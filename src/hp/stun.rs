@@ -193,6 +193,7 @@ pub mod test {
                 stun_port: port,
                 stun_only: true,
                 stun_test_ip: None,
+                derp_port: 0,
             };
             m.regions.insert(
                 region_id,

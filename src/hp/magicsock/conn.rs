@@ -10,7 +10,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context as _, Result};
@@ -21,7 +21,7 @@ use rand::{seq::SliceRandom, Rng, SeedableRng};
 use subtle::ConstantTimeEq;
 use tokio::{
     sync::{self, Mutex, RwLock},
-    time::{self, Instant},
+    time,
 };
 use tracing::{debug, info, warn};
 
@@ -29,7 +29,7 @@ use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
     derp::{self, DerpMap},
     disco, interfaces, key,
-    magicsock::SESSION_ACTIVE_TIMEOUT,
+    magicsock::{rebinding_conn, SESSION_ACTIVE_TIMEOUT},
     monitor, netcheck, netmap, portmapper, stun,
 };
 
@@ -787,7 +787,7 @@ impl Conn {
     }
 
     fn derp_region_code_locked(&self, region_id: usize) -> String {
-        match &*self.derp_map.blocking_read() {
+        match &*tokio::task::block_in_place(|| self.derp_map.blocking_read()) {
             Some(ref dm) => match dm.regions.get(&region_id) {
                 Some(dr) => dr.region_code.clone(),
                 None => "".to_string(),
@@ -1115,24 +1115,27 @@ impl Conn {
         let dc = derp::http::Client::new_region(
             state.private_key.clone().expect("checked for key earlier"),
             move || {
-                // Warning: it is not legal to acquire
-                // magicsock.Conn.mu from this callback.
-                // It's run from derp::http::Client.connect (via Send, etc)
-                // and the lock ordering rules are that magicsock.Conn.mu
-                // must be acquired before derp::http.Client.mu
+                let this = this.clone();
+                Box::pin(async move {
+                    // Warning: it is not legal to acquire
+                    // magicsock.Conn.mu from this callback.
+                    // It's run from derp::http::Client.connect (via Send, etc)
+                    // and the lock ordering rules are that magicsock.Conn.mu
+                    // must be acquired before derp::http.Client.mu
 
-                if this.is_closing() {
-                    // We're closing anyway; return to stop dialing.
-                    return None;
-                }
+                    if this.is_closing() {
+                        // We're closing anyway; return to stop dialing.
+                        return None;
+                    }
 
-                // Need to load the derp map without aquiring the lock
+                    // Need to load the derp map without aquiring the lock
 
-                let derp_map = &*this.derp_map.blocking_read();
-                match derp_map {
-                    None => None,
-                    Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
-                }
+                    let derp_map = &*this.derp_map.read().await;
+                    match derp_map {
+                        None => None,
+                        Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
+                    }
+                })
             },
         );
 
@@ -1140,12 +1143,15 @@ impl Conn {
         dc.note_preferred(state.my_derp == region_id).await;
         let this = self.clone();
         dc.set_address_family_selector(move || {
-            // TODO: use atomic read?
-            if let Some(r) = &*this.last_net_check_report.blocking_read() {
-                // TODO: avoid locking on the report
-                return r.blocking_read().ipv6;
-            }
-            false
+            let this = this.clone();
+            Box::pin(async move {
+                // TODO: use atomic read?
+                if let Some(r) = &*this.last_net_check_report.read().await {
+                    // TODO: avoid locking on the report
+                    return r.read().await.ipv6;
+                }
+                false
+            })
         });
 
         // TODO: DNS Cache
@@ -1407,7 +1413,9 @@ impl Conn {
         cache: &SocketEndpointCache,
     ) -> bool {
         if stun::is(b) {
-            if let Some(ref f) = &*self.on_stun_receive.blocking_read() {
+            if let Some(ref f) =
+                &*tokio::task::block_in_place(|| self.on_stun_receive.blocking_read())
+            {
                 f(b, meta.addr);
             }
             return false;
@@ -1424,7 +1432,7 @@ impl Conn {
         if let Some(de) = cache.get(&meta.addr) {
             meta.dst_ip = Some(de.fake_wg_addr.ip());
         } else {
-            let state = self.state.blocking_lock();
+            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
             match state.peer_map.endpoint_for_ip_port(&meta.addr) {
                 None => {
                     return false;
@@ -1467,7 +1475,7 @@ impl Conn {
         }
 
         let ep = {
-            let state = self.state.blocking_lock();
+            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
             let ep = state.peer_map.endpoint_for_node_key(&dm.src);
             ep.cloned()
         };
@@ -1583,7 +1591,7 @@ impl Conn {
 
         let (source, sealed_box) = source.unwrap();
 
-        let mut state = self.state.blocking_lock();
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
         if state.closed || state.private_key.is_none() {
             return true;
         }
@@ -1740,7 +1748,7 @@ impl Conn {
     ) -> Option<key::node::PublicKey> {
         if let Some(src) = derp_node_src {
             if let Some(ep) = peer_map.endpoint_for_node_key(src) {
-                if &ep.state.blocking_lock().disco_key == dk {
+                if &tokio::task::block_in_place(|| ep.state.blocking_lock()).disco_key == dk {
                     return Some(src.clone());
                 }
             }
@@ -1748,7 +1756,7 @@ impl Conn {
 
         // Pings contains its node source. See if it maps back.
         if let Some(ep) = peer_map.endpoint_for_node_key(&dm.node_key) {
-            if &ep.state.blocking_lock().disco_key == dk {
+            if &tokio::task::block_in_place(|| ep.state.blocking_lock()).disco_key == dk {
                 return Some(dm.node_key.clone());
             }
         }
@@ -2111,7 +2119,7 @@ impl Conn {
             return;
         }
 
-        // Update selt.net_map regardless, before the following early return.
+        // Update self.net_map regardless, before the following early return.
         let prior_netmap = state.net_map.replace(nm);
 
         // TODO:
@@ -2153,8 +2161,8 @@ impl Conn {
             peer_map.upsert_endpoint(ep, None).await;
         }
 
-        // If the set of nodes changed since the last SetNetworkMap, the
-        // upsert loop just above made c.peerMap contain the union of the
+        // If the set of nodes changed since the last set_network_map, the
+        // upsert loop just above made self.peer_map contain the union of the
         // old and new peers - which will be larger than the set from the
         // current netmap. If that happens, go through the allocful
         // deletion path to clean up moribund nodes.
@@ -2503,7 +2511,7 @@ impl Conn {
         // key somehow. So for now, only stop doing work if we ever
         // had a key, which helps real users, but appeases tests for
         // now. TODO: rewrite those tests to be less brittle or more realistic.
-        if state.private_key.is_some() && state.ever_had_key {
+        if state.private_key.is_none() && state.ever_had_key {
             debug!("re_stun({}) ignored; stopped, no private key", why);
             return;
         }
@@ -2512,12 +2520,13 @@ impl Conn {
             if state.want_endpoints_update.is_none() || state.want_endpoints_update.unwrap() != why
             {
                 debug!(
-                    "re_stun: endpoint update active, need another later ({})",
+                    "re_stun({}): endpoint update active, need another later",
                     why
                 );
                 state.want_endpoints_update = Some(why);
             }
         } else {
+            debug!("re_stun({}): started", why);
             state.endpoints_update_active = true;
             let this = self.clone();
             tokio::task::spawn(async move {
@@ -2597,8 +2606,9 @@ impl Conn {
         for port in &ports {
             // Close the existing conn, in case it is sitting on the port we want.
             if let Err(err) = ruc.close() {
-                // !errors.Is(err, net.ErrClosed) && !errors.Is(err, errNilPConn) {
-                info!("bind_socket {:?} close failed: {:?}", network, err);
+                if !matches!(rebinding_conn::Error::NoConn, err) {
+                    info!("bind_socket {:?} close failed: {:?}", network, err);
+                }
             }
             // Open a new one with the desired port.
             match self.listen_packet(network, *port).await {
@@ -2897,7 +2907,7 @@ impl AsyncUdpSocket for Conn {
         if num_msgs_total < bufs.len() {
             while i < bufs.len() {
                 if let Ok(dm) = self.derp_recv_ch.1.try_recv() {
-                    if self.state.blocking_lock().closed {
+                    if tokio::task::block_in_place(|| self.state.blocking_lock()).closed {
                         break;
                     }
 
@@ -3002,9 +3012,11 @@ fn disco_info_locked<'a>(
 
 #[cfg(test)]
 mod tests {
-    use tokio::net;
+    use tokio::{net, task::JoinSet};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
+    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -3068,5 +3080,403 @@ mod tests {
 
         c.close().await.unwrap();
         t.await.unwrap().unwrap();
+    }
+
+    struct Devices {
+        m1_ip: IpAddr,
+        m2_ip: IpAddr,
+        stun_ip: IpAddr,
+    }
+
+    async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
+        let d = derp::Server::new(key::node::SecretKey::generate(&mut rand::rngs::OsRng));
+
+        // TODO: configure DERP server when actually implemented
+        // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
+        // httpsrv.Config.ErrorLog = logger.StdLogger(logf)
+        // httpsrv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+        // httpsrv.StartTLS()
+
+        let (stun_addr, _, stun_cleanup) = stun::test::serve().await?;
+        let m = DerpMap {
+            regions: [(
+                1,
+                DerpRegion {
+                    region_id: 1,
+                    region_code: "test".into(),
+                    nodes: vec![DerpNode {
+                        name: "t1".into(),
+                        region_id: 1,
+                        host_name: "test-node.unused".into(),
+                        stun_only: true, // TODO: switch to false once derp is implemented,
+                        stun_port: stun_addr.port(),
+                        ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
+                        ipv6: UseIpv6::None,
+
+                        derp_port: 1234, // TODO: httpsrv.Listener.Addr().(*net.TCPAddr).Port,
+                        stun_test_ip: Some(stun_addr.ip()),
+                    }],
+                    avoid: false,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        let cleanup = || {
+            // httpsrv.CloseClientConnections()
+            // httpsrv.Close()
+            // d.Close()
+
+            stun_cleanup.send(()).unwrap();
+        };
+
+        Ok((m, cleanup))
+    }
+
+    /// Magicsock plus wrappers for sending packets
+    #[derive(Clone)]
+    struct MagicStack {
+        ep_ch: flume::Receiver<Vec<cfg::Endpoint>>,
+        key: key::node::SecretKey,
+        conn: Conn,
+    }
+
+    impl MagicStack {
+        async fn new(derp_map: DerpMap) -> Result<Self> {
+            let key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+            Self::with_key(key, derp_map).await
+        }
+
+        async fn with_key(key: key::node::SecretKey, derp_map: DerpMap) -> Result<Self> {
+            let (ep_s, ep_r) = flume::bounded(16);
+            let conn = Conn::new(Options {
+                on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
+                    ep_s.send(eps.to_vec()).unwrap();
+                })),
+                ..Default::default()
+            })
+            .await?;
+            conn.set_derp_map(Some(derp_map)).await;
+            conn.set_private_key(key.clone()).await?;
+
+            Ok(Self {
+                ep_ch: ep_r,
+                key,
+                conn,
+            })
+        }
+
+        async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
+            let state = &*self.conn.state.lock().await;
+            let mut out = Vec::new();
+            for ep in state.peer_map.endpoints() {
+                out.push(ep.public_key.clone());
+            }
+            out
+        }
+
+        fn public(&self) -> key::node::PublicKey {
+            self.key.verifying_key().into()
+        }
+    }
+
+    /// Monitors endpoint changes and plumbs things together.
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
+        // Serialize all reconfigurations globally, just to keep things simpler.
+        let eps = Arc::new(Mutex::new(vec![Vec::new(); stacks.len()]));
+
+        async fn build_netmap(
+            eps: &[Vec<cfg::Endpoint>],
+            ms: &[MagicStack],
+            my_idx: usize,
+        ) -> netmap::NetworkMap {
+            let me = &ms[my_idx];
+            let mut peers = Vec::new();
+
+            for (i, peer) in ms.iter().enumerate() {
+                if i == my_idx {
+                    continue;
+                }
+
+                let addresses = vec![Ipv4Addr::new(1, 0, 0, (i + 1) as u8).into()];
+                peers.push(cfg::Node {
+                    addresses: addresses.clone(),
+                    id: (i + 1) as u64,
+                    stable_id: String::new(),
+                    name: Some(format!("node{}", i + 1)),
+                    key: peer.key.verifying_key().into(),
+                    disco_key: peer.conn.disco_public_key().await,
+                    allowed_ips: addresses,
+                    endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
+                    derp: Some("127.3.3.40:1".parse().unwrap()),
+                    created: Instant::now(),
+                    hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                    keep_alive: false,
+                    expired: false,
+                    online: None,
+                    last_seen: None,
+                });
+            }
+
+            let nm = netmap::NetworkMap {
+                peers,
+                // 	PrivateKey: me.privateKey,
+                // 	NodeKey:    me.privateKey.Public(),
+                // 	Addresses:  []netip.Prefix{netip.PrefixFrom(netaddr.IPv4(1, 0, 0, byte(myIdx+1)), 32)},
+            };
+
+            // if mutateNetmap != nil {
+            // 	mutateNetmap(myIdx, nm)
+            // }
+            nm
+        }
+
+        async fn update_eps(
+            eps: Arc<Mutex<Vec<Vec<cfg::Endpoint>>>>,
+            ms: &[MagicStack],
+            idx: usize,
+            new_eps: Vec<cfg::Endpoint>,
+        ) {
+            let eps = &mut *eps.lock().await;
+            eps[idx] = new_eps;
+
+            for (i, m) in ms.iter().enumerate() {
+                let nm = build_netmap(&eps[..], ms, i).await;
+                let peer_set: HashSet<_> = nm.peers.iter().map(|p| p.key.clone()).collect();
+                m.conn.set_network_map(nm).await;
+                m.conn.update_peers(peer_set).await;
+            }
+        }
+
+        let mut tasks = JoinSet::new();
+
+        for (my_idx, m) in stacks.iter().enumerate() {
+            let m = m.clone();
+            let eps = eps.clone();
+            let stacks = stacks.clone();
+            tasks.spawn(async move {
+                loop {
+                    // TODO: check for shutdown
+                    tokio::select! {
+                        res = m.ep_ch.recv_async() => match res {
+                            Ok(new_eps) => {
+                                debug!("conn{} endpoints update", my_idx + 1);
+                                update_eps(eps.clone(), &stacks, my_idx, new_eps).await;
+                            }
+                            Err(err) => {
+                                warn!("err: {:?}", err);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(move || {
+            tasks.abort_all();
+        })
+    }
+
+    #[tokio::test]
+    async fn test_two_device_ping() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        let devices = Devices {
+            m1_ip: "127.0.0.1".parse()?,
+            m2_ip: "127.0.0.1".parse()?,
+            stun_ip: "127.0.0.1".parse()?,
+        };
+
+        let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+
+        let m1 = MagicStack::new(derp_map.clone()).await?;
+        let m2 = MagicStack::new(derp_map.clone()).await?;
+
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+
+        // Wait for magicsock to be told about peers from mesh_stacks.
+        let m1t = m1.clone();
+        let m2t = m2.clone();
+        time::timeout(Duration::from_secs(10), async move {
+            loop {
+                let mut ready = 0;
+                if m1t.tracked_endpoints().await.contains(&m2t.public()) {
+                    ready += 1;
+                }
+                if m2t.tracked_endpoints().await.contains(&m1t.public()) {
+                    ready += 1;
+                }
+                if ready == 2 {
+                    break;
+                }
+            }
+        })
+        .await?;
+
+        // m1cfg := &wgcfg.Config{
+        // 	Name:       "peer1",
+        // 	PrivateKey: m1.privateKey,
+        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
+        // 	Peers: []wgcfg.Peer{
+        // 		{
+        // 			PublicKey:  m2.privateKey.Public(),
+        // 			DiscoKey:   m2.conn.DiscoPublicKey(),
+        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
+        // 		},
+        // 	},
+        // }
+        // m2cfg := &wgcfg.Config{
+        // 	Name:       "peer2",
+        // 	PrivateKey: m2.privateKey,
+        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
+        // 	Peers: []wgcfg.Peer{
+        // 		{
+        // 			PublicKey:  m1.privateKey.Public(),
+        // 			DiscoKey:   m1.conn.DiscoPublicKey(),
+        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
+        // 		},
+        // 	},
+        // }
+
+        // if err := m1.Reconfig(m1cfg); err != nil {
+        // 	t.Fatal(err)
+        // }
+        // if err := m2.Reconfig(m2cfg); err != nil {
+        // 	t.Fatal(err)
+        // }
+
+        // In the normal case, pings succeed immediately.
+        // However, in the case of a handshake race, we need to retry.
+        // With very bad luck, we can need to retry multiple times.
+        const ALLOWED_RETRIES: usize = 3;
+
+        // Retries take 5s each. Add 1s for some processing time.
+        const PING_TIMEOUT: Duration = Duration::from_secs(5 * ALLOWED_RETRIES as u64 + 1);
+
+        // // sendWithTimeout sends msg using send, checking that it is received unchanged from in.
+        // // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
+        // sendWithTimeout := func(msg []byte, in chan []byte, send func()) error {
+        // 	start := time.Now()
+        // 	for time.Since(start) < pingTimeout {
+        // 		send()
+        // 		select {
+        // 		case recv := <-in:
+        // 			if !bytes.Equal(msg, recv) {
+        // 				return errors.New("ping did not transit correctly")
+        // 			}
+        // 			return nil
+        // 		case <-time.After(time.Second):
+        // 			// try again
+        // 		}
+        // 	}
+        // 	return errors.New("ping timed out")
+        // }
+
+        // ping1 := func(t *testing.T) {
+        // 	msg2to1 := tuntest.Ping(netip.MustParseAddr("1.0.0.1"), netip.MustParseAddr("1.0.0.2"))
+        // 	send := func() {
+        // 		m2.tun.Outbound <- msg2to1
+        // 		t.Log("ping1 sent")
+        // 	}
+        // 	in := m1.tun.Inbound
+        // 	if err := sendWithTimeout(msg2to1, in, send); err != nil {
+        // 		t.Error(err)
+        // 	}
+        // }
+        // ping2 := func(t *testing.T) {
+        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
+        // 	send := func() {
+        // 		m1.tun.Outbound <- msg1to2
+        // 		t.Log("ping2 sent")
+        // 	}
+        // 	in := m2.tun.Inbound
+        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
+        // 		t.Error(err)
+        // 	}
+        // }
+
+        // m1.stats = connstats.NewStatistics(0, 0, nil)
+        // defer m1.stats.Shutdown(context.Background())
+        // m1.conn.SetStatistics(m1.stats)
+        // m2.stats = connstats.NewStatistics(0, 0, nil)
+        // defer m2.stats.Shutdown(context.Background())
+        // m2.conn.SetStatistics(m2.stats)
+
+        // checkStats := func(t *testing.T, m *magicStack, wantConns []netlogtype.Connection) {
+        // 	_, stats := m.stats.TestExtract()
+        // 	for _, conn := range wantConns {
+        // 		if _, ok := stats[conn]; ok {
+        // 			return
+        // 		}
+        // 	}
+        // 	t.Helper()
+        // 	t.Errorf("missing any connection to %s from %s", wantConns, maps.Keys(stats))
+        // }
+
+        // addrPort := netip.MustParseAddrPort
+        // m1Conns := []netlogtype.Connection{
+        // 	{Src: addrPort("1.0.0.2:0"), Dst: m2.conn.pconn4.LocalAddr().AddrPort()},
+        // 	{Src: addrPort("1.0.0.2:0"), Dst: addrPort("127.3.3.40:1")},
+        // }
+        // m2Conns := []netlogtype.Connection{
+        // 	{Src: addrPort("1.0.0.1:0"), Dst: m1.conn.pconn4.LocalAddr().AddrPort()},
+        // 	{Src: addrPort("1.0.0.1:0"), Dst: addrPort("127.3.3.40:1")},
+        // }
+
+        // outerT := t
+        // t.Run("ping 1.0.0.1", func(t *testing.T) {
+        // 	setT(t)
+        // 	defer setT(outerT)
+        // 	ping1(t)
+        // 	checkStats(t, m1, m1Conns)
+        // 	checkStats(t, m2, m2Conns)
+        // })
+
+        // t.Run("ping 1.0.0.2", func(t *testing.T) {
+        // 	setT(t)
+        // 	defer setT(outerT)
+        // 	ping2(t)
+        // 	checkStats(t, m1, m1Conns)
+        // 	checkStats(t, m2, m2Conns)
+        // })
+
+        // t.Run("ping 1.0.0.2 via SendPacket", func(t *testing.T) {
+        // 	setT(t)
+        // 	defer setT(outerT)
+        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
+        // 	send := func() {
+        // 		if err := m1.tsTun.InjectOutbound(msg1to2); err != nil {
+        // 			t.Fatal(err)
+        // 		}
+        // 		t.Log("SendPacket sent")
+        // 	}
+        // 	in := m2.tun.Inbound
+        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
+        // 		t.Error(err)
+        // 	}
+        // 	checkStats(t, m1, m1Conns)
+        // 	checkStats(t, m2, m2Conns)
+        // })
+
+        // t.Run("no-op dev1 reconfig", func(t *testing.T) {
+        // 	setT(t)
+        // 	defer setT(outerT)
+        // 	if err := m1.Reconfig(m1cfg); err != nil {
+        // 		t.Fatal(err)
+        // 	}
+        // 	ping1(t)
+        // 	ping2(t)
+        // 	checkStats(t, m1, m1Conns)
+        // 	checkStats(t, m2, m2Conns)
+        // })
+
+        cleanup();
+        cleanup_mesh();
+        Ok(())
     }
 }
