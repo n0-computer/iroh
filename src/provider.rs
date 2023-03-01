@@ -14,13 +14,20 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::RwLock;
 use std::task::Poll;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future;
+use futures::Stream;
+use quic_rpc::server::RpcChannel;
+use quic_rpc::transport::flume::FlumeConnection;
+use quic_rpc::transport::misc::DummyServerEndpoint;
+use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
@@ -34,30 +41,50 @@ use crate::blobs::{Blob, Collection};
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
+use crate::rpc_protocol::{
+    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProvideResponseEntry,
+    ProviderRequest, ProviderResponse, ProviderService, VersionRequest, VersionResponse,
+    WatchRequest, WatchResponse,
+};
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
+const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Database containing content-addressed data (blobs or collections).
-#[derive(Debug, Clone)]
-pub struct Database(Arc<HashMap<Hash, BlobOrCollection>>);
+#[derive(Debug, Clone, Default)]
+pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 
 impl Database {
-    fn get(&self, key: &Hash) -> Option<&BlobOrCollection> {
-        self.0.get(key)
+    fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
+        self.0.read().unwrap().get(key).cloned()
+    }
+
+    fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
+        let mut inner = self.0.write().unwrap();
+        for (k, v) in db {
+            inner.entry(k).or_insert(v);
+        }
     }
 
     /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> impl Iterator<Item = (&Hash, &PathBuf, u64)> + '_ {
-        self.0
+    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
+        let items = self
+            .0
+            .read()
+            .unwrap()
             .iter()
             .filter_map(|(k, v)| match v {
                 BlobOrCollection::Blob(data) => Some((k, data)),
                 BlobOrCollection::Collection(_) => None,
             })
-            .map(|(k, data)| (k, &data.path, data.size))
+            .map(|(k, data)| (*k, data.path.clone(), data.size))
+            .collect::<Vec<_>>();
+        // todo: make this a proper lazy iterator at some point
+        // e.g. by using an immutable map or a real database that supports snapshots.
+        items.into_iter()
     }
 }
 
@@ -69,15 +96,16 @@ impl Database {
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder {
+pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
+    rpc_endpoint: E,
     db: Database,
     keylog: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection((Bytes, Bytes)),
@@ -90,8 +118,23 @@ impl Builder {
             bind_addr: "127.0.0.1:4433".parse().unwrap(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
+            rpc_endpoint: Default::default(),
             db,
             keylog: false,
+        }
+    }
+}
+
+impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
+    ///
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: value,
         }
     }
 
@@ -131,7 +174,11 @@ impl Builder {
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
-        let tls_server_config = tls::make_server_config(&self.keypair, self.keylog)?;
+        let tls_server_config = tls::make_server_config(
+            &self.keypair,
+            vec![crate::tls::P2P_ALPN.to_vec()],
+            self.keylog,
+        )?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
@@ -148,10 +195,21 @@ impl Builder {
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
+        tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let task = {
             let cancel_token = cancel_token.clone();
             tokio::spawn(async move {
-                Self::run(endpoint, db2, self.auth_token, events_sender, cancel_token).await
+                Self::run(
+                    endpoint,
+                    db2,
+                    self.auth_token,
+                    events_sender,
+                    cancel_token,
+                    self.rpc_endpoint,
+                    internal_rpc,
+                )
+                .await
             })
         };
 
@@ -161,6 +219,7 @@ impl Builder {
             auth_token: self.auth_token,
             task,
             events,
+            controller,
             cancel_token,
         })
     }
@@ -171,7 +230,11 @@ impl Builder {
         auth_token: AuthToken,
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
+        rpc: E,
+        internal_rpc: impl ServiceEndpoint<ProviderService>,
     ) {
+        let rpc = RpcServer::new(rpc);
+        let internal_rpc = RpcServer::new(internal_rpc);
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
@@ -179,6 +242,31 @@ impl Builder {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => break,
+                // handle rpc requests. This will do nothing if rpc is not configured, since
+                // accept is just a pending future.
+                request = rpc.accept() => {
+                    match request {
+                        Ok((msg, chan)) => {
+                            handle_rpc_request(msg, chan, &db);
+                        }
+                        Err(e) => {
+                            tracing::info!("rpc request error: {:?}", e);
+                        }
+                    }
+                },
+                // handle internal rpc requests.
+                request = internal_rpc.accept() => {
+                    match request {
+                        Ok((msg, chan)) => {
+                            handle_rpc_request(msg, chan, &db);
+                        }
+                        Err(_) => {
+                            tracing::info!("last controller dropped, shutting down");
+                            break;
+                        }
+                    }
+                },
+                // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
                     let db = db.clone();
                     let events = events.clone();
@@ -215,6 +303,7 @@ pub struct Provider {
     task: JoinHandle<()>,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
+    controller: FlumeConnection<ProviderResponse, ProviderRequest>,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -279,6 +368,13 @@ impl Provider {
         self.events.subscribe()
     }
 
+    /// Returns a handle that can be used to do RPC calls to the provider internally.
+    pub fn controller(
+        &self,
+    ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
+        RpcClient::new(self.controller.clone())
+    }
+
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
@@ -311,6 +407,76 @@ impl Future for Provider {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
     }
+}
+
+struct Handler(Database);
+
+impl Handler {
+    fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
+        let items = self
+            .0
+            .blobs()
+            .into_iter()
+            .map(|(hash, path, size)| ListResponse { hash, path, size });
+        futures::stream::iter(items)
+    }
+    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+        let path = msg.path;
+        let data_sources: Vec<DataSource> = if path.is_dir() {
+            let mut paths = Vec::new();
+            let mut iter = tokio::fs::read_dir(&path).await?;
+            while let Some(el) = iter.next_entry().await? {
+                if el.path().is_file() {
+                    paths.push(el.path().into());
+                }
+            }
+            paths
+        } else if path.is_file() {
+            vec![path.into()]
+        } else {
+            anyhow::bail!("path must be either a Directory or a File");
+        };
+        // create the collection
+        // todo: provide feedback for progress
+        let (db, entries, hash) = create_collection_inner(data_sources).await?;
+        self.0.union_with(db);
+
+        Ok(ProvideResponse { hash, entries })
+    }
+    async fn version(self, _: VersionRequest) -> VersionResponse {
+        VersionResponse {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
+        futures::stream::unfold((), |()| async move {
+            tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            Some((
+                WatchResponse {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+                (),
+            ))
+        })
+    }
+}
+
+fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
+    msg: ProviderRequest,
+    chan: RpcChannel<ProviderService, C>,
+    db: &Database,
+) {
+    let db = db.clone();
+    tokio::spawn(async move {
+        let handler = Handler(db.clone());
+        use ProviderRequest::*;
+        match msg {
+            List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
+            Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
+            Watch(msg) => chan.server_streaming(msg, handler, Handler::watch).await,
+            Version(msg) => chan.rpc(msg, handler, Handler::version).await,
+        }
+    });
 }
 
 async fn handle_connection(
@@ -522,7 +688,7 @@ async fn handle_stream(
     };
 
     // 5. Transfer data!
-    match transfer_collection(&db, writer, &mut out_buffer, outboard, data).await {
+    match transfer_collection(&db, writer, &mut out_buffer, &outboard, &data).await {
         Ok(SentStatus::Sent) => {
             let _ = events.send(Event::TransferCompleted {
                 connection_id,
@@ -561,9 +727,6 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             write_response(&mut writer, buffer, Res::Found).await?;
-            let path = path.clone();
-            let outboard = outboard.clone();
-            let size = *size;
             // need to thread the writer though the spawn_blocking, since
             // taking a reference does not work. spawn_blocking requires
             // 'static lifetime.
@@ -595,13 +758,17 @@ pub(crate) struct Data {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
+    ///
+    /// Note that when adding multiple files with the same content, only one of them
+    /// will get added to the store. So the path is not that useful for information.
+    /// It is just a place to look for the data correspoding to the hash and outboard.
     path: PathBuf,
     /// Size of the original data.
     size: u64,
 }
 
 /// A data source
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
     /// the filename.
@@ -690,6 +857,19 @@ fn compute_outboard(
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
+    let (db, _, hash) = create_collection_inner(data_sources).await?;
+    Ok((Database(Arc::new(RwLock::new(db))), hash))
+}
+
+/// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
+/// a public Database.
+async fn create_collection_inner(
+    data_sources: Vec<DataSource>,
+) -> Result<(
+    HashMap<Hash, BlobOrCollection>,
+    Vec<ProvideResponseEntry>,
+    Hash,
+)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -709,8 +889,24 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         .await
         .into_iter()
         .collect::<Result<Result<Vec<_>, _>, _>>()??;
-    // insert outboards into the database and build collection
 
+    // compute information about the collection
+    let entries = outboards
+        .iter()
+        .map(|(path, name, hash, outboard)| {
+            let name = name
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| path.display().to_string());
+            ProvideResponseEntry {
+                name,
+                hash: *hash,
+                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
+            }
+        })
+        .collect();
+
+    // insert outboards into the database and build collection
     for (path, name, hash, outboard) in outboards {
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
@@ -754,7 +950,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
 
-    Ok((Database(Arc::new(db)), hash))
+    Ok((db, entries, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
@@ -897,7 +1093,7 @@ mod tests {
         let collection = {
             let c = db.get(&hash).unwrap();
             if let BlobOrCollection::Collection((_, data)) = c {
-                Collection::from_bytes(data)?
+                Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
             }
@@ -907,4 +1103,24 @@ mod tests {
 
         Ok(())
     }
+}
+
+/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+pub fn make_server_config(
+    keypair: &Keypair,
+    max_streams: u64,
+    max_connections: u32,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(max_streams.try_into()?)
+        .max_concurrent_uni_streams(0u32.into());
+
+    server_config
+        .transport_config(Arc::new(transport_config))
+        .concurrent_connections(max_connections);
+    Ok(server_config)
 }

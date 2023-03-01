@@ -5,7 +5,7 @@
 //! to store the received data.
 use std::fmt::Debug;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -45,22 +45,34 @@ impl Default for Options {
     }
 }
 
-/// Setup a QUIC connection to the provided address.
-async fn setup(opts: Options) -> Result<quinn::Connection> {
+/// Create a quinn client endpoint
+pub fn make_client_endpoint(
+    bind_addr: SocketAddr,
+    peer_id: Option<PeerId>,
+    alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
+) -> Result<quinn::Endpoint> {
     let keypair = Keypair::generate();
 
-    let tls_client_config = tls::make_client_config(&keypair, opts.peer_id, opts.keylog)?;
+    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let bind_addr = match opts.addr.is_ipv6() {
-        true => "[::]:0".parse().unwrap(),
-        false => "0.0.0.0:0".parse().unwrap(),
-    };
     let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     client_config.transport_config(Arc::new(transport_config));
 
     endpoint.set_default_client_config(client_config);
+    Ok(endpoint)
+}
+
+/// Setup a QUIC connection to the provided address.
+async fn setup(opts: Options) -> Result<quinn::Connection> {
+    let bind_addr = match opts.addr.is_ipv6() {
+        true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
+        false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
+    };
+    let endpoint =
+        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false)?;
 
     debug!("connecting to {}", opts.addr);
     let connect = endpoint.connect(opts.addr, "localhost")?;
