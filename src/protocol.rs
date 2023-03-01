@@ -4,7 +4,7 @@ use std::io;
 use std::str::FromStr;
 
 use abao::decode::AsyncSliceDecoder;
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -92,6 +92,10 @@ pub(crate) async fn read_lp(
     };
     let mut reader = reader.take(size);
     let size = usize::try_from(size).context("frame larger than usize")?;
+    if size > MAX_MESSAGE_SIZE {
+        bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
+    }
+    buffer.reserve(size);
     loop {
         let r = reader.read_buf(buffer).await?;
         if r == 0 {
