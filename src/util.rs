@@ -8,6 +8,7 @@ use anyhow::ensure;
 use base64::{engine::general_purpose, Engine as _};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -120,10 +121,8 @@ impl MaxSize for Hash {
 }
 
 /// A serializable error type for use in RPC responses.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Error)]
 pub struct RpcError(serde_error::Error);
-
-impl std::error::Error for RpcError {}
 
 impl fmt::Display for RpcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -17,12 +17,11 @@ use iroh::rpc_protocol::{
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
-use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
 
-const RPC_PORT: u16 = 0x1337;
+const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 #[derive(Parser, Debug, Clone)]
@@ -54,14 +53,14 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919
-        #[clap(long, default_value_t = RPC_PORT)]
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
     /// List hashes
     #[clap(about = "List hashes")]
     List {
         /// Optional rpc port, defaults to 4919
-        #[clap(long, default_value_t = RPC_PORT)]
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
     /// Add some data to the database.
@@ -70,7 +69,7 @@ enum Commands {
         /// The path to the file or folder to add.
         path: PathBuf,
         /// Optional rpc port, defaults to 4919
-        #[clap(long, default_value_t = RPC_PORT)]
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
     /// Fetch some data by hash.
@@ -115,11 +114,7 @@ enum Commands {
 macro_rules! progress {
     // Match a format string followed by any number of arguments
     ($fmt:expr $(, $args:expr)*) => {{
-        // Use the `format!` macro to format the string with the arguments
-        let mut message = format!($fmt $(, $args)*);
-        // Print the formatted string to the console with a newline
-        message.push('\n');
-        tokio::io::stderr().write_all(message.as_ref()).await.unwrap();
+        eprintln!($fmt $(, $args)*);
     }};
 }
 
