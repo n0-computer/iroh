@@ -45,6 +45,7 @@ pub struct DerpNode {
     /// If `None`, A record(s) from DNS lookups of HostName are used.
     /// If `Disabled`, IPv4 is not used;
     pub ipv6: UseIpv6,
+    pub derp_port: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

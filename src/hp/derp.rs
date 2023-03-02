@@ -12,9 +12,11 @@
 mod client;
 pub mod http;
 mod map;
+mod server;
 
-pub use client::ReceivedMessage;
-pub use map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+pub use self::client::ReceivedMessage;
+pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+pub use self::server::Server;
 
 use std::time::Duration;
 
