@@ -3171,7 +3171,8 @@ mod tests {
             conn.set_derp_map(Some(derp_map)).await;
             conn.set_private_key(key.clone()).await?;
 
-            let tls_server_config = tls::make_server_config(&key.clone().into(), false)?;
+            let tls_server_config =
+                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
             let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
                 quinn::EndpointConfig::default(),
@@ -3180,7 +3181,12 @@ mod tests {
                 quinn::TokioRuntime,
             )?;
 
-            let tls_client_config = tls::make_client_config(&key.clone().into(), None, false)?;
+            let tls_client_config = tls::make_client_config(
+                &key.clone().into(),
+                None,
+                vec![tls::P2P_ALPN.to_vec()],
+                false,
+            )?;
             let client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             quic_ep.set_default_client_config(client_config);
 
