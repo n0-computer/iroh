@@ -1276,7 +1276,9 @@ impl Conn {
                     for peer in peer_present.drain() {
                         self.remove_derp_peer_route(peer, region_id, &dc).await;
                     }
-                    if err == derp::http::ClientError::Closed {
+                    if err == derp::http::ClientError::Closed
+                        || err == derp::http::ClientError::Todo
+                    {
                         return;
                     }
                     if self.network_down() {
@@ -1532,7 +1534,7 @@ impl Conn {
         dst_disco: &key::disco::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
-        debug!("sending disco message: {:?}", msg);
+        debug!("sending disco message to {}: {:?}", dst, msg);
         let is_derp = dst.ip() == DERP_MAGIC_IP;
         let is_pong = matches!(msg, disco::Message::Pong(_));
         if is_pong && !is_derp && dst.ip().is_ipv4() {
@@ -3153,6 +3155,7 @@ impl Drop for WgGuard {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
     use tokio::{net, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -3307,7 +3310,11 @@ mod tests {
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
-            let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            server_config.transport_config(Arc::new(transport_config));
             let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
                 quinn::EndpointConfig::default(),
                 Some(server_config),
@@ -3321,7 +3328,10 @@ mod tests {
                 vec![tls::P2P_ALPN.to_vec()],
                 false,
             )?;
-            let client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            client_config.transport_config(Arc::new(transport_config));
             quic_ep.set_default_client_config(client_config);
 
             Ok(Self {
@@ -3564,7 +3574,6 @@ mod tests {
                 m2.quic_ep.local_addr()?.port(),
             );
             info!("m1: {}, m2: {}", m1_addr, m2.quic_ep.local_addr()?);
-            let (m1_send, m1_recv) = flume::bounded(8);
 
             // Setup connection information for discovery
             m2.conn
@@ -3579,33 +3588,43 @@ mod tests {
                 info!("[m1] accepting conn");
                 while let Some(conn) = m1.quic_ep.accept().await {
                     info!("[m1] connecting");
-                    let conn = conn.await?;
+                    let conn = conn.await.context("[m1] connecting")?;
                     info!("[m1] accepting bi");
-                    let (mut send_bi, recv_bi) = conn.accept_bi().await?;
+                    let (mut send_bi, recv_bi) =
+                        conn.accept_bi().await.context("[m1] accepting bi")?;
 
                     info!("[m1] reading");
-                    let val = recv_bi.read_to_end(usize::MAX).await?;
-                    m1_send.send_async(val).await?;
-                    send_bi.finish().await?;
+                    let val = recv_bi
+                        .read_to_end(usize::MAX)
+                        .await
+                        .context("[m1] reading to end")?;
+                    send_bi.finish().await.context("[m1] finishing")?;
                     info!("[m1] finished");
-                    break;
+                    return Ok::<_, anyhow::Error>(val);
                 }
 
-                Ok::<_, anyhow::Error>(())
+                unreachable!()
             });
 
             info!("[m2] connecting to m1");
-            let conn = m2.quic_ep.connect(m1_addr, "localhost")?.await?;
+            let conn = m2
+                .quic_ep
+                .connect(m1_addr, "localhost")?
+                .await
+                .context("[m2]")?;
 
             info!("[m2] opening bi");
-            let (mut send_bi, recv_bi) = conn.open_bi().await?;
+            let (mut send_bi, recv_bi) = conn.open_bi().await.context("[m2] open bi")?;
             info!("[m2] writing message");
-            send_bi.write_all(b"hello").await?;
+            send_bi
+                .write_all(b"hello")
+                .await
+                .context("[m2] write all")?;
             info!("[m2] finishing");
-            send_bi.finish().await?;
+            send_bi.finish().await.context("[m2] finish")?;
 
             info!("[m2] reading_to_end");
-            let _ = recv_bi.read_to_end(usize::MAX).await?;
+            let _ = recv_bi.read_to_end(usize::MAX).await.context("[m2]")?;
             info!("[m2] close");
             conn.close(0u32.into(), b"done");
             info!("[m2] wait idle");
@@ -3615,10 +3634,8 @@ mod tests {
 
             // make sure the right values arrived
             info!("waiting for channel");
-            let val = m1_recv.recv_async().await?;
+            let val = m1_task.await??;
             assert_eq!(val, b"hello");
-
-            m1_task.await??;
         }
 
         // TODO: m1 -> m2

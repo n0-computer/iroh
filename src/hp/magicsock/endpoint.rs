@@ -384,6 +384,7 @@ impl Endpoint {
         now: Instant,
         purpose: DiscoPingPurpose,
     ) {
+        debug!("start ping {:?}", purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = state.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);

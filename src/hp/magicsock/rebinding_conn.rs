@@ -319,7 +319,13 @@ impl AsyncUdpSocket for UdpSocket {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        debug!("sending {:?} transmits", transmits);
+        debug!(
+            "sending {:?} transmits",
+            transmits
+                .iter()
+                .map(|t| format!("dest: {:?}, bytes: {}", t.destination, t.contents.len()))
+                .collect::<Vec<_>>()
+        );
         let inner = &mut self.inner;
         let io = &self.io;
         loop {
