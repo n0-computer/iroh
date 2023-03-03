@@ -13,6 +13,7 @@ use tokio::{
     io::Interest,
     sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
 };
+use tracing::debug;
 
 use super::conn::Network;
 
@@ -282,6 +283,7 @@ impl AsyncUdpSocket for UdpSocket {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
+        debug!("sending {:?} transmits", transmits);
         let inner = &mut self.inner;
         let io = &self.io;
         loop {
@@ -289,6 +291,7 @@ impl AsyncUdpSocket for UdpSocket {
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
                 inner.send(io.into(), state, transmits)
             }) {
+                debug!("sent {:?}", res);
                 return Poll::Ready(Ok(res));
             }
         }
@@ -300,11 +303,14 @@ impl AsyncUdpSocket for UdpSocket {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
+        debug!("trying to recv {}: {:?}", bufs.len(), meta.len());
+
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
+                debug!("received {:?}", res);
                 return Poll::Ready(Ok(res));
             }
         }

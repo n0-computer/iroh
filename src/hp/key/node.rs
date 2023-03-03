@@ -1,11 +1,17 @@
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 pub use ed25519_dalek::{SigningKey as SecretKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
 
 use super::disco;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(ed25519_dalek::VerifyingKey);
+
+impl Debug for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PublicKey({})", hex::encode(self.0.as_bytes()))
+    }
+}
 
 impl AsRef<[u8]> for PublicKey {
     fn as_ref(&self) -> &[u8] {

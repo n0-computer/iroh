@@ -21,7 +21,6 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Result};
-use rand::RngCore;
 
 use crate::hp::stun::to_canonical;
 
@@ -31,9 +30,6 @@ use super::{key, stun};
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
 pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
-
-/// The length of the nonces used by nacl secretboxes.
-const NONCE_LEN: usize = 24;
 
 /// Current Version.
 const V0: u8 = 0;
@@ -71,14 +67,12 @@ impl TryFrom<u8> for MessageType {
     }
 }
 
-pub fn encode_message(sender: &key::disco::PublicKey, seal: Vec<u8>) -> Vec<u8> {
-    let mut nonce = vec![0u8; NONCE_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
+const MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;
 
-    let mut out = Vec::with_capacity(MAGIC_LEN + NONCE_LEN + KEY_LEN);
+pub fn encode_message(sender: &key::disco::PublicKey, seal: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(MESSAGE_HEADER_LEN);
     out.extend_from_slice(MAGIC.as_bytes());
     out.extend_from_slice(sender.as_bytes());
-    out.extend_from_slice(&nonce);
     out.extend(seal);
 
     out
@@ -86,7 +80,7 @@ pub fn encode_message(sender: &key::disco::PublicKey, seal: Vec<u8>) -> Vec<u8> 
 
 /// Reports whether p looks like it's a packet containing an encrypted disco message.
 pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
-    if p.len() < MAGIC_LEN + KEY_LEN + NONCE_LEN {
+    if p.len() < MESSAGE_HEADER_LEN {
         return false;
     }
 
@@ -387,5 +381,33 @@ mod tests {
             let back = Message::from_bytes(&got).expect("failed to parse");
             assert_eq!(test.m, back, "wrong from_bytes");
         }
+    }
+
+    #[test]
+    fn test_extraction() {
+        let sender_key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+        let sender_node_key: key::node::PublicKey = sender_key.verifying_key().into();
+        let msg = Message::Ping(Ping {
+            tx_id: stun::TransactionId::default(),
+            node_key: sender_node_key.clone(),
+        });
+
+        let sender_disco_key = key::disco::SecretKey::generate();
+        let recv_disco_key = key::disco::SecretKey::generate();
+        let shared = sender_disco_key.shared(&recv_disco_key.public());
+        let seal = shared.seal(&msg.as_bytes());
+        let bytes = encode_message(&sender_disco_key.public(), seal.clone());
+
+        assert!(looks_like_disco_wrapper(&bytes));
+        assert_eq!(source(&bytes).unwrap(), sender_disco_key.public().as_ref());
+
+        let (raw_key, seal_back) = source_and_box(&bytes).unwrap();
+        assert_eq!(raw_key, sender_disco_key.public().as_ref());
+        assert_eq!(seal_back, seal);
+
+        let shared_recv = recv_disco_key.shared(&sender_disco_key.public());
+        let open_seal = shared_recv.open(seal_back).unwrap();
+        let msg_back = Message::from_bytes(&open_seal).unwrap();
+        assert_eq!(msg_back, msg);
     }
 }

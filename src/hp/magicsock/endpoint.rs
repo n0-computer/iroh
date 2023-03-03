@@ -1,7 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
     hash::Hash,
+    io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
     pin::Pin,
@@ -9,6 +10,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -17,7 +19,7 @@ use tokio::{
     sync::{Mutex, RwLock},
     time::Instant,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
@@ -34,6 +36,17 @@ use super::{
 /// based on network conditions and what the peer supports.
 #[derive(Clone)]
 pub struct Endpoint(Arc<InnerEndpoint>);
+
+impl Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MagicsockEndpoint({}, {})",
+            crate::util::encode(&self.public_key),
+            crate::util::encode(self.disco_key())
+        )
+    }
+}
 
 impl Display for Endpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -68,9 +81,10 @@ impl Deref for Endpoint {
 }
 
 pub struct InnerEndpoint {
-    // Atomically accessed; declared first for alignment reasons
+    // Atomically accessed
     pub last_recv: RwLock<Option<Instant>>,
     pub num_stop_and_reset_atomic: AtomicU64,
+
     // These fields are initialized once and never modified.
     pub c: Conn,
     /// Peer public key (for WireGuard + DERP)
@@ -357,6 +371,7 @@ impl Endpoint {
         } else {
             false
         };
+        debug!("disco ping was sent? {}", sent);
         if !sent {
             self.forget_ping(tx_id).await;
         }
@@ -373,12 +388,21 @@ impl Endpoint {
             if let Some(st) = state.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
             } else {
-                // Shouldn't happen. But don't ping an endpoint that's  not active for us.
+                /*// Shouldn't happen. But don't ping an endpoint that's not active for us.
                 warn!(
                     "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
                     ep
                 );
-                return;
+                return;*/
+                // TODO: verify this doesn't break anything
+                // needed for non relay based connections
+                state.endpoint_state.insert(
+                    ep,
+                    EndpointState {
+                        last_ping: Some(now),
+                        ..Default::default()
+                    },
+                );
             }
         }
 
@@ -532,7 +556,7 @@ impl Endpoint {
     }
 
     /// Adds ep as an endpoint to which we should send future pings. If there is an
-    /// existing endpointState for ep, and for_rx_ping_tx_id matches the last received
+    /// existing endpoint_state for ep, and for_rx_ping_tx_id matches the last received
     /// ping TransactionId, this function reports `true`, otherwise `false`.
     ///
     /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
@@ -542,7 +566,7 @@ impl Endpoint {
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
         // (duplicatePing bool) {
-        let state = &mut *self.state.blocking_lock();
+        let state = &mut *tokio::task::block_in_place(|| self.state.blocking_lock());
 
         if let Some(st) = state.endpoint_state.get_mut(&ep) {
             let duplicate_ping = for_rx_ping_tx_id == st.last_got_ping_tx_id;
@@ -601,6 +625,20 @@ impl Endpoint {
         state.trust_best_addr_until = None;
     }
 
+    /// Note that we have a potential best addr.
+    pub(super) async fn maybe_add_best_addr(&self, addr: SocketAddr) {
+        let mut state = self.state.lock().await;
+        if state.best_addr.is_none() {
+            state.best_addr = Some(AddrLatency {
+                addr,
+                latency: Duration::from_secs(1), // assume bad latency for now
+            });
+
+            // Update paths
+            state.trust_best_addr_until = None;
+        }
+    }
+
     /// Handles a Pong message (a reply to an earlier ping).
     /// It should be called with the Conn.mu held.
     ///
@@ -613,8 +651,7 @@ impl Endpoint {
         di: &mut DiscoInfo,
         src: SocketAddr,
     ) -> bool {
-        // -> (knownTxID bool) {
-        let mut state = self.state.blocking_lock();
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
         match state.sent_ping.remove(&m.tx_id) {
@@ -790,6 +827,77 @@ impl Endpoint {
     pub fn num_stop_and_reset(&self) -> u64 {
         self.num_stop_and_reset_atomic.load(Ordering::Relaxed)
     }
+
+    pub(crate) fn poll_send(
+        &self,
+        udp_state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+        if state.expired {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "endpoint expired",
+            )));
+        }
+
+        let now = Instant::now();
+        let (udp_addr, derp_addr) = self.addr_for_send_locked(&state, &now);
+
+        debug!(
+            "available addrs: UDP({:?}), DERP({:?})",
+            udp_addr, derp_addr
+        );
+        if udp_addr.is_none() || state.trust_best_addr_until.map(|s| s > now).unwrap_or(true) {
+            self.send_pings_locked(&mut state, now, true);
+        }
+        self.note_active_locked(&mut state);
+        drop(state);
+
+        if udp_addr.is_none() && derp_addr.is_none() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no UDP or DERP addr",
+            )));
+        }
+
+        let res = if let Some(udp_addr) = udp_addr {
+            debug!("sending UDP: {}", udp_addr);
+            self.c.poll_send_raw(udp_state, cx, transmits)
+        } else {
+            Poll::Pending
+        };
+        if let Some(derp_addr) = derp_addr {
+            let mut sent = 0;
+            for t in transmits {
+                let transmit = quinn::Transmit {
+                    destination: derp_addr,
+                    ecn: t.ecn,
+                    contents: t.contents.clone(), // TODO: avoid clone
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                };
+                match self
+                    .c
+                    .poll_send_addr(udp_state, cx, Some(&self.public_key), transmit)
+                {
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(n)) => {
+                        sent += n;
+                    }
+                    Poll::Ready(Err(err)) => {
+                        warn!("failed to send {:?}", err);
+                    }
+                }
+            }
+            if sent == transmits.len() {
+                return Poll::Ready(Ok(sent));
+            }
+        }
+
+        res
+    }
 }
 
 impl InnerMutEndpoint {
@@ -826,7 +934,7 @@ pub struct AddrLatency {
 
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
 /// Doesn't do any locking, all access must be done with Conn.mu held.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PeerMap {
     pub by_node_key: HashMap<key::node::PublicKey, PeerInfo>,
     pub by_ip_port: HashMap<SocketAddr, PeerInfo>,

@@ -705,8 +705,8 @@ impl Client {
 
         let mut to_remove = Vec::new();
         for (t, pr) in &reports.prev {
-            if dbg!(now.duration_since(*t)) > MAX_AGE {
-                to_remove.push(dbg!(*t));
+            if now.duration_since(*t) > MAX_AGE {
+                to_remove.push(*t);
                 continue;
             }
             let pr = pr.0.read().await;
