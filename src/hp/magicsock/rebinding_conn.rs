@@ -186,6 +186,18 @@ impl RebindingUdpConn {
         let addr = tokio::task::block_in_place(|| self.inner.blocking_read()).local_addr()?;
         Ok(addr)
     }
+
+    fn from_socket(p: UdpSocket) -> Self {
+        let port = p.local_addr().map(|a| a.port()).unwrap_or_default();
+        RebindingUdpConn {
+            inner: Arc::new(RwLock::new(Inner {
+                pconn: Some(p),
+                port,
+            })),
+            write_mutex: Default::default(),
+            read_mutex: Default::default(),
+        }
+    }
 }
 
 impl Inner {
@@ -276,6 +288,30 @@ fn poll_recv(
     }
 }
 
+impl AsyncUdpSocket for RebindingUdpConn {
+    fn poll_send(
+        &mut self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        (&*self).poll_send(state, cx, transmits)
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.local_addr_blocking()
+    }
+}
+
 impl AsyncUdpSocket for UdpSocket {
     fn poll_send(
         &mut self,
@@ -318,5 +354,85 @@ impl AsyncUdpSocket for UdpSocket {
 
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
         self.io.local_addr()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{hp::key, tls};
+
+    use super::*;
+    use anyhow::Result;
+
+    fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::node::SecretKey)> {
+        let key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+        let tls_server_config =
+            tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+        let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+        let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            conn,
+            quinn::TokioRuntime,
+        )?;
+
+        let tls_client_config = tls::make_client_config(
+            &key.clone().into(),
+            None,
+            vec![tls::P2P_ALPN.to_vec()],
+            false,
+        )?;
+        let client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+        quic_ep.set_default_client_config(client_config);
+        Ok((quic_ep, key))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_send_recv() -> Result<()> {
+        let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);
+        let (m1, m1_key) = wrap_socket(m1)?;
+
+        let m2 = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let m2 = RebindingUdpConn::from_socket(UdpSocket::from_std(m2)?);
+        let (m2, m2_key) = wrap_socket(m2)?;
+
+        let m1_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m1.local_addr()?.port());
+        let m2_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m2.local_addr()?.port());
+        let (m1_send, m1_recv) = flume::bounded(8);
+
+        let m1_task = tokio::task::spawn(async move {
+            while let Some(conn) = m1.accept().await {
+                let conn = conn.await?;
+                let (mut send_bi, recv_bi) = conn.accept_bi().await?;
+
+                let val = recv_bi.read_to_end(usize::MAX).await?;
+                m1_send.send_async(val).await?;
+                send_bi.finish().await?;
+                break;
+            }
+
+            Ok::<_, anyhow::Error>(())
+        });
+
+        let conn = m2.connect(m1_addr, "localhost")?.await?;
+
+        let (mut send_bi, recv_bi) = conn.open_bi().await?;
+        send_bi.write_all(b"hello").await?;
+        send_bi.finish().await?;
+
+        let _ = recv_bi.read_to_end(usize::MAX).await?;
+        conn.close(0u32.into(), b"done");
+        m2.wait_idle().await;
+
+        drop(send_bi);
+
+        // make sure the right values arrived
+        let val = m1_recv.recv_async().await?;
+        assert_eq!(val, b"hello");
+
+        m1_task.await??;
+
+        Ok(())
     }
 }
