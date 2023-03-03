@@ -170,3 +170,14 @@ jobs:
     - name: Check MSRV all features
       run: |
         cargo +$MSRV check --workspace --all-targets --no-default-features
+
+  cargo_deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          arguments: --workspace --all-features
+          command: check
+          command-arguments: "-Dwarnings"
