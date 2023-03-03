@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
+use governor::RateLimiter;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -25,8 +26,15 @@ use crate::hp::{
 const SERVER_KEY_FRAME_MAX_SIZE: u32 = 1024;
 
 /// A DERP Client.
-/// TODO: static????
-struct Client<W: AsyncWrite + Send + Unpin + 'static, R: AsyncRead + Unpin> {
+struct Client<W, R, S, C, MW = governor::middleware::NoOpMiddleware>
+where
+    /// TODO: static????
+    W: AsyncWrite + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
+    S: governor::state::DirectStateStore<Key = governor::state::direct::NotKeyed>,
+    C: governor::clock::Clock,
+    MW: governor::middleware::RateLimitingMiddleware<C::Instant>,
+{
     /// Server key of the DERP server, not a machine or node key
     server_key: key::node::PublicKey,
     /// TODO: maybe change to "secret_key" to match `key::node::SecretKey` naming
@@ -44,8 +52,8 @@ struct Client<W: AsyncWrite + Send + Unpin + 'static, R: AsyncRead + Unpin> {
 
     // mutex lock to protect the writer
     writer: Arc<Mutex<W>>,
-    // TODO: wtf is this:
-    // rate: rate.Limiter
+    // TODO: maybe write a trait to make working with the rate limiter less gross cause it's currently disgusting
+    rate_limiter: Option<Arc<RateLimiter<governor::state::direct::NotKeyed, S, C, MW>>>,
     /// bytes to discard on next Recv
     peeked: usize,
     /// sticky (set by Recv)
@@ -55,7 +63,14 @@ struct Client<W: AsyncWrite + Send + Unpin + 'static, R: AsyncRead + Unpin> {
 
 /// TODO: ClientBuilder
 
-impl<W: AsyncWrite + Send + Unpin + 'static, R: AsyncRead + Unpin> Client<W, R> {
+impl<W, R, S, C, MW> Client<W, R, S, C, MW>
+where
+    W: AsyncWrite + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
+    S: governor::state::DirectStateStore<Key = governor::state::direct::NotKeyed>,
+    C: governor::clock::Clock,
+    MW: governor::middleware::RateLimitingMiddleware<C::Instant>,
+{
     // TODO: for something relatively straight forward, this is pretty hard to follow
     // TODO: also, should Client.server_key be an option?
     async fn recv_server_key(&mut self) -> Result<()> {
@@ -130,9 +145,21 @@ impl<W: AsyncWrite + Send + Unpin + 'static, R: AsyncRead + Unpin> Client<W, R> 
             bail!("packet too big: {}", packet.len());
         }
         let frame_len = u32::try_from(key::node::KEY_SIZE + packet.len())?;
+        let rate_limiter = match &self.rate_limiter {
+            None => None,
+            Some(rl) => Some(Arc::clone(&rl)),
+        };
         {
             let mut writer = self.writer.lock().await;
-            // TODO: rate limiter
+            if let Some(rate_limiter) = rate_limiter {
+                match rate_limiter.check_n(std::num::NonZeroU32::new(frame_len).unwrap()) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        tracing::warn!("droping send: rate limit reached");
+                        return Ok(());
+                    }
+                }
+            }
             write_frame_header(&mut *writer, FRAME_SEND_PACKET, frame_len).await?;
             writer.write_all(dstkey.as_bytes()).await?;
             writer.write_all(packet).await?;
