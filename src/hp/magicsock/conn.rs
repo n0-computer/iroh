@@ -215,6 +215,9 @@ pub struct Inner {
     /// None (or zero regions/nodes) means DERP is disabled.
     /// Tracked outside to avoid deadlock issues (replaces atomic acess from go)
     derp_map: RwLock<Option<DerpMap>>,
+
+    /// Tracks the networkmap Node entity for each peer discovery key.
+    pub(super) peer_map: RwLock<PeerMap>,
 }
 
 pub(super) struct ConnState {
@@ -257,9 +260,6 @@ pub(super) struct ConnState {
     disco_private: key::disco::SecretKey,
     /// Public key of disco_private.
     pub(super) disco_public: key::disco::PublicKey,
-
-    /// Tracks the networkmap Node entity for each peer discovery key.
-    pub(super) peer_map: PeerMap,
 
     // The state for an active DiscoKey.
     disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
@@ -304,7 +304,6 @@ impl Default for ConnState {
             peer_set: HashSet::new(),
             disco_private,
             disco_public,
-            peer_map: PeerMap::default(),
             disco_info: HashMap::new(),
             net_info_last: None,
             net_map: None,
@@ -404,6 +403,7 @@ impl Conn {
             closing: AtomicBool::new(false),
             derp_recv_ch,
             derp_map: Default::default(),
+            peer_map: Default::default(),
         }));
 
         c.rebind(CurrentPortFate::Keep).await?;
@@ -714,17 +714,17 @@ impl Conn {
         node_key: &key::node::PublicKey,
         addr: &SocketAddr,
     ) {
-        let mut state = self.state.lock().await;
-        state.peer_map.set_node_key_for_ip_port(addr, node_key);
-        if let Some(ep) = state.peer_map.endpoint_for_node_key(node_key) {
+        let mut peer_map = self.peer_map.write().await;
+        peer_map.set_node_key_for_ip_port(addr, node_key);
+        if let Some(ep) = peer_map.endpoint_for_node_key(node_key) {
             ep.maybe_add_best_addr(*addr).await;
         }
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
     async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
-        let state = self.state.lock().await;
-        match state.peer_map.endpoint_for_node_key(nk) {
+        let peer_map = self.peer_map.read().await;
+        match peer_map.endpoint_for_node_key(nk) {
             Some(de) => {
                 let saw = &*de.last_recv.read().await;
                 match saw {
@@ -760,7 +760,12 @@ impl Conn {
                 Some(peer.hostinfo.hostname.clone())
             }
         };
-        let ep = state.peer_map.endpoint_for_node_key(&peer.key);
+        let ep = self
+            .peer_map
+            .read()
+            .await
+            .endpoint_for_node_key(&peer.key)
+            .cloned();
         match ep {
             Some(ep) => {
                 ep.cli_ping(res, cb).await;
@@ -1455,8 +1460,8 @@ impl Conn {
         if let Some(de) = cache.get(&meta.addr) {
             meta.dst_ip = Some(de.fake_wg_addr.ip());
         } else {
-            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
-            match state.peer_map.endpoint_for_ip_port(&meta.addr) {
+            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            match peer_map.endpoint_for_ip_port(&meta.addr) {
                 None => {
                     debug!("no peer_map state found for {}", meta.addr);
                     return false;
@@ -1503,9 +1508,8 @@ impl Conn {
         }
 
         let ep = {
-            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
-            let ep = state.peer_map.endpoint_for_node_key(&dm.src);
-            ep.cloned()
+            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            peer_map.endpoint_for_node_key(&dm.src).cloned()
         };
         if ep.is_none() {
             // We don't know anything about this node key, nothing to record or process.
@@ -1648,8 +1652,8 @@ impl Conn {
         }
 
         let sender = key::disco::PublicKey::from(source);
-
-        if !state.peer_map.any_endpoint_for_disco_key(&sender) {
+        let mut peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_write());
+        if !peer_map.any_endpoint_for_disco_key(&sender) {
             // TODO:
             // metricRecvDiscoBadPeer.Add(1)
             debug!(
@@ -1665,7 +1669,6 @@ impl Conn {
         let ConnState {
             disco_info,
             disco_private,
-            peer_map,
             disco_public,
             ..
         } = &mut *state;
@@ -1717,7 +1720,14 @@ impl Conn {
         match dm {
             disco::Message::Ping(ping) => {
                 // metricRecvDiscoPing.Add(1)
-                self.handle_ping_locked(&mut state, ping, &sender, src, derp_node_src);
+                self.handle_ping_locked(
+                    &mut state,
+                    &mut peer_map,
+                    ping,
+                    &sender,
+                    src,
+                    derp_node_src,
+                );
                 true
             }
             disco::Message::Pong(pong) => {
@@ -1731,7 +1741,7 @@ impl Conn {
                     .cloned()
                     .collect();
                 for ep in eps {
-                    if ep.handle_pong_conn_locked(peer_map, &disco_public, &pong, di, src) {
+                    if ep.handle_pong_conn_locked(&mut *peer_map, &disco_public, &pong, di, src) {
                         break;
                     }
                 }
@@ -1748,7 +1758,7 @@ impl Conn {
                 let node_key = derp_node_src.unwrap();
                 let di_disco_key = di.disco_key.clone();
                 drop(di);
-                let ep = state.peer_map.endpoint_for_node_key(&node_key);
+                let ep = peer_map.endpoint_for_node_key(&node_key);
                 if ep.is_none() {
                     // metricRecvDiscoCallMeMaybeBadNode.Add(1)
                     debug!(
@@ -1834,6 +1844,7 @@ impl Conn {
     fn handle_ping_locked(
         &self,
         state: &mut ConnState,
+        peer_map: &mut PeerMap,
         dm: disco::Ping,
         sender: &key::disco::PublicKey,
         src: SocketAddr,
@@ -1842,7 +1853,6 @@ impl Conn {
         let ConnState {
             disco_info,
             disco_private,
-            peer_map,
             disco_public,
             ..
         } = &mut *state;
@@ -2203,9 +2213,9 @@ impl Conn {
         let ConnState {
             disco_info,
             net_map,
-            peer_map,
             ..
         } = &mut *state;
+        let mut peer_map = self.peer_map.write().await;
         for n in &net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
                 let old_disco_key = ep.disco_key();
@@ -2494,8 +2504,11 @@ impl Conn {
         self.stop_periodic_re_stun_timer(&mut state).await;
         self.port_mapper.close();
 
-        for ep in state.peer_map.endpoints() {
-            ep.stop_and_reset().await;
+        {
+            let peer_map = self.peer_map.read().await;
+            for ep in peer_map.endpoints() {
+                ep.stop_and_reset().await;
+            }
         }
 
         state.closed = true;
@@ -2750,8 +2763,8 @@ impl Conn {
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     async fn reset_endpoint_states(&self) {
-        let state = self.state.lock().await;
-        for ep in state.peer_map.endpoints() {
+        let peer_map = self.peer_map.read().await;
+        for ep in peer_map.endpoints() {
             ep.note_connectivity_change().await;
         }
     }
@@ -2762,6 +2775,7 @@ impl Conn {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
+        debug!("poll_send_raw: {} packets", transmits.len());
         // TODO: find a way around the copies
         let mut transmits_ipv4: Vec<quinn::Transmit> = Vec::new();
         let mut transmits_ipv6: Vec<quinn::Transmit> = Vec::new();
@@ -2924,35 +2938,47 @@ impl AsyncUdpSocket for Conn {
         let mut offset = 0;
         let last = transmits.len() - 1;
         for i in 0..transmits.len() {
+            debug!(
+                "checking transmit {}/{}, {:?}",
+                i,
+                transmits.len(),
+                current_dest,
+            );
             if i != last && current_dest == Some(transmits[i].destination) {
                 continue;
             } else {
-                if let Some(current_dest) = current_dest.take() {
-                    // Send all previous ones
+                let dest = current_dest
+                    .take()
+                    .unwrap_or_else(|| transmits[i].destination);
+                // Send all previous ones
+                let end = i + 1;
+                debug!(
+                    "trying to transmit {}..{} of {} transmits",
+                    offset,
+                    end,
+                    transmits.len()
+                );
+                let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+                let maybe_ep = peer_map.endpoint_for_ip_port(&dest);
 
-                    let state = tokio::task::block_in_place(|| self.state.blocking_lock());
-                    let maybe_ep = state.peer_map.endpoint_for_ip_port(&current_dest);
-
-                    debug!("found ep: {:?}", maybe_ep);
-                    debug!("peers: {:?}", state.peer_map);
-                    match maybe_ep {
-                        Some(ep) => match ep.poll_send(udp_state, cx, &transmits[offset..i]) {
-                            Poll::Pending => continue,
-                            Poll::Ready(Ok(n)) => {
-                                num_msgs += n;
-                            }
-                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                        },
-                        None => {
-                            // Should this error, do we need to create the EP?
-                            debug!("trying to find endpoint for {}", current_dest);
-                            todo!()
+                debug!("found ep: {:?}", maybe_ep);
+                debug!("peers: {:?}", peer_map);
+                match maybe_ep {
+                    Some(ep) => match ep.poll_send(udp_state, cx, &transmits[offset..end]) {
+                        Poll::Pending => continue,
+                        Poll::Ready(Ok(n)) => {
+                            num_msgs += n;
                         }
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    },
+                    None => {
+                        // Should this error, do we need to create the EP?
+                        debug!("trying to find endpoint for {}", dest);
+                        todo!()
                     }
-
-                    offset = i;
                 }
 
+                offset = i;
                 current_dest.replace(transmits[i].destination);
             }
         }
@@ -3343,9 +3369,9 @@ mod tests {
         }
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
-            let state = &*self.conn.state.lock().await;
+            let peer_map = &*self.conn.peer_map.read().await;
             let mut out = Vec::new();
-            for ep in state.peer_map.endpoints() {
+            for ep in peer_map.endpoints() {
                 out.push(ep.public_key.clone());
             }
             out

@@ -393,9 +393,9 @@ impl Endpoint {
                 warn!(
                     "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
                     ep
-                );
-                return;*/
-                // TODO: verify this doesn't break anything
+                );*/
+                return;
+                /*// TODO: verify this doesn't break anything
                 // needed for non relay based connections
                 state.endpoint_state.insert(
                     ep,
@@ -403,7 +403,7 @@ impl Endpoint {
                         last_ping: Some(now),
                         ..Default::default()
                     },
-                );
+                );*/
             }
         }
 
