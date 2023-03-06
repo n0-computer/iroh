@@ -2774,56 +2774,31 @@ impl Conn {
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
         debug!("poll_send_raw: {} packets", transmits.len());
-        // TODO: find a way around the copies
-        let mut transmits_ipv4: Vec<quinn::Transmit> = Vec::new();
-        let mut transmits_ipv6: Vec<quinn::Transmit> = Vec::new();
-
-        for t in transmits {
-            if t.destination.is_ipv6() {
-                transmits_ipv6.push(quinn::Transmit {
-                    destination: t.destination,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                });
-            } else {
-                transmits_ipv4.push(quinn::Transmit {
-                    destination: t.destination,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                });
-            }
-        }
-        debug!("sending IPv4 {} packets", transmits_ipv4.len());
 
         let mut sum = 0;
-        if !transmits_ipv4.is_empty() {
-            match self.pconn4.poll_send(state, cx, &transmits_ipv4[..]) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(r)) => {
-                    sum += r;
-                }
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Err(err));
-                }
-            }
-        }
 
-        debug!("sending IPv6 {} packets", transmits_ipv6.len());
+        let res = group_by(
+            transmits,
+            |a, b| a.destination.is_ipv6() == b.destination.is_ipv6(),
+            |group| {
+                let res = if group[0].destination.is_ipv6() {
+                    self.pconn6.poll_send(state, cx, group)
+                } else {
+                    self.pconn4.poll_send(state, cx, group)
+                };
+                match res {
+                    Poll::Pending => None,
+                    Poll::Ready(Ok(r)) => {
+                        sum += r;
+                        None
+                    }
+                    Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
+                }
+            },
+        );
 
-        if !transmits_ipv6.is_empty() {
-            match self.pconn6.poll_send(state, cx, &transmits_ipv6) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(r)) => {
-                    sum += r;
-                }
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Err(err));
-                }
-            }
+        if let Some(err) = res {
+            return err;
         }
 
         debug!("sent {} packets", sum);
@@ -2937,50 +2912,35 @@ impl AsyncUdpSocket for Conn {
         );
 
         let mut num_msgs = 0;
+        let res = group_by(
+            transmits,
+            |a, b| a.destination == b.destination,
+            |group| {
+                let dest = &group[0].destination;
+                let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+                let maybe_ep = peer_map.endpoint_for_ip_port(dest);
+                debug!("found ep: {:?}", maybe_ep);
+                debug!("peers: {:?}", peer_map);
 
-        // Split up, by endpoint
-        let mut groups = Vec::new();
-
-        for (i, transmit) in transmits.iter().enumerate() {
-            match groups.last_mut() {
-                Some((dest, _, end)) => {
-                    if transmit.destination == *dest {
-                        *end += 1;
-                    } else {
-                        groups.push((transmit.destination, i, i + 1));
+                match maybe_ep {
+                    Some(ep) => match ep.poll_send(udp_state, cx, &group) {
+                        Poll::Pending => None,
+                        Poll::Ready(Ok(n)) => {
+                            num_msgs += n;
+                            None
+                        }
+                        Poll::Ready(Err(e)) => Some(Poll::Ready(Err(e))),
+                    },
+                    None => {
+                        // Should this error, do we need to create the EP?
+                        debug!("trying to find endpoint for {}", dest);
+                        todo!()
                     }
                 }
-                None => {
-                    groups.push((transmit.destination, i, i + 1));
-                }
-            }
-        }
-        for (dest, start, end) in groups {
-            debug!(
-                "trying to transmit {}..{} of {} transmits",
-                start,
-                end,
-                transmits.len()
-            );
-            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-            let maybe_ep = peer_map.endpoint_for_ip_port(&dest);
-
-            debug!("found ep: {:?}", maybe_ep);
-            debug!("peers: {:?}", peer_map);
-            match maybe_ep {
-                Some(ep) => match ep.poll_send(udp_state, cx, &transmits[start..end]) {
-                    Poll::Pending => continue,
-                    Poll::Ready(Ok(n)) => {
-                        num_msgs += n;
-                    }
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                },
-                None => {
-                    // Should this error, do we need to create the EP?
-                    debug!("trying to find endpoint for {}", dest);
-                    todo!()
-                }
-            }
+            },
+        );
+        if let Some(err) = res {
+            return err;
         }
 
         debug_assert!(
@@ -3185,6 +3145,39 @@ impl Drop for WgGuard {
     }
 }
 
+fn group_by<F, G, T, U>(transmits: &[T], f: F, mut g: G) -> Option<U>
+where
+    F: Fn(&T, &T) -> bool,
+    G: FnMut(&[T]) -> Option<U>,
+{
+    if transmits.is_empty() {
+        return None;
+    }
+
+    let mut last = &transmits[0];
+    let mut start = 0;
+    let mut end = 1;
+
+    for i in 1..transmits.len() {
+        if f(last, &transmits[i]) {
+            // Same group, continue.
+            end += 1;
+        } else {
+            // New group.
+            let res = g(&transmits[start..end]);
+            if res.is_some() {
+                return res;
+            }
+            start = i;
+            end = i + 1;
+        }
+        last = &transmits[i];
+    }
+
+    // Last group.
+    g(&transmits[start..end])
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
@@ -3197,6 +3190,80 @@ mod tests {
         hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
         tls,
     };
+
+    #[test]
+    fn test_group_by_continue() {
+        let cases = [
+            (vec![1, 1], vec![vec![1, 1]]),
+            (vec![1, 2, 3], vec![vec![1], vec![2], vec![3]]),
+            (
+                vec![1, 1, 2, 3, 4, 4, 4, 5, 1],
+                vec![
+                    vec![1, 1],
+                    vec![2],
+                    vec![3],
+                    vec![4, 4, 4],
+                    vec![5],
+                    vec![1],
+                ],
+            ),
+        ];
+        for (input, expected) in cases {
+            let mut out = Vec::new();
+            let res: Option<()> = group_by(
+                &input,
+                |a, b| a == b,
+                |els| {
+                    out.push(els.to_vec());
+                    None
+                },
+            );
+            assert!(res.is_none());
+            assert_eq!(out, expected,);
+        }
+    }
+
+    #[test]
+    fn test_group_by_early_return() {
+        let cases = [
+            (vec![(1, true), (1, false)], vec![vec![1, 1]]),
+            (
+                vec![(1, true), (2, false), (3, false)],
+                vec![vec![1], vec![2]],
+            ),
+            (
+                vec![
+                    (1, true),
+                    (1, true),
+                    (2, true),
+                    (3, true),
+                    (4, true),
+                    (4, false),
+                    (4, false),
+                    (5, false),
+                ],
+                vec![vec![1, 1], vec![2], vec![3], vec![4, 4, 4]],
+            ),
+        ];
+        for (i, (input, expected)) in cases.into_iter().enumerate() {
+            println!("case {}", i);
+            let mut out: Vec<Vec<usize>> = Vec::new();
+            let res: Option<()> = group_by(
+                &input,
+                |a, b| a.0 == b.0,
+                |els| {
+                    out.push(els.iter().map(|(e, _)| *e).collect());
+                    if els.last().unwrap().1 {
+                        None
+                    } else {
+                        Some(())
+                    }
+                },
+            );
+            assert!(res.is_some()); // all abort early
+            assert_eq!(out, expected);
+        }
+    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
