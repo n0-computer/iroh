@@ -91,11 +91,15 @@ const FRAME_NOTE_PREFERRED: FrameType = 0x07;
 ///
 /// That is, if A sent to B, and then if A disconnects, the server sends `FRAME_PEER_GONE`
 /// to B so B can forget that a reverse path exists on that connection to get back to A
-const FRAME_PEER_GONE: FrameType = 0x08; // 32B pub key of peer that's gone
+///
+/// 32B pub key of peer that's gone
+const FRAME_PEER_GONE: FrameType = 0x08;
 
 /// Like [`FRAME_PEER_GONE`], but for other members of the DERP region
 /// when they're meshed up together
-const FRAME_PEER_PRESENT: FrameType = 0x09; // 32B pub key of peer that's connected
+///
+/// 32B pub key of peer that's connected
+const FRAME_PEER_PRESENT: FrameType = 0x09;
 
 /// How one DERP node in a regional mesh subscribes to the others in the region.
 ///
