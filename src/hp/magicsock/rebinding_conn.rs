@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_send_recv() -> Result<()> {
+    async fn test_rebinding_conn_send_recv() -> Result<()> {
         let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
         let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);
         let (m1, m1_key) = wrap_socket(m1)?;

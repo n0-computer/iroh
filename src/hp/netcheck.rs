@@ -1710,10 +1710,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_udp_blocked() -> Result<(), Error> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .init();
+        // tracing_subscriber::registry()
+        //     .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        //     .with(EnvFilter::from_default_env())
+        //     .init();
 
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;

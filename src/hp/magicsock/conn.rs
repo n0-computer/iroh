@@ -2827,6 +2827,13 @@ impl Conn {
         }
 
         debug!("sent {} packets", sum);
+        debug_assert!(
+            sum <= transmits.len(),
+            "too many msgs {} > {}",
+            sum,
+            transmits.len()
+        );
+
         if sum > 0 {
             return Poll::Ready(Ok(sum));
         }
@@ -2932,55 +2939,56 @@ impl AsyncUdpSocket for Conn {
         let mut num_msgs = 0;
 
         // Split up, by endpoint
-        let mut current_dest = None;
-        let mut offset = 0;
-        let last = transmits.len() - 1;
-        for i in 0..transmits.len() {
-            debug!(
-                "checking transmit {}/{}, {:?}",
-                i,
-                transmits.len(),
-                current_dest,
-            );
-            if i != last && current_dest == Some(transmits[i].destination) {
-                continue;
-            } else {
-                let dest = current_dest
-                    .take()
-                    .unwrap_or_else(|| transmits[i].destination);
-                // Send all previous ones
-                let end = i + 1;
-                debug!(
-                    "trying to transmit {}..{} of {} transmits",
-                    offset,
-                    end,
-                    transmits.len()
-                );
-                let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-                let maybe_ep = peer_map.endpoint_for_ip_port(&dest);
+        let mut groups = Vec::new();
 
-                debug!("found ep: {:?}", maybe_ep);
-                debug!("peers: {:?}", peer_map);
-                match maybe_ep {
-                    Some(ep) => match ep.poll_send(udp_state, cx, &transmits[offset..end]) {
-                        Poll::Pending => continue,
-                        Poll::Ready(Ok(n)) => {
-                            num_msgs += n;
-                        }
-                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    },
-                    None => {
-                        // Should this error, do we need to create the EP?
-                        debug!("trying to find endpoint for {}", dest);
-                        todo!()
+        for (i, transmit) in transmits.iter().enumerate() {
+            match groups.last_mut() {
+                Some((dest, _, end)) => {
+                    if transmit.destination == *dest {
+                        *end += 1;
+                    } else {
+                        groups.push((transmit.destination, i, i + 1));
                     }
                 }
+                None => {
+                    groups.push((transmit.destination, i, i + 1));
+                }
+            }
+        }
+        for (dest, start, end) in groups {
+            debug!(
+                "trying to transmit {}..{} of {} transmits",
+                start,
+                end,
+                transmits.len()
+            );
+            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            let maybe_ep = peer_map.endpoint_for_ip_port(&dest);
 
-                offset = i;
-                current_dest.replace(transmits[i].destination);
+            debug!("found ep: {:?}", maybe_ep);
+            debug!("peers: {:?}", peer_map);
+            match maybe_ep {
+                Some(ep) => match ep.poll_send(udp_state, cx, &transmits[start..end]) {
+                    Poll::Pending => continue,
+                    Poll::Ready(Ok(n)) => {
+                        num_msgs += n;
+                    }
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                },
+                None => {
+                    // Should this error, do we need to create the EP?
+                    debug!("trying to find endpoint for {}", dest);
+                    todo!()
+                }
             }
         }
 
+        debug_assert!(
+            num_msgs <= transmits.len(),
+            "too many msgs {} > {}",
+            num_msgs,
+            transmits.len()
+        );
         if num_msgs > 0 {
             return Poll::Ready(Ok(num_msgs));
         }
@@ -2995,7 +3003,7 @@ impl AsyncUdpSocket for Conn {
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
-        debug_assert_eq!(bufs.len(), meta.len());
+        debug_assert_eq!(bufs.len(), meta.len(), "non matching bufs & metas");
         debug!("trying to receive up to {} packets", bufs.len());
 
         let mut num_msgs_total = 0;
