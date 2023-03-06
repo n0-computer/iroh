@@ -304,6 +304,7 @@ impl Client {
     ///
     /// It may not be called concurrently with itself.
     pub async fn get_report(&self, dm: &DerpMap) -> Result<Report, Error> {
+        debug!("get_report:start");
         // TODO
         // metricNumGetReport.Add(1)
 
@@ -313,6 +314,7 @@ impl Client {
             .timeout(OVERALL_PROBE_TIMEOUT, self.clone().get_report_inner(dm))
             .await??;
         let report = self.finish_and_store_report(&report, dm).await;
+        debug!("get_report:end");
         Ok(report)
     }
 
@@ -389,8 +391,16 @@ impl Client {
         reports.cur_state = Some(rs.clone());
         drop(reports);
 
-        // TODO: always clear `cur_state`
-        // defer func() { c.curState = nil }()
+        // always clear `cur_state`
+        struct DropGuard(Client);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                let mut reports = tokio::task::block_in_place(|| self.0.reports.blocking_lock());
+                reports.cur_state = None;
+            }
+        }
+
+        let _guard = DropGuard(self.clone());
 
         let if_state = interfaces::State::new().await;
 
@@ -460,10 +470,9 @@ impl Client {
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
-        let (done_send, captive_portal_done) = oneshot::channel();
+        let (captive_done_send, captive_portal_done) = oneshot::channel();
         let mut captive_task = None;
         if !rs.incremental {
-            // TODO: track task
             let rs = rs.clone();
             let delay = CAPTIVE_PORTAL_DELAY;
             let dm = dm.clone(); // TODO: avoid or make cheap
@@ -479,8 +488,12 @@ impl Client {
                         info!("check_captive_portal error: {:?}", err);
                     }
                 }
-                let _ = done_send.send(());
+                let _ = captive_done_send.send(());
+                debug!("captive_portal done");
             }));
+        } else {
+            // make sure to mark the channel as done
+            let _ = captive_done_send.send(());
         }
 
         let mut task_set = JoinSet::new();
@@ -611,6 +624,7 @@ impl Client {
                 t?;
             }
         }
+
         // Wait for captive portal check before finishing the report.
         // If the task is aborted, this will error, so ignore potential task joining errors.
         captive_portal_done.await.ok();
@@ -1647,30 +1661,34 @@ mod tests {
         client.udp_bind_addr = "0.0.0.0:0".parse().unwrap();
 
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
-        let r = client.get_report(&dm).await?;
-        let r = &*r.0.read().await;
 
-        assert!(r.udp, "want UDP");
-        assert_eq!(
-            r.region_latency.len(),
-            1,
-            "expected 1 key in DERPLatency; got {}",
-            r.region_latency.len()
-        );
-        assert!(
-            r.region_latency.get(&1).is_some(),
-            "expected key 1 in DERPLatency; got {:?}",
-            r.region_latency
-        );
-        assert!(r.global_v4.is_some(), "expected globalV4 set");
-        assert_eq!(
-            r.preferred_derp, 1,
-            "preferred_derp = {}; want 1",
-            r.preferred_derp
-        );
+        for i in 0..5 {
+            println!("--round {}", i);
+            let r = client.get_report(&dm).await?;
+            let r = &*r.0.read().await;
+
+            assert!(r.udp, "want UDP");
+            assert_eq!(
+                r.region_latency.len(),
+                1,
+                "expected 1 key in DERPLatency; got {}",
+                r.region_latency.len()
+            );
+            assert!(
+                r.region_latency.get(&1).is_some(),
+                "expected key 1 in DERPLatency; got {:?}",
+                r.region_latency
+            );
+            assert!(r.global_v4.is_some(), "expected globalV4 set");
+            assert_eq!(
+                r.preferred_derp, 1,
+                "preferred_derp = {}; want 1",
+                r.preferred_derp
+            );
+        }
 
         done.send(()).unwrap();
-        assert_eq!(stun_stats.total().await, 1, "expected 1 stun");
+        assert_eq!(stun_stats.total().await, 5, "expected 5 stun");
 
         Ok(())
     }

@@ -223,6 +223,12 @@ pub struct Inner {
     pub(super) peer_map: RwLock<PeerMap>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct EndpointUpdateState {
+    running: bool,
+    want_update: Option<&'static str>,
+}
+
 pub(super) struct ConnState {
     /// Close was called
     closed: bool,
@@ -236,12 +242,8 @@ pub(super) struct ConnState {
     // When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
     periodic_re_stun_timer: Option<Timer>,
 
-    /// Indicates that update_endpoints is currently running. It's used to deduplicate
-    /// concurrent endpoint update requests.
-    endpoints_update_active: bool,
-    /// If set, means that a new endpoints update should begin immediately after the currently-running one
-    /// completes. It can only be non-empty if `endpoints_update_active == true`.
-    want_endpoints_update: Option<&'static str>,
+    /// Indicates the update endpoint state.
+    endpoints_update_state: EndpointUpdateState,
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
     last_endpoints: Vec<cfg::Endpoint>,
@@ -299,8 +301,7 @@ impl Default for ConnState {
             derp_cleanup_timer: None,
             derp_cleanup_timer_armed: false,
             periodic_re_stun_timer: None,
-            endpoints_update_active: false,
-            want_endpoints_update: None,
+            endpoints_update_state: Default::default(),
             last_endpoints: Vec::new(),
             last_endpoints_time: None,
             on_endpoint_refreshed: HashMap::new(),
@@ -467,9 +468,45 @@ impl Conn {
         }
     }
 
+    // c.mu must NOT be held.
+    fn update_endpoints(&self, why: &'static str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            // TODO:
+            // metricUpdateEndpoints.Add(1)
+
+            debug!("starting endpoint update ({})", why);
+            if self.no_v4_send.load(Ordering::Relaxed) {
+                let closed = self.state.lock().await.closed;
+                if !closed {
+                    debug!("last netcheck reported send error. Rebinding.");
+                    self.rebind_all().await;
+                }
+            }
+
+            match self.determine_endpoints().await {
+                Ok(endpoints) => {
+                    if self.set_endpoints(&endpoints).await {
+                        self.log_endpoint_change(&endpoints);
+                        if let Some(ref cb) = self.on_endpoints {
+                            cb(&endpoints[..]);
+                        }
+                    }
+                }
+                Err(err) => {
+                    info!("endpoint update ({}) failed: {:#?}", why, err);
+                    // TODO(crawshaw): are there any conditions under which
+                    // we should trigger a retry based on the error here?
+                }
+            }
+
+            self.update_endpoints_after().await;
+        })
+    }
+
     async fn update_endpoints_after(&self) {
         let mut state = self.state.lock().await;
-        let why = state.want_endpoints_update.take();
+        let why = state.endpoints_update_state.want_update.take();
+
         if !state.closed {
             if let Some(why) = why {
                 let this = self.clone();
@@ -479,8 +516,10 @@ impl Conn {
             if self.should_do_periodic_re_stun(&mut state) {
                 // Pick a random duration between 20 and 26 seconds (just under 30s,
                 // a common UDP NAT timeout on Linux,etc)
-                let mut rng = rand::thread_rng();
-                let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
+                let d: Duration = {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26))
+                };
                 if let Some(ref mut t) = state.periodic_re_stun_timer {
                     t.reset(d).await;
                 } else {
@@ -497,40 +536,9 @@ impl Conn {
                 self.stop_periodic_re_stun_timer(&mut state).await;
             }
         }
-        state.endpoints_update_active = false;
+
+        state.endpoints_update_state.running = false;
         self.state_notifier.notify_waiters();
-    }
-
-    // c.mu must NOT be held.
-    async fn update_endpoints(&self, why: &'static str) {
-        // TODO:
-        // metricUpdateEndpoints.Add(1)
-
-        debug!("starting endpoint update ({})", why);
-        if self.no_v4_send.load(Ordering::Relaxed) {
-            let closed = self.state.lock().await.closed;
-            if !closed {
-                debug!("last netcheck reported send error. Rebinding.");
-                self.rebind_all().await;
-            }
-        }
-
-        match self.determine_endpoints().await {
-            Ok(endpoints) => {
-                if self.set_endpoints(&endpoints).await {
-                    self.log_endpoint_change(&endpoints);
-                    if let Some(ref cb) = self.on_endpoints {
-                        cb(&endpoints[..]);
-                    }
-                }
-            }
-            Err(err) => {
-                info!("endpoint update ({}) failed: {:?}", why, err);
-                // TODO(crawshaw): are there any conditions under which
-                // we should trigger a retry based on the error here?
-                return;
-            }
-        }
     }
 
     /// Records the new endpoints, reporting whether they're changed.
@@ -1565,11 +1573,6 @@ impl Conn {
         } = &mut *state;
         let di = disco_info_locked(disco_info, &*disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
-        debug!(
-            "sealing msg from {:?} to {:?}",
-            disco_private.public(),
-            dst_disco,
-        );
         drop(state);
 
         // TODO
@@ -1983,7 +1986,10 @@ impl Conn {
                 || state.last_endpoints_time.as_ref().unwrap().elapsed()
                     > ENDPOINTS_FRESH_ENOUGH_DURATION
             {
-                info!("want call-me-maybe but endpoints stale; restunning");
+                info!(
+                    "want call-me-maybe but endpoints stale; restunning ({:?})",
+                    state.last_endpoints_time
+                );
 
                 let this = self.clone();
                 state.on_endpoint_refreshed.insert(
@@ -2117,7 +2123,7 @@ impl Conn {
         Ok(())
     }
 
-    /// Called when the set of WireGuard peers changes. It then removes any state for old peers.
+    /// Called when the set of peers changes. It then removes any state for old peers.
     pub async fn update_peers(&self, new_peers: HashSet<key::node::PublicKey>) {
         let mut state = self.state.lock().await;
 
@@ -2535,7 +2541,7 @@ impl Conn {
     }
 
     async fn tasks_running_locked(&self, state: &mut ConnState) -> bool {
-        if state.endpoints_update_active {
+        if state.endpoints_update_state.running {
             return true;
         }
         // TODO: track spawned tasks and join them
@@ -2580,28 +2586,24 @@ impl Conn {
         // If the user stopped the app, stop doing work. (When the
         // user stops we get reconfigures the engine with a no private key.)
         //
-        // This used to just check c.privateKey.IsZero, but that broke
-        // some end-to-end tests that didn't ever set a private
-        // key somehow. So for now, only stop doing work if we ever
-        // had a key, which helps real users, but appeases tests for
-        // now. TODO: rewrite those tests to be less brittle or more realistic.
         if state.private_key.is_none() && state.ever_had_key {
             debug!("re_stun({}) ignored; stopped, no private key", why);
             return;
         }
 
-        if state.endpoints_update_active {
-            if state.want_endpoints_update.is_none() || state.want_endpoints_update.unwrap() != why
-            {
+        if state.endpoints_update_state.running {
+            if Some(why) != state.endpoints_update_state.want_update {
                 debug!(
                     "re_stun({}): endpoint update active, need another later",
                     why
                 );
-                state.want_endpoints_update = Some(why);
+                state.endpoints_update_state.want_update.replace(why);
             }
         } else {
             debug!("re_stun({}): started", why);
-            state.endpoints_update_active = true;
+            state.endpoints_update_state.running = true;
+            drop(state);
+
             let this = self.clone();
             tokio::task::spawn(async move {
                 this.update_endpoints(why).await;
@@ -2924,11 +2926,7 @@ impl AsyncUdpSocket for Conn {
             |group| {
                 let dest = &group[0].destination;
                 let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-                let maybe_ep = peer_map.endpoint_for_ip_port(dest);
-                debug!("found ep: {:?}", maybe_ep);
-                debug!("peers: {:?}", peer_map);
-
-                match maybe_ep {
+                match peer_map.endpoint_for_ip_port(dest) {
                     Some(ep) => match ep.poll_send(udp_state, cx, &group) {
                         Poll::Pending => None,
                         Poll::Ready(Ok(n)) => {
@@ -3360,7 +3358,7 @@ mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "test-node.unused".into(),
+                        host_name: "test-node.invalid".into(),
                         stun_only: true, // TODO: switch to false once derp is implemented,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
@@ -3538,7 +3536,6 @@ mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 loop {
-                    // TODO: check for shutdown
                     tokio::select! {
                         res = m.ep_ch.recv_async() => match res {
                             Ok(new_eps) => {
@@ -3592,80 +3589,25 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("failed to connect peers")?;
 
-        // m1cfg := &wgcfg.Config{
-        // 	Name:       "peer1",
-        // 	PrivateKey: m1.privateKey,
-        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
-        // 	Peers: []wgcfg.Peer{
-        // 		{
-        // 			PublicKey:  m2.privateKey.Public(),
-        // 			DiscoKey:   m2.conn.DiscoPublicKey(),
-        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
-        // 		},
-        // 	},
-        // }
-        // m2cfg := &wgcfg.Config{
-        // 	Name:       "peer2",
-        // 	PrivateKey: m2.privateKey,
-        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
-        // 	Peers: []wgcfg.Peer{
-        // 		{
-        // 			PublicKey:  m1.privateKey.Public(),
-        // 			DiscoKey:   m1.conn.DiscoPublicKey(),
-        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
-        // 		},
-        // 	},
-        // }
-
-        // if err := m1.Reconfig(m1cfg); err != nil {
-        // 	t.Fatal(err)
-        // }
-        // if err := m2.Reconfig(m2cfg); err != nil {
-        // 	t.Fatal(err)
-        // }
-
-        // In the normal case, pings succeed immediately.
-        // However, in the case of a handshake race, we need to retry.
-        // With very bad luck, we can need to retry multiple times.
-        const ALLOWED_RETRIES: usize = 3;
-
-        // Retries take 5s each. Add 1s for some processing time.
-        const PING_TIMEOUT: Duration = Duration::from_secs(5 * ALLOWED_RETRIES as u64 + 1);
-
-        // Sends msg using send, checking that it is received unchanged from recv.
-        // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
-        async fn send_with_timeout(
-            msg: &[u8],
-            recv: flume::Receiver<Vec<u8>>,
-            send: impl Fn(),
-        ) -> Result<()> {
-            time::timeout(PING_TIMEOUT, async move {
-                loop {
-                    send();
-                    tokio::select! {
-                        r = recv.recv_async() => {
-                            match r {
-                                Ok(val) => {
-                                    if val != msg {
-                                        bail!("value did not roundtrip: {:?} != {:?} ", msg, val);
-                                    }
-                                    return Ok(());
-                                }
-                                Err(err) => {
-                                    return Err(err.into());
-                                }
-                            }
-                        }
-                        _ = time::sleep(Duration::from_secs(1)) => {
-                            // try again
-                        }
-                    }
-                }
-            })
-            .await??;
-            Ok(())
+        // Setup connection information for discovery
+        {
+            let m1_addr = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                m1.quic_ep.local_addr()?.port(),
+            );
+            let m2_addr = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                m2.quic_ep.local_addr()?.port(),
+            );
+            m1.conn
+                .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
+                .await;
+            m2.conn
+                .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
+                .await;
         }
 
         // msg from  m2 -> m1
@@ -3687,14 +3629,6 @@ mod tests {
                     b_name,
                     b.quic_ep.local_addr()?
                 );
-
-                // Setup connection information for discovery
-                a.conn
-                    .add_valid_disco_path_for_test(&b.public(), &b_addr)
-                    .await;
-                b.conn
-                    .add_valid_disco_path_for_test(&a.public(), &a_addr)
-                    .await;
 
                 let b_task = tokio::task::spawn(async move {
                     info!("[{}] accepting conn", b_name);
@@ -3773,12 +3707,12 @@ mod tests {
         }
 
         for i in 0..10 {
-            info!("round {}", i + 1);
+            info!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello");
             roundtrip!(m2, m1, b"hello");
         }
 
-        info!("larger data");
+        info!("-- larger data");
         {
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
