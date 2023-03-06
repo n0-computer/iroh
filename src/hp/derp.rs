@@ -33,6 +33,8 @@ const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
 
 /// The DERP magic number, sent in the FRAME_SERVER_KEY frame
 /// upon initial connection
+///
+/// 8 bytes: 0x44 45 52 50 f0 9f 94 91
 const MAGIC: &str = "DERP🔑";
 
 const NONCE_LEN: u8 = 24;
@@ -68,37 +70,39 @@ type FrameType = u8;
 ///  * server then sends FRAME_RECV_PACKET to recipient
 ///
 
-const FRAME_SERVER_KEY: FrameType = 0x01;
 /// 8B magic + 32B public key + (0+ bytes future use)
-const FRAME_CLIENT_INFO: FrameType = 0x02;
+const FRAME_SERVER_KEY: FrameType = 0x01;
 /// 32b pub key + 24B nonce + naclbox(json)
-const FRAME_SERVER_INFO: FrameType = 0x03;
+const FRAME_CLIENT_INFO: FrameType = 0x02;
 /// 24B nonce + naclbox(json)
-const FRAME_SEND_PACKET: FrameType = 0x04;
+const FRAME_SERVER_INFO: FrameType = 0x03;
 /// 32B dest pub key + packet bytes
-const FRAME_FORWARD_PACKET: FrameType = 0x0a;
+const FRAME_SEND_PACKET: FrameType = 0x04;
 /// 32B src pub key + 32B dst pub key + packet bytes
+const FRAME_FORWARD_PACKET: FrameType = 0x0a;
+/// v0/1 packet bytes, v2: 32B src pub key + packet bytes
 const FRAME_RECV_PACKET: FrameType = 0x05;
-/// v0/1 packet bytes, v2: 32B src pub key + packet
-/// bytes
-const FRAME_KEEP_ALIVE: FrameType = 0x06;
 /// no payload, no-op (to be replaced with ping/pong)
+const FRAME_KEEP_ALIVE: FrameType = 0x06;
+/// 1 byte paylouad: 0x01 or 0x00 for whether this is client's home node
 const FRAME_NOTE_PREFERRED: FrameType = 0x07;
-/// 1 byte paylouad: 0x01 or 0x00 for whether this is
-/// client's home node
 
-/// Sent from server to client to signal that a previous sender
-/// is no longer connected. That is, if A sent to B, and then if
-/// A disconnects, the server sends `FRAME_PEER_GONE` to B so B can
-/// forget that a reverse path exists on that connection to get back
-/// to A
-const FRAME_PEER_GONE: FrameType = 0x08; // 32B pub key of peer that's gone
+/// Sent from server to client to signal that a previous sender is no longer connected.
+///
+/// That is, if A sent to B, and then if A disconnects, the server sends `FRAME_PEER_GONE`
+/// to B so B can forget that a reverse path exists on that connection to get back to A
+///
+/// 32B pub key of peer that's gone
+const FRAME_PEER_GONE: FrameType = 0x08;
 
 /// Like [`FRAME_PEER_GONE`], but for other members of the DERP region
 /// when they're meshed up together
-const FRAME_PEER_PRESENT: FrameType = 0x09; // 32B pub key of peer that's connected
+///
+/// 32B pub key of peer that's connected
+const FRAME_PEER_PRESENT: FrameType = 0x09;
 
 /// How one DERP node in a regional mesh subscribes to the others in the region.
+///
 /// There's no payload. If the sender doesn't have permission, the connection
 /// is closed. Otherwise, the client is initially flooded with
 /// [`FRAME_PEER_PRESENT`] for all connected nodes, and then a stream of
@@ -108,13 +112,14 @@ const FRAME_WATCH_CONNS: FrameType = 0x10;
 /// A priviledged frame type (requires the mesh key for now) that closes
 /// the provided peer's connection. (To be used for cluster load balancing
 /// purposes, when clients end up on a non-ideal node)
-const FRAME_CLOSE_PEER: FrameType = 0x11;
+///
 /// 32B pub key of peer close.
+const FRAME_CLOSE_PEER: FrameType = 0x11;
 
-const FRAME_PING: FrameType = 0x12;
 /// 8 byte ping payload, to be echoed back in FRAME_PONG
-const FRAME_PONG: FrameType = 0x13;
+const FRAME_PING: FrameType = 0x12;
 /// 8 byte payload, the contents of ping being replied to
+const FRAME_PONG: FrameType = 0x13;
 
 /// Sent from server to client to tell the client if their connection is
 /// unhealthy somehow. Currently the only unhealthy state is whether the
