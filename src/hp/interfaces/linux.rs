@@ -14,10 +14,12 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
     }
 
     #[cfg(target_os = "android")]
-    default_route_android_ip_route().await.ok().flatten();
+    let res = default_route_android_ip_route().await;
 
     #[cfg(not(target_os = "android"))]
-    default_route_netlink().await.ok().flatten()
+    let res = default_route_netlink().await;
+
+    res.ok().flatten()
 }
 
 async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
