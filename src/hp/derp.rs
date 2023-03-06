@@ -29,7 +29,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// including its on-wire framing overhead)
 const MAX_PACKET_SIZE: usize = 64 * 1024;
 
-const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
+const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The DERP magic number, sent in the FRAME_SERVER_KEY frame
 /// upon initial connection
@@ -170,7 +170,7 @@ async fn read_frame(
     if frame_len > max_size {
         bail!("frame header size {frame_len} exceeds reader limit of {max_size}");
     }
-
+    // TODO: this is weird and wrong
     reader.read_exact(&mut bytes).await?;
     Ok((frame_type, frame_len))
 }
