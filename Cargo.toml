@@ -67,6 +67,10 @@ wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+netlink-packet-route = "0.15.0"
+rtnetlink = "0.12.0"
+
 [dev-dependencies]
 async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }
 hex = "0.4.0"
