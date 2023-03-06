@@ -32,7 +32,7 @@ impl Client {
         // TODO:
     }
 
-    pub async fn note_preferred(&self, is_preferred: bool) {
+    pub fn note_preferred(&self, is_preferred: bool) {
         // TODO:
     }
 

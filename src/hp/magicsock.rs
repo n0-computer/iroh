@@ -36,7 +36,7 @@ fn use_derp_route() -> bool {
 }
 
 /// All the information magicsock tracks about a particular peer.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PeerInfo {
     pub ep: Endpoint,
     /// An inverted version of `PeerMap.by_ip_port` (below), so

@@ -1,11 +1,20 @@
+use std::fmt::Debug;
+
 use anyhow::{anyhow, ensure, Result};
 
 pub const PUBLIC_RAW_LEN: usize = 32;
+const NONCE_LEN: usize = 24;
 pub const SECRET_RAW_LEN: usize = 32;
 
 /// Public key for a discovery.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PublicKey(crypto_box::PublicKey);
+
+impl Debug for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PublicKey({})", hex::encode(self.0.as_bytes()))
+    }
+}
 
 impl AsRef<[u8]> for PublicKey {
     fn as_ref(&self) -> &[u8] {
@@ -26,8 +35,14 @@ impl PublicKey {
 }
 
 /// Secret key for discovery.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
+
+impl Debug for SecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
+    }
+}
 
 impl AsRef<[u8]> for SecretKey {
     fn as_ref(&self) -> &[u8] {
@@ -62,8 +77,6 @@ impl SecretKey {
         self.0.as_bytes()
     }
 }
-
-const NONCE_LEN: usize = 24;
 
 /// Shared Secret for a very Node.
 #[derive(Clone)]

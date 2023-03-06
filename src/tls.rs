@@ -85,6 +85,13 @@ impl Keypair {
     }
 }
 
+impl From<SecretKey> for Keypair {
+    fn from(secret: SecretKey) -> Self {
+        let public = secret.verifying_key();
+        Keypair { secret, public }
+    }
+}
+
 // TODO: probably needs a version field
 /// An identifier for networked peers.
 ///

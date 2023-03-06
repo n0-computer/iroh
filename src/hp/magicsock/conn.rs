@@ -215,6 +215,9 @@ pub struct Inner {
     /// None (or zero regions/nodes) means DERP is disabled.
     /// Tracked outside to avoid deadlock issues (replaces atomic acess from go)
     derp_map: RwLock<Option<DerpMap>>,
+
+    /// Tracks the networkmap Node entity for each peer discovery key.
+    pub(super) peer_map: RwLock<PeerMap>,
 }
 
 pub(super) struct ConnState {
@@ -257,9 +260,6 @@ pub(super) struct ConnState {
     disco_private: key::disco::SecretKey,
     /// Public key of disco_private.
     pub(super) disco_public: key::disco::PublicKey,
-
-    /// Tracks the networkmap Node entity for each peer discovery key.
-    pub(super) peer_map: PeerMap,
 
     // The state for an active DiscoKey.
     disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
@@ -304,7 +304,6 @@ impl Default for ConnState {
             peer_set: HashSet::new(),
             disco_private,
             disco_public,
-            peer_map: PeerMap::default(),
             disco_info: HashMap::new(),
             net_info_last: None,
             net_map: None,
@@ -404,6 +403,7 @@ impl Conn {
             closing: AtomicBool::new(false),
             derp_recv_ch,
             derp_map: Default::default(),
+            peer_map: Default::default(),
         }));
 
         c.rebind(CurrentPortFate::Keep).await?;
@@ -707,22 +707,24 @@ impl Conn {
         }
     }
 
-    /// Makes addr a validated disco address for discoKey. It's used in tests to enable receiving of packets from
-    /// addr without having to spin up the entire active discovery machinery.
-    #[cfg(test)]
+    /// Makes addr a validated disco address for discoKey.
+    /// Used to provide user/externally discovered addresses.
     async fn add_valid_disco_path_for_test(
         &self,
         node_key: &key::node::PublicKey,
         addr: &SocketAddr,
     ) {
-        let mut state = self.state.lock().await;
-        state.peer_map.set_node_key_for_ip_port(addr, node_key);
+        let mut peer_map = self.peer_map.write().await;
+        peer_map.set_node_key_for_ip_port(addr, node_key);
+        if let Some(ep) = peer_map.endpoint_for_node_key(node_key) {
+            ep.maybe_add_best_addr(*addr).await;
+        }
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
     async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
-        let state = self.state.lock().await;
-        match state.peer_map.endpoint_for_node_key(nk) {
+        let peer_map = self.peer_map.read().await;
+        match peer_map.endpoint_for_node_key(nk) {
             Some(de) => {
                 let saw = &*de.last_recv.read().await;
                 match saw {
@@ -758,7 +760,12 @@ impl Conn {
                 Some(peer.hostinfo.hostname.clone())
             }
         };
-        let ep = state.peer_map.endpoint_for_node_key(&peer.key);
+        let ep = self
+            .peer_map
+            .read()
+            .await
+            .endpoint_for_node_key(&peer.key)
+            .cloned();
         match ep {
             Some(ep) => {
                 ep.cli_ping(res, cb).await;
@@ -845,7 +852,9 @@ impl Conn {
         for (i, ad) in &state.active_derp {
             let b = *i == state.my_derp;
             let c = ad.c.clone();
-            tokio::task::spawn(async move { c.note_preferred(b).await });
+            tokio::task::spawn(async move {
+                c.note_preferred(b);
+            });
         }
         self.go_derp_connect(derp_num);
         true
@@ -866,8 +875,7 @@ impl Conn {
             this.derp_write_chan_of_addr(
                 SocketAddr::new(DERP_MAGIC_IP, u16::try_from(node).expect("node too large")),
                 None,
-            )
-            .await;
+            );
         });
     }
 
@@ -991,60 +999,71 @@ impl Conn {
     /// The returned sent is whether a packet went out at all. An example of when they might
     /// be different: sending to an IPv6 address when the local machine doesn't have IPv6 support
     /// returns Ok(false); it's not an error, but nothing was sent.
-    async fn send_addr(
+    pub(super) fn poll_send_addr(
         &self,
-        addr: SocketAddr,
+        udp_state: &quinn_udp::UdpState,
+        cx: &mut Context,
         pub_key: Option<&key::node::PublicKey>,
-        b: &[u8],
-    ) -> Result<bool> {
-        if addr.ip() != DERP_MAGIC_IP {
-            return self.send_udp(addr, b).await;
+        transmit: quinn_proto::Transmit,
+    ) -> Poll<io::Result<usize>> {
+        if transmit.destination.ip() != DERP_MAGIC_IP {
+            return self.poll_send_udp(udp_state, cx, transmit);
         }
 
-        match self.derp_write_chan_of_addr(addr, pub_key).await {
+        match self.derp_write_chan_of_addr(transmit.destination, pub_key) {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
-                return Ok(false);
+                return Poll::Ready(Ok(0));
             }
             Some(ch) => {
                 if self.closing.load(Ordering::Relaxed) {
-                    bail!("connection closed");
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "connection closed",
+                    )));
                 }
 
                 match ch.try_send(DerpWriteRequest {
-                    addr,
                     pub_key: pub_key.cloned(),
-                    b: b.to_vec(),
+                    addr: transmit.destination,
+                    content: transmit.contents,
                 }) {
                     Ok(_) => {
                         //   metricSendDERPQueued.Add(1)
-                        return Ok(true);
+                        return Poll::Ready(Ok(1));
                     }
                     Err(_) => {
                         //   metricSendDERPErrorQueue.Add(1)
                         // Too many writes queued. Drop packet.
-                        bail!("packet dropped");
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "packet dropped",
+                        )));
                     }
                 }
             }
         }
     }
 
-    async fn send_udp(&self, addr: SocketAddr, b: &[u8]) -> Result<bool> {
-        let ok = match addr {
-            SocketAddr::V4(_) => self.pconn4.send_to(addr, b).await?,
-            SocketAddr::V6(_) => self.pconn6.send_to(addr, b).await?,
-        };
-
-        Ok(ok)
+    fn poll_send_udp(
+        &self,
+        udp_state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmit: quinn_proto::Transmit,
+    ) -> Poll<io::Result<usize>> {
+        let transmits = [transmit];
+        match transmits[0].destination {
+            SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmits),
+            SocketAddr::V6(_) => self.pconn6.poll_send(udp_state, cx, &transmits),
+        }
     }
 
     /// Returns a DERP client for fake UDP addresses that represent DERP servers, creating them as necessary.
     /// For real UDP addresses, it returns `None`.
     ///
     /// If peer is `Some`, it can be used to find an active reverse path, without using addr.
-    async fn derp_write_chan_of_addr(
+    fn derp_write_chan_of_addr(
         &self,
         addr: SocketAddr,
         peer: Option<&key::node::PublicKey>,
@@ -1057,8 +1076,8 @@ impl Conn {
         }
         let region_id = usize::from(addr.port());
 
-        let mut state = self.state.lock().await;
-        let derp_map = self.derp_map.read().await;
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+        let derp_map = tokio::task::block_in_place(|| self.derp_map.blocking_read());
         if derp_map.is_none() || state.closed {
             return None;
         }
@@ -1140,7 +1159,7 @@ impl Conn {
         );
 
         dc.set_can_ack_pings(true);
-        dc.note_preferred(state.my_derp == region_id).await;
+        dc.note_preferred(state.my_derp == region_id);
         let this = self.clone();
         dc.set_address_family_selector(move || {
             let this = this.clone();
@@ -1172,7 +1191,11 @@ impl Conn {
         // metricNumDERPConns.Set(int64(len(c.activeDerp)))
         self.log_active_derp_locked(&mut state);
 
-        self.schedule_clean_stale_derp_locked(&mut state).await;
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            let mut state = this.state.lock().await;
+            this.schedule_clean_stale_derp_locked(&mut state).await;
+        });
 
         // Build a start_gate for the derp reader+writer tasks, so they don't start running
         // until any previous generation is closed.
@@ -1247,7 +1270,6 @@ impl Conn {
                 .with_initial_interval(Duration::from_millis(10))
                 .with_max_interval(Duration::from_secs(5))
                 .build();
-        // NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5 * time.Second);
 
         let mut last_packet_time: Option<Instant> = None;
         let mut last_packet_src: Option<key::node::PublicKey> = None;
@@ -1259,7 +1281,9 @@ impl Conn {
                     for peer in peer_present.drain() {
                         self.remove_derp_peer_route(peer, region_id, &dc).await;
                     }
-                    if err == derp::http::ClientError::Closed {
+                    if err == derp::http::ClientError::Closed
+                        || err == derp::http::ClientError::Todo
+                    {
                         return;
                     }
                     if self.network_down() {
@@ -1271,7 +1295,7 @@ impl Conn {
                         return;
                     }
 
-                    info!("[{:?}] derp.recv(derp-{}): {:?}", dc, region_id, err);
+                    debug!("[{:?}] derp.recv(derp-{}): {:?}", dc, region_id, err);
 
                     // If our DERP connection broke, it might be because our network
                     // conditions changed. Start that check.
@@ -1280,7 +1304,7 @@ impl Conn {
                     // Back off a bit before reconnecting.
                     match bo.next_backoff() {
                         Some(t) => {
-                            info!("backoff sleep: {}ms", t.as_millis());
+                            debug!("backoff sleep: {}ms", t.as_millis());
                             time::sleep(t).await
                         }
                         None => return,
@@ -1384,7 +1408,7 @@ impl Conn {
                     }
                 }
                 wr = ch.recv_async() => match wr {
-                    Ok(wr) => match dc.send(wr.pub_key, wr.b).await {
+                    Ok(wr) => match dc.send(wr.pub_key, wr.content).await {
                         Ok(_) => {
                             // TODO:
                             // metricSendDERP.Add(1)
@@ -1411,7 +1435,10 @@ impl Conn {
         meta: &mut quinn_udp::RecvMeta,
         cache: &SocketEndpointCache,
     ) -> bool {
+        // Trunacte the slice, to the actual message length.
+        let b = &b[..meta.len];
         if stun::is(b) {
+            debug!("received STUN message {}", b.len());
             if let Some(ref f) =
                 &*tokio::task::block_in_place(|| self.on_stun_receive.blocking_read())
             {
@@ -1420,9 +1447,11 @@ impl Conn {
             return false;
         }
         if self.handle_disco_message(b, meta.addr, None) {
+            debug!("received DISCO message {}", b.len());
             return false;
         }
         if !self.have_private_key.load(Ordering::Relaxed) {
+            debug!("skipping receive, no key available");
             // If we have no private key, we're logged out or
             // stopped. Don't try to pass these packets along
             return false;
@@ -1431,9 +1460,10 @@ impl Conn {
         if let Some(de) = cache.get(&meta.addr) {
             meta.dst_ip = Some(de.fake_wg_addr.ip());
         } else {
-            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
-            match state.peer_map.endpoint_for_ip_port(&meta.addr) {
+            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            match peer_map.endpoint_for_ip_port(&meta.addr) {
                 None => {
+                    debug!("no peer_map state found for {}", meta.addr);
                     return false;
                 }
                 Some(de) => {
@@ -1447,6 +1477,9 @@ impl Conn {
         // if stats := c.stats.Load(); stats != nil {
         //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
         // }
+
+        debug!("received passthrough message {}", b.len());
+
         true
     }
 
@@ -1456,6 +1489,7 @@ impl Conn {
         b: &mut io::IoSliceMut<'_>,
         meta: &mut quinn_udp::RecvMeta,
     ) -> usize {
+        let b = &b[..meta.len];
         if dm.buf.is_empty() {
             return 0;
         }
@@ -1474,9 +1508,8 @@ impl Conn {
         }
 
         let ep = {
-            let state = tokio::task::block_in_place(|| self.state.blocking_lock());
-            let ep = state.peer_map.endpoint_for_node_key(&dm.src);
-            ep.cloned()
+            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            peer_map.endpoint_for_node_key(&dm.src).cloned()
         };
         if ep.is_none() {
             // We don't know anything about this node key, nothing to record or process.
@@ -1505,6 +1538,7 @@ impl Conn {
         dst_disco: &key::disco::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
+        debug!("sending disco message to {}: {:?}", dst, msg);
         let is_derp = dst.ip() == DERP_MAGIC_IP;
         let is_pong = matches!(msg, disco::Message::Pong(_));
         if is_pong && !is_derp && dst.ip().is_ipv4() {
@@ -1525,6 +1559,11 @@ impl Conn {
         } = &mut *state;
         let di = disco_info_locked(disco_info, &*disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
+        debug!(
+            "sealing msg from {:?} to {:?}",
+            disco_private.public(),
+            dst_disco,
+        );
         drop(state);
 
         // TODO
@@ -1535,9 +1574,28 @@ impl Conn {
         // }
 
         let pkt = disco::encode_message(&disco_public, seal);
-        let sent = self.send_addr(dst, dst_key, &pkt).await;
+        let udp_state = quinn_udp::UdpState::default(); // TODO: store
+        let sent = futures::future::poll_fn(move |cx| {
+            self.poll_send_addr(
+                &udp_state,
+                cx,
+                dst_key,
+                quinn_proto::Transmit {
+                    destination: dst,
+                    contents: pkt.clone(), // TODO: avoid
+                    ecn: None,
+                    segment_size: None, // TODO: make sure this is correct
+                    src_ip: None,       // TODO
+                },
+            )
+        })
+        .await;
         match sent {
-            Ok(true) => {
+            Ok(0) => {
+                // Can't send. (e.g. no IPv6 locally)
+                Ok(false)
+            }
+            Ok(n) => {
                 // TODO:
                 // if is_derp {
                 //     metricSentDiscoDERP.Add(1);
@@ -1552,18 +1610,15 @@ impl Conn {
                 //     case *disco.CallMeMaybe:
                 //     	metricSentDiscoCallMeMaybe.Add(1)
                 //     }
+                Ok(true)
             }
-            Ok(false) => {
-                // Can't send. (e.g. no IPv6 locally)
-            }
-            Err(ref err) => {
+            Err(err) => {
                 if !self.network_down() {
                     warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
                 }
+                Err(err.into())
             }
         }
-
-        sent
     }
 
     /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
@@ -1596,8 +1651,8 @@ impl Conn {
         }
 
         let sender = key::disco::PublicKey::from(source);
-
-        if !state.peer_map.any_endpoint_for_disco_key(&sender) {
+        let mut peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_write());
+        if !peer_map.any_endpoint_for_disco_key(&sender) {
             // TODO:
             // metricRecvDiscoBadPeer.Add(1)
             debug!(
@@ -1613,7 +1668,6 @@ impl Conn {
         let ConnState {
             disco_info,
             disco_private,
-            peer_map,
             disco_public,
             ..
         } = &mut *state;
@@ -1627,7 +1681,12 @@ impl Conn {
             // or non-NATed endpoints.
             // Don't log in normal case. Pass on to wireguard, in case
             // it's actually a wireguard packet (super unlikely, but).
-            debug!("disco: failed to open box from {:?} (wrong rcpt?)", sender);
+            debug!(
+                "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
+                disco_private.public(),
+                sender,
+                payload,
+            );
             // TODO:
             // metricRecvDiscoBadKey.Add(1)
             return true;
@@ -1659,7 +1718,14 @@ impl Conn {
         match dm {
             disco::Message::Ping(ping) => {
                 // metricRecvDiscoPing.Add(1)
-                self.handle_ping_locked(&mut state, ping, &sender, src, derp_node_src);
+                self.handle_ping_locked(
+                    &mut state,
+                    &mut peer_map,
+                    ping,
+                    &sender,
+                    src,
+                    derp_node_src,
+                );
                 true
             }
             disco::Message::Pong(pong) => {
@@ -1673,7 +1739,7 @@ impl Conn {
                     .cloned()
                     .collect();
                 for ep in eps {
-                    if ep.handle_pong_conn_locked(peer_map, &disco_public, &pong, di, src) {
+                    if ep.handle_pong_conn_locked(&mut *peer_map, &disco_public, &pong, di, src) {
                         break;
                     }
                 }
@@ -1690,7 +1756,7 @@ impl Conn {
                 let node_key = derp_node_src.unwrap();
                 let di_disco_key = di.disco_key.clone();
                 drop(di);
-                let ep = state.peer_map.endpoint_for_node_key(&node_key);
+                let ep = peer_map.endpoint_for_node_key(&node_key);
                 if ep.is_none() {
                     // metricRecvDiscoCallMeMaybeBadNode.Add(1)
                     debug!(
@@ -1776,6 +1842,7 @@ impl Conn {
     fn handle_ping_locked(
         &self,
         state: &mut ConnState,
+        peer_map: &mut PeerMap,
         dm: disco::Ping,
         sender: &key::disco::PublicKey,
         src: SocketAddr,
@@ -1784,7 +1851,6 @@ impl Conn {
         let ConnState {
             disco_info,
             disco_private,
-            peer_map,
             disco_public,
             ..
         } = &mut *state;
@@ -2145,9 +2211,9 @@ impl Conn {
         let ConnState {
             disco_info,
             net_map,
-            peer_map,
             ..
         } = &mut *state;
+        let mut peer_map = self.peer_map.write().await;
         for n in &net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
                 let old_disco_key = ep.disco_key();
@@ -2436,8 +2502,11 @@ impl Conn {
         self.stop_periodic_re_stun_timer(&mut state).await;
         self.port_mapper.close();
 
-        for ep in state.peer_map.endpoints() {
-            ep.stop_and_reset().await;
+        {
+            let peer_map = self.peer_map.read().await;
+            for ep in peer_map.endpoints() {
+                ep.stop_and_reset().await;
+            }
         }
 
         state.closed = true;
@@ -2558,6 +2627,8 @@ impl Conn {
         socket.set_nonblocking(true)?;
         socket.bind(&addr.into())?;
         let socket = UdpSocket::from_std(socket.into())?;
+
+        debug!("bound to {}", socket.local_addr()?);
 
         Ok(socket)
     }
@@ -2690,10 +2761,59 @@ impl Conn {
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     async fn reset_endpoint_states(&self) {
-        let state = self.state.lock().await;
-        for ep in state.peer_map.endpoints() {
+        let peer_map = self.peer_map.read().await;
+        for ep in peer_map.endpoints() {
             ep.note_connectivity_change().await;
         }
+    }
+
+    pub(super) fn poll_send_raw(
+        &self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        debug!("poll_send_raw: {} packets", transmits.len());
+
+        let mut sum = 0;
+
+        let res = group_by(
+            transmits,
+            |a, b| a.destination.is_ipv6() == b.destination.is_ipv6(),
+            |group| {
+                let res = if group[0].destination.is_ipv6() {
+                    self.pconn6.poll_send(state, cx, group)
+                } else {
+                    self.pconn4.poll_send(state, cx, group)
+                };
+                match res {
+                    Poll::Pending => None,
+                    Poll::Ready(Ok(r)) => {
+                        sum += r;
+                        None
+                    }
+                    Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
+                }
+            },
+        );
+
+        if let Some(err) = res {
+            return err;
+        }
+
+        debug!("sent {} packets", sum);
+        debug_assert!(
+            sum <= transmits.len(),
+            "too many msgs {} > {}",
+            sum,
+            transmits.len()
+        );
+
+        if sum > 0 {
+            return Poll::Ready(Ok(sum));
+        }
+
+        Poll::Pending
     }
 }
 
@@ -2774,59 +2894,63 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
 impl AsyncUdpSocket for Conn {
     fn poll_send(
         &mut self,
-        state: &quinn_udp::UdpState,
+        udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        // TODO: find a way around the copies
-        let mut transmits_ipv4: Vec<quinn::Transmit> = Vec::new();
-        let mut transmits_ipv6: Vec<quinn::Transmit> = Vec::new();
+        debug!(
+            "sending:\n{}",
+            transmits
+                .iter()
+                .map(|t| format!(
+                    "  dest: {}, src: {:?}, content_len: {}\n",
+                    t.destination,
+                    t.src_ip,
+                    t.contents.len()
+                ))
+                .collect::<String>()
+        );
 
-        for t in transmits {
-            if t.destination.is_ipv6() {
-                transmits_ipv6.push(quinn::Transmit {
-                    destination: t.destination,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                });
-            } else {
-                transmits_ipv4.push(quinn::Transmit {
-                    destination: t.destination,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                });
-            }
-        }
-        let mut sum = 0;
-        if !transmits_ipv4.is_empty() {
-            match self.pconn4.poll_send(state, cx, &transmits_ipv4[..]) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(r)) => {
-                    sum += r;
+        let mut num_msgs = 0;
+        let res = group_by(
+            transmits,
+            |a, b| a.destination == b.destination,
+            |group| {
+                let dest = &group[0].destination;
+                let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+                let maybe_ep = peer_map.endpoint_for_ip_port(dest);
+                debug!("found ep: {:?}", maybe_ep);
+                debug!("peers: {:?}", peer_map);
+
+                match maybe_ep {
+                    Some(ep) => match ep.poll_send(udp_state, cx, &group) {
+                        Poll::Pending => None,
+                        Poll::Ready(Ok(n)) => {
+                            num_msgs += n;
+                            None
+                        }
+                        Poll::Ready(Err(e)) => Some(Poll::Ready(Err(e))),
+                    },
+                    None => {
+                        // Should this error, do we need to create the EP?
+                        debug!("trying to find endpoint for {}", dest);
+                        todo!()
+                    }
                 }
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Err(err));
-                }
-            }
-        }
-        if !transmits_ipv6.is_empty() {
-            match self.pconn6.poll_send(state, cx, &transmits_ipv6) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(r)) => {
-                    sum += r;
-                }
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Err(err));
-                }
-            }
+            },
+        );
+        if let Some(err) = res {
+            return err;
         }
 
-        if sum > 0 {
-            return Poll::Ready(Ok(sum));
+        debug_assert!(
+            num_msgs <= transmits.len(),
+            "too many msgs {} > {}",
+            num_msgs,
+            transmits.len()
+        );
+        if num_msgs > 0 {
+            return Poll::Ready(Ok(num_msgs));
         }
 
         Poll::Pending
@@ -2839,7 +2963,8 @@ impl AsyncUdpSocket for Conn {
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
-        debug_assert_eq!(bufs.len(), meta.len());
+        debug_assert_eq!(bufs.len(), meta.len(), "non matching bufs & metas");
+        debug!("trying to receive up to {} packets", bufs.len());
 
         let mut num_msgs_total = 0;
 
@@ -2850,7 +2975,8 @@ impl AsyncUdpSocket for Conn {
                 return Poll::Ready(Err(err));
             }
             Poll::Ready(Ok(mut num_msgs)) => {
-                debug_assert!(num_msgs < bufs.len());
+                debug!("received {} msgs on IPv4", num_msgs);
+                debug_assert!(num_msgs <= bufs.len(), "{} > {}", num_msgs, bufs.len());
                 let mut i = 0;
                 while i < num_msgs {
                     if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint4) {
@@ -2881,6 +3007,7 @@ impl AsyncUdpSocket for Conn {
                     return Poll::Ready(Err(err));
                 }
                 Poll::Ready(Ok(mut num_msgs)) => {
+                    debug!("received {} msgs on IPv6", num_msgs);
                     debug_assert!(num_msgs + num_msgs_total < bufs.len());
                     let mut i = num_msgs_total;
                     while i < num_msgs + num_msgs_total {
@@ -2924,6 +3051,7 @@ impl AsyncUdpSocket for Conn {
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
+        debug!("received {} msgs", num_msgs_total);
         if num_msgs_total > 0 {
             return Poll::Ready(Ok(num_msgs_total));
         }
@@ -2949,7 +3077,7 @@ struct DerpReadResult {
 struct DerpWriteRequest {
     addr: SocketAddr,
     pub_key: Option<key::node::PublicKey>,
-    b: Vec<u8>,
+    content: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -3017,13 +3145,125 @@ impl Drop for WgGuard {
     }
 }
 
+fn group_by<F, G, T, U>(transmits: &[T], f: F, mut g: G) -> Option<U>
+where
+    F: Fn(&T, &T) -> bool,
+    G: FnMut(&[T]) -> Option<U>,
+{
+    if transmits.is_empty() {
+        return None;
+    }
+
+    let mut last = &transmits[0];
+    let mut start = 0;
+    let mut end = 1;
+
+    for i in 1..transmits.len() {
+        if f(last, &transmits[i]) {
+            // Same group, continue.
+            end += 1;
+        } else {
+            // New group.
+            let res = g(&transmits[start..end]);
+            if res.is_some() {
+                return res;
+            }
+            start = i;
+            end = i + 1;
+        }
+        last = &transmits[i];
+    }
+
+    // Last group.
+    g(&transmits[start..end])
+}
+
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
+    use rand::RngCore;
     use tokio::{net, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::{
+        hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        tls,
+    };
+
+    #[test]
+    fn test_group_by_continue() {
+        let cases = [
+            (vec![1, 1], vec![vec![1, 1]]),
+            (vec![1, 2, 3], vec![vec![1], vec![2], vec![3]]),
+            (
+                vec![1, 1, 2, 3, 4, 4, 4, 5, 1],
+                vec![
+                    vec![1, 1],
+                    vec![2],
+                    vec![3],
+                    vec![4, 4, 4],
+                    vec![5],
+                    vec![1],
+                ],
+            ),
+        ];
+        for (input, expected) in cases {
+            let mut out = Vec::new();
+            let res: Option<()> = group_by(
+                &input,
+                |a, b| a == b,
+                |els| {
+                    out.push(els.to_vec());
+                    None
+                },
+            );
+            assert!(res.is_none());
+            assert_eq!(out, expected,);
+        }
+    }
+
+    #[test]
+    fn test_group_by_early_return() {
+        let cases = [
+            (vec![(1, true), (1, false)], vec![vec![1, 1]]),
+            (
+                vec![(1, true), (2, false), (3, false)],
+                vec![vec![1], vec![2]],
+            ),
+            (
+                vec![
+                    (1, true),
+                    (1, true),
+                    (2, true),
+                    (3, true),
+                    (4, true),
+                    (4, false),
+                    (4, false),
+                    (5, false),
+                ],
+                vec![vec![1, 1], vec![2], vec![3], vec![4, 4, 4]],
+            ),
+        ];
+        for (i, (input, expected)) in cases.into_iter().enumerate() {
+            println!("case {}", i);
+            let mut out: Vec<Vec<usize>> = Vec::new();
+            let res: Option<()> = group_by(
+                &input,
+                |a, b| a.0 == b.0,
+                |els| {
+                    out.push(els.iter().map(|(e, _)| *e).collect());
+                    if els.last().unwrap().1 {
+                        None
+                    } else {
+                        Some(())
+                    }
+                },
+            );
+            assert!(res.is_some()); // all abort early
+            assert_eq!(out, expected);
+        }
+    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -3147,6 +3387,7 @@ mod tests {
         ep_ch: flume::Receiver<Vec<cfg::Endpoint>>,
         key: key::node::SecretKey,
         conn: Conn,
+        quic_ep: quinn::Endpoint,
     }
 
     impl MagicStack {
@@ -3167,17 +3408,44 @@ mod tests {
             conn.set_derp_map(Some(derp_map)).await;
             conn.set_private_key(key.clone()).await?;
 
+            let tls_server_config =
+                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            server_config.transport_config(Arc::new(transport_config));
+            let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                conn.clone(),
+                quinn::TokioRuntime,
+            )?;
+
+            let tls_client_config = tls::make_client_config(
+                &key.clone().into(),
+                None,
+                vec![tls::P2P_ALPN.to_vec()],
+                false,
+            )?;
+            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            client_config.transport_config(Arc::new(transport_config));
+            quic_ep.set_default_client_config(client_config);
+
             Ok(Self {
                 ep_ch: ep_r,
                 key,
                 conn,
+                quic_ep,
             })
         }
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
-            let state = &*self.conn.state.lock().await;
+            let peer_map = &*self.conn.peer_map.read().await;
             let mut out = Vec::new();
-            for ep in state.peer_map.endpoints() {
+            for ep in peer_map.endpoints() {
                 out.push(ep.public_key.clone());
             }
             out
@@ -3286,8 +3554,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn test_two_device_ping() -> Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_devices_roundtrip() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -3311,14 +3579,9 @@ mod tests {
         let m2t = m2.clone();
         time::timeout(Duration::from_secs(10), async move {
             loop {
-                let mut ready = 0;
-                if m1t.tracked_endpoints().await.contains(&m2t.public()) {
-                    ready += 1;
-                }
-                if m2t.tracked_endpoints().await.contains(&m1t.public()) {
-                    ready += 1;
-                }
-                if ready == 2 {
+                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                if ab && ba {
                     break;
                 }
             }
@@ -3365,123 +3628,159 @@ mod tests {
         // Retries take 5s each. Add 1s for some processing time.
         const PING_TIMEOUT: Duration = Duration::from_secs(5 * ALLOWED_RETRIES as u64 + 1);
 
-        // // sendWithTimeout sends msg using send, checking that it is received unchanged from in.
-        // // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
-        // sendWithTimeout := func(msg []byte, in chan []byte, send func()) error {
-        // 	start := time.Now()
-        // 	for time.Since(start) < pingTimeout {
-        // 		send()
-        // 		select {
-        // 		case recv := <-in:
-        // 			if !bytes.Equal(msg, recv) {
-        // 				return errors.New("ping did not transit correctly")
-        // 			}
-        // 			return nil
-        // 		case <-time.After(time.Second):
-        // 			// try again
-        // 		}
-        // 	}
-        // 	return errors.New("ping timed out")
-        // }
+        // Sends msg using send, checking that it is received unchanged from recv.
+        // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
+        async fn send_with_timeout(
+            msg: &[u8],
+            recv: flume::Receiver<Vec<u8>>,
+            send: impl Fn(),
+        ) -> Result<()> {
+            time::timeout(PING_TIMEOUT, async move {
+                loop {
+                    send();
+                    tokio::select! {
+                        r = recv.recv_async() => {
+                            match r {
+                                Ok(val) => {
+                                    if val != msg {
+                                        bail!("value did not roundtrip: {:?} != {:?} ", msg, val);
+                                    }
+                                    return Ok(());
+                                }
+                                Err(err) => {
+                                    return Err(err.into());
+                                }
+                            }
+                        }
+                        _ = time::sleep(Duration::from_secs(1)) => {
+                            // try again
+                        }
+                    }
+                }
+            })
+            .await??;
+            Ok(())
+        }
 
-        // ping1 := func(t *testing.T) {
-        // 	msg2to1 := tuntest.Ping(netip.MustParseAddr("1.0.0.1"), netip.MustParseAddr("1.0.0.2"))
-        // 	send := func() {
-        // 		m2.tun.Outbound <- msg2to1
-        // 		t.Log("ping1 sent")
-        // 	}
-        // 	in := m1.tun.Inbound
-        // 	if err := sendWithTimeout(msg2to1, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // }
-        // ping2 := func(t *testing.T) {
-        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
-        // 	send := func() {
-        // 		m1.tun.Outbound <- msg1to2
-        // 		t.Log("ping2 sent")
-        // 	}
-        // 	in := m2.tun.Inbound
-        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // }
+        // msg from  m2 -> m1
+        macro_rules! roundtrip {
+            ($a:expr, $b:expr, $msg:expr) => {
+                let a = $a.clone();
+                let b = $b.clone();
+                let a_name = stringify!($a);
+                let b_name = stringify!($b);
+                info!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
+                let a_addr =
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), a.quic_ep.local_addr()?.port());
+                let b_addr =
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), b.quic_ep.local_addr()?.port());
+                info!(
+                    "{}: {}, {}: {}",
+                    a_name,
+                    a_addr,
+                    b_name,
+                    b.quic_ep.local_addr()?
+                );
 
-        // m1.stats = connstats.NewStatistics(0, 0, nil)
-        // defer m1.stats.Shutdown(context.Background())
-        // m1.conn.SetStatistics(m1.stats)
-        // m2.stats = connstats.NewStatistics(0, 0, nil)
-        // defer m2.stats.Shutdown(context.Background())
-        // m2.conn.SetStatistics(m2.stats)
+                // Setup connection information for discovery
+                a.conn
+                    .add_valid_disco_path_for_test(&b.public(), &b_addr)
+                    .await;
+                b.conn
+                    .add_valid_disco_path_for_test(&a.public(), &a_addr)
+                    .await;
 
-        // checkStats := func(t *testing.T, m *magicStack, wantConns []netlogtype.Connection) {
-        // 	_, stats := m.stats.TestExtract()
-        // 	for _, conn := range wantConns {
-        // 		if _, ok := stats[conn]; ok {
-        // 			return
-        // 		}
-        // 	}
-        // 	t.Helper()
-        // 	t.Errorf("missing any connection to %s from %s", wantConns, maps.Keys(stats))
-        // }
+                let b_task = tokio::task::spawn(async move {
+                    info!("[{}] accepting conn", b_name);
+                    while let Some(conn) = b.quic_ep.accept().await {
+                        info!("[{}] connecting", b_name);
+                        let conn = conn
+                            .await
+                            .with_context(|| format!("[{}] connecting", b_name))?;
+                        info!("[{}] accepting bi", b_name);
+                        let (mut send_bi, recv_bi) = conn
+                            .accept_bi()
+                            .await
+                            .with_context(|| format!("[{}] accepting bi", b_name))?;
 
-        // addrPort := netip.MustParseAddrPort
-        // m1Conns := []netlogtype.Connection{
-        // 	{Src: addrPort("1.0.0.2:0"), Dst: m2.conn.pconn4.LocalAddr().AddrPort()},
-        // 	{Src: addrPort("1.0.0.2:0"), Dst: addrPort("127.3.3.40:1")},
-        // }
-        // m2Conns := []netlogtype.Connection{
-        // 	{Src: addrPort("1.0.0.1:0"), Dst: m1.conn.pconn4.LocalAddr().AddrPort()},
-        // 	{Src: addrPort("1.0.0.1:0"), Dst: addrPort("127.3.3.40:1")},
-        // }
+                        info!("[{}] reading", b_name);
+                        let val = recv_bi
+                            .read_to_end(usize::MAX)
+                            .await
+                            .with_context(|| format!("[{}] reading to end", b_name))?;
+                        send_bi
+                            .finish()
+                            .await
+                            .with_context(|| format!("[{}] finishing", b_name))?;
+                        info!("[{}] finished", b_name);
+                        return Ok::<_, anyhow::Error>(val);
+                    }
+                    bail!("no connections available anymore");
+                });
 
-        // outerT := t
-        // t.Run("ping 1.0.0.1", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	ping1(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+                info!("[{}] connecting to {}", a_name, b_addr);
+                let conn = a
+                    .quic_ep
+                    .connect(b_addr, "localhost")?
+                    .await
+                    .with_context(|| format!("[{}] connect", a_name))?;
 
-        // t.Run("ping 1.0.0.2", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	ping2(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+                info!("[{}] opening bi", a_name);
+                let (mut send_bi, recv_bi) = conn
+                    .open_bi()
+                    .await
+                    .with_context(|| format!("[{}] open bi", a_name))?;
+                info!("[{}] writing message", a_name);
+                send_bi
+                    .write_all(&$msg[..])
+                    .await
+                    .with_context(|| format!("[{}] write all", a_name))?;
 
-        // t.Run("ping 1.0.0.2 via SendPacket", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
-        // 	send := func() {
-        // 		if err := m1.tsTun.InjectOutbound(msg1to2); err != nil {
-        // 			t.Fatal(err)
-        // 		}
-        // 		t.Log("SendPacket sent")
-        // 	}
-        // 	in := m2.tun.Inbound
-        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+                info!("[{}] finishing", a_name);
+                send_bi
+                    .finish()
+                    .await
+                    .with_context(|| format!("[{}] finish", a_name))?;
 
-        // t.Run("no-op dev1 reconfig", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	if err := m1.Reconfig(m1cfg); err != nil {
-        // 		t.Fatal(err)
-        // 	}
-        // 	ping1(t)
-        // 	ping2(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+                info!("[{}] reading_to_end", a_name);
+                let _ = recv_bi
+                    .read_to_end(usize::MAX)
+                    .await
+                    .with_context(|| format!("[{}]", a_name))?;
+                info!("[{}] close", a_name);
+                conn.close(0u32.into(), b"done");
+                info!("[{}] wait idle", a_name);
+                a.quic_ep.wait_idle().await;
 
+                drop(send_bi);
+
+                // make sure the right values arrived
+                info!("waiting for channel");
+                let val = b_task.await??;
+                anyhow::ensure!(
+                    val == $msg,
+                    "expected {}, got {}",
+                    hex::encode($msg),
+                    hex::encode(val)
+                );
+            };
+        }
+
+        for i in 0..10 {
+            info!("round {}", i + 1);
+            roundtrip!(m1, m2, b"hello");
+            roundtrip!(m2, m1, b"hello");
+        }
+
+        info!("larger data");
+        {
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
+        }
+
+        info!("cleaning up");
         cleanup();
         cleanup_mesh();
         Ok(())
