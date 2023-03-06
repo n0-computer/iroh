@@ -5,6 +5,9 @@ use std::{
     net::{IpAddr, Ipv6Addr},
 };
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use default_net::ip::{Ipv4Net, Ipv6Net};
 
 const IFF_UP: u32 = 0x1;
@@ -300,7 +303,7 @@ impl State {
     /// Returns the state of all the current machine's network interfaces.
     ///
     /// It does not set the returned `State.is_expensive`. The caller can populate that.
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let mut interface_ips = HashMap::new();
         let mut interface = HashMap::new();
         let mut have_v6 = false;
@@ -327,7 +330,7 @@ impl State {
             interface_ips.insert(name, pfxs);
         }
 
-        let default_route_interface = default_route_interface();
+        let default_route_interface = default_route_interface().await;
 
         State {
             interface_ips,
@@ -468,19 +471,19 @@ impl DefaultRouteDetails {
         target_os = "macos",
         target_os = "ios"
     ))]
-    pub fn new() -> Option<Self> {
+    pub async fn new() -> Option<Self> {
         bsd::default_route()
     }
 
     #[cfg(target_os = "linux")]
-    pub fn new() -> Option<Self> {
-        todo!()
+    pub async fn new() -> Option<Self> {
+        linux::default_route().await
     }
 }
 
 /// Like `DefaultRoutDetails::new` but only returns the interface name.
-pub fn default_route_interface() -> Option<String> {
-    DefaultRouteDetails::new().map(|v| v.interface_name)
+pub async fn default_route_interface() -> Option<String> {
+    DefaultRouteDetails::new().await.map(|v| v.interface_name)
 }
 
 #[cfg(any(

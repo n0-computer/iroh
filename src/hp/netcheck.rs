@@ -392,7 +392,7 @@ impl Client {
         // TODO: always clear `cur_state`
         // defer func() { c.curState = nil }()
 
-        let if_state = interfaces::State::new();
+        let if_state = interfaces::State::new().await;
 
         // See if IPv6 works at all, or if it's been hard disabled at the OS level.
         {

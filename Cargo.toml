@@ -34,6 +34,7 @@ hostname = "0.3.1"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 libc = "0.2.139"
 multibase = { version = "0.9.1", optional = true }
+netlink-packet-route = "0.15.0"
 once_cell = "1.17.0"
 os_info = "3.6.0"
 portable-atomic = "1"
@@ -46,6 +47,7 @@ rand = "0.8"
 rcgen = "0.10"
 reqwest = "0.11.14"
 ring = "0.16.20"
+rtnetlink = "0.12.0"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
