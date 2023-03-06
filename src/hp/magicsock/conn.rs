@@ -1560,10 +1560,9 @@ impl Conn {
         let di = disco_info_locked(disco_info, &*disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
         debug!(
-            "sealing msg from {:?} to {:?}\n{}",
+            "sealing msg from {:?} to {:?}",
             disco_private.public(),
             dst_disco,
-            hex::encode(&seal),
         );
         drop(state);
 
@@ -1683,11 +1682,10 @@ impl Conn {
             // Don't log in normal case. Pass on to wireguard, in case
             // it's actually a wireguard packet (super unlikely, but).
             debug!(
-                "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}:\n{}",
+                "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
                 disco_private.public(),
                 sender,
                 payload,
-                hex::encode(sealed_box),
             );
             // TODO:
             // metricRecvDiscoBadKey.Add(1)
@@ -3182,6 +3180,7 @@ impl Drop for WgGuard {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use rand::RngCore;
     use tokio::{net, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -3589,87 +3588,124 @@ mod tests {
         }
 
         // msg from  m2 -> m1
-        {
-            info!("m2 -> m1");
-            let m1_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m1.quic_ep.local_addr()?.port(),
-            );
-            let m2_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m2.quic_ep.local_addr()?.port(),
-            );
-            info!("m1: {}, m2: {}", m1_addr, m2.quic_ep.local_addr()?);
+        macro_rules! roundtrip {
+            ($a:expr, $b:expr, $msg:expr) => {
+                let a = $a.clone();
+                let b = $b.clone();
+                let a_name = stringify!($a);
+                let b_name = stringify!($b);
+                info!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
+                let a_addr =
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), a.quic_ep.local_addr()?.port());
+                let b_addr =
+                    SocketAddr::new("127.0.0.1".parse().unwrap(), b.quic_ep.local_addr()?.port());
+                info!(
+                    "{}: {}, {}: {}",
+                    a_name,
+                    a_addr,
+                    b_name,
+                    b.quic_ep.local_addr()?
+                );
 
-            // Setup connection information for discovery
-            m2.conn
-                .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
-                .await;
+                // Setup connection information for discovery
+                a.conn
+                    .add_valid_disco_path_for_test(&b.public(), &b_addr)
+                    .await;
+                b.conn
+                    .add_valid_disco_path_for_test(&a.public(), &a_addr)
+                    .await;
 
-            m1.conn
-                .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
-                .await;
+                let b_task = tokio::task::spawn(async move {
+                    info!("[{}] accepting conn", b_name);
+                    while let Some(conn) = b.quic_ep.accept().await {
+                        info!("[{}] connecting", b_name);
+                        let conn = conn
+                            .await
+                            .with_context(|| format!("[{}] connecting", b_name))?;
+                        info!("[{}] accepting bi", b_name);
+                        let (mut send_bi, recv_bi) = conn
+                            .accept_bi()
+                            .await
+                            .with_context(|| format!("[{}] accepting bi", b_name))?;
 
-            let m1_task = tokio::task::spawn(async move {
-                info!("[m1] accepting conn");
-                while let Some(conn) = m1.quic_ep.accept().await {
-                    info!("[m1] connecting");
-                    let conn = conn.await.context("[m1] connecting")?;
-                    info!("[m1] accepting bi");
-                    let (mut send_bi, recv_bi) =
-                        conn.accept_bi().await.context("[m1] accepting bi")?;
+                        info!("[{}] reading", b_name);
+                        let val = recv_bi
+                            .read_to_end(usize::MAX)
+                            .await
+                            .with_context(|| format!("[{}] reading to end", b_name))?;
+                        send_bi
+                            .finish()
+                            .await
+                            .with_context(|| format!("[{}] finishing", b_name))?;
+                        info!("[{}] finished", b_name);
+                        return Ok::<_, anyhow::Error>(val);
+                    }
+                    bail!("no connections available anymore");
+                });
 
-                    info!("[m1] reading");
-                    let val = recv_bi
-                        .read_to_end(usize::MAX)
-                        .await
-                        .context("[m1] reading to end")?;
-                    send_bi.finish().await.context("[m1] finishing")?;
-                    info!("[m1] finished");
-                    return Ok::<_, anyhow::Error>(val);
-                }
+                info!("[{}] connecting to {}", a_name, b_addr);
+                let conn = a
+                    .quic_ep
+                    .connect(b_addr, "localhost")?
+                    .await
+                    .with_context(|| format!("[{}] connect", a_name))?;
 
-                unreachable!()
-            });
+                info!("[{}] opening bi", a_name);
+                let (mut send_bi, recv_bi) = conn
+                    .open_bi()
+                    .await
+                    .with_context(|| format!("[{}] open bi", a_name))?;
+                info!("[{}] writing message", a_name);
+                send_bi
+                    .write_all(&$msg[..])
+                    .await
+                    .with_context(|| format!("[{}] write all", a_name))?;
 
-            info!("[m2] connecting to m1");
-            let conn = m2
-                .quic_ep
-                .connect(m1_addr, "localhost")?
-                .await
-                .context("[m2]")?;
+                info!("[{}] finishing", a_name);
+                send_bi
+                    .finish()
+                    .await
+                    .with_context(|| format!("[{}] finish", a_name))?;
 
-            info!("[m2] opening bi");
-            let (mut send_bi, recv_bi) = conn.open_bi().await.context("[m2] open bi")?;
-            info!("[m2] writing message");
-            send_bi
-                .write_all(b"hello")
-                .await
-                .context("[m2] write all")?;
-            info!("[m2] finishing");
-            send_bi.finish().await.context("[m2] finish")?;
+                info!("[{}] reading_to_end", a_name);
+                let _ = recv_bi
+                    .read_to_end(usize::MAX)
+                    .await
+                    .with_context(|| format!("[{}]", a_name))?;
+                info!("[{}] close", a_name);
+                conn.close(0u32.into(), b"done");
+                info!("[{}] wait idle", a_name);
+                a.quic_ep.wait_idle().await;
 
-            info!("[m2] reading_to_end");
-            let _ = recv_bi.read_to_end(usize::MAX).await.context("[m2]")?;
-            info!("[m2] close");
-            conn.close(0u32.into(), b"done");
-            info!("[m2] wait idle");
-            m2.quic_ep.wait_idle().await;
+                drop(send_bi);
 
-            drop(send_bi);
-
-            // make sure the right values arrived
-            info!("waiting for channel");
-            let val = m1_task.await??;
-            assert_eq!(val, b"hello");
+                // make sure the right values arrived
+                info!("waiting for channel");
+                let val = b_task.await??;
+                anyhow::ensure!(
+                    val == $msg,
+                    "expected {}, got {}",
+                    hex::encode($msg),
+                    hex::encode(val)
+                );
+            };
         }
 
-        // TODO: m1 -> m2
+        for i in 0..10 {
+            info!("round {}", i + 1);
+            roundtrip!(m1, m2, b"hello");
+            roundtrip!(m2, m1, b"hello");
+        }
 
-        // TODO: send_datagram m2 -> m1
+        info!("larger data");
+        {
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
+        }
 
-        // TODO: send_datagram m1 -> m2
-
+        info!("cleaning up");
         cleanup();
         cleanup_mesh();
         Ok(())
