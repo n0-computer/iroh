@@ -24,7 +24,10 @@ use crate::hp::{
         FRAME_KEEP_ALIVE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, FRAME_SERVER_KEY, MAX_FRAME_SIZE,
         MAX_INFO_LEN, NONCE_LEN,
     },
-    key::{self, node::PublicKey},
+    key::{
+        self,
+        node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
+    },
     magicsock::Conn,
 };
 
@@ -38,11 +41,9 @@ where
     RL: RateLimiter,
 {
     /// Server key of the DERP server, not a machine or node key
-    server_key: key::node::PublicKey,
-    /// TODO: maybe change to "secret_key" to match `key::node::SecretKey` naming
-    private_key: key::node::SecretKey,
-    /// public key associated with `private_key`
-    public_key: key::node::PublicKey,
+    server_key: PublicKey,
+    /// The public/private keypair
+    secret_key: SecretKey,
     conn: Conn,
     reader: R,
     /// TODO: This is a string in the go impl, using bytes here to make it easier for postcard
@@ -100,8 +101,8 @@ where
         }
 
         let msg = self
-            .private_key
-            .open_from(&self.public_key, buf)
+            .secret_key
+            .open_from(&self.secret_key.verifying_key(), buf)
             .context(format!(
                 "failed to open crypto_box from server key {:?}",
                 self.server_key.as_bytes()
@@ -121,9 +122,11 @@ where
             },
             &mut buf,
         )?;
-        let mut msg = self.private_key.seal_to(&self.public_key, msg);
+        let mut msg = self
+            .secret_key
+            .seal_to(&self.secret_key.verifying_key(), msg);
         // TODO: doing bufs all over the place...
-        let mut buf: Vec<u8> = self.public_key.as_bytes().to_vec();
+        let mut buf: Vec<u8> = self.secret_key.verifying_key().as_bytes().to_vec();
         buf.append(&mut msg);
         let mut writer = self.writer.lock().await;
         write_frame(&mut *writer, FRAME_CLIENT_INFO, &buf).await
@@ -141,7 +144,7 @@ where
         if packet.len() > MAX_PACKET_SIZE {
             bail!("packet too big: {}", packet.len());
         }
-        let frame_len = key::node::KEY_SIZE + packet.len();
+        let frame_len = PUBLIC_KEY_LENGTH + packet.len();
         {
             let mut writer = self.writer.lock().await;
             {
@@ -172,7 +175,7 @@ where
             bail!("packet too big: {}", packet.len());
         }
 
-        let frame_len = key::node::KEY_SIZE + packet.len();
+        let frame_len = PUBLIC_KEY_LENGTH + packet.len();
         let writer = Arc::clone(&self.writer);
         let write_task = tokio::spawn(async move {
             let mut writer = writer.lock().await;
@@ -348,7 +351,7 @@ where
                     return Ok(ReceivedMessage::KeepAlive);
                 }
                 FRAME_PEER_GONE => {
-                    if (frame_len) < crypto_box::KEY_SIZE {
+                    if (frame_len) < PUBLIC_KEY_LENGTH {
                         tracing::warn!(
                             "unexpected: dropping short PEER_GONE frame from DERP server"
                         );
@@ -358,7 +361,7 @@ where
                     return Ok(ReceivedMessage::PeerGone(PublicKey::from(key)));
                 }
                 FRAME_PEER_PRESENT => {
-                    if (frame_len) < crypto_box::KEY_SIZE {
+                    if (frame_len) < PUBLIC_KEY_LENGTH {
                         tracing::warn!(
                             "unexpected: dropping short PEER_PRESENT frame from DERP server"
                         );
@@ -368,14 +371,14 @@ where
                     return Ok(ReceivedMessage::PeerPresent(PublicKey::from(key)));
                 }
                 FRAME_RECV_PACKET => {
-                    if (frame_len) < crypto_box::KEY_SIZE {
+                    if (frame_len) < PUBLIC_KEY_LENGTH {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
                     let key = get_key_from_slice(&frame_payload[..])?;
                     let packet = ReceivedMessage::ReceivedPacket {
                         source: key,
-                        data: frame_payload[crypto_box::KEY_SIZE..].to_vec(),
+                        data: frame_payload[PUBLIC_KEY_LENGTH..].to_vec(),
                     };
                     return Ok(packet);
                 }
@@ -424,7 +427,7 @@ where
 
 // errors if `frame_len` is less than the expected key size
 fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
-    Ok(<[u8; crypto_box::KEY_SIZE]>::try_from(payload)?.into())
+    Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
 #[derive(Serialize, Deserialize, MaxSize)]
@@ -448,15 +451,15 @@ pub(crate) struct ClientInfo {
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
-        source: key::node::PublicKey,
+        source: PublicKey,
         /// The received packet bytes. It aliases the memory passed to Client.Recv.
         data: Vec<u8>, // TODO: ref
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
-    PeerGone(key::node::PublicKey),
+    PeerGone(PublicKey),
     /// Indicates that the client is connected to the server. (Only used by trusted mesh clients)
-    PeerPresent(key::node::PublicKey),
+    PeerPresent(PublicKey),
     /// Sent by the server upon first connect.
     ServerInfo {
         /// How many bytes per second the server says it will accept, including all framing bytes.

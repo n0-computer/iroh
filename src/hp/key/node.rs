@@ -5,8 +5,6 @@ pub use ed25519_dalek::{SigningKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
 use super::{disco, disco::NONCE_LEN};
 use anyhow::{anyhow, ensure, Result};
 
-pub(crate) const KEY_SIZE: usize = 32;
-
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(ed25519_dalek::VerifyingKey);
 
@@ -116,12 +114,6 @@ impl SecretKey {
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "SecretKey({})", hex::encode(self.0.to_bytes()))
-    }
-}
-
-impl AsRef<[u8]> for SecretKey {
-    fn as_ref(&self) -> &[u8] {
-        &self.0.to_bytes()
     }
 }
 
