@@ -1,9 +1,10 @@
 //! based on tailscale/derp/derp_client.go
+use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{net::SocketAddr, sync::Arc};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use quinn::AsyncUdpSocket;
@@ -34,11 +35,10 @@ use crate::hp::{
 const SERVER_KEY_FRAME_MAX_SIZE: usize = 1024;
 
 /// A DERP Client.
-struct Client<W, R, RL>
+struct Client<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
     R: AsyncRead + Unpin,
-    RL: RateLimiter,
 {
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
@@ -56,7 +56,7 @@ where
     // mutex lock to protect the writer
     writer: Arc<Mutex<W>>,
     // TODO: maybe write a trait to make working with the rate limiter less gross cause it's currently disgusting
-    rate_limiter: Arc<Mutex<RL>>,
+    rate_limiter: Option<RateLimiter>,
     /// Once the Client has received an error while receiving (`recv`), it's considered dead & should
     /// respond to all future attempts to `recv` with an error
     /// TODO: name?
@@ -65,11 +65,10 @@ where
 
 /// TODO: ClientBuilder
 
-impl<W, R, RL> Client<W, R, RL>
+impl<W, R> Client<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    RL: RateLimiter,
 {
     // TODO: for something relatively straight forward, this is pretty hard to follow
     // TODO: also, should Client.server_key be an option?
@@ -147,8 +146,7 @@ where
         let frame_len = PUBLIC_KEY_LENGTH + packet.len();
         {
             let mut writer = self.writer.lock().await;
-            {
-                let rate_limiter = &*self.rate_limiter.lock().await;
+            if let Some(rate_limiter) = &self.rate_limiter {
                 match rate_limiter.check_n(frame_len) {
                     Ok(_) => {}
                     Err(_) => {
@@ -253,8 +251,14 @@ where
             token_bucket_bytes_burst,
         } = sm
         {
-            let mut rate_limiter = self.rate_limiter.lock().await;
-            rate_limiter.update(token_bucket_bytes_per_second, token_bucket_bytes_burst);
+            if token_bucket_bytes_per_second == 0 || token_bucket_bytes_burst == 0 {
+                self.rate_limiter = None;
+            } else {
+                self.rate_limiter = Some(
+                    RateLimiter::new(token_bucket_bytes_per_second, token_bucket_bytes_burst)
+                        .unwrap(),
+                );
+            }
         }
     }
 
@@ -506,12 +510,34 @@ pub enum ReceivedMessage {
     },
 }
 
-pub trait RateLimiter {
-    /// Adjust the rate limiter to use the new rate:
-    ///     `bytes_per_second` measures how many bytes are allowed to be
-    ///     transfered per second
-    ///     `bytes_burst`, measures the number of bytes that can be transfered
-    ///     at one time
-    fn update(&mut self, bytes_per_second: usize, bytes_burst: usize) -> Result<()>;
-    fn check_n(&self, n: usize) -> Result<()>;
+struct RateLimiter {
+    inner: governor::RateLimiter<
+        governor::state::direct::NotKeyed,
+        governor::state::InMemoryState,
+        governor::clock::DefaultClock,
+        governor::middleware::NoOpMiddleware,
+    >,
+}
+
+impl RateLimiter {
+    fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Self> {
+        ensure!(bytes_per_second != 0);
+        ensure!(bytes_burst != 0);
+        let bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)?).unwrap();
+        let bytes_burst = NonZeroU32::new(u32::try_from(bytes_burst)?).unwrap();
+        Ok(Self {
+            inner: governor::RateLimiter::direct(
+                governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
+            ),
+        })
+    }
+
+    fn check_n(&self, n: usize) -> Result<()> {
+        ensure!(n != 0);
+        let n = NonZeroU32::new(u32::try_from(n)?).unwrap();
+        match self.inner.check_n(n) {
+            Ok(_) => Ok(()),
+            Err(_) => bail!("batch cannot go through"),
+        }
+    }
 }
