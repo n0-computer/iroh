@@ -1,4 +1,5 @@
 //! based on tailscale/derp/derp_client.go
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{net::SocketAddr, sync::Arc};
 
@@ -58,9 +59,10 @@ where
     writer: Arc<Mutex<W>>,
     // TODO: maybe write a trait to make working with the rate limiter less gross cause it's currently disgusting
     rate_limiter: Option<Arc<RateLimiter<governor::state::direct::NotKeyed, S, C, MW>>>,
-    /// sticky (set by Recv)
-    /// TODO: temporarily a string until I figure out what to do about cloning errors
-    recv_err: Arc<Mutex<Option<String>>>,
+    /// Once the Client has received an error while receiving, it's considered dead & should
+    /// respond to all attempts to `recv` with an error
+    /// TODO: name?
+    is_dead: AtomicBool,
 }
 
 /// TODO: ClientBuilder
@@ -83,7 +85,7 @@ where
             read_frame(&mut self.reader, SERVER_KEY_FRAME_MAX_SIZE, &mut buf).await?;
         if frame_len < buf.len()
             || frame_type != FRAME_SERVER_KEY
-            || buf[..magic_len] != MAGIC.bytes().collect::<Vec<_>>()[..]
+            || buf[..magic_len] != *MAGIC.as_bytes()
         {
             bail!("invalid server greeting");
         }
@@ -268,9 +270,8 @@ where
 
     async fn local_addr(&self) -> Result<SocketAddr> {
         {
-            let recv_err = self.recv_err.lock().await;
-            if let Some(e) = &*recv_err {
-                bail!(e.clone());
+            if self.is_dead.load(Ordering::Relaxed) {
+                bail!("Client is dead");
             }
         }
         Ok(self.conn.local_addr()?)
@@ -286,34 +287,28 @@ where
         self.recv_check_error(Duration::from_secs(120)).await
     }
 
-    async fn recv_check_error(&self, timeout: Duration) -> Result<ReceivedMessage> {
-        {
-            let recv_err = self.recv_err.lock().await;
-            if let Some(err) = &*recv_err {
-                bail!(err.clone());
-            }
+    async fn recv_check_error(&self, timeout_duration: Duration) -> Result<ReceivedMessage> {
+        if self.is_dead.load(Ordering::Relaxed) {
+            bail!("Client is dead");
         }
-        match self.recv_timeout(timeout).await {
+        match self.recv_timeout(timeout_duration).await {
             Ok(m) => Ok(m),
             Err(e) => {
-                let mut recv_err = self.recv_err.lock().await;
-                // if it's errored on a simultaneous call to `recv` alread, just
-                // return the other error
-                if let Some(err) = &*recv_err {
-                    bail!(err.clone());
-                } else {
-                    *recv_err = Some(e.to_string());
-                    bail!(e);
-                }
+                self.is_dead.swap(true, Ordering::Relaxed);
+                bail!(e);
             }
         }
     }
 
-    async fn recv_timeout(&self, timeout: Duration) -> Result<ReceivedMessage> {
-        todo!();
+    async fn recv_timeout(&self, timeout_duration: Duration) -> Result<ReceivedMessage> {
+        let recv_task = tokio::spawn(async { self.recv_0().await });
+        tokio::time::timeout(timeout_duration, recv_task).await??
     }
 
     async fn recv_0(&mut self) -> Result<ReceivedMessage> {
+        // from the tailscale/derp/derp_client.go:
+        // "In practice [a frame is] 4KB (from derphttp.Client's bufio.NewReader(httpConn)) and
+        // in practice, WireGuard packets (and thus DERP frames) are under 1.5 KiB."
         let mut frame_payload = BytesMut::with_capacity(4 * 1024);
         loop {
             let (frame_type, frame_len) = read_frame_header(&mut self.reader).await?;

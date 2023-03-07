@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+        let sender_key = key::node::SecretKey::generate();
         let sender_node_key: key::node::PublicKey = sender_key.verifying_key().into();
         let msg = Message::Ping(Ping {
             tx_id: stun::TransactionId::default(),

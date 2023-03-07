@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use anyhow::{anyhow, ensure, Result};
 
 pub const PUBLIC_RAW_LEN: usize = 32;
-const NONCE_LEN: usize = 24;
+pub(crate) const NONCE_LEN: usize = 24;
 pub const SECRET_RAW_LEN: usize = 32;
 
 /// Public key for a discovery.

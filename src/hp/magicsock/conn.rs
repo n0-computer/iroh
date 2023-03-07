@@ -3336,7 +3336,7 @@ mod tests {
     }
 
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
-        let d = derp::Server::new(key::node::SecretKey::generate(&mut rand::rngs::OsRng));
+        let d = derp::Server::new(key::node::SecretKey::generate());
 
         // TODO: configure DERP server when actually implemented
         // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
@@ -3392,7 +3392,7 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
-            let key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+            let key = key::node::SecretKey::generate();
             Self::with_key(key, derp_map).await
         }
 
