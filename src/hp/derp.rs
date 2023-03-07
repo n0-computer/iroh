@@ -37,16 +37,16 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// 8 bytes: 0x44 45 52 50 f0 9f 94 91
 const MAGIC: &str = "DERP🔑";
 
-const NONCE_LEN: u8 = 24;
-const FRAME_HEADER_LEN: u8 = 1 + 4; // FrameType byte + 4 byte length
-const KEY_LEN: u8 = 32;
+const NONCE_LEN: usize = 24;
+const FRAME_HEADER_LEN: usize = 1 + 4; // FrameType byte + 4 byte length
+const KEY_LEN: usize = 32;
 const MAX_INFO_LEN: usize = 1024 * 1024;
 const KEEP_ALIVE: Duration = Duration::from_secs(60);
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FRAME_RECV_PACKET at beginning
-const PROTOCOL_VERSION: u8 = 2;
+const PROTOCOL_VERSION: usize = 2;
 
 /// The one byte frame type at the beginning of the frame
 /// header. The second field is a big-endian u32 describing the
@@ -137,7 +137,7 @@ const FRAME_RESTARTING: FrameType = 0x15;
 async fn read_frame_type_header(
     reader: impl AsyncRead + Unpin,
     want_type: FrameType,
-) -> Result<u32> {
+) -> Result<usize> {
     let (got_type, frame_len) = read_frame_header(reader).await?;
     if want_type != got_type {
         bail!("bad frame type {got_type:#04x}, want {want_type:#04x}");
@@ -145,10 +145,10 @@ async fn read_frame_type_header(
     Ok(frame_len)
 }
 
-async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, u32)> {
+async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, usize)> {
     let frame_type = reader.read_u8().await?;
     let frame_len = reader.read_u32().await?;
-    Ok((frame_type, frame_len))
+    Ok((frame_type, frame_len as usize))
 }
 
 /// AsyncReads a frame header and then reads its payload into `bytes` of
@@ -163,14 +163,15 @@ async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameT
 /// `frame_len`, we DO NOT ERROR.
 async fn read_frame(
     mut reader: impl AsyncRead + Unpin,
-    max_size: u32,
-    mut bytes: BytesMut,
-) -> Result<(FrameType, u32)> {
+    max_size: usize,
+    mut bytes: &mut BytesMut,
+) -> Result<(FrameType, usize)> {
     let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
     if frame_len > max_size {
         bail!("frame header size {frame_len} exceeds reader limit of {max_size}");
     }
-    // TODO: this is weird and wrong
+    // TODO: trusting that the caller has sized the buffer correctly? Shouldn't we just attempt to
+    // read `frame_len` amount?
     reader.read_exact(&mut bytes).await?;
     Ok((frame_type, frame_len))
 }
@@ -178,8 +179,9 @@ async fn read_frame(
 async fn write_frame_header(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
-    frame_len: u32,
+    frame_len: usize,
 ) -> Result<()> {
+    let frame_len = u32::try_from(frame_len)?;
     writer.write_u8(frame_type).await?;
     writer.write_u32(frame_len).await?;
     Ok(())
@@ -189,13 +191,12 @@ async fn write_frame_header(
 async fn write_frame(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
-    bytes: BytesMut,
+    bytes: &[u8],
 ) -> Result<()> {
     if bytes.len() > MAX_FRAME_SIZE {
         bail!("unreasonably large frame write");
     }
-    let frame_len = u32::try_from(bytes.len())?;
-    write_frame_header(&mut writer, frame_type, frame_len).await?;
+    write_frame_header(&mut writer, frame_type, bytes.len()).await?;
     writer.write_all(&bytes).await?;
     writer.flush().await?;
     Ok(())

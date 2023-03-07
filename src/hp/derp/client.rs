@@ -28,7 +28,7 @@ use crate::hp::{
     magicsock::Conn,
 };
 
-const SERVER_KEY_FRAME_MAX_SIZE: u32 = 1024;
+const SERVER_KEY_FRAME_MAX_SIZE: usize = 1024;
 
 /// A DERP Client.
 struct Client<W, R, S, C, MW = governor::middleware::NoOpMiddleware>
@@ -81,8 +81,7 @@ where
         let mut buf = BytesMut::with_capacity(magic_len + 32);
         let (frame_type, frame_len) =
             read_frame(&mut self.reader, SERVER_KEY_FRAME_MAX_SIZE, &mut buf).await?;
-        let buffer_len = u32::try_from(buf.len())?;
-        if frame_len < buffer_len
+        if frame_len < buf.len()
             || frame_type != FRAME_SERVER_KEY
             || buf[..magic_len] != MAGIC.bytes().collect::<Vec<_>>()[..]
         {
@@ -94,10 +93,9 @@ where
     }
 
     async fn parse_server_info(&self, buf: &mut [u8]) -> Result<ServerInfo> {
-        // TODO: should NONCE_LEN just be usize?
-        let max_len = NONCE_LEN as usize + MAX_INFO_LEN;
+        let max_len = NONCE_LEN + MAX_INFO_LEN;
         let frame_len = buf.len();
-        if frame_len < NONCE_LEN as usize {
+        if frame_len < NONCE_LEN {
             bail!("short ServerInfo frame");
         }
         if frame_len > max_len {
@@ -146,7 +144,7 @@ where
         if packet.len() > MAX_PACKET_SIZE {
             bail!("packet too big: {}", packet.len());
         }
-        let frame_len = u32::try_from(key::node::KEY_SIZE + packet.len())?;
+        let frame_len = key::node::KEY_SIZE + packet.len();
         let rate_limiter = match &self.rate_limiter {
             None => None,
             Some(rl) => Some(Arc::clone(&rl)),
@@ -154,6 +152,7 @@ where
         {
             let mut writer = self.writer.lock().await;
             if let Some(rate_limiter) = rate_limiter {
+                let frame_len = u32::try_from(frame_len)?;
                 match rate_limiter.check_n(std::num::NonZeroU32::new(frame_len).unwrap()) {
                     Ok(_) => {}
                     Err(_) => {
@@ -180,7 +179,7 @@ where
             bail!("packet too big: {}", packet.len());
         }
 
-        let frame_len = u32::try_from(key::node::KEY_SIZE + packet.len())?;
+        let frame_len = key::node::KEY_SIZE + packet.len();
         let writer = Arc::clone(&self.writer);
         let write_task = tokio::spawn(async move {
             let mut writer = writer.lock().await;
@@ -318,7 +317,7 @@ where
         let mut frame_payload = BytesMut::with_capacity(4 * 1024);
         loop {
             let (frame_type, frame_len) = read_frame_header(&mut self.reader).await?;
-            if frame_len as usize > MAX_FRAME_SIZE {
+            if frame_len > MAX_FRAME_SIZE {
                 bail!("unexpectedly large frame of {} bytes returned", frame_len);
             }
             let mut read_total = 0;
@@ -329,7 +328,7 @@ where
                 }
                 read_total += read;
             }
-            if read_total != frame_len as usize {
+            if read_total != frame_len {
                 bail!(
                     "unexpected number of bytes sent in frame, said {}, received {}",
                     frame_len,
@@ -359,7 +358,7 @@ where
                     return Ok(ReceivedMessage::KeepAlive);
                 }
                 FRAME_PEER_GONE => {
-                    if (frame_len as usize) < crypto_box::KEY_SIZE {
+                    if (frame_len) < crypto_box::KEY_SIZE {
                         tracing::warn!(
                             "unexpected: dropping short PEER_GONE frame from DERP server"
                         );
@@ -369,7 +368,7 @@ where
                     return Ok(ReceivedMessage::PeerGone(PublicKey::from(key)));
                 }
                 FRAME_PEER_PRESENT => {
-                    if (frame_len as usize) < crypto_box::KEY_SIZE {
+                    if (frame_len) < crypto_box::KEY_SIZE {
                         tracing::warn!(
                             "unexpected: dropping short PEER_PRESENT frame from DERP server"
                         );
@@ -379,7 +378,7 @@ where
                     return Ok(ReceivedMessage::PeerPresent(PublicKey::from(key)));
                 }
                 FRAME_RECV_PACKET => {
-                    if (frame_len as usize) < crypto_box::KEY_SIZE {
+                    if (frame_len) < crypto_box::KEY_SIZE {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
