@@ -5,7 +5,6 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
-use governor::RateLimiter;
 use postcard::experimental::max_size::MaxSize;
 use quinn::AsyncUdpSocket;
 use serde::{Deserialize, Serialize};
@@ -32,13 +31,11 @@ use crate::hp::{
 const SERVER_KEY_FRAME_MAX_SIZE: usize = 1024;
 
 /// A DERP Client.
-struct Client<W, R, S, C, MW = governor::middleware::NoOpMiddleware>
+struct Client<W, R, RL>
 where
     W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
     R: AsyncRead + Unpin,
-    S: governor::state::DirectStateStore<Key = governor::state::direct::NotKeyed>,
-    C: governor::clock::Clock,
-    MW: governor::middleware::RateLimitingMiddleware<C::Instant>,
+    RL: RateLimiter,
 {
     /// Server key of the DERP server, not a machine or node key
     server_key: key::node::PublicKey,
@@ -58,22 +55,20 @@ where
     // mutex lock to protect the writer
     writer: Arc<Mutex<W>>,
     // TODO: maybe write a trait to make working with the rate limiter less gross cause it's currently disgusting
-    rate_limiter: Option<Arc<RateLimiter<governor::state::direct::NotKeyed, S, C, MW>>>,
-    /// Once the Client has received an error while receiving, it's considered dead & should
-    /// respond to all attempts to `recv` with an error
+    rate_limiter: Arc<Mutex<RL>>,
+    /// Once the Client has received an error while receiving (`recv`), it's considered dead & should
+    /// respond to all future attempts to `recv` with an error
     /// TODO: name?
     is_dead: AtomicBool,
 }
 
 /// TODO: ClientBuilder
 
-impl<W, R, S, C, MW> Client<W, R, S, C, MW>
+impl<W, R, RL> Client<W, R, RL>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    S: governor::state::DirectStateStore<Key = governor::state::direct::NotKeyed>,
-    C: governor::clock::Clock,
-    MW: governor::middleware::RateLimitingMiddleware<C::Instant>,
+    RL: RateLimiter,
 {
     // TODO: for something relatively straight forward, this is pretty hard to follow
     // TODO: also, should Client.server_key be an option?
@@ -147,21 +142,17 @@ where
             bail!("packet too big: {}", packet.len());
         }
         let frame_len = key::node::KEY_SIZE + packet.len();
-        let rate_limiter = match &self.rate_limiter {
-            None => None,
-            Some(rl) => Some(Arc::clone(&rl)),
-        };
         {
             let mut writer = self.writer.lock().await;
-            if let Some(rate_limiter) = rate_limiter {
-                let frame_len = u32::try_from(frame_len)?;
-                match rate_limiter.check_n(std::num::NonZeroU32::new(frame_len).unwrap()) {
+            {
+                let rate_limiter = &*self.rate_limiter.lock().await;
+                match rate_limiter.check_n(frame_len) {
                     Ok(_) => {}
                     Err(_) => {
                         tracing::warn!("dropping send: rate limit reached");
                         return Ok(());
                     }
-                }
+                };
             }
             write_frame_header(&mut *writer, FRAME_SEND_PACKET, frame_len).await?;
             writer.write_all(dstkey.as_bytes()).await?;
@@ -256,15 +247,11 @@ where
     async fn set_send_rate_limiter(&mut self, sm: ReceivedMessage) {
         if let ReceivedMessage::ServerInfo {
             token_bucket_bytes_per_second,
-            ..
+            token_bucket_bytes_burst,
         } = sm
         {
-            if token_bucket_bytes_per_second == 0 {
-                self.rate_limiter = None;
-            } else {
-                // make a new rate_limiter & add it to the client
-                todo!("the rate limiter stuff is a mess, figure it out");
-            }
+            let mut rate_limiter = self.rate_limiter.lock().await;
+            rate_limiter.update(token_bucket_bytes_per_second, token_bucket_bytes_burst);
         }
     }
 
@@ -283,11 +270,11 @@ where
     /// should only be accessed until the next call to [`Client`].
     ///
     /// Once [`recv`] returns an error, the [`Client`] is dead forever.
-    pub async fn recv(&self) -> Result<ReceivedMessage> {
+    pub async fn recv(&mut self) -> Result<ReceivedMessage> {
         self.recv_check_error(Duration::from_secs(120)).await
     }
 
-    async fn recv_check_error(&self, timeout_duration: Duration) -> Result<ReceivedMessage> {
+    async fn recv_check_error(&mut self, timeout_duration: Duration) -> Result<ReceivedMessage> {
         if self.is_dead.load(Ordering::Relaxed) {
             bail!("Client is dead");
         }
@@ -300,9 +287,17 @@ where
         }
     }
 
-    async fn recv_timeout(&self, timeout_duration: Duration) -> Result<ReceivedMessage> {
-        let recv_task = tokio::spawn(async { self.recv_0().await });
-        tokio::time::timeout(timeout_duration, recv_task).await??
+    async fn recv_timeout(&mut self, timeout_duration: Duration) -> Result<ReceivedMessage> {
+        // let recv_task = tokio::spawn(async { self.recv_0().await });
+        // tokio::time::timeout(timeout_duration, recv_task).await??
+        tokio::select! {
+            _ = tokio::time::sleep(timeout_duration) => {
+                bail!("recv call exceeded timeout");
+            }
+            res = self.recv_0() => {
+                res
+            }
+        }
     }
 
     async fn recv_0(&mut self) -> Result<ReceivedMessage> {
@@ -506,4 +501,14 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
+}
+
+pub trait RateLimiter {
+    /// Adjust the rate limiter to use the new rate:
+    ///     `bytes_per_second` measures how many bytes are allowed to be
+    ///     transfered per second
+    ///     `bytes_burst`, measures the number of bytes that can be transfered
+    ///     at one time
+    fn update(&mut self, bytes_per_second: usize, bytes_burst: usize) -> Result<()>;
+    fn check_n(&self, n: usize) -> Result<()>;
 }
