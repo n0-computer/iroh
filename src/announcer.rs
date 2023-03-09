@@ -76,7 +76,10 @@ impl Listener {
             if n > MAX_MSG_SIZE {
                 continue; // not a datagram for us
             }
-            let msg: Message = postcard::from_bytes(&buf[..n])?;
+            let msg: Message = match postcard::from_bytes(&buf[..n]) {
+                Ok(msg) => msg,
+                Err(_) => continue, // not a datagram for us
+            };
             if msg.magic != *MAGIC {
                 continue; // not  a datagram for us
             }
