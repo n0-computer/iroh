@@ -37,6 +37,42 @@ struct Cli {
     keylog: bool,
 }
 
+#[derive(Debug, Clone)]
+enum ProviderRpcPort {
+    Enabled(u16),
+    Disabled,
+}
+
+impl ProviderRpcPort {
+    fn into_option(self) -> Option<u16> {
+        match self {
+            ProviderRpcPort::Enabled(port) => Some(port),
+            ProviderRpcPort::Disabled => None,
+        }
+    }
+}
+
+impl fmt::Display for ProviderRpcPort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderRpcPort::Enabled(port) => write!(f, "{port}"),
+            ProviderRpcPort::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
+impl FromStr for ProviderRpcPort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "disabled" {
+            Ok(ProviderRpcPort::Disabled)
+        } else {
+            Ok(ProviderRpcPort::Enabled(s.parse()?))
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
@@ -55,8 +91,8 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
+        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
+        rpc_port: ProviderRpcPort,
     },
     /// List hashes
     #[clap(about = "List hashes")]
@@ -316,7 +352,8 @@ async fn main_impl() -> Result<()> {
             key,
             rpc_port,
         } => {
-            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
+            let provider =
+                provide(addr, auth_token, key, cli.keylog, rpc_port.into_option()).await?;
             let controller = provider.controller();
             let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
@@ -342,7 +379,7 @@ async fn main_impl() -> Result<()> {
 
                 print_add_response(hash, entries);
                 ticket.hash = hash;
-                println!("All-in-one ticket: {}", ticket);
+                println!("All-in-one ticket: {ticket}");
                 anyhow::Ok(tmp_path)
             });
 
@@ -387,7 +424,7 @@ async fn provide(
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
-    rpc_port: u16,
+    rpc_port: Option<u16>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
@@ -400,7 +437,7 @@ async fn provide(
         let auth_token = AuthToken::from_str(encoded)?;
         builder = builder.auth_token(auth_token);
     }
-    let provider = if rpc_port != 0 {
+    let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
         builder
             .rpc_endpoint(rpc_endpoint)
