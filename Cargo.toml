@@ -31,6 +31,7 @@ ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
 flume = "0.10.14"
 futures = "0.3.25"
 hex = "0.4.0"
+governor = "0.5.1"
 hostname = "0.3.1"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 libc = "0.2.139"

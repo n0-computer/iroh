@@ -371,7 +371,7 @@ mod tests {
     use anyhow::Result;
 
     fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::node::SecretKey)> {
-        let key = key::node::SecretKey::generate(&mut rand::rngs::OsRng);
+        let key = key::node::SecretKey::generate();
         let tls_server_config =
             tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
         let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));

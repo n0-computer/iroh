@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::hp::key;
 
 #[derive(Debug)]
@@ -8,4 +10,11 @@ impl Server {
         // TODO:
         Server {}
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ServerInfo {
+    pub(crate) version: usize,
+    pub(crate) token_bucket_bytes_per_second: usize,
+    pub(crate) token_bucket_bytes_burst: usize,
 }
