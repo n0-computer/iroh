@@ -15,7 +15,7 @@ use crate::protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
@@ -76,7 +76,7 @@ async fn setup(opts: Options) -> Result<quinn::Connection> {
 
     debug!("connecting to {}", opts.addr);
     let connect = endpoint.connect(opts.addr, "localhost")?;
-    let connection = connect.await?;
+    let connection = connect.await.context("failed connecting to provider")?;
 
     Ok(connection)
 }
