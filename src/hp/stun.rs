@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 use stun_rs::{
     attributes::stun::{Fingerprint, XorMappedAddress},
@@ -8,6 +8,8 @@ pub use stun_rs::{
     attributes::StunAttribute, error::StunDecodeError, methods, MessageClass, MessageDecoder,
     TransactionId,
 };
+
+use crate::hp::to_canonical;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -132,23 +134,12 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
     Err(Error::MalformedAttrs)
 }
 
-// TODO: replace with IpAddr::to_canoncial once stabilized.
-pub fn to_canonical(ip: IpAddr) -> IpAddr {
-    match ip {
-        ip @ IpAddr::V4(_) => ip,
-        IpAddr::V6(ip) => {
-            if let Some(ip) = ip.to_ipv4_mapped() {
-                IpAddr::V4(ip)
-            } else {
-                IpAddr::V6(ip)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub mod test {
-    use std::{net::SocketAddr, sync::Arc};
+    use std::{
+        net::{IpAddr, SocketAddr},
+        sync::Arc,
+    };
 
     use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 

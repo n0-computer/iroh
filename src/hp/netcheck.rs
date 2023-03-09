@@ -22,7 +22,7 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::hp::stun::to_canonical;
+use crate::hp::to_canonical;
 
 use super::{
     clock::Clock,

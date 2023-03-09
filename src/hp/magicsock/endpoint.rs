@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
-    disco, key, stun,
+    disco, is_unicast_link_local, key, stun,
 };
 
 use super::{
@@ -1139,9 +1139,4 @@ impl AddrLatency {
         }
         self.latency < other.latency
     }
-}
-
-// Copied from std lib, not stable yet
-pub const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
-    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
