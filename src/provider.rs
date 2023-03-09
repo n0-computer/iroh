@@ -416,7 +416,6 @@ impl Handler {
         let items = self
             .0
             .blobs()
-            .into_iter()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
         futures::stream::iter(items)
     }
