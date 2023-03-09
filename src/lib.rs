@@ -8,6 +8,8 @@ pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
+pub mod net;
+
 mod tls;
 mod util;
 
