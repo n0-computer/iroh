@@ -26,7 +26,6 @@ derive_more = "0.99.17"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 futures = "0.3.25"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-j4rs = "0.15.3"
 multibase = { version = "0.9.1", optional = true }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -49,6 +48,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"
+
+# Needs https://github.com/astonbitecode/j4rs/#j4rs-in-android
+[target.'cfg(target_os = "android")'.dependencies]
+j4rs = "0.15.3"
 
 [dev-dependencies]
 hex = "0.4.3"

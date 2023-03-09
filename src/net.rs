@@ -25,6 +25,9 @@ impl LocalAddresses {
     /// If there are no regular addresses it will return any IPv4 linklocal or IPv6 unique local
     /// addresses because we know of environments where these are used with NAT to provide connectivity.
     pub fn new() -> Self {
+        #[cfg(target_os = "android")]
+        let ifaces = java_sadness().unwrap_or_default();
+        #[cfg(not(target_os = "android"))]
         let ifaces = default_net::interface::get_interfaces();
 
         let mut loopback = Vec::new();
@@ -146,36 +149,60 @@ const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
-fn java_sadness() -> Result<(), j4rs::errors::J4RsError> {
-    use j4rs::{Instance, InvocationArg, Jvm, JvmBuilder};
+#[cfg(target_os = "android")]
+fn java_sadness() -> anyhow::Result<Vec<IpAddr>> {
+    use j4rs::JvmBuilder;
 
-    // Create a JVM
     let jvm = JvmBuilder::new().build()?;
 
-    // Create a java.lang.String instance
-    let string_instance = jvm.create_instance(
-        "java.lang.String", // The Java class to create an instance for
-        &Vec::new(), // The `InvocationArg`s to use for the constructor call - empty for this example
+    let network_interfaces = jvm.invoke_static(
+        "java.net.NetworkInterface",
+        "getNetworkInterfaces",
+        &Vec::new(),
     )?;
 
-    // The instances returned from invocations and instantiations can be viewed as pointers to Java Objects.
-    // They can be used for further Java calls.
-    // For example, the following invokes the `isEmpty` method of the created java.lang.String instance
-    let boolean_instance = jvm.invoke(
-        &string_instance, // The String instance created above
-        "isEmpty",        // The method of the String instance to invoke
-        &Vec::new(),      // The `InvocationArg`s to use for the invocation - empty for this example
-    )?;
+    let mut ip_list = Vec::new();
+    loop {
+        let has_more = jvm.invoke(&network_interfaces, "hasMoreElements", &Vec::new())?;
+        let has_more: bool = jvm.to_rust(has_more)?;
+        if !has_more {
+            break;
+        }
 
-    // If we need to transform an `Instance` to Rust value, the `to_rust` should be called
-    let rust_boolean: bool = jvm.to_rust(boolean_instance)?;
-    println!(
-        "The isEmpty() method of the java.lang.String instance returned {}",
-        rust_boolean
-    );
-    // The above prints:
-    // The isEmpty() method of the java.lang.String instance returned true
-    Ok(())
+        let interface = jvm.invoke(&network_interfaces, "nextElement", &Vec::new())?;
+        let interface = jvm.cast(&interface, "java.net.NetworkInterface")?;
+        let interface_name = jvm.invoke(&interface, "getDisplayName", &Vec::new())?;
+        let interface_name: String = jvm.to_rust(interface_name)?;
+        println!("Interface: {}", interface_name);
+
+        let ips = jvm.invoke(&interface, "getInetAddresses", &Vec::new())?;
+
+        loop {
+            let has_more = jvm.invoke(&ips, "hasMoreElements", &Vec::new())?;
+            let has_more: bool = jvm.to_rust(has_more)?;
+            if !has_more {
+                break;
+            }
+            let ip = jvm.invoke(&ips, "nextElement", &Vec::new())?;
+            let ip = jvm.cast(&ip, "java.net.InetAddress")?;
+            let ip_string = jvm.invoke(&ip, "toString", &Vec::new())?;
+            let ip_string: String = jvm.to_rust(ip_string)?;
+
+            // String format is like this
+            // /fe80:0:0:0:7823:59ed:8756:ac96%wlp74s0
+            // /192.168.178.89
+
+            let ip_str = ip_string
+                .trim_start_matches('/')
+                .split('%')
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("invalid ip addr format: {}", ip_string))?;
+            let ip: IpAddr = ip_str.parse()?;
+            ip_list.push(ip);
+        }
+    }
+
+    Ok(ip_list)
 }
 
 #[cfg(test)]
@@ -191,8 +218,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "android")]
     fn test_java_sadness() {
-        java_sadness().unwrap();
-        assert!(false);
+        let ips = java_sadness().unwrap();
+        assert!(ips.is_empty());
     }
 }
