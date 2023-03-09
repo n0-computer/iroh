@@ -34,6 +34,42 @@ struct Cli {
     keylog: bool,
 }
 
+#[derive(Debug, Clone)]
+enum ProviderRpcPort {
+    Enabled(u16),
+    Disabled,
+}
+
+impl From<ProviderRpcPort> for Option<u16> {
+    fn from(value: ProviderRpcPort) -> Self {
+        match value {
+            ProviderRpcPort::Enabled(port) => Some(port),
+            ProviderRpcPort::Disabled => None,
+        }
+    }
+}
+
+impl fmt::Display for ProviderRpcPort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderRpcPort::Enabled(port) => write!(f, "{port}"),
+            ProviderRpcPort::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
+impl FromStr for ProviderRpcPort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "disabled" {
+            Ok(ProviderRpcPort::Disabled)
+        } else {
+            Ok(ProviderRpcPort::Enabled(s.parse()?))
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
@@ -51,9 +87,9 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
-        /// Optional rpc port, defaults to 4919
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
+        /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
+        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
+        rpc_port: ProviderRpcPort,
     },
     /// List hashes
     #[clap(about = "List hashes")]
@@ -331,7 +367,7 @@ async fn main_impl() -> Result<()> {
             key,
             rpc_port,
         } => {
-            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
+            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port.into()).await?;
             let controller = provider.controller();
             let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
@@ -423,17 +459,12 @@ async fn provide(
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
-    rpc_port: u16,
+    rpc_port: Option<u16>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
-    // create the rpc endpoint as well as a handle that can be used to control the service locally.
-    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
 
     let db = Database::default();
-    let mut builder = provider::Provider::builder(db)
-        .rpc_endpoint(rpc_endpoint)
-        .keypair(keypair)
-        .keylog(keylog);
+    let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
@@ -441,7 +472,15 @@ async fn provide(
         let auth_token = AuthToken::from_str(encoded)?;
         builder = builder.auth_token(auth_token);
     }
-    let provider = builder.spawn()?;
+    let provider = if let Some(rpc_port) = rpc_port {
+        let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
+        builder
+            .rpc_endpoint(rpc_endpoint)
+            .keypair(keypair)
+            .spawn()?
+    } else {
+        builder.keypair(keypair).spawn()?
+    };
 
     println!("Listening address: {}", provider.listen_addr());
     println!("PeerID: {}", provider.peer_id());
