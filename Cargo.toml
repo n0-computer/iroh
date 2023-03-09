@@ -37,7 +37,7 @@ rustls = { version = "0.20.8", default-features = false, features = ["dangerous_
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
-tempfile = "3"
+tempfile = "3.4"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
