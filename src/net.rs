@@ -10,7 +10,7 @@ const IFF_LOOPBACK: u32 = 0x8;
 pub struct LocalAddresses {
     /// Loopback addresses.
     pub loopback: Vec<IpAddr>,
-    ///
+    /// Regular addresses.
     pub regular: Vec<IpAddr>,
 }
 
