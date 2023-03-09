@@ -140,3 +140,9 @@ impl From<SecretKey> for disco::SecretKey {
         disco::SecretKey::from(value.0.to_bytes())
     }
 }
+
+impl From<SecretKey> for crate::tls::Keypair {
+    fn from(value: SecretKey) -> Self {
+        value.0.into()
+    }
+}

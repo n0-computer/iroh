@@ -134,45 +134,30 @@ const FRAME_HEALTH: FrameType = 0x14;
 /// more details on how the client should interpret them.
 const FRAME_RESTARTING: FrameType = 0x15;
 
-async fn read_frame_type_header(
-    reader: impl AsyncRead + Unpin,
-    want_type: FrameType,
-) -> Result<usize> {
-    let (got_type, frame_len) = read_frame_header(reader).await?;
-    if want_type != got_type {
-        bail!("bad frame type {got_type:#04x}, want {want_type:#04x}");
-    }
-    Ok(frame_len)
-}
-
 async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, usize)> {
     let frame_type = reader.read_u8().await?;
     let frame_len = reader.read_u32().await?;
-    Ok((frame_type, frame_len as usize))
+    Ok((frame_type, frame_len.try_into()?))
 }
 
-/// AsyncReads a frame header and then reads its payload into `bytes` of
-/// `frame_len`.
+/// AsyncReads a frame header and then reads a `frame_len` of bytes into `buf`.
+/// It resizes the `buf` to the expected `frame_len`.
 ///
 /// If the frame header length is greater than `max_size`, `read_frame` returns
 /// an error after reading the frame header.
 ///
-/// If the frame is less than `max_size` but greater than the `bytes.len()`,
-/// `bytes.len()` bytes are read, and there is no error. The `frame_type` and `frame_len`
-/// are returned as a tuple `(FrameType, u32)`. If the number of bytes read are less than
-/// `frame_len`, we DO NOT ERROR.
+/// Also errors if we receive EOF before the end of the expected length of the frame.
 async fn read_frame(
     mut reader: impl AsyncRead + Unpin,
     max_size: usize,
-    mut bytes: &mut BytesMut,
+    mut buf: &mut BytesMut,
 ) -> Result<(FrameType, usize)> {
     let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
     if frame_len > max_size {
         bail!("frame header size {frame_len} exceeds reader limit of {max_size}");
     }
-    // TODO: trusting that the caller has sized the buffer correctly? Shouldn't we just attempt to
-    // read `frame_len` amount?
-    reader.read_exact(&mut bytes).await?;
+    buf.resize(frame_len, 0u8);
+    reader.read_exact(&mut buf).await?;
     Ok((frame_type, frame_len))
 }
 
@@ -191,13 +176,41 @@ async fn write_frame_header(
 async fn write_frame(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
-    bytes: &[u8],
+    bytes: Vec<&[u8]>,
 ) -> Result<()> {
-    if bytes.len() > MAX_FRAME_SIZE {
+    let bytes_len: usize = bytes.iter().map(|b| b.len()).sum();
+    if bytes_len > MAX_FRAME_SIZE {
         bail!("unreasonably large frame write");
     }
-    write_frame_header(&mut writer, frame_type, bytes.len()).await?;
-    writer.write_all(&bytes).await?;
+    write_frame_header(&mut writer, frame_type, bytes_len).await?;
+    for b in bytes {
+        writer.write_all(b).await?;
+    }
     writer.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_basic_read_write() -> Result<()> {
+        let (mut reader, mut writer) = tokio::io::duplex(1024);
+
+        write_frame_header(&mut writer, FRAME_PEER_GONE, 301).await?;
+        let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
+        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_len, 301);
+
+        let expect_buf = b"hello world!";
+        write_frame(&mut writer, FRAME_HEALTH, vec![expect_buf]).await?;
+        println!("{:?}", reader);
+        let mut got_buf = BytesMut::new();
+        let (frame_type, frame_len) = read_frame(&mut reader, 1024, &mut got_buf).await?;
+        assert_eq!(FRAME_HEALTH, frame_type);
+        assert_eq!(expect_buf.len(), frame_len);
+        assert_eq!(expect_buf.as_slice(), &got_buf);
+        Ok(())
+    }
 }

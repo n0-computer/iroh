@@ -1,38 +1,30 @@
 //! based on tailscale/derp/derp_client.go
+use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use quinn::AsyncUdpSocket;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::Mutex,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{
-    read_frame, read_frame_header, server::ServerInfo, write_frame, write_frame_header, FrameType,
-    FRAME_CLIENT_INFO, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED,
-    FRAME_PEER_GONE, FRAME_PING, FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET,
-    FRAME_SERVER_INFO, FRAME_WATCH_CONNS, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER,
+    FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PING,
+    FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_WATCH_CONNS, MAGIC,
+    MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 use crate::hp::{
     derp::{
         FRAME_KEEP_ALIVE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, FRAME_SERVER_KEY, MAX_FRAME_SIZE,
         MAX_INFO_LEN, NONCE_LEN,
     },
-    key::{
-        self,
-        node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
-    },
+    key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
     magicsock::Conn,
 };
-
-const SERVER_KEY_FRAME_MAX_SIZE: usize = 1024;
 
 /// A DERP Client.
 pub struct Client<W, R>
@@ -104,10 +96,13 @@ where
             },
             &mut buf,
         )?;
-        let mut msg = self.secret_key.seal_to(&self.server_key, msg);
-        let mut buf: Vec<u8> = self.secret_key.verifying_key().as_bytes().to_vec();
-        buf.append(&mut msg);
-        write_frame(&mut self.writer, FRAME_CLIENT_INFO, &buf).await
+        let sealed_msg = self.secret_key.seal_to(&self.server_key, msg);
+        write_frame(
+            &mut self.writer,
+            FRAME_CLIENT_INFO,
+            vec![self.secret_key.verifying_key().as_bytes(), &sealed_msg],
+        )
+        .await
     }
 
     /// Returns a reference to the server's public key.
@@ -132,11 +127,12 @@ where
                 }
             };
         }
-        write_frame_header(&mut self.writer, FRAME_SEND_PACKET, frame_len).await?;
-        self.writer.write_all(dstkey.as_bytes()).await?;
-        self.writer.write_all(packet).await?;
-        self.writer.flush().await?;
-        Ok(())
+        write_frame(
+            &mut self.writer,
+            FRAME_SEND_PACKET,
+            vec![dstkey.as_bytes(), packet],
+        )
+        .await
     }
 
     pub async fn forward_packet(
@@ -146,11 +142,12 @@ where
         packet: &[u8],
     ) -> Result<()> {
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                self.write_timeout_fired().await
-            }
+            biased;
             res = self.forward_packet_0(srckey, dstkey, packet) => {
                 res
+            }
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                self.write_timeout_fired().await
             }
         }
     }
@@ -165,12 +162,12 @@ where
             bail!("packet too big: {}", packet.len());
         }
 
-        let frame_len = PUBLIC_KEY_LENGTH + packet.len();
-        write_frame_header(&mut self.writer, FRAME_FORWARD_PACKET, frame_len).await?;
-        self.writer.write_all(srckey.as_bytes()).await?;
-        self.writer.write_all(dstkey.as_bytes()).await?;
-        self.writer.flush().await?;
-        Ok(())
+        write_frame(
+            &mut self.writer,
+            FRAME_FORWARD_PACKET,
+            vec![srckey.as_bytes(), dstkey.as_bytes(), packet],
+        )
+        .await
     }
 
     async fn write_timeout_fired(&self) -> Result<()> {
@@ -186,10 +183,7 @@ where
     }
 
     async fn send_ping_or_pong(&mut self, frame_type: FrameType, data: [u8; 8]) -> Result<()> {
-        write_frame_header(&mut self.writer, frame_type, 8).await?;
-        self.writer.write_all(&data).await?;
-        self.writer.flush().await?;
-        Ok(())
+        write_frame(&mut self.writer, frame_type, vec![&data]).await
     }
 
     /// Sends a packet that tells the server whether this
@@ -203,24 +197,19 @@ where
                 [0x01]
             }
         };
-        write_frame_header(&mut self.writer, FRAME_NOTE_PREFERRED, 1).await?;
-        self.writer.write(&byte).await?;
-        self.writer.flush().await?;
-        Ok(())
+        write_frame(&mut self.writer, FRAME_NOTE_PREFERRED, vec![&byte]).await
     }
 
     /// Sends a request to subscribe to the peer's connection list.
     /// It's a fatal error if the client wasn't created using [`MeshKey`].
     pub async fn watch_connection_changes(&mut self) -> Result<()> {
-        write_frame_header(&mut self.writer, FRAME_WATCH_CONNS, 0).await?;
-        self.writer.flush().await?;
-        Ok(())
+        write_frame(&mut self.writer, FRAME_WATCH_CONNS, vec![]).await
     }
 
     /// Asks the server to close the target's TCP connection.
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
     pub async fn close_peer(&mut self, target: PublicKey) -> Result<()> {
-        write_frame(&mut self.writer, FRAME_CLOSE_PEER, target.as_bytes()).await?;
+        write_frame(&mut self.writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
         Ok(())
     }
 
@@ -275,28 +264,21 @@ where
 
     async fn recv_timeout(&mut self, timeout_duration: Duration) -> Result<ReceivedMessage> {
         tokio::select! {
-            _ = tokio::time::sleep(timeout_duration) => {
-                bail!("recv call exceeded timeout");
-            }
+            biased;
             res = self.recv_0() => {
                 res
+            } _ = tokio::time::sleep(timeout_duration) => {
+                bail!("recv call exceeded timeout");
             }
         }
     }
 
     async fn recv_0(&mut self) -> Result<ReceivedMessage> {
-        // from the tailscale/derp/derp_client.go:
-        // "In practice [a frame is] 4KB (from derphttp.Client's bufio.NewReader(httpConn)) and
-        // in practice, WireGuard packets (and thus DERP frames) are under 1.5 KiB."
-        let mut frame_payload = BytesMut::with_capacity(4 * 1024);
+        // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
+        let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
-            let (frame_type, frame_len) = read_frame_header(&mut self.reader).await?;
-            if frame_len > MAX_FRAME_SIZE {
-                bail!("unexpectedly large frame of {} bytes returned", frame_len);
-            }
-            self.reader
-                .read_exact(&mut frame_payload[..frame_len])
-                .await?;
+            let (frame_type, frame_len) =
+                read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut frame_payload).await?;
 
             match frame_type {
                 FRAME_SERVER_INFO => {
@@ -479,17 +461,22 @@ where
     }
 }
 
-// TODO: for something relatively straight forward, this is pretty hard to follow
 async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
     // expecting MAGIC followed by 32 bytes that contain the server key
     let magic_len = MAGIC.len();
-    let mut buf = BytesMut::with_capacity(magic_len + 32);
-    let (frame_type, _) = read_frame(&mut reader, SERVER_KEY_FRAME_MAX_SIZE, &mut buf).await?;
-    if frame_type != FRAME_SERVER_KEY || buf[..magic_len] != *MAGIC.as_bytes() {
+    let expected_frame_len = magic_len + 32;
+    let mut buf = BytesMut::with_capacity(expected_frame_len);
+
+    let (frame_type, frame_len) = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await?;
+
+    if expected_frame_len != frame_len
+        || frame_type != FRAME_SERVER_KEY
+        || buf[..magic_len] != *MAGIC.as_bytes()
+    {
         bail!("invalid server greeting");
     }
-    let key: [u8; 32] = buf[magic_len..magic_len + 32].try_into()?;
-    Ok(key::node::PublicKey::from(key))
+
+    Ok(get_key_from_slice(&buf[magic_len..expected_frame_len])?)
 }
 
 // errors if `frame_len` is less than the expected key size
