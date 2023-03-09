@@ -43,8 +43,8 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::{
     ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProvideResponseEntry,
-    ProviderRequest, ProviderResponse, ProviderService, VersionRequest, VersionResponse,
-    WatchRequest, WatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, VersionRequest,
+    VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
@@ -247,7 +247,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &db);
+                            handle_rpc_request(msg, chan, &db, &cancel_token);
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -258,7 +258,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &db);
+                            handle_rpc_request(msg, chan, &db, &cancel_token);
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -398,6 +398,11 @@ impl Provider {
     pub fn shutdown(&self) {
         self.cancel_token.cancel();
     }
+
+    /// Returns a token that can be used to cancel the provider.
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
 }
 
 /// The future completes when the spawned tokio task finishes.
@@ -409,12 +414,15 @@ impl Future for Provider {
     }
 }
 
-struct Handler(Database);
+struct Handler {
+    db: Database,
+    shutdown: CancellationToken,
+}
 
 impl Handler {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
         let items = self
-            .0
+            .db
             .blobs()
             .into_iter()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
@@ -439,13 +447,22 @@ impl Handler {
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
-        self.0.union_with(db);
+        self.db.union_with(db);
 
         Ok(ProvideResponse { hash, entries })
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    async fn shutdown(self, request: ShutdownRequest) {
+        if request.hard {
+            std::process::exit(0);
+        } else {
+            // trigger a graceful shutdown
+            tracing::info!("graceful shutdown requested");
+            self.shutdown.cancel();
         }
     }
     fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
@@ -465,16 +482,19 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
     db: &Database,
+    shutdown: &CancellationToken,
 ) {
     let db = db.clone();
+    let shutdown = shutdown.clone();
     tokio::spawn(async move {
-        let handler = Handler(db.clone());
+        let handler = Handler { db, shutdown };
         use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
             Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
             Watch(msg) => chan.server_streaming(msg, handler, Handler::watch).await,
             Version(msg) => chan.rpc(msg, handler, Handler::version).await,
+            Shutdown(msg) => chan.rpc(msg, handler, Handler::shutdown).await,
         }
     });
 }

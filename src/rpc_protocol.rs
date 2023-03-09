@@ -60,6 +60,15 @@ impl RpcMsg<ProviderService> for VersionRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ShutdownRequest {
+    pub hard: bool,
+}
+
+impl RpcMsg<ProviderService> for ShutdownRequest {
+    type Response = ();
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WatchResponse {
     pub version: String,
 }
@@ -88,6 +97,7 @@ pub enum ProviderRequest {
     Version(VersionRequest),
     List(ListRequest),
     Provide(ProvideRequest),
+    Shutdown(ShutdownRequest),
 }
 
 /// Response enum
@@ -97,6 +107,7 @@ pub enum ProviderResponse {
     Version(VersionResponse),
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
+    Shutdown(()),
 }
 
 impl Service for ProviderService {
