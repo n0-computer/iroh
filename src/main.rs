@@ -54,7 +54,7 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
-        /// Optional rpc port, defaults to 4919
+        /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
@@ -390,14 +390,9 @@ async fn provide(
     rpc_port: u16,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
-    // create the rpc endpoint as well as a handle that can be used to control the service locally.
-    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
 
     let db = Database::default();
-    let mut builder = provider::Provider::builder(db)
-        .rpc_endpoint(rpc_endpoint)
-        .keypair(keypair)
-        .keylog(keylog);
+    let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
@@ -405,7 +400,15 @@ async fn provide(
         let auth_token = AuthToken::from_str(encoded)?;
         builder = builder.auth_token(auth_token);
     }
-    let provider = builder.spawn()?;
+    let provider = if rpc_port != 0 {
+        let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
+        builder
+            .rpc_endpoint(rpc_endpoint)
+            .keypair(keypair)
+            .spawn()?
+    } else {
+        builder.keypair(keypair).spawn()?
+    };
 
     println!("Listening address: {}", provider.listen_addr());
     println!("PeerID: {}", provider.peer_id());
