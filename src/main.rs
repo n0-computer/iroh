@@ -322,7 +322,7 @@ async fn main_impl() -> Result<()> {
         } => {
             let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]))?;
+            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
             // task that will add data to the provider, either from a file or from stdin
             let fut = tokio::spawn(async move {

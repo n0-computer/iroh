@@ -379,7 +379,7 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub fn ticket(&self, hash: Hash) -> Ticket {
         // TODO: Verify that the hash exists in the db?
         let listen_ip = self.listen_addr.ip();
         let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
@@ -400,12 +400,12 @@ impl Provider {
             }
             false => vec![self.listen_addr],
         };
-        Ok(Ticket {
+        Ticket {
             hash,
             peer: self.peer_id(),
             addrs,
             token: self.auth_token,
-        })
+        }
     }
 
     /// Aborts the provider.
@@ -1155,7 +1155,7 @@ mod tests {
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token.clone().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash);
         println!("addrs: {:?}", ticket.addrs);
         assert!(!ticket.addrs.is_empty());
     }
