@@ -25,10 +25,7 @@ impl LocalAddresses {
     /// If there are no regular addresses it will return any IPv4 linklocal or IPv6 unique local
     /// addresses because we know of environments where these are used with NAT to provide connectivity.
     pub fn new() -> Self {
-        #[cfg(target_os = "android")]
-        let ifaces = java_sadness().unwrap_or_default();
-        #[cfg(not(target_os = "android"))]
-        let ifaces = default_net::interface::get_interfaces();
+        let ifaces = get_interfaces();
 
         let mut loopback = Vec::new();
         let mut regular4 = Vec::new();
@@ -37,18 +34,13 @@ impl LocalAddresses {
         let mut ula6 = Vec::new();
 
         for iface in ifaces {
-            if !is_up(&iface) {
+            if !iface.is_up {
                 // Skip down interfaces
                 continue;
             }
-            let ifc_is_loopback = is_loopback(&iface);
-            let addrs = iface
-                .ipv4
-                .iter()
-                .map(|a| IpAddr::V4(a.addr))
-                .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr)));
+            let ifc_is_loopback = iface.is_loopback;
 
-            for ip in addrs {
+            for ip in iface.addrs {
                 let ip = to_canonical(ip);
 
                 if ip.is_loopback() || ifc_is_loopback {
@@ -94,10 +86,44 @@ impl LocalAddresses {
     }
 }
 
+/// Network interface.
+#[derive(Debug, Clone)]
+pub struct Interface {
+    /// The name of the interface.
+    pub name: String,
+    /// List of available [IpAddr]s.
+    pub addrs: Vec<IpAddr>,
+    /// Is the interface up?
+    pub is_up: bool,
+    /// Is this this a loopback interface?
+    pub is_loopback: bool,
+}
+
+#[cfg(not(target_os = "android"))]
+fn get_interfaces() -> Vec<Interface> {
+    let ifaces = default_net::interface::get_interfaces();
+    ifaces
+        .into_iter()
+        .map(|i| Interface {
+            addrs: i
+                .ipv4
+                .iter()
+                .map(|a| IpAddr::V4(a.addr))
+                .chain(i.ipv6.iter().map(|a| IpAddr::V6(a.addr)))
+                .collect(),
+            is_up: is_up(&i),
+            is_loopback: is_loopback(&i),
+            name: i.name,
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "android"))]
 const fn is_up(interface: &default_net::Interface) -> bool {
     interface.flags & IFF_UP != 0
 }
 
+#[cfg(not(target_os = "android"))]
 const fn is_loopback(interface: &default_net::Interface) -> bool {
     interface.flags & IFF_LOOPBACK != 0
 }
@@ -150,7 +176,12 @@ const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
 }
 
 #[cfg(target_os = "android")]
-fn java_sadness() -> anyhow::Result<Vec<IpAddr>> {
+fn get_interfaces() -> Vec<Interface> {
+    java_sadness().unwrap_or_default()
+}
+
+#[cfg(target_os = "android")]
+fn java_sadness() -> anyhow::Result<Vec<Interface>> {
     use j4rs::JvmBuilder;
 
     let jvm = JvmBuilder::new().build()?;
@@ -161,7 +192,7 @@ fn java_sadness() -> anyhow::Result<Vec<IpAddr>> {
         &Vec::new(),
     )?;
 
-    let mut ip_list = Vec::new();
+    let mut interface_list = Vec::new();
     loop {
         let has_more = jvm.invoke(&network_interfaces, "hasMoreElements", &Vec::new())?;
         let has_more: bool = jvm.to_rust(has_more)?;
@@ -173,10 +204,13 @@ fn java_sadness() -> anyhow::Result<Vec<IpAddr>> {
         let interface = jvm.cast(&interface, "java.net.NetworkInterface")?;
         let interface_name = jvm.invoke(&interface, "getDisplayName", &Vec::new())?;
         let interface_name: String = jvm.to_rust(interface_name)?;
-        println!("Interface: {}", interface_name);
+        let is_loopback = jvm.invoke(&interface, "isLoopback", &Vec::new())?;
+        let is_loopback: bool = jvm.to_rust(is_loopback)?;
+        let is_up = jvm.invoke(&interface, "isUp", &Vec::new())?;
+        let is_up: bool = jvm.to_rust(is_up)?;
 
         let ips = jvm.invoke(&interface, "getInetAddresses", &Vec::new())?;
-
+        let mut addrs = Vec::new();
         loop {
             let has_more = jvm.invoke(&ips, "hasMoreElements", &Vec::new())?;
             let has_more: bool = jvm.to_rust(has_more)?;
@@ -198,11 +232,18 @@ fn java_sadness() -> anyhow::Result<Vec<IpAddr>> {
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("invalid ip addr format: {}", ip_string))?;
             let ip: IpAddr = ip_str.parse()?;
-            ip_list.push(ip);
+            addrs.push(ip);
         }
+
+        interface_list.push(Interface {
+            name: interface_name,
+            addrs,
+            is_up,
+            is_loopback,
+        });
     }
 
-    Ok(ip_list)
+    Ok(interface_list)
 }
 
 #[cfg(test)]
@@ -220,7 +261,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "android")]
     fn test_java_sadness() {
-        let ips = java_sadness().unwrap();
-        assert!(ips.is_empty());
+        let interfaces = java_sadness().unwrap();
+        dbg!(&interfaces);
+        assert!(!interfaces.is_empty());
     }
 }
