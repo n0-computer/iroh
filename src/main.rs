@@ -11,10 +11,7 @@ use indicatif::{
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
-use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, VersionRequest,
-};
+use iroh::rpc_protocol::*;
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -72,6 +69,13 @@ enum Commands {
         /// Hard shutdown will immediately terminate the process, soft shutdown will wait for all connections to close.
         #[clap(long, default_value_t = false)]
         hard: bool,
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Identity
+    #[clap(about = "Identify provider")]
+    Id {
         /// Optional rpc port, defaults to 4919
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -392,6 +396,15 @@ async fn main_impl() -> Result<()> {
         Commands::Shutdown { hard, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
             client.rpc(ShutdownRequest { hard }).await?;
+            Ok(())
+        }
+        Commands::Id { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(IdRequest).await?;
+
+            println!("Listening address: {}", response.listen_addr);
+            println!("PeerID: {}", response.peer_id);
+            println!("Auth token: {}", response.auth_token);
             Ok(())
         }
         Commands::Add { path, rpc_port } => {
