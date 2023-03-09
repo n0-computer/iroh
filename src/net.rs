@@ -146,6 +146,38 @@ const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
+fn java_sadness() -> Result<(), j4rs::errors::J4RsError> {
+    use j4rs::{Instance, InvocationArg, Jvm, JvmBuilder};
+
+    // Create a JVM
+    let jvm = JvmBuilder::new().build()?;
+
+    // Create a java.lang.String instance
+    let string_instance = jvm.create_instance(
+        "java.lang.String", // The Java class to create an instance for
+        &Vec::new(), // The `InvocationArg`s to use for the constructor call - empty for this example
+    )?;
+
+    // The instances returned from invocations and instantiations can be viewed as pointers to Java Objects.
+    // They can be used for further Java calls.
+    // For example, the following invokes the `isEmpty` method of the created java.lang.String instance
+    let boolean_instance = jvm.invoke(
+        &string_instance, // The String instance created above
+        "isEmpty",        // The method of the String instance to invoke
+        &Vec::new(),      // The `InvocationArg`s to use for the invocation - empty for this example
+    )?;
+
+    // If we need to transform an `Instance` to Rust value, the `to_rust` should be called
+    let rust_boolean: bool = jvm.to_rust(boolean_instance)?;
+    println!(
+        "The isEmpty() method of the java.lang.String instance returned {}",
+        rust_boolean
+    );
+    // The above prints:
+    // The isEmpty() method of the java.lang.String instance returned true
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +188,11 @@ mod tests {
         dbg!(&addrs);
         assert!(!addrs.loopback.is_empty());
         assert!(!addrs.regular.is_empty());
+    }
+
+    #[test]
+    fn test_java_sadness() {
+        java_sadness().unwrap();
+        assert!(false);
     }
 }
