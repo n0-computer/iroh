@@ -273,7 +273,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 Some(connecting) = server.accept() => {
                     let db = handler.db.clone();
                     let events = events.clone();
-                    let auth_token = handler.auth_token.clone();
+                    let auth_token = handler.auth_token;
                     tokio::spawn(handle_connection(connecting, db, auth_token, events));
                 }
                 else => break,
@@ -437,7 +437,6 @@ impl ProviderHandles {
         let items = self
             .db
             .blobs()
-            .into_iter()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
         futures::stream::iter(items)
     }
@@ -471,14 +470,15 @@ impl ProviderHandles {
     }
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
-            peer_id: self.peer_id,
-            auth_token: self.auth_token,
-            listen_addr: self.listen_addr,
+            peer_id: Box::new(self.peer_id),
+            auth_token: Box::new(self.auth_token),
+            listen_addr: Box::new(self.listen_addr),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
-        if request.hard {
+        if request.force {
+            tracing::info!("hard shutdown requested");
             std::process::exit(0);
         } else {
             // trigger a graceful shutdown

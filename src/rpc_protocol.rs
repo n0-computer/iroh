@@ -61,7 +61,7 @@ impl RpcMsg<ProviderService> for VersionRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ShutdownRequest {
-    pub hard: bool,
+    pub force: bool,
 }
 
 impl RpcMsg<ProviderService> for ShutdownRequest {
@@ -82,9 +82,9 @@ pub struct WatchResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
-    pub peer_id: PeerId,
-    pub auth_token: AuthToken,
-    pub listen_addr: SocketAddr,
+    pub peer_id: Box<PeerId>,
+    pub auth_token: Box<AuthToken>,
+    pub listen_addr: Box<SocketAddr>,
     pub version: String,
 }
 

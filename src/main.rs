@@ -68,7 +68,7 @@ enum Commands {
         /// Shutdown mode.
         /// Hard shutdown will immediately terminate the process, soft shutdown will wait for all connections to close.
         #[clap(long, default_value_t = false)]
-        hard: bool,
+        force: bool,
         /// Optional rpc port, defaults to 4919
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -357,7 +357,7 @@ async fn main_impl() -> Result<()> {
 
                 print_add_response(hash, entries);
                 ticket.hash = hash;
-                println!("All-in-one ticket: {}", ticket);
+                println!("All-in-one ticket: {ticket}");
                 anyhow::Ok(tmp_path)
             });
 
@@ -393,9 +393,9 @@ async fn main_impl() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Shutdown { hard, rpc_port } => {
+        Commands::Shutdown { force, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
-            client.rpc(ShutdownRequest { hard }).await?;
+            client.rpc(ShutdownRequest { force }).await?;
             Ok(())
         }
         Commands::Id { rpc_port } => {
