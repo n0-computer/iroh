@@ -38,6 +38,7 @@ use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
 use crate::blobs::{Blob, Collection};
+use crate::net::LocalAddresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
@@ -381,27 +382,20 @@ impl Provider {
     pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let listen_ip = self.listen_addr.ip();
-        let addrs = match listen_ip.is_unspecified() {
+        let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
             true => {
                 // Find all the local addresses for this address family.
-                let interfaces = if_watch::tokio::IfWatcher::new()?;
-                interfaces
+                let addrs = LocalAddresses::new();
+                addrs
+                    .regular
                     .iter()
-                    .filter_map(|interface| match interface {
-                        if_watch::IpNet::V4(ipnet) if listen_ip.is_ipv4() => {
-                            dbg!(&ipnet);
-                            Some(IpAddr::from(ipnet.addr()))
-                        }
-                        if_watch::IpNet::V6(ipnet) if listen_ip.is_ipv6() => {
-                            dbg!(&ipnet);
-                            Some(IpAddr::from(ipnet.addr()))
-                        }
-                        _ => {
-                            dbg!("ignoring", interface);
-                            None
-                        }
+                    .filter(|addr| match addr {
+                        IpAddr::V4(_) if listen_ip.is_ipv4() => true,
+                        IpAddr::V6(_) if listen_ip.is_ipv6() => true,
+                        _ => false,
                     })
-                    .map(|ipaddr| SocketAddr::from((ipaddr, self.listen_addr.port())))
+                    .copied()
+                    .map(|addr| SocketAddr::from((addr, self.listen_addr.port())))
                     .collect()
             }
             false => vec![self.listen_addr],
