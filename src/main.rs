@@ -43,9 +43,9 @@ enum ProviderRpcPort {
     Disabled,
 }
 
-impl ProviderRpcPort {
-    fn into_option(self) -> Option<u16> {
-        match self {
+impl From<ProviderRpcPort> for Option<u16> {
+    fn from(value: ProviderRpcPort) -> Self {
+        match value {
             ProviderRpcPort::Enabled(port) => Some(port),
             ProviderRpcPort::Disabled => None,
         }
@@ -352,8 +352,7 @@ async fn main_impl() -> Result<()> {
             key,
             rpc_port,
         } => {
-            let provider =
-                provide(addr, auth_token, key, cli.keylog, rpc_port.into_option()).await?;
+            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port.into()).await?;
             let controller = provider.controller();
             let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
