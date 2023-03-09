@@ -387,16 +387,19 @@ impl Provider {
                 let interfaces = if_watch::tokio::IfWatcher::new()?;
                 interfaces
                     .iter()
-                    .map(|interface| match interface {
+                    .filter_map(|interface| match interface {
                         if_watch::IpNet::V4(ipnet) if listen_ip.is_ipv4() => {
                             dbg!(&ipnet);
-                            IpAddr::from(ipnet.addr())
+                            Some(IpAddr::from(ipnet.addr()))
                         }
                         if_watch::IpNet::V6(ipnet) if listen_ip.is_ipv6() => {
                             dbg!(&ipnet);
-                            IpAddr::from(ipnet.addr())
+                            Some(IpAddr::from(ipnet.addr()))
                         }
-                        _ => unreachable!(),
+                        _ => {
+                            dbg!("ignoring", interface);
+                            None
+                        }
                     })
                     .map(|ipaddr| SocketAddr::from((ipaddr, self.listen_addr.port())))
                     .collect()
