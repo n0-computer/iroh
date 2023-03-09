@@ -5,14 +5,6 @@ use std::net::{IpAddr, Ipv6Addr};
 const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
 
-const fn is_up(interface: &default_net::Interface) -> bool {
-    interface.flags & IFF_UP != 0
-}
-
-const fn is_loopback(interface: &default_net::Interface) -> bool {
-    interface.flags & IFF_LOOPBACK != 0
-}
-
 /// List of machine's IP addresses.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalAddresses {
@@ -86,6 +78,7 @@ impl LocalAddresses {
             // addresses we otherwise wouldn't, like:
             //   + 169.254.x.x (AWS Lambda uses NAT with these)
             //   + IPv6 ULA (Google Cloud Run uses these with address translation)
+            regular4 = linklocal4;
             regular6 = ula6;
         }
         let mut regular = regular4;
@@ -96,6 +89,14 @@ impl LocalAddresses {
 
         LocalAddresses { loopback, regular }
     }
+}
+
+const fn is_up(interface: &default_net::Interface) -> bool {
+    interface.flags & IFF_UP != 0
+}
+
+const fn is_loopback(interface: &default_net::Interface) -> bool {
+    interface.flags & IFF_LOOPBACK != 0
 }
 
 /// Reports whether ip is a private address, according to RFC 1918
