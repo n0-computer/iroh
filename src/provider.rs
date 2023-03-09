@@ -10,7 +10,7 @@
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -378,14 +378,37 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        Ticket {
+        let listen_ip = self.listen_addr.ip();
+        let addrs = match listen_ip.is_unspecified() {
+            true => {
+                // Find all the local addresses for this address family.
+                let interfaces = if_watch::tokio::IfWatcher::new()?;
+                interfaces
+                    .iter()
+                    .map(|interface| match interface {
+                        if_watch::IpNet::V4(ipnet) if listen_ip.is_ipv4() => {
+                            dbg!(&ipnet);
+                            IpAddr::from(ipnet.addr())
+                        }
+                        if_watch::IpNet::V6(ipnet) if listen_ip.is_ipv6() => {
+                            dbg!(&ipnet);
+                            IpAddr::from(ipnet.addr())
+                        }
+                        _ => unreachable!(),
+                    })
+                    .map(|ipaddr| SocketAddr::from((ipaddr, self.listen_addr.port())))
+                    .collect()
+            }
+            false => vec![self.listen_addr],
+        };
+        Ok(Ticket {
             hash,
             peer: self.peer_id(),
-            addr: self.listen_addr,
+            addrs,
             token: self.auth_token,
-        }
+        })
     }
 
     /// Aborts the provider.
@@ -982,8 +1005,8 @@ pub struct Ticket {
     pub hash: Hash,
     /// The peer ID identifying the provider.
     pub peer: PeerId,
-    /// The socket address the provider is listening on.
-    pub addr: SocketAddr,
+    /// The socket addresses the provider is listening on.
+    pub addrs: Vec<SocketAddr>,
     /// The authentication token with permission to retrieve the hash.
     pub token: AuthToken,
 }
@@ -1020,8 +1043,30 @@ impl FromStr for Ticket {
     }
 }
 
+/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+pub fn make_server_config(
+    keypair: &Keypair,
+    max_streams: u64,
+    max_connections: u32,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(max_streams.try_into()?)
+        .max_concurrent_uni_streams(0u32.into());
+
+    server_config
+        .transport_config(Arc::new(transport_config))
+        .concurrent_connections(max_connections);
+    Ok(server_config)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+    use std::path::Path;
     use std::str::FromStr;
     use testdir::testdir;
 
@@ -1037,7 +1082,7 @@ mod tests {
         let ticket = Ticket {
             hash,
             peer,
-            addr,
+            addrs: vec![addr],
             token,
         };
         let base64 = ticket.to_string();
@@ -1103,24 +1148,18 @@ mod tests {
 
         Ok(())
     }
-}
 
-/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
-pub fn make_server_config(
-    keypair: &Keypair,
-    max_streams: u64,
-    max_connections: u32,
-    alpn_protocols: Vec<Vec<u8>>,
-) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(max_streams.try_into()?)
-        .max_concurrent_uni_streams(0u32.into());
-
-    server_config
-        .transport_config(Arc::new(transport_config))
-        .concurrent_connections(max_connections);
-    Ok(server_config)
+    #[tokio::test]
+    async fn test_ticket_multiple_addrs() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = Provider::builder(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .spawn()
+            .unwrap();
+        let _drop_guard = provider.cancel_token.clone().drop_guard();
+        let ticket = provider.ticket(hash).unwrap();
+        println!("addrs: {:?}", ticket.addrs);
+        assert!(!ticket.addrs.is_empty());
+    }
 }

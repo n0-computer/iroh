@@ -290,9 +290,13 @@ async fn main_impl() -> Result<()> {
             let Ticket {
                 hash,
                 peer,
-                addr,
+                addrs,
                 token,
             } = ticket;
+            let addr = addrs
+                .get(0)
+                .copied()
+                .context("missing SocketAddr in ticket")?;
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer),
@@ -318,7 +322,7 @@ async fn main_impl() -> Result<()> {
         } => {
             let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
+            let mut ticket = provider.ticket(Hash::from([0u8; 32]))?;
 
             // task that will add data to the provider, either from a file or from stdin
             let fut = tokio::spawn(async move {
