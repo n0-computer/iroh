@@ -11,10 +11,7 @@ use indicatif::{
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
-use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
-};
+use iroh::rpc_protocol::*;
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -97,6 +94,24 @@ enum Commands {
     /// List hashes
     #[clap(about = "List hashes")]
     List {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Shutdown
+    #[clap(about = "Shutdown provider")]
+    Shutdown {
+        /// Shutdown mode.
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Identity
+    #[clap(about = "Identify provider")]
+    Id {
         /// Optional rpc port, defaults to 4919
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -382,10 +397,17 @@ async fn main_impl() -> Result<()> {
                 anyhow::Ok(tmp_path)
             });
 
-            tokio::signal::ctrl_c().await?;
-            println!("Shutting down provider...");
-            provider.shutdown();
-            provider.await?;
+            let cancel_token = provider.cancel_token();
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutting down provider...");
+                    cancel_token.cancel();
+                }
+                res = provider => {
+                    res?;
+                }
+            }
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.
@@ -405,6 +427,20 @@ async fn main_impl() -> Result<()> {
                     HumanBytes(item.size),
                 );
             }
+            Ok(())
+        }
+        Commands::Shutdown { force, rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            client.rpc(ShutdownRequest { force }).await?;
+            Ok(())
+        }
+        Commands::Id { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(IdRequest).await?;
+
+            println!("Listening address: {}", response.listen_addr);
+            println!("PeerID: {}", response.peer_id);
+            println!("Auth token: {}", response.auth_token);
             Ok(())
         }
         Commands::Add { path, rpc_port } => {

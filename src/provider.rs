@@ -42,9 +42,9 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProvideResponseEntry,
-    ProviderRequest, ProviderResponse, ProviderService, VersionRequest, VersionResponse,
-    WatchRequest, WatchResponse,
+    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
+    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
@@ -191,7 +191,6 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
 
         let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
         let listen_addr = endpoint.local_addr().unwrap();
-        let db2 = self.db.clone();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
@@ -199,13 +198,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let task = {
             let cancel_token = cancel_token.clone();
+            let handler = ProviderHandles {
+                peer_id: self.keypair.public().into(),
+                db: self.db,
+                auth_token: self.auth_token,
+                shutdown: cancel_token,
+                listen_addr,
+            };
             tokio::spawn(async move {
                 Self::run(
                     endpoint,
-                    db2,
-                    self.auth_token,
                     events_sender,
-                    cancel_token,
+                    handler,
                     self.rpc_endpoint,
                     internal_rpc,
                 )
@@ -226,10 +230,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
 
     async fn run(
         server: quinn::Endpoint,
-        db: Database,
-        auth_token: AuthToken,
         events: broadcast::Sender<Event>,
-        cancel_token: CancellationToken,
+        handler: ProviderHandles,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
     ) {
@@ -238,6 +240,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
+        let cancel_token = handler.shutdown.clone();
         loop {
             tokio::select! {
                 biased;
@@ -247,7 +250,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &db);
+                            handle_rpc_request(msg, chan, &handler);
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -258,7 +261,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &db);
+                            handle_rpc_request(msg, chan, &handler);
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -268,8 +271,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 },
                 // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
-                    let db = db.clone();
+                    let db = handler.db.clone();
                     let events = events.clone();
+                    let auth_token = handler.auth_token;
                     tokio::spawn(handle_connection(connecting, db, auth_token, events));
                 }
                 else => break,
@@ -398,6 +402,11 @@ impl Provider {
     pub fn shutdown(&self) {
         self.cancel_token.cancel();
     }
+
+    /// Returns a token that can be used to cancel the provider.
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
 }
 
 /// The future completes when the spawned tokio task finishes.
@@ -409,12 +418,24 @@ impl Future for Provider {
     }
 }
 
-struct Handler(Database);
+#[derive(Debug, Clone)]
+struct ProviderHandles {
+    /// database handle
+    pub db: Database,
+    /// cancellation token
+    pub shutdown: CancellationToken,
+    /// peer id
+    pub peer_id: PeerId,
+    /// auth token
+    pub auth_token: AuthToken,
+    /// listen address
+    pub listen_addr: SocketAddr,
+}
 
-impl Handler {
+impl ProviderHandles {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
         let items = self
-            .0
+            .db
             .blobs()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
         futures::stream::iter(items)
@@ -438,13 +459,31 @@ impl Handler {
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
-        self.0.union_with(db);
+        self.db.union_with(db);
 
         Ok(ProvideResponse { hash, entries })
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    async fn id(self, _: IdRequest) -> IdResponse {
+        IdResponse {
+            peer_id: Box::new(self.peer_id),
+            auth_token: Box::new(self.auth_token),
+            listen_addr: Box::new(self.listen_addr),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    async fn shutdown(self, request: ShutdownRequest) {
+        if request.force {
+            tracing::info!("hard shutdown requested");
+            std::process::exit(0);
+        } else {
+            // trigger a graceful shutdown
+            tracing::info!("graceful shutdown requested");
+            self.shutdown.cancel();
         }
     }
     fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
@@ -463,17 +502,27 @@ impl Handler {
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    db: &Database,
+    handler: &ProviderHandles,
 ) {
-    let db = db.clone();
+    let handler = handler.clone();
     tokio::spawn(async move {
-        let handler = Handler(db.clone());
         use ProviderRequest::*;
         match msg {
-            List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
-            Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
-            Watch(msg) => chan.server_streaming(msg, handler, Handler::watch).await,
-            Version(msg) => chan.rpc(msg, handler, Handler::version).await,
+            List(msg) => {
+                chan.server_streaming(msg, handler, ProviderHandles::list)
+                    .await
+            }
+            Provide(msg) => {
+                chan.rpc_map_err(msg, handler, ProviderHandles::provide)
+                    .await
+            }
+            Watch(msg) => {
+                chan.server_streaming(msg, handler, ProviderHandles::watch)
+                    .await
+            }
+            Version(msg) => chan.rpc(msg, handler, ProviderHandles::version).await,
+            Id(msg) => chan.rpc(msg, handler, ProviderHandles::id).await,
+            Shutdown(msg) => chan.rpc(msg, handler, ProviderHandles::shutdown).await,
         }
     });
 }

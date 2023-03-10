@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{util::RpcResult, Hash};
+use crate::{protocol::AuthToken, util::RpcResult, Hash, PeerId};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -60,7 +60,31 @@ impl RpcMsg<ProviderService> for VersionRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ShutdownRequest {
+    pub force: bool,
+}
+
+impl RpcMsg<ProviderService> for ShutdownRequest {
+    type Response = ();
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IdRequest;
+
+impl RpcMsg<ProviderService> for IdRequest {
+    type Response = IdResponse;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WatchResponse {
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IdResponse {
+    pub peer_id: Box<PeerId>,
+    pub auth_token: Box<AuthToken>,
+    pub listen_addr: Box<SocketAddr>,
     pub version: String,
 }
 
@@ -88,6 +112,8 @@ pub enum ProviderRequest {
     Version(VersionRequest),
     List(ListRequest),
     Provide(ProvideRequest),
+    Id(IdRequest),
+    Shutdown(ShutdownRequest),
 }
 
 /// Response enum
@@ -97,6 +123,8 @@ pub enum ProviderResponse {
     Version(VersionResponse),
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
+    Id(IdResponse),
+    Shutdown(()),
 }
 
 impl Service for ProviderService {
