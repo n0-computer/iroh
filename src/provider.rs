@@ -7,12 +7,15 @@
 //! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
+use std::collections::BTreeSet;
+use std::convert::Infallible;
 use std::fmt::{self, Display};
 use std::future::Future;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::result;
 use std::str::FromStr;
 use std::sync::RwLock;
 use std::task::Poll;
@@ -57,7 +60,213 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 
+/// A snapshot of the database.
+///
+/// `E` can be `Infallible` if we take a snapshot from an in memory database,
+/// or `io::Error` if we read a database from disk.
+struct Snapshot<E> {
+    // list of paths we have, hash is the hash of the blob or collection
+    paths: Box<dyn Iterator<Item = (PathBuf, u64, Hash)>>,
+    // map of hash to outboard, hash is the hash of the outboard and is unique
+    outboards: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
+    // map of hash to collection, hash is the hash of the collection and is unique
+    collections: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
+}
+
+struct DataPaths {
+    data_dir: PathBuf,
+    outboards_dir: PathBuf,
+    collections_dir: PathBuf,
+    paths_file: PathBuf,
+}
+
+impl DataPaths {
+    fn new(data_dir: PathBuf) -> Self {
+        Self {
+            outboards_dir: data_dir.join("/collections"),
+            collections_dir: data_dir.join("/outboards"),
+            paths_file: data_dir.join("/paths.bin"),
+            data_dir: data_dir,
+        }
+    }
+}
+
+/// Using base64 you have all those weird characters like + and /.
+/// So we use hex for file names.
+fn format_hash(hash: &Hash) -> String {
+    hex::encode(hash.as_ref())
+}
+
+/// Parse a hash from a string, e.g. a file name.
+fn parse_hash(hash: &str) -> Result<Hash> {
+    let hash = hex::decode(hash)?;
+    let hash: [u8; 32] = hash.try_into().ok().context("wrong size for hash")?;
+    Ok(Hash::from(hash))
+}
+
+impl Snapshot<io::Error> {
+    pub fn load(data_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+        use std::fs;
+        let DataPaths {
+            outboards_dir,
+            collections_dir,
+            paths_file,
+            ..
+        } = DataPaths::new(data_dir.as_ref().to_path_buf());
+        let paths = fs::read(paths_file)?;
+        let paths = postcard::from_bytes::<Vec<(PathBuf, u64, Hash)>>(&paths)?;
+        let hashes = paths
+            .iter()
+            .map(|(_, _, hash)| *hash)
+            .collect::<BTreeSet<_>>();
+        let outboards = hashes.clone().into_iter().map(move |hash| {
+            let path = outboards_dir.join(format_hash(&hash));
+            fs::read(path).map(|x| (hash, Bytes::from(x)))
+        });
+        let collections = fs::read_dir(collections_dir)?.filter_map(move |entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            // skip directories
+            if entry.file_type().ok()?.is_dir() {
+                return None;
+            }
+            // skip file names that are not valid hashes;
+            let hash = parse_hash(path.file_name()?.to_str()?).ok()?;
+            // skip files that are not in the paths file
+            if !hashes.contains(&hash) {
+                return None;
+            }
+            // read the collection data and turn it into a Bytes
+            let collection = Bytes::from(fs::read(path).ok()?);
+            Some(io::Result::Ok((hash, collection)))
+        });
+        Ok(Self {
+            paths: Box::new(paths.into_iter()),
+            outboards: Box::new(outboards),
+            collections: Box::new(collections),
+        })
+    }
+}
+
+impl<E: Into<io::Error>> Snapshot<E> {
+    pub fn persist(self, data_dir: impl AsRef<Path>) -> io::Result<()> {
+        use std::fs;
+        let DataPaths {
+            outboards_dir,
+            collections_dir,
+            paths_file,
+            ..
+        } = DataPaths::new(data_dir.as_ref().to_path_buf());
+        fs::create_dir_all(&data_dir)?;
+        fs::create_dir_all(&outboards_dir)?;
+        fs::create_dir_all(&collections_dir)?;
+        for item in self.outboards {
+            let (hash, outboard) = item.map_err(Into::into)?;
+            let path = outboards_dir.join(format_hash(&hash));
+            fs::write(path, &outboard)?;
+        }
+        for item in self.collections {
+            let (hash, collection) = item.map_err(Into::into)?;
+            let path = collections_dir.join(format_hash(&hash));
+            fs::write(path, &collection)?;
+        }
+        let mut paths = self.paths.collect::<Vec<_>>();
+        paths.sort_by_key(|(path, _, _)| path.clone());
+        let paths_content = postcard::to_stdvec(&paths).expect("failed to serialize paths file");
+        fs::write(&paths_file, &paths_content)?;
+        Ok(())
+    }
+}
+
 impl Database {
+    fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
+        let Snapshot {
+            outboards,
+            collections,
+            paths,
+        } = snapshot;
+        let outboards = outboards
+            .collect::<result::Result<HashMap<_, _>, E>>()
+            .map_err(Into::into)?;
+        let collections = collections
+            .collect::<result::Result<HashMap<_, _>, E>>()
+            .map_err(Into::into)?;
+        let mut db = HashMap::new();
+        for (path, size, hash) in paths {
+            if let Some(outboard) = outboards.get(&hash) {
+                db.insert(
+                    hash,
+                    BlobOrCollection::Blob(Data {
+                        outboard: outboard.clone(),
+                        path,
+                        size,
+                    }),
+                );
+            }
+        }
+        for (hash, data) in collections {
+            if let Some(outboard) = outboards.get(&hash) {
+                db.insert(
+                    hash,
+                    BlobOrCollection::Collection {
+                        outboard: outboard.clone(),
+                        data,
+                    },
+                );
+            }
+        }
+
+        Ok(Self(Arc::new(RwLock::new(db))))
+    }
+
+    // take a snapshot of the database
+    fn snapshot(&self) -> Snapshot<Infallible> {
+        let this = self.0.read().unwrap();
+        let outboards = this
+            .iter()
+            .map(|(k, v)| match v {
+                BlobOrCollection::Blob(Data { outboard, .. }) => (*k, outboard.clone()),
+                BlobOrCollection::Collection { outboard, .. } => (*k, outboard.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        let collections = this
+            .iter()
+            .filter_map(|(k, v)| match v {
+                BlobOrCollection::Blob(_) => None,
+                BlobOrCollection::Collection { data, .. } => Some((*k, data.clone())),
+            })
+            .collect::<Vec<_>>();
+
+        let paths = this
+            .iter()
+            .filter_map(|(k, v)| match v {
+                BlobOrCollection::Blob(Data { path, size, .. }) => Some((path.clone(), *size, *k)),
+                BlobOrCollection::Collection { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        Snapshot {
+            outboards: Box::new(outboards.into_iter().map(Ok)),
+            collections: Box::new(collections.into_iter().map(Ok)),
+            paths: Box::new(paths.into_iter()),
+        }
+    }
+
+    fn collections(&self) -> impl Iterator<Item = (Hash, Bytes)> + '_ {
+        let res = self
+            .0
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|(k, v)| match v {
+                BlobOrCollection::Blob(_) => None,
+                BlobOrCollection::Collection { data, .. } => Some((*k, data.clone())),
+            })
+            .collect::<Vec<_>>();
+        res.into_iter()
+    }
+
     fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
         self.0.read().unwrap().get(key).cloned()
     }
@@ -78,7 +287,7 @@ impl Database {
             .iter()
             .filter_map(|(k, v)| match v {
                 BlobOrCollection::Blob(data) => Some((k, data)),
-                BlobOrCollection::Collection(_) => None,
+                BlobOrCollection::Collection { .. } => None,
             })
             .map(|(k, data)| (*k, data.path.clone(), data.size))
             .collect::<Vec<_>>();
@@ -108,7 +317,7 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
 #[derive(Debug, Clone)]
 pub(crate) enum BlobOrCollection {
     Blob(Data),
-    Collection((Bytes, Bytes)),
+    Collection { outboard: Bytes, data: Bytes },
 }
 
 impl Builder {
@@ -675,7 +884,7 @@ async fn handle_stream(
     // 4. Attempt to find hash
     let (outboard, data) = match db.get(&hash) {
         // We only respond to requests for collections, not individual blobs
-        Some(BlobOrCollection::Collection(d)) => d,
+        Some(BlobOrCollection::Collection { outboard, data }) => (outboard, data),
         _ => {
             debug!("not found {}", hash);
             notify_transfer_aborted(events, connection_id, request_id);
@@ -946,7 +1155,10 @@ async fn create_collection_inner(
     let hash = Hash::from(hash);
     db.insert(
         hash,
-        BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
+        BlobOrCollection::Collection {
+            outboard: Bytes::from(outboard),
+            data: Bytes::from(data.to_vec()),
+        },
     );
 
     Ok((db, entries, hash))
@@ -1091,7 +1303,7 @@ mod tests {
 
         let collection = {
             let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection((_, data)) = c {
+            if let BlobOrCollection::Collection { data, .. } = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");

@@ -1,7 +1,7 @@
 use std::{
     env,
     fmt::{self, Display},
-    path::PathBuf,
+    path::{Path, PathBuf},
     result,
     str::FromStr,
 };
@@ -58,6 +58,18 @@ impl From<blake3::Hash> for Hash {
 impl From<[u8; 32]> for Hash {
     fn from(value: [u8; 32]) -> Self {
         Hash(blake3::Hash::from(value))
+    }
+}
+
+impl PartialOrd for Hash {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.0.as_bytes().cmp(other.0.as_bytes()))
+    }
+}
+
+impl Ord for Hash {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
@@ -154,6 +166,7 @@ pub type RpcResult<T> = result::Result<T, RpcError>;
 /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
+#[allow(dead_code)]
 pub fn iroh_config_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
         return Ok(PathBuf::from(val));
@@ -164,7 +177,8 @@ pub fn iroh_config_root() -> Result<PathBuf> {
 }
 
 // Path that leads to a file in the iroh config directory.
-pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
+#[allow(dead_code)]
+pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
     Ok(path)
 }
@@ -180,6 +194,7 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
+#[allow(dead_code)]
 pub fn iroh_data_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_DATA_DIR") {
         return Ok(PathBuf::from(val));
@@ -191,7 +206,8 @@ pub fn iroh_data_root() -> Result<PathBuf> {
 }
 
 /// Path that leads to a file in the iroh data directory.
-pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
+#[allow(dead_code)]
+pub fn iroh_data_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_data_root()?.join(file_name);
     Ok(path)
 }
@@ -207,6 +223,7 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | Linux    | `$XDG_CACHE_HOME`/iroh or `$HOME`/.cache/iroh | /home/.cache/iroh                        |
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
+#[allow(dead_code)]
 pub fn iroh_cache_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_CACHE_DIR") {
         return Ok(PathBuf::from(val));
@@ -218,7 +235,8 @@ pub fn iroh_cache_root() -> Result<PathBuf> {
 }
 
 /// Path that leads to a file in the iroh cache directory.
-pub fn iroh_cache_path(file_name: &str) -> Result<PathBuf> {
+#[allow(dead_code)]
+pub fn iroh_cache_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_cache_root()?.join(file_name);
     Ok(path)
 }
