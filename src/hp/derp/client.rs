@@ -7,15 +7,14 @@ use std::time::Duration;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
-use quinn::AsyncUdpSocket;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{
-    read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER,
-    FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PING,
-    FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_WATCH_CONNS, MAGIC,
-    MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    conn::Conn, read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO,
+    FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE,
+    FRAME_PING, FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO,
+    FRAME_WATCH_CONNS, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
 use crate::hp::{
     derp::{
@@ -23,20 +22,20 @@ use crate::hp::{
         MAX_INFO_LEN, NONCE_LEN,
     },
     key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
-    magicsock::Conn,
 };
 
 /// A DERP Client.
-pub struct Client<W, R>
+pub struct Client<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
     /// The public/private keypair
     secret_key: SecretKey,
-    conn: Conn,
+    conn: C,
     reader: R,
     /// TODO: This is a string in the go impl, using bytes here to make it easier for postcard
     /// to serialize. 32 is a random number I chose. Need to figure out what the `mesh_key`
@@ -55,10 +54,11 @@ where
     is_dead: AtomicBool,
 }
 
-impl<W, R> Client<W, R>
+impl<W, R, C> Client<W, R, C>
 where
     W: AsyncWrite + Unpin + Send,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     async fn recv_server_key(&mut self) -> Result<PublicKey> {
         recv_server_key(&mut self.reader).await
@@ -171,7 +171,7 @@ where
     }
 
     async fn write_timeout_fired(&self) -> Result<()> {
-        self.conn.close().await
+        self.conn.close()
     }
 
     pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
@@ -236,7 +236,7 @@ where
                 bail!("Client is dead");
             }
         }
-        Ok(self.conn.local_addr()?)
+        Ok(self.conn.local_addr())
     }
 
     /// Reads a messages from a DERP server.
@@ -376,13 +376,14 @@ where
     }
 }
 
-pub struct ClientBuilder<W, R>
+pub struct ClientBuilder<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     secret_key: SecretKey,
-    conn: Conn,
+    conn: C,
     reader: R,
     writer: W,
     mesh_key: Option<[u8; 32]>,
@@ -391,12 +392,13 @@ where
     can_ack_pings: bool,
 }
 
-impl<W, R> ClientBuilder<W, R>
+impl<W, R, C> ClientBuilder<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
-    pub fn new(secret_key: SecretKey, conn: Conn, reader: R, writer: W) -> Self {
+    pub fn new(secret_key: SecretKey, conn: C, reader: R, writer: W) -> Self {
         Self {
             secret_key,
             conn,
@@ -429,10 +431,11 @@ where
         self
     }
 
-    pub async fn build(mut self) -> Result<Client<W, R>>
+    pub async fn build(mut self) -> Result<Client<W, R, C>>
     where
         W: AsyncWrite + Send + Unpin + 'static,
         R: AsyncRead + Unpin,
+        C: Conn,
     {
         // NEXT: BUILD CLIENT
 
@@ -484,7 +487,7 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
-#[derive(Serialize, Deserialize, MaxSize)]
+#[derive(Debug, Serialize, Deserialize, MaxSize)]
 pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].

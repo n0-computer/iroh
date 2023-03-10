@@ -10,6 +10,8 @@
 //! Based on tailscale/derp/derp.go
 
 mod client;
+mod client_conn;
+mod conn;
 pub mod http;
 mod map;
 mod server;
