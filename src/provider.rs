@@ -8,7 +8,6 @@
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::collections::BTreeSet;
-use std::convert::Infallible;
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{self, BufReader, Read};
@@ -66,11 +65,19 @@ pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 /// or `io::Error` if we read a database from disk.
 struct Snapshot<E> {
     // list of paths we have, hash is the hash of the blob or collection
-    paths: Box<dyn Iterator<Item = (PathBuf, u64, Hash)>>,
+    paths: Box<dyn Iterator<Item = (Hash, u64, Option<PathBuf>)>>,
     // map of hash to outboard, hash is the hash of the outboard and is unique
     outboards: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
     // map of hash to collection, hash is the hash of the collection and is unique
     collections: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
+}
+
+enum NoError {}
+
+impl From<NoError> for io::Error {
+    fn from(_: NoError) -> Self {
+        unreachable!()
+    }
 }
 
 struct DataPaths {
@@ -83,9 +90,9 @@ struct DataPaths {
 impl DataPaths {
     fn new(data_dir: PathBuf) -> Self {
         Self {
-            outboards_dir: data_dir.join("/collections"),
-            collections_dir: data_dir.join("/outboards"),
-            paths_file: data_dir.join("/paths.bin"),
+            outboards_dir: data_dir.join("collections"),
+            collections_dir: data_dir.join("outboards"),
+            paths_file: data_dir.join("paths.bin"),
             data_dir: data_dir,
         }
     }
@@ -114,32 +121,54 @@ impl Snapshot<io::Error> {
             ..
         } = DataPaths::new(data_dir.as_ref().to_path_buf());
         let paths = fs::read(paths_file)?;
-        let paths = postcard::from_bytes::<Vec<(PathBuf, u64, Hash)>>(&paths)?;
+        let paths = postcard::from_bytes::<Vec<(Hash, u64, Option<PathBuf>)>>(&paths)?;
         let hashes = paths
             .iter()
-            .map(|(_, _, hash)| *hash)
+            .map(|(hash, _, _)| *hash)
             .collect::<BTreeSet<_>>();
         let outboards = hashes.clone().into_iter().map(move |hash| {
             let path = outboards_dir.join(format_hash(&hash));
             fs::read(path).map(|x| (hash, Bytes::from(x)))
         });
-        let collections = fs::read_dir(collections_dir)?.filter_map(move |entry| {
-            let entry = entry.ok()?;
+        let collections = fs::read_dir(collections_dir)?.map(move |entry| {
+            let entry = entry?;
             let path = entry.path();
             // skip directories
-            if entry.file_type().ok()?.is_dir() {
-                return None;
+            if entry.file_type()?.is_dir() {
+                tracing::debug!("skipping directory: {:?}", path);
+                return Ok(None);
             }
-            // skip file names that are not valid hashes;
-            let hash = parse_hash(path.file_name()?.to_str()?).ok()?;
+            // try to get the file name as an OsStr
+            let name = if let Some(name) = path.file_name() {
+                name
+            } else {
+                tracing::debug!("skipping unexpected path: {:?}", path);
+                return Ok(None);
+            };
+            // try to convert into a std str
+            let name = if let Some(name) = name.to_str() {
+                name
+            } else {
+                tracing::debug!("skipping unexpected path: {:?}", path);
+                return Ok(None);
+            };
+            // try to parse the file name as a hash
+            let hash = match parse_hash(name) {
+                Ok(hash) => hash,
+                Err(err) => {
+                    tracing::debug!("skipping unexpected path: {:?}: {}", path, err);
+                    return Ok(None);
+                }
+            };
             // skip files that are not in the paths file
             if !hashes.contains(&hash) {
-                return None;
+                tracing::debug!("skipping unexpected hash: {:?}", hash);
+                return Ok(None);
             }
             // read the collection data and turn it into a Bytes
-            let collection = Bytes::from(fs::read(path).ok()?);
-            Some(io::Result::Ok((hash, collection)))
-        });
+            let collection = Bytes::from(fs::read(path)?);
+            io::Result::Ok(Some((hash, collection)))
+        }).filter_map(|x| x.transpose());
         Ok(Self {
             paths: Box::new(paths.into_iter()),
             outboards: Box::new(outboards),
@@ -148,7 +177,9 @@ impl Snapshot<io::Error> {
     }
 }
 
-impl<E: Into<io::Error>> Snapshot<E> {
+impl<E> Snapshot<E>
+    where io::Error: From<E>
+{
     pub fn persist(self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         use std::fs;
         let DataPaths {
@@ -192,16 +223,18 @@ impl Database {
             .collect::<result::Result<HashMap<_, _>, E>>()
             .map_err(Into::into)?;
         let mut db = HashMap::new();
-        for (path, size, hash) in paths {
-            if let Some(outboard) = outboards.get(&hash) {
-                db.insert(
-                    hash,
-                    BlobOrCollection::Blob(Data {
-                        outboard: outboard.clone(),
-                        path,
-                        size,
-                    }),
-                );
+        for (hash, size, path) in paths {
+            if let Some(path) = path {
+                if let Some(outboard) = outboards.get(&hash) {
+                    db.insert(
+                        hash,
+                        BlobOrCollection::Blob(Data {
+                            outboard: outboard.clone(),
+                            path,
+                            size,
+                        }),
+                    );
+                }
             }
         }
         for (hash, data) in collections {
@@ -220,7 +253,7 @@ impl Database {
     }
 
     // take a snapshot of the database
-    fn snapshot(&self) -> Snapshot<Infallible> {
+    fn snapshot(&self) -> Snapshot<NoError> {
         let this = self.0.read().unwrap();
         let outboards = this
             .iter()
@@ -240,9 +273,9 @@ impl Database {
 
         let paths = this
             .iter()
-            .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob(Data { path, size, .. }) => Some((path.clone(), *size, *k)),
-                BlobOrCollection::Collection { .. } => None,
+            .map(|(k, v)| match v {
+                BlobOrCollection::Blob(Data { path, size, .. }) => (*k, *size, Some(path.clone())),
+                BlobOrCollection::Collection { outboard, data } => (*k, data.len() as u64, None),
             })
             .collect::<Vec<_>>();
 
@@ -295,6 +328,11 @@ impl Database {
         // e.g. by using an immutable map or a real database that supports snapshots.
         items.into_iter()
     }
+
+    #[cfg(test)]
+    fn to_inner(&self) -> HashMap<Hash, BlobOrCollection> {
+        self.0.read().unwrap().clone()
+    }
 }
 
 /// Builder for the [`Provider`].
@@ -314,7 +352,7 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     keylog: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection { outboard: Bytes, data: Bytes },
@@ -1231,12 +1269,100 @@ impl FromStr for Ticket {
     }
 }
 
+/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+pub fn make_server_config(
+    keypair: &Keypair,
+    max_streams: u64,
+    max_connections: u32,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(max_streams.try_into()?)
+        .max_concurrent_uni_streams(0u32.into());
+
+    server_config
+        .transport_config(Arc::new(transport_config))
+        .concurrent_connections(max_connections);
+    Ok(server_config)
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use proptest::prelude::*;
     use testdir::testdir;
 
     use super::*;
+
+    fn blob(size: usize) -> impl Strategy<Value = Bytes> {
+        proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
+    }
+     
+    fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
+        proptest::collection::vec(blob(size), 0..count)
+    }
+
+    fn db(blob_count: usize, blob_size: usize) -> impl Strategy<Value = Database> {
+        let blobs = blobs(blob_count, blob_size);
+        blobs.prop_map(|blobs| {
+            let mut map = HashMap::new();
+            let mut cblobs = Vec::new();
+            let mut total_blobs_size = 0u64;
+            for blob in blobs {
+                let size = blob.len() as u64;
+                total_blobs_size += size;
+                let (outboard, hash) = abao::encode::outboard(&blob);
+                let outboard = Bytes::from(outboard);
+                let hash = Hash::from(hash);
+                let path = PathBuf::from_str(&hash.to_string()).unwrap();
+                cblobs.push(Blob {
+                    name: hash.to_string(),
+                    hash,
+                });
+                map.insert(hash, BlobOrCollection::Blob(Data { outboard, size, path }));
+            }
+            let collection = Collection {
+                blobs: cblobs,
+                total_blobs_size,
+                name: "".to_string(),
+            };
+            // encode collection and add it
+            {
+                let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
+                let (outboard, hash) = abao::encode::outboard(&data);
+                let outboard = Bytes::from(outboard);
+                let hash = Hash::from(hash);
+                map.insert(hash, BlobOrCollection::Collection { outboard, data });
+            }
+            let db = Database::default();
+            db.union_with(map);
+            db            
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn database_snapshot_roundtrip(db in db(10, 1024 * 64)) {
+            let snapshot = db.snapshot();
+            let db2 = Database::from_snapshot(snapshot).unwrap();
+            prop_assert_eq!(db.to_inner(), db2.to_inner());
+        }
+
+        #[test]
+        fn database_persistence_roundtrip(db in db(10, 1024 * 64)) {
+            let dir = tempfile::tempdir().unwrap();
+            let snapshot = db.snapshot();
+            snapshot.persist(&dir).unwrap();
+            let snapshot2 = Snapshot::load(&dir).unwrap();
+            let db2 = Database::from_snapshot(snapshot2).unwrap();
+            let db = db.to_inner();
+            let db2 = db2.to_inner();
+            prop_assert_eq!(db, db2);
+        }
+    }
 
     #[test]
     fn test_ticket_base64_roundtrip() {
@@ -1314,24 +1440,4 @@ mod tests {
 
         Ok(())
     }
-}
-
-/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
-pub fn make_server_config(
-    keypair: &Keypair,
-    max_streams: u64,
-    max_connections: u32,
-    alpn_protocols: Vec<Vec<u8>>,
-) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(max_streams.try_into()?)
-        .max_concurrent_uni_streams(0u32.into());
-
-    server_config
-        .transport_config(Arc::new(transport_config))
-        .concurrent_connections(max_connections);
-    Ok(server_config)
 }
