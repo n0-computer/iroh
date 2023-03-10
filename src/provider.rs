@@ -63,16 +63,24 @@ pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 ///
 /// `E` can be `Infallible` if we take a snapshot from an in memory database,
 /// or `io::Error` if we read a database from disk.
-struct Snapshot<E> {
-    // list of paths we have, hash is the hash of the blob or collection
+pub struct Snapshot<E> {
+    /// list of paths we have, hash is the hash of the blob or collection
     paths: Box<dyn Iterator<Item = (Hash, u64, Option<PathBuf>)>>,
-    // map of hash to outboard, hash is the hash of the outboard and is unique
+    /// map of hash to outboard, hash is the hash of the outboard and is unique
     outboards: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
-    // map of hash to collection, hash is the hash of the collection and is unique
+    /// map of hash to collection, hash is the hash of the collection and is unique
     collections: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
 }
 
-enum NoError {}
+impl<E> fmt::Debug for Snapshot<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Snapshot").finish()
+    }
+}
+
+/// An error that can never happen
+#[derive(Debug)]
+pub enum NoError {}
 
 impl From<NoError> for io::Error {
     fn from(_: NoError) -> Self {
@@ -81,6 +89,7 @@ impl From<NoError> for io::Error {
 }
 
 struct DataPaths {
+    #[allow(dead_code)]
     data_dir: PathBuf,
     outboards_dir: PathBuf,
     collections_dir: PathBuf,
@@ -112,6 +121,7 @@ fn parse_hash(hash: &str) -> Result<Hash> {
 }
 
 impl Snapshot<io::Error> {
+    /// Load a snapshot from disk.
     pub fn load(data_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         use std::fs;
         let DataPaths {
@@ -130,45 +140,47 @@ impl Snapshot<io::Error> {
             let path = outboards_dir.join(format_hash(&hash));
             fs::read(path).map(|x| (hash, Bytes::from(x)))
         });
-        let collections = fs::read_dir(collections_dir)?.map(move |entry| {
-            let entry = entry?;
-            let path = entry.path();
-            // skip directories
-            if entry.file_type()?.is_dir() {
-                tracing::debug!("skipping directory: {:?}", path);
-                return Ok(None);
-            }
-            // try to get the file name as an OsStr
-            let name = if let Some(name) = path.file_name() {
-                name
-            } else {
-                tracing::debug!("skipping unexpected path: {:?}", path);
-                return Ok(None);
-            };
-            // try to convert into a std str
-            let name = if let Some(name) = name.to_str() {
-                name
-            } else {
-                tracing::debug!("skipping unexpected path: {:?}", path);
-                return Ok(None);
-            };
-            // try to parse the file name as a hash
-            let hash = match parse_hash(name) {
-                Ok(hash) => hash,
-                Err(err) => {
-                    tracing::debug!("skipping unexpected path: {:?}: {}", path, err);
+        let collections = fs::read_dir(collections_dir)?
+            .map(move |entry| {
+                let entry = entry?;
+                let path = entry.path();
+                // skip directories
+                if entry.file_type()?.is_dir() {
+                    tracing::debug!("skipping directory: {:?}", path);
                     return Ok(None);
                 }
-            };
-            // skip files that are not in the paths file
-            if !hashes.contains(&hash) {
-                tracing::debug!("skipping unexpected hash: {:?}", hash);
-                return Ok(None);
-            }
-            // read the collection data and turn it into a Bytes
-            let collection = Bytes::from(fs::read(path)?);
-            io::Result::Ok(Some((hash, collection)))
-        }).filter_map(|x| x.transpose());
+                // try to get the file name as an OsStr
+                let name = if let Some(name) = path.file_name() {
+                    name
+                } else {
+                    tracing::debug!("skipping unexpected path: {:?}", path);
+                    return Ok(None);
+                };
+                // try to convert into a std str
+                let name = if let Some(name) = name.to_str() {
+                    name
+                } else {
+                    tracing::debug!("skipping unexpected path: {:?}", path);
+                    return Ok(None);
+                };
+                // try to parse the file name as a hash
+                let hash = match parse_hash(name) {
+                    Ok(hash) => hash,
+                    Err(err) => {
+                        tracing::debug!("skipping unexpected path: {:?}: {}", path, err);
+                        return Ok(None);
+                    }
+                };
+                // skip files that are not in the paths file
+                if !hashes.contains(&hash) {
+                    tracing::debug!("skipping unexpected hash: {:?}", hash);
+                    return Ok(None);
+                }
+                // read the collection data and turn it into a Bytes
+                let collection = Bytes::from(fs::read(path)?);
+                io::Result::Ok(Some((hash, collection)))
+            })
+            .filter_map(|x| x.transpose());
         Ok(Self {
             paths: Box::new(paths.into_iter()),
             outboards: Box::new(outboards),
@@ -178,8 +190,10 @@ impl Snapshot<io::Error> {
 }
 
 impl<E> Snapshot<E>
-    where io::Error: From<E>
+where
+    io::Error: From<E>,
 {
+    /// Persist the snapshot to disk.
     pub fn persist(self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         use std::fs;
         let DataPaths {
@@ -210,7 +224,8 @@ impl<E> Snapshot<E>
 }
 
 impl Database {
-    fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
+    /// Load a database from disk.
+    pub fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
         let Snapshot {
             outboards,
             collections,
@@ -252,8 +267,8 @@ impl Database {
         Ok(Self(Arc::new(RwLock::new(db))))
     }
 
-    // take a snapshot of the database
-    fn snapshot(&self) -> Snapshot<NoError> {
+    /// take a snapshot of the database
+    pub fn snapshot(&self) -> Snapshot<NoError> {
         let this = self.0.read().unwrap();
         let outboards = this
             .iter()
@@ -275,7 +290,7 @@ impl Database {
             .iter()
             .map(|(k, v)| match v {
                 BlobOrCollection::Blob(Data { path, size, .. }) => (*k, *size, Some(path.clone())),
-                BlobOrCollection::Collection { outboard, data } => (*k, data.len() as u64, None),
+                BlobOrCollection::Collection { data, .. } => (*k, data.len() as u64, None),
             })
             .collect::<Vec<_>>();
 
@@ -284,20 +299,6 @@ impl Database {
             collections: Box::new(collections.into_iter().map(Ok)),
             paths: Box::new(paths.into_iter()),
         }
-    }
-
-    fn collections(&self) -> impl Iterator<Item = (Hash, Bytes)> + '_ {
-        let res = self
-            .0
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob(_) => None,
-                BlobOrCollection::Collection { data, .. } => Some((*k, data.clone())),
-            })
-            .collect::<Vec<_>>();
-        res.into_iter()
     }
 
     fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
@@ -461,6 +462,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         };
 
         Ok(Provider {
+            database: self.db.clone(),
             listen_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
@@ -551,6 +553,7 @@ pub struct Provider {
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
+    database: Database,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -633,6 +636,11 @@ impl Provider {
             addr: self.listen_addr,
             token: self.auth_token,
         }
+    }
+
+    /// Return the database
+    pub fn database(&self) -> &Database {
+        &self.database
     }
 
     /// Aborts the provider.
@@ -1291,8 +1299,8 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use proptest::prelude::*;
+    use std::str::FromStr;
     use testdir::testdir;
 
     use super::*;
@@ -1300,7 +1308,7 @@ mod tests {
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
         proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
     }
-     
+
     fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
         proptest::collection::vec(blob(size), 0..count)
     }
@@ -1322,7 +1330,14 @@ mod tests {
                     name: hash.to_string(),
                     hash,
                 });
-                map.insert(hash, BlobOrCollection::Blob(Data { outboard, size, path }));
+                map.insert(
+                    hash,
+                    BlobOrCollection::Blob(Data {
+                        outboard,
+                        size,
+                        path,
+                    }),
+                );
             }
             let collection = Collection {
                 blobs: cblobs,
@@ -1339,7 +1354,7 @@ mod tests {
             }
             let db = Database::default();
             db.union_with(map);
-            db            
+            db
         })
     }
 
