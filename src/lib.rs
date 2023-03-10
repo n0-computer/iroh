@@ -20,7 +20,6 @@ pub use util::Hash;
 mod tests {
     use std::{
         net::SocketAddr,
-        path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
         time::Duration,
     };
@@ -90,7 +89,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn multiple_clients() -> Result<()> {
-        let dir: PathBuf = testdir!();
+        let dir = testdir!();
         let filename = "hello_world";
         let path = dir.join(filename);
         let content = b"hello world!";
@@ -183,7 +182,7 @@ mod tests {
     where
         S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
     {
-        let dir: PathBuf = testdir!();
+        let dir = testdir!();
 
         // create and save files
         let mut files = Vec::new();
@@ -409,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipv6() {
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let readme = dinghy_test::test_project_path().join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
