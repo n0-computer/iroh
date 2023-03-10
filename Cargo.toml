@@ -64,6 +64,3 @@ cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
 [[bin]]
 name = "iroh"
 required-features = ["cli"]
-
-[patch.crates-io]
-default-net = { path = "../default-net" }
