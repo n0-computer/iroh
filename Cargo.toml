@@ -12,7 +12,7 @@ repository = "https://github.com/n0-computer/iroh"
 rust-version = "1.63"
 
 [dependencies]
-abao = { version = "0.1.2" }
+abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
 anyhow = { version = "1", features = ["backtrace"] }
 async-time-mock-tokio = "0.0.1"
 backoff = "0.4.0"
@@ -24,7 +24,7 @@ console = { version = "0.15.5", optional = true }
 crypto_box = "0.8.2"
 curve25519-dalek = "=4.0.0-rc.1"
 data-encoding = { version = "2.3.3", optional = true }
-default-net = "0.12.0"
+default-net = "0.13.0"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = "0.99.17"
 ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
@@ -56,7 +56,7 @@ ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] 
 stun-rs = "0.1.4"
 subtle = "2.4.1"
 syscalls = { version = "0.6.7", features = ["full"] } # todo not all
-tempfile = "3"
+tempfile = "3.4"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
@@ -78,7 +78,7 @@ async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }
 hex = "0.4.0"
 proptest = "1.0.0"
 rand = "0.8"
-testdir = "0.7.1"
+testdir = "0.7.2"
 regex = { version = "1.7.1", features = ["std"] }
 
 [features]
