@@ -23,10 +23,8 @@ use super::{
     MAX_PACKET_SIZE,
 };
 
-type PacketReceiver = mpsc::Receiver<Packet>;
-
 /// A request to write a dataframe to a Client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Packet {
     /// The sender of the packet
     src: PublicKey,
@@ -40,7 +38,7 @@ struct Packet {
 }
 
 /// PeerConnState represents whether or not a peer is connected to the server.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PeerConnState {
     peer: PublicKey,
     present: bool,
@@ -413,7 +411,7 @@ where
                 "unexpected request to update mesh peers on a connection that is not able to mesh"
             );
         }
-        let scheduled_updates: Vec<_> = if updates.len() > 16 {
+        let scheduled_updates: Vec<_> = if updates.len() < 16 {
             updates.drain(..).collect()
         } else {
             updates.drain(..16).collect()
@@ -472,7 +470,7 @@ where
             write_frame_timeout(
                 &mut self.writer,
                 FRAME_RECV_PACKET,
-                vec![&contents, srckey.as_bytes()],
+                vec![srckey.as_bytes(), &contents],
                 self.timeout,
             )
             .await
@@ -732,11 +730,15 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 
 #[cfg(test)]
 mod tests {
-    super::*;
+    use crate::hp::derp::server::WRITE_TIMEOUT;
+
+    use super::*;
 
     #[tokio::test]
-    fn test_client_to_read_manager() -> Result<()> {
-        // set up read manager with reader 
+    async fn test_client_conn_reader_basic() -> Result<()> {
+        let (mut reader, mut writer) = tokio::io::duplex(1024);
+
+        // set up read manager with reader
         // set up channels to send off read manager
         // send each kind of packet from the client
         // test that correct messages got to channels
@@ -744,12 +746,95 @@ mod tests {
     }
 
     #[tokio::test]
-    fn test_write_manager_to_client() -> Result<()> {
-        // set up writer manager with writer 
-        // set up channels with write info
-        // send each kind of message from the write manager
-        // test that the correct messages got to the writer
-        todo!();
-    }
+    async fn test_client_conn_writer_basic() -> Result<()> {
+        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let mut buf = BytesMut::new();
+        let (send_queue_s, send_queue_r) = mpsc::channel(10);
+        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
+        let (send_pong_s, send_pong_r) = mpsc::channel(10);
+        let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
+        let conn_writer = ClientConnWriter {
+            can_mesh: true,
+            writer,
+            timeout: WRITE_TIMEOUT,
+            send_queue: send_queue_r,
+            disco_send_queue: disco_send_queue_r,
+            send_pong: send_pong_r,
+            peer_gone: peer_gone_r,
+            mesh_update_r,
+            mesh_update_s: mesh_update_s.clone(),
+        };
 
+        let done = CancellationToken::new();
+        let writer_done = done.clone();
+        let writer_handle = tokio::spawn(async move { conn_writer.run(writer_done).await });
+        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+        let data = b"hello world!";
+
+        // send packet
+        let packet = Packet {
+            src: key.clone(),
+            enqueued_at: Instant::now(),
+            bytes: Bytes::from(&data[..]),
+        };
+        send_queue_s.send(packet.clone()).await?;
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        assert_eq!(key, got_key);
+        assert_eq!(&data[..], got_data);
+
+        // send disco packet
+        disco_send_queue_s.send(packet.clone()).await?;
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        assert_eq!(key, got_key);
+        assert_eq!(&data[..], got_data);
+
+        // send pong
+        let msg = b"pingpong";
+        send_pong_s.send(*msg).await?;
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_PONG, frame_type);
+        assert_eq!(8, frame_len);
+        assert_eq!(msg, &buf[..]);
+
+        // send peer_gone
+        peer_gone_s.send(key.clone()).await?;
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_PEER_GONE, frame_type);
+        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+
+        // send mesh_upate
+        let updates = vec![
+            PeerConnState {
+                peer: key.clone(),
+                present: true,
+            },
+            PeerConnState {
+                peer: key.clone(),
+                present: false,
+            },
+        ];
+
+        mesh_update_s.send(updates.clone()).await?;
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_PEER_PRESENT, frame_type);
+        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+
+        let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_PEER_GONE, frame_type);
+        assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
+        assert_eq!(key, PublicKey::try_from(&buf[..])?);
+
+        done.cancel();
+        writer_handle.await??;
+        Ok(())
+    }
 }

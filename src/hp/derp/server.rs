@@ -36,7 +36,7 @@ enum DupPolicy {
 
 #[derive(Debug)]
 /// A DERP server.
-pub struct Server<'a, C: Conn> {
+pub struct Server<'a> {
     /// Optionally specifies how long to wait before failing when writing
     /// to a cliet
     write_timeout: Option<Duration>,
@@ -96,7 +96,7 @@ pub struct Server<'a, C: Conn> {
 
     closed: AtomicBool,
     // TODO: how is this used, should it be a `Sender`?
-    net_conns: HashMap<C, Receiver<()>>,
+    // net_conns: HashMap<C, Receiver<()>>,
     clients: HashMap<PublicKey, ClientSet>,
     watchers: HashMap<ClientConn, bool>,
     /// Tracks all clients in the cluster, both locally and to mesh peers.
@@ -114,10 +114,7 @@ pub struct Server<'a, C: Conn> {
     key_of_addr: HashMap<SocketAddr, PublicKey>,
 }
 
-impl<'a, C> Server<'a, C>
-where
-    C: Conn,
-{
+impl<'a> Server<'a> {
     /// replace with builder
     pub fn new(key: SecretKey) -> Self {
         // TODO:
@@ -146,27 +143,27 @@ where
 
     /// Closes the server and waits for the connections to disconnect.
     pub async fn close(self) {
-        let closed = self.closed.load(Ordering::Relaxed);
-        if closed {
-            return;
-        }
-        self.closed.swap(true, Ordering::Relaxed);
-        let mut closed_channels = Vec::new();
+        // let closed = self.closed.load(Ordering::Relaxed);
+        // if closed {
+        //     return;
+        // }
+        // self.closed.swap(true, Ordering::Relaxed);
+        // let mut closed_channels = Vec::new();
 
-        for (net_conn, closed) in self.net_conns.into_iter() {
-            match net_conn.close() {
-                Ok(_) => closed_channels.push(closed),
-                Err(e) => {
-                    tracing::warn!("error closing connection {e:#?}")
-                }
-            }
-        }
+        // for (net_conn, closed) in self.net_conns.into_iter() {
+        //     match net_conn.close() {
+        //         Ok(_) => closed_channels.push(closed),
+        //         Err(e) => {
+        //             tracing::warn!("error closing connection {e:#?}")
+        //         }
+        //     }
+        // }
 
-        for c in closed_channels.into_iter() {
-            if let Err(e) = c.await {
-                tracing::warn!("error while closing connection {e:#?}");
-            }
-        }
+        // for c in closed_channels.into_iter() {
+        //     if let Err(e) = c.await {
+        //         tracing::warn!("error while closing connection {e:#?}");
+        //     }
+        // }
     }
 
     pub fn is_closed(&self) -> bool {
@@ -188,7 +185,7 @@ where
     /// Accept closes `conn`.
     pub fn accept<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         &self,
-        conn: C,
+        // conn: C,
         reader: R,
         writer: W,
         remote_addr: String,
@@ -256,7 +253,7 @@ where
 
     fn accept_0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
-        conn: C,
+        // conn: C,
         reader: R,
         writer: W,
         remote_addr: String,

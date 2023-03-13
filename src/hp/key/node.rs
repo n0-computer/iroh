@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 pub use ed25519_dalek::{SigningKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
 
 use super::{disco, disco::NONCE_LEN};
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(ed25519_dalek::VerifyingKey);
@@ -41,7 +41,8 @@ impl From<[u8; PUBLIC_KEY_LENGTH]> for PublicKey {
 impl TryFrom<&[u8]> for PublicKey {
     type Error = anyhow::Error;
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
-        let value = <[u8; PUBLIC_KEY_LENGTH]>::try_from(value)?;
+        let value =
+            <[u8; PUBLIC_KEY_LENGTH]>::try_from(value).context("TryFrom slice to PublicKey")?;
         Ok(PublicKey::from(value))
     }
 }

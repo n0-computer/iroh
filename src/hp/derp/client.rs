@@ -268,8 +268,9 @@ where
                         );
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
-                    return Ok(ReceivedMessage::PeerGone(PublicKey::from(key)));
+                    return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
+                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                    )?));
                 }
                 FRAME_PEER_PRESENT => {
                     if (frame_len) < PUBLIC_KEY_LENGTH {
@@ -278,18 +279,19 @@ where
                         );
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
-                    return Ok(ReceivedMessage::PeerPresent(PublicKey::from(key)));
+                    return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
+                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                    )?));
                 }
                 FRAME_RECV_PACKET => {
                     if (frame_len) < PUBLIC_KEY_LENGTH {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
+                    let (source, data) = parse_recv_frame(&frame_payload)?;
                     let packet = ReceivedMessage::ReceivedPacket {
-                        source: key,
-                        data: frame_payload[PUBLIC_KEY_LENGTH..].to_vec(),
+                        source,
+                        data: data.to_vec(),
                     };
                     return Ok(packet);
                 }
@@ -648,4 +650,11 @@ async fn close_peer<W: AsyncWrite + Unpin>(mut writer: W, target: PublicKey) -> 
     write_frame(&mut writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
     writer.flush().await?;
     Ok(())
+}
+
+pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
+    Ok((
+        PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
+        &frame[PUBLIC_KEY_LENGTH..],
+    ))
 }

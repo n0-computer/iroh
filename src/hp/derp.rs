@@ -9,7 +9,7 @@
 //! between very aggressive NATs, firewalls, no IPv6, etc? Well, DERP.
 //! Based on tailscale/derp/derp.go
 
-mod client;
+pub(crate) mod client;
 mod client_conn;
 mod conn;
 pub mod http;
