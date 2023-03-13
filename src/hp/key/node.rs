@@ -38,6 +38,14 @@ impl From<[u8; PUBLIC_KEY_LENGTH]> for PublicKey {
     }
 }
 
+impl TryFrom<&[u8]> for PublicKey {
+    type Error = anyhow::Error;
+    fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
+        let value = <[u8; PUBLIC_KEY_LENGTH]>::try_from(value)?;
+        Ok(PublicKey::from(value))
+    }
+}
+
 impl From<PublicKey> for disco::PublicKey {
     fn from(value: PublicKey) -> Self {
         let ed_compressed = curve25519_dalek::edwards::CompressedEdwardsY(*value.0.as_bytes());
@@ -52,6 +60,10 @@ impl From<PublicKey> for disco::PublicKey {
 impl PublicKey {
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_LENGTH] {
         self.0.as_bytes()
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0.as_bytes() == &[0u8; PUBLIC_KEY_LENGTH]
     }
 }
 

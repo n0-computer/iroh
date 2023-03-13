@@ -8,7 +8,7 @@ use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use super::{
     conn::Conn, read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO,
@@ -102,7 +102,9 @@ where
             FRAME_CLIENT_INFO,
             vec![self.secret_key.verifying_key().as_bytes(), &sealed_msg],
         )
-        .await
+        .await?;
+        self.writer.flush().await?;
+        Ok(())
     }
 
     /// Returns a reference to the server's public key.
@@ -113,28 +115,16 @@ where
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
+    // TODO: the rate limiter is only on this method, is it because it's the only method that
+    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
     pub async fn send(&mut self, dstkey: PublicKey, packet: &[u8]) -> Result<()> {
-        if packet.len() > MAX_PACKET_SIZE {
-            bail!("packet too big: {}", packet.len());
-        }
-        let frame_len = PUBLIC_KEY_LENGTH + packet.len();
-        if let Some(rate_limiter) = &self.rate_limiter {
-            match rate_limiter.check_n(frame_len) {
-                Ok(_) => {}
-                Err(_) => {
-                    tracing::warn!("dropping send: rate limit reached");
-                    return Ok(());
-                }
-            };
-        }
-        write_frame(
-            &mut self.writer,
-            FRAME_SEND_PACKET,
-            vec![dstkey.as_bytes(), packet],
-        )
-        .await
+        send_packet(&mut self.writer, &self.rate_limiter, dstkey, packet).await
     }
 
+    /// Used by mesh peers to forward packets.
+    ///
+    // TODO: this is the only method with a timeout, why? Why does it have a timeout and no rate
+    // limiter?
     pub async fn forward_packet(
         &mut self,
         srckey: PublicKey,
@@ -143,7 +133,7 @@ where
     ) -> Result<()> {
         tokio::select! {
             biased;
-            res = self.forward_packet_0(srckey, dstkey, packet) => {
+            res = forward_packet(&mut self.writer, srckey, dstkey, packet) => {
                 res
             }
             _ = tokio::time::sleep(Duration::from_secs(5)) => {
@@ -152,65 +142,35 @@ where
         }
     }
 
-    async fn forward_packet_0(
-        &mut self,
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        packet: &[u8],
-    ) -> Result<()> {
-        if packet.len() > MAX_PACKET_SIZE {
-            bail!("packet too big: {}", packet.len());
-        }
-
-        write_frame(
-            &mut self.writer,
-            FRAME_FORWARD_PACKET,
-            vec![srckey.as_bytes(), dstkey.as_bytes(), packet],
-        )
-        .await
-    }
-
     async fn write_timeout_fired(&self) -> Result<()> {
         self.conn.close()
     }
 
     pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        self.send_ping_or_pong(FRAME_PING, data).await
+        send_ping(&mut self.writer, data).await
     }
 
     pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        self.send_ping_or_pong(FRAME_PONG, data).await
-    }
-
-    async fn send_ping_or_pong(&mut self, frame_type: FrameType, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, frame_type, vec![&data]).await
+        send_pong(&mut self.writer, data).await
     }
 
     /// Sends a packet that tells the server whether this
     /// client is the user's preferred server. This is only
     /// used in the server for stats.
     pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        let byte = {
-            if preferred {
-                [0x00]
-            } else {
-                [0x01]
-            }
-        };
-        write_frame(&mut self.writer, FRAME_NOTE_PREFERRED, vec![&byte]).await
+        send_note_preferred(&mut self.writer, preferred).await
     }
 
     /// Sends a request to subscribe to the peer's connection list.
     /// It's a fatal error if the client wasn't created using [`MeshKey`].
     pub async fn watch_connection_changes(&mut self) -> Result<()> {
-        write_frame(&mut self.writer, FRAME_WATCH_CONNS, vec![]).await
+        watch_connection_changes(&mut self.writer).await
     }
 
     /// Asks the server to close the target's TCP connection.
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
     pub async fn close_peer(&mut self, target: PublicKey) -> Result<()> {
-        write_frame(&mut self.writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
-        Ok(())
+        close_peer(&mut self.writer, target).await
     }
 
     async fn set_send_rate_limiter(&mut self, sm: ReceivedMessage) {
@@ -593,4 +553,99 @@ impl RateLimiter {
             Err(_) => bail!("batch cannot go through"),
         }
     }
+}
+
+async fn send_packet<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    rate_limiter: &Option<RateLimiter>,
+    dstkey: PublicKey,
+    packet: &[u8],
+) -> Result<()> {
+    if packet.len() > MAX_PACKET_SIZE {
+        bail!("packet too big: {}", packet.len());
+    }
+    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+    if let Some(rate_limiter) = rate_limiter {
+        match rate_limiter.check_n(frame_len) {
+            Ok(_) => {}
+            Err(_) => {
+                tracing::warn!("dropping send: rate limit reached");
+                return Ok(());
+            }
+        };
+    }
+    write_frame(
+        &mut writer,
+        FRAME_SEND_PACKET,
+        vec![dstkey.as_bytes(), packet],
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn forward_packet<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    srckey: PublicKey,
+    dstkey: PublicKey,
+    packet: &[u8],
+) -> Result<()> {
+    if packet.len() > MAX_PACKET_SIZE {
+        bail!("packet too big: {}", packet.len());
+    }
+
+    write_frame(
+        &mut writer,
+        FRAME_FORWARD_PACKET,
+        vec![srckey.as_bytes(), dstkey.as_bytes(), packet],
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: [u8; 8]) -> Result<()> {
+    send_ping_or_pong(&mut writer, FRAME_PING, data).await
+}
+
+async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: [u8; 8]) -> Result<()> {
+    send_ping_or_pong(&mut writer, FRAME_PONG, data).await
+}
+
+async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    frame_type: FrameType,
+    data: [u8; 8],
+) -> Result<()> {
+    write_frame(&mut writer, frame_type, vec![&data]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    preferred: bool,
+) -> Result<()> {
+    let byte = {
+        if preferred {
+            [0x00]
+        } else {
+            [0x01]
+        }
+    };
+    write_frame(&mut writer, FRAME_NOTE_PREFERRED, vec![&byte]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
+    write_frame(&mut writer, FRAME_WATCH_CONNS, vec![]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn close_peer<W: AsyncWrite + Unpin>(mut writer: W, target: PublicKey) -> Result<()> {
+    write_frame(&mut writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
+    writer.flush().await?;
+    Ok(())
 }

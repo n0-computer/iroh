@@ -174,7 +174,7 @@ async fn write_frame_header(
     Ok(())
 }
 
-/// AsyncWrites a complete frame & flushes it.
+/// AsyncWrites a complete frame. Does not flush.
 async fn write_frame(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
@@ -188,8 +188,31 @@ async fn write_frame(
     for b in bytes {
         writer.write_all(b).await?;
     }
-    writer.flush().await?;
     Ok(())
+}
+
+/// AsyncWrites a complete frame, errors if it is unable to write within the given `timeout`.
+/// Ignores the timeout if `timeout.is_zero()`
+///
+/// Does not flush.
+async fn write_frame_timeout(
+    writer: impl AsyncWrite + Unpin,
+    frame_type: FrameType,
+    bytes: Vec<&[u8]>,
+    timeout: Duration,
+) -> Result<()> {
+    if timeout.is_zero() {
+        return write_frame(writer, frame_type, bytes).await;
+    }
+    tokio::select! {
+        biased;
+        res = write_frame(writer, frame_type, bytes) => {
+            res
+        }
+        _ = tokio::time::sleep(timeout) => {
+            bail!("could not write {} within the deadline {:?}", frame_type, timeout);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +230,7 @@ mod tests {
 
         let expect_buf = b"hello world!";
         write_frame(&mut writer, FRAME_HEALTH, vec![expect_buf]).await?;
+        writer.flush().await;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();
         let (frame_type, frame_len) = read_frame(&mut reader, 1024, &mut got_buf).await?;
