@@ -24,8 +24,8 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future;
-use futures::Stream;
+use futures::future::{self, BoxFuture, Shared};
+use futures::{FutureExt, Stream, TryFutureExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -33,7 +33,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinError;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
@@ -444,14 +444,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let cancel_token = CancellationToken::new();
         tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let inner = Arc::new(ProviderInner {
+            db: self.db,
+            listen_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            events,
+            controller,
+            cancel_token,
+        });
         let task = {
-            let cancel_token = cancel_token.clone();
-            let handler = ProviderHandles {
-                peer_id: self.keypair.public().into(),
-                db: self.db,
-                auth_token: self.auth_token,
-                shutdown: cancel_token,
-                listen_addr,
+            let handler = RpcHandler {
+                inner: inner.clone(),
             };
             tokio::spawn(async move {
                 Self::run(
@@ -464,22 +468,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 .await
             })
         };
+        let provider = Provider {
+            inner,
+            task: task.map_err(Arc::new).boxed().shared(),
+        };
 
-        Ok(Provider {
-            listen_addr,
-            keypair: self.keypair,
-            auth_token: self.auth_token,
-            task,
-            events,
-            controller,
-            cancel_token,
-        })
+        Ok(provider)
     }
 
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
-        handler: ProviderHandles,
+        handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
     ) {
@@ -488,7 +488,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
-        let cancel_token = handler.shutdown.clone();
+        let cancel_token = handler.inner.cancel_token.clone();
         loop {
             tokio::select! {
                 biased;
@@ -519,9 +519,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 },
                 // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
-                    let db = handler.db.clone();
+                    let db = handler.inner.db.clone();
                     let events = events.clone();
-                    let auth_token = handler.auth_token;
+                    let auth_token = handler.inner.auth_token;
                     tokio::spawn(handle_connection(connecting, db, auth_token, events));
                 }
                 else => break,
@@ -547,12 +547,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
 /// This runs a tokio task which can be aborted and joined if desired.  To join the task
 /// await the [`Provider`] struct directly, it will complete when the task completes.  If
 /// this is dropped the provider task is not stopped but keeps running.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Provider {
+    inner: Arc<ProviderInner>,
+    task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
+}
+
+#[derive(Debug)]
+struct ProviderInner {
+    db: Database,
     listen_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
-    task: JoinHandle<()>,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
@@ -601,30 +607,30 @@ impl Provider {
 
     /// Returns the address on which the server is listening for connections.
     pub fn listen_addr(&self) -> SocketAddr {
-        self.listen_addr
+        self.inner.listen_addr
     }
 
     /// Returns the [`PeerId`] of the provider.
     pub fn peer_id(&self) -> PeerId {
-        self.keypair.public().into()
+        self.inner.keypair.public().into()
     }
 
     /// Returns the [`AuthToken`] needed to connect to the provider.
     pub fn auth_token(&self) -> AuthToken {
-        self.auth_token
+        self.inner.auth_token
     }
 
     /// Subscribe to [`Event`]s emitted from the provider, informing about connections and
     /// progress.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        self.events.subscribe()
+        self.inner.events.subscribe()
     }
 
     /// Returns a handle that can be used to do RPC calls to the provider internally.
     pub fn controller(
         &self,
     ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
-        RpcClient::new(self.controller.clone())
+        RpcClient::new(self.inner.controller.clone())
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -635,8 +641,8 @@ impl Provider {
         Ticket {
             hash,
             peer: self.peer_id(),
-            addr: self.listen_addr,
-            token: self.auth_token,
+            addr: self.inner.listen_addr,
+            token: self.inner.auth_token,
         }
     }
 
@@ -648,18 +654,18 @@ impl Provider {
     ///
     /// The shutdown behaviour will become more graceful in the future.
     pub fn shutdown(&self) {
-        self.cancel_token.cancel();
+        self.inner.cancel_token.cancel();
     }
 
     /// Returns a token that can be used to cancel the provider.
     pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel_token.clone()
+        self.inner.cancel_token.clone()
     }
 }
 
 /// The future completes when the spawned tokio task finishes.
 impl Future for Provider {
-    type Output = Result<(), JoinError>;
+    type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
@@ -667,22 +673,14 @@ impl Future for Provider {
 }
 
 #[derive(Debug, Clone)]
-struct ProviderHandles {
-    /// database handle
-    pub db: Database,
-    /// cancellation token
-    pub shutdown: CancellationToken,
-    /// peer id
-    pub peer_id: PeerId,
-    /// auth token
-    pub auth_token: AuthToken,
-    /// listen address
-    pub listen_addr: SocketAddr,
+struct RpcHandler {
+    inner: Arc<ProviderInner>,
 }
 
-impl ProviderHandles {
+impl RpcHandler {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
         let items = self
+            .inner
             .db
             .blobs()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
@@ -707,7 +705,7 @@ impl ProviderHandles {
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
-        self.db.union_with(db);
+        self.inner.db.union_with(db);
 
         Ok(ProvideResponse { hash, entries })
     }
@@ -718,9 +716,9 @@ impl ProviderHandles {
     }
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
-            peer_id: Box::new(self.peer_id),
-            auth_token: Box::new(self.auth_token),
-            listen_addr: Box::new(self.listen_addr),
+            peer_id: Box::new(self.inner.keypair.public().into()),
+            auth_token: Box::new(self.inner.auth_token),
+            listen_addr: Box::new(self.inner.listen_addr),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
@@ -731,7 +729,7 @@ impl ProviderHandles {
         } else {
             // trigger a graceful shutdown
             tracing::info!("graceful shutdown requested");
-            self.shutdown.cancel();
+            self.inner.cancel_token.cancel();
         }
     }
     fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
@@ -750,27 +748,18 @@ impl ProviderHandles {
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    handler: &ProviderHandles,
+    handler: &RpcHandler,
 ) {
     let handler = handler.clone();
     tokio::spawn(async move {
         use ProviderRequest::*;
         match msg {
-            List(msg) => {
-                chan.server_streaming(msg, handler, ProviderHandles::list)
-                    .await
-            }
-            Provide(msg) => {
-                chan.rpc_map_err(msg, handler, ProviderHandles::provide)
-                    .await
-            }
-            Watch(msg) => {
-                chan.server_streaming(msg, handler, ProviderHandles::watch)
-                    .await
-            }
-            Version(msg) => chan.rpc(msg, handler, ProviderHandles::version).await,
-            Id(msg) => chan.rpc(msg, handler, ProviderHandles::id).await,
-            Shutdown(msg) => chan.rpc(msg, handler, ProviderHandles::shutdown).await,
+            List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
+            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
+            Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
+            Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
         }
     });
 }

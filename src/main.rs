@@ -332,12 +332,12 @@ async fn main_impl() -> Result<()> {
                 anyhow::Ok(tmp_path)
             });
 
-            let cancel_token = provider.cancel_token();
+            let provider2 = provider.clone();
             tokio::select! {
                 biased;
                 _ = tokio::signal::ctrl_c() => {
                     println!("Shutting down provider...");
-                    cancel_token.cancel();
+                    provider2.shutdown();
                 }
                 res = provider => {
                     res?;
