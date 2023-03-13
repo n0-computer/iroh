@@ -22,7 +22,7 @@ pub use self::server::Server;
 
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{ensure, Result};
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -86,8 +86,12 @@ const FRAME_FORWARD_PACKET: FrameType = 0x0a;
 const FRAME_RECV_PACKET: FrameType = 0x05;
 /// no payload, no-op (to be replaced with ping/pong)
 const FRAME_KEEP_ALIVE: FrameType = 0x06;
-/// 1 byte paylouad: 0x01 or 0x00 for whether this is client's home node
+/// 1 byte payload: 0x01 or 0x00 for whether this is client's home node
 const FRAME_NOTE_PREFERRED: FrameType = 0x07;
+/// indicates this is the client's home node
+const PREFERRED: u8 = 1u8;
+/// indicates this is NOT the client's home node
+const NOT_PREFERRED: u8 = 0u8;
 
 /// Sent from server to client to signal that a previous sender is no longer connected.
 ///
@@ -155,9 +159,10 @@ async fn read_frame(
     mut buf: &mut BytesMut,
 ) -> Result<(FrameType, usize)> {
     let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
-    if frame_len > max_size {
-        bail!("frame header size {frame_len} exceeds reader limit of {max_size}");
-    }
+    ensure!(
+        frame_len < max_size,
+        "frame header size {frame_len} exceeds reader limit of {max_size}"
+    );
     buf.resize(frame_len, 0u8);
     reader.read_exact(&mut buf).await?;
     Ok((frame_type, frame_len))
@@ -175,15 +180,16 @@ async fn write_frame_header(
 }
 
 /// AsyncWrites a complete frame. Does not flush.
-async fn write_frame(
+async fn write_frame<'a>(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
-    bytes: Vec<&[u8]>,
+    bytes: &[&[u8]],
 ) -> Result<()> {
     let bytes_len: usize = bytes.iter().map(|b| b.len()).sum();
-    if bytes_len > MAX_FRAME_SIZE {
-        bail!("unreasonably large frame write");
-    }
+    ensure!(
+        bytes_len <= MAX_FRAME_SIZE,
+        "unreasonably large frame write"
+    );
     write_frame_header(&mut writer, frame_type, bytes_len).await?;
     for b in bytes {
         writer.write_all(b).await?;
@@ -198,20 +204,14 @@ async fn write_frame(
 async fn write_frame_timeout(
     writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
-    bytes: Vec<&[u8]>,
-    timeout: Duration,
+    bytes: &[&[u8]],
+    timeout: Option<Duration>,
 ) -> Result<()> {
-    if timeout.is_zero() {
-        return write_frame(writer, frame_type, bytes).await;
-    }
-    tokio::select! {
-        biased;
-        res = write_frame(writer, frame_type, bytes) => {
-            res
-        }
-        _ = tokio::time::sleep(timeout) => {
-            bail!("could not write {} within the deadline {:?}", frame_type, timeout);
-        }
+    if let Some(duration) = timeout {
+        tokio::time::timeout(duration, write_frame(writer, frame_type, bytes)).await??;
+        Ok(())
+    } else {
+        write_frame(writer, frame_type, &bytes).await
     }
 }
 
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(frame_len, 301);
 
         let expect_buf = b"hello world!";
-        write_frame(&mut writer, FRAME_HEALTH, vec![expect_buf]).await?;
+        write_frame(&mut writer, FRAME_HEALTH, &[expect_buf]).await?;
         writer.flush().await;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();

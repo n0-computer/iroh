@@ -16,6 +16,7 @@ use super::{
     FRAME_PING, FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO,
     FRAME_WATCH_CONNS, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
+use super::{NOT_PREFERRED, PREFERRED};
 use crate::hp::{
     derp::{
         FRAME_KEEP_ALIVE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, FRAME_SERVER_KEY, MAX_FRAME_SIZE,
@@ -67,12 +68,8 @@ where
     async fn parse_server_info(&self, buf: &mut [u8]) -> Result<ServerInfo> {
         let max_len = NONCE_LEN + MAX_INFO_LEN;
         let frame_len = buf.len();
-        if frame_len < NONCE_LEN {
-            bail!("short ServerInfo frame");
-        }
-        if frame_len > max_len {
-            bail!("long ServerInfo frame");
-        }
+        ensure!(frame_len > NONCE_LEN, "short ServerInfo frame");
+        ensure!(frame_len < max_len, "long ServerInfo frame");
 
         let msg = self
             .secret_key
@@ -100,7 +97,7 @@ where
         write_frame(
             &mut self.writer,
             FRAME_CLIENT_INFO,
-            vec![self.secret_key.verifying_key().as_bytes(), &sealed_msg],
+            &[self.secret_key.verifying_key().as_bytes(), &sealed_msg],
         )
         .await?;
         self.writer.flush().await?;
@@ -146,11 +143,11 @@ where
         self.conn.close()
     }
 
-    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
+    pub async fn send_ping(&mut self, data: &[u8; 8]) -> Result<()> {
         send_ping(&mut self.writer, data).await
     }
 
-    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
+    pub async fn send_pong(&mut self, data: &[u8; 8]) -> Result<()> {
         send_pong(&mut self.writer, data).await
     }
 
@@ -525,7 +522,7 @@ pub enum ReceivedMessage {
     },
 }
 
-struct RateLimiter {
+pub(crate) struct RateLimiter {
     inner: governor::RateLimiter<
         governor::state::direct::NotKeyed,
         governor::state::InMemoryState,
@@ -557,69 +554,65 @@ impl RateLimiter {
     }
 }
 
-async fn send_packet<W: AsyncWrite + Unpin>(
+pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
     mut writer: W,
     rate_limiter: &Option<RateLimiter>,
     dstkey: PublicKey,
     packet: &[u8],
 ) -> Result<()> {
-    if packet.len() > MAX_PACKET_SIZE {
-        bail!("packet too big: {}", packet.len());
-    }
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
     let frame_len = PUBLIC_KEY_LENGTH + packet.len();
     if let Some(rate_limiter) = rate_limiter {
-        match rate_limiter.check_n(frame_len) {
-            Ok(_) => {}
-            Err(_) => {
-                tracing::warn!("dropping send: rate limit reached");
-                return Ok(());
-            }
-        };
+        if rate_limiter.check_n(frame_len).is_err() {
+            tracing::warn!("dropping send: rate limit reached");
+            return Ok(());
+        }
     }
-    write_frame(
-        &mut writer,
-        FRAME_SEND_PACKET,
-        vec![dstkey.as_bytes(), packet],
-    )
-    .await?;
+    write_frame(&mut writer, FRAME_SEND_PACKET, &[dstkey.as_bytes(), packet]).await?;
     writer.flush().await?;
     Ok(())
 }
 
-async fn forward_packet<W: AsyncWrite + Unpin>(
+pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
     mut writer: W,
     srckey: PublicKey,
     dstkey: PublicKey,
     packet: &[u8],
 ) -> Result<()> {
-    if packet.len() > MAX_PACKET_SIZE {
-        bail!("packet too big: {}", packet.len());
-    }
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
 
     write_frame(
         &mut writer,
         FRAME_FORWARD_PACKET,
-        vec![srckey.as_bytes(), dstkey.as_bytes(), packet],
+        &[srckey.as_bytes(), dstkey.as_bytes(), packet],
     )
     .await?;
     writer.flush().await?;
     Ok(())
 }
 
-async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: [u8; 8]) -> Result<()> {
+pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
     send_ping_or_pong(&mut writer, FRAME_PING, data).await
 }
 
-async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: [u8; 8]) -> Result<()> {
+async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
     send_ping_or_pong(&mut writer, FRAME_PONG, data).await
 }
 
 async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
     mut writer: W,
     frame_type: FrameType,
-    data: [u8; 8],
+    data: &[u8; 8],
 ) -> Result<()> {
-    write_frame(&mut writer, frame_type, vec![&data]).await?;
+    write_frame(&mut writer, frame_type, &[data]).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -630,29 +623,36 @@ pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
 ) -> Result<()> {
     let byte = {
         if preferred {
-            [0x00]
+            [PREFERRED]
         } else {
-            [0x01]
+            [NOT_PREFERRED]
         }
     };
-    write_frame(&mut writer, FRAME_NOTE_PREFERRED, vec![&byte]).await?;
+    write_frame(&mut writer, FRAME_NOTE_PREFERRED, &[&byte]).await?;
     writer.flush().await?;
     Ok(())
 }
 
-async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
-    write_frame(&mut writer, FRAME_WATCH_CONNS, vec![]).await?;
+pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
+    write_frame(&mut writer, FRAME_WATCH_CONNS, &[]).await?;
     writer.flush().await?;
     Ok(())
 }
 
-async fn close_peer<W: AsyncWrite + Unpin>(mut writer: W, target: PublicKey) -> Result<()> {
-    write_frame(&mut writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
+pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    target: PublicKey,
+) -> Result<()> {
+    write_frame(&mut writer, FRAME_CLOSE_PEER, &[target.as_bytes()]).await?;
     writer.flush().await?;
     Ok(())
 }
 
 pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
+    ensure!(
+        frame.len() >= PUBLIC_KEY_LENGTH,
+        "frame is shorter than expected"
+    );
     Ok((
         PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
         &frame[PUBLIC_KEY_LENGTH..],

@@ -1,8 +1,9 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -20,7 +21,7 @@ use super::{
     read_frame, write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_SEND_PACKET, FRAME_WATCH_CONNS, KEEP_ALIVE, MAX_FRAME_SIZE,
-    MAX_PACKET_SIZE,
+    MAX_PACKET_SIZE, PREFERRED,
 };
 
 /// A request to write a dataframe to a Client
@@ -98,6 +99,12 @@ where
 
 /// Channels that the [`ClientConnReader`] needs in order to notify the server
 /// about actions it needs to take on behalf of the client.
+// TODO: in all cases in the code right now, we use `send` to communicate to the server on these
+// channels. It is possible however, that this is not the right call, and we should instead
+// `try_send` & drop any packets that do not make it onto the server at the first attempt, or even
+// use `send_timeout` in a newly spun up thread. It also may be benefitial to have editional channels where we can request
+// the server drop packets from the front of its queue so that newer packets are prioritized when
+// there is heavy load
 #[derive(Debug)]
 struct ServerChannels {
     /// Send a notification to the Server to add this client as a watcher
@@ -144,7 +151,7 @@ where
         remote_ip_port: u16,
         can_mesh: bool,
         client_info: ClientInfo,
-        write_timeout: Duration,
+        write_timeout: Option<Duration>,
         channel_capacity: usize,
         server_channels: ServerChannels,
         shutdown_client: mpsc::Sender<(PublicKey, i64)>,
@@ -179,7 +186,7 @@ where
             key: key.clone(),
             send_pong: send_pong_s,
             server_channels,
-            preferred: false,
+            preferred: Arc::from(AtomicBool::from(false)),
         };
 
         // start writer loop
@@ -283,7 +290,7 @@ pub(crate) struct ClientConnWriter<W: AsyncWrite + Unpin + Send + Sync> {
     /// Writer we use to write to the client
     writer: W,
     /// Max time we wait to complete a write to the client
-    timeout: Duration,
+    timeout: Option<Duration>,
     /// Packets queued to send to the client
     send_queue: mpsc::Receiver<Packet>,
     /// Important packets queued to send to the client
@@ -356,7 +363,7 @@ where
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.writer, FRAME_KEEP_ALIVE, vec![], self.timeout).await
+        write_frame_timeout(&mut self.writer, FRAME_KEEP_ALIVE, &[], self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -365,7 +372,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(&mut self.writer, FRAME_PONG, vec![&data], self.timeout).await
+        write_frame_timeout(&mut self.writer, FRAME_PONG, &[&data], self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -377,7 +384,7 @@ where
         write_frame_timeout(
             &mut self.writer,
             FRAME_PEER_GONE,
-            vec![peer.as_bytes()],
+            &[peer.as_bytes()],
             self.timeout,
         )
         .await
@@ -390,7 +397,7 @@ where
         write_frame_timeout(
             &mut self.writer,
             FRAME_PEER_PRESENT,
-            vec![peer.as_bytes()],
+            &[peer.as_bytes()],
             self.timeout,
         )
         .await
@@ -406,11 +413,10 @@ where
     /// in the vector. If there are more than 16 entires, it schedules itself for a
     /// future update.
     async fn send_mesh_updates(&mut self, mut updates: Vec<PeerConnState>) -> Result<()> {
-        if !self.can_mesh {
-            bail!(
-                "unexpected request to update mesh peers on a connection that is not able to mesh"
-            );
-        }
+        ensure!(
+            self.can_mesh,
+            "unexpected request to update mesh peers on a connection that is not able to mesh"
+        );
         let scheduled_updates: Vec<_> = if updates.len() < 16 {
             updates.drain(..).collect()
         } else {
@@ -431,11 +437,10 @@ where
 
     // runs in a go routing in the go impl
     async fn request_mesh_update(&self, updates: Vec<PeerConnState>) -> Result<()> {
-        if !self.can_mesh {
-            bail!(
-                "unexpected request to update mesh peers on a connection that is not able to mesh"
-            );
-        }
+        ensure!(
+            self.can_mesh,
+            "unexpected request to update mesh peers on a connection that is not able to mesh"
+        );
         self.mesh_update_s.send(updates).await?;
         Ok(())
     }
@@ -462,7 +467,7 @@ where
             write_frame_timeout(
                 &mut self.writer,
                 FRAME_RECV_PACKET,
-                vec![&contents],
+                &[&contents],
                 self.timeout,
             )
             .await
@@ -470,7 +475,7 @@ where
             write_frame_timeout(
                 &mut self.writer,
                 FRAME_RECV_PACKET,
-                vec![srckey.as_bytes(), &contents],
+                &[srckey.as_bytes(), &contents],
                 self.timeout,
             )
             .await
@@ -508,8 +513,15 @@ where
     /// it needs to take on behalf of the client
     server_channels: ServerChannels,
 
-    /// TODO: what is this?
-    preferred: bool,
+    /// Notes that the client considers this the preferred connection (important in cases
+    /// where the client moves to a different network, but has the same PublicKey)
+    /// This is the only "shared" information between the `ClientConnReader` and
+    /// `ClientConnManager`.
+    // TODO: I'm taking a chance & using an atomic here rather
+    // than passing this through the server to update manually on the connection... although we
+    // might find that the alternative is better, once I have a better idea of how this is supposed
+    // to be read.
+    preferred: Arc<AtomicBool>,
 }
 
 impl<R> ClientConnReader<R>
@@ -533,28 +545,29 @@ where
         let mut buf = BytesMut::new();
         loop {
             // TODO: return Ok(()) if EOF error
-            let (frame_type, _frame_len) =
+            let (frame_type, frame_len) =
                 read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
             // TODO: "note client activity", meaning we update the server that the client with this
             // public key was the last one to receive data
+            let frame = buf.split_to(frame_len);
             match frame_type {
                 FRAME_NOTE_PREFERRED => {
-                    self.handle_frame_note_preferred(&buf)?;
+                    self.handle_frame_note_preferred(&frame)?;
                 }
                 FRAME_SEND_PACKET => {
-                    self.handle_frame_send_packet(&buf).await?;
+                    self.handle_frame_send_packet(&frame).await?;
                 }
                 FRAME_FORWARD_PACKET => {
-                    self.handle_frame_forward_packet(&buf).await?;
+                    self.handle_frame_forward_packet(&frame).await?;
                 }
                 FRAME_WATCH_CONNS => {
-                    self.handle_frame_watch_conns(&buf).await?;
+                    self.handle_frame_watch_conns(&frame).await?;
                 }
                 FRAME_CLOSE_PEER => {
-                    self.handle_frame_close_peer(&buf).await?;
+                    self.handle_frame_close_peer(&frame).await?;
                 }
                 FRAME_PING => {
-                    self.handle_frame_ping(&buf).await?;
+                    self.handle_frame_ping(&frame).await?;
                 }
                 _ => {
                     buf.clear();
@@ -563,12 +576,15 @@ where
         }
     }
 
-    // TODO: what does preferred mean?
+    /// Preferred indicates if this is the preferred connection to the client with
+    /// this public key.
     fn set_preferred(&mut self, v: bool) -> Result<()> {
-        if self.preferred == v {
+        // swap `preferred` for the value `v`
+        // if `preferred` was already the same as `v`, return
+        // otherwise, report the swap in stats
+        if self.preferred.swap(v, Ordering::Relaxed) == v {
             return Ok(());
         }
-        self.preferred = v;
         // TODO: stats:
         // 	if v {
         // c.s.curHomeClients.Add(1)
@@ -590,19 +606,19 @@ where
     }
 
     fn handle_frame_note_preferred(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() != 1 {
-            bail!("FRAME_NOTE_PREFERRED content is an unexpected size");
-        }
-        self.set_preferred(data[0] != 0)
+        ensure!(
+            data.len() == 1,
+            "FRAME_NOTE_PREFERRED content is an unexpected size"
+        );
+        self.set_preferred(data[0] == PREFERRED)
     }
 
     async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
-        if !data.is_empty() {
-            bail!("FRAME_WATCH_CONNS content is an unexpected size");
-        }
-        if !self.can_mesh {
-            bail!("insufficient permissions");
-        }
+        ensure!(
+            data.len() == 0,
+            "FRAME_WATCH_CONNS content is an unexpected size"
+        );
+        ensure!(self.can_mesh, "insufficient permissions");
         self.server_channels
             .add_watcher
             .send(self.key.clone())
@@ -612,23 +628,23 @@ where
 
     // assumes ping is 8 bytes
     async fn handle_frame_ping(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() != 8 {
-            bail!("FRAME_PING unexpected length {}", data.len());
-        }
+        ensure!(
+            data.len() == 8,
+            "FRAME_PING unexpected length {}",
+            data.len()
+        );
         // TODO:stats
         // c.s.gotPing.Add(1)
 
         // TODO: add rate limiter
 
-        let data = <[u8; 8]>::try_from(data)?;
+        let data = <[u8; 8]>::try_from(data).unwrap();
         self.send_pong.send(data).await?;
         Ok(())
     }
 
     async fn handle_frame_close_peer(&self, data: &[u8]) -> Result<()> {
-        if !self.can_mesh {
-            bail!("insufficient permissions");
-        }
+        ensure!(self.can_mesh, "insufficient permissions");
         let key = PublicKey::try_from(data)?;
         self.server_channels.close_peer.send(key).await?;
         Ok(())
@@ -641,9 +657,7 @@ where
     /// Errors if this client is not a trusted mesh peer, or if the keys cannot
     /// be parsed correctly, or if the packet is larger than MAX_PACKET_SIZE
     async fn handle_frame_forward_packet(&self, data: &[u8]) -> Result<()> {
-        if !self.can_mesh {
-            bail!("insufficient permissions");
-        }
+        ensure!(self.can_mesh, "insufficient permissions");
         let (srckey, dstkey, data) = parse_forward_packet(data)?;
 
         // TODO: stats:
@@ -684,30 +698,32 @@ where
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
         if looks_like_disco_wrapper(&packet.bytes) {
             self.server_channels
-                .send_queue
-                .send((dstkey, packet))
-                .await
-                .expect("server send_queue dropped");
-        } else {
-            self.server_channels
                 .disco_send_queue
                 .send((dstkey, packet))
                 .await
                 .expect("server disco_send_queue dropped");
+        } else {
+            self.server_channels
+                .send_queue
+                .send((dstkey, packet))
+                .await
+                .expect("server send_queue dropped");
         }
         Ok(())
     }
 }
 
 fn parse_forward_packet(data: &[u8]) -> Result<(PublicKey, PublicKey, &[u8])> {
-    if data.len() < PUBLIC_KEY_LENGTH * 2 {
-        bail!("short FORWARD_PACKET frame");
-    }
+    ensure!(
+        data.len() >= PUBLIC_KEY_LENGTH * 2,
+        "short FORWARD_PACKET frame"
+    );
 
     let packet_len = data.len() - (PUBLIC_KEY_LENGTH * 2);
-    if packet_len > MAX_PACKET_SIZE {
-        bail!("data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}");
-    }
+    ensure!(
+        packet_len <= MAX_PACKET_SIZE,
+        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
+    );
     let srckey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
     let dstkey = PublicKey::try_from(&data[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
     let data = &data[PUBLIC_KEY_LENGTH * 2..];
@@ -716,13 +732,12 @@ fn parse_forward_packet(data: &[u8]) -> Result<(PublicKey, PublicKey, &[u8])> {
 }
 
 fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
-    if data.len() < PUBLIC_KEY_LENGTH {
-        bail!("short SEND_PACKET frame");
-    }
+    ensure!(data.len() >= PUBLIC_KEY_LENGTH, "short SEND_PACKET frame");
     let packet_len = data.len() - PUBLIC_KEY_LENGTH;
-    if packet_len > MAX_PACKET_SIZE {
-        bail!("data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}");
-    }
+    ensure!(
+        packet_len <= MAX_PACKET_SIZE,
+        "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
+    );
     let dstkey = PublicKey::try_from(&data[..PUBLIC_KEY_LENGTH])?;
     let data = &data[PUBLIC_KEY_LENGTH..];
     Ok((dstkey, data))
@@ -730,24 +745,115 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 
 #[cfg(test)]
 mod tests {
-    use crate::hp::derp::server::WRITE_TIMEOUT;
-
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_client_conn_reader_basic() -> Result<()> {
-        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let (send_pong_s, mut send_pong_r) = mpsc::channel(10);
+        let (send_queue_s, mut send_queue_r) = mpsc::channel(10);
+        let (disco_send_queue_s, mut disco_send_queue_r) = mpsc::channel(10);
+        let (close_peer_s, mut close_peer_r) = mpsc::channel(10);
+        let (add_watcher_s, mut add_watcher_r) = mpsc::channel(10);
+        let server_channels = ServerChannels {
+            add_watcher: add_watcher_s,
+            close_peer: close_peer_s,
+            send_queue: send_queue_s,
+            disco_send_queue: disco_send_queue_s,
+        };
 
-        // set up read manager with reader
-        // set up channels to send off read manager
-        // send each kind of packet from the client
-        // test that correct messages got to channels
-        todo!();
+        let preferred = Arc::from(AtomicBool::from(true));
+        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+        let conn_reader = ClientConnReader {
+            key: key.clone(),
+            can_mesh: true,
+            reader,
+            send_pong: send_pong_s,
+            server_channels,
+            preferred: Arc::clone(&preferred),
+        };
+
+        let done = CancellationToken::new();
+        let reader_done = done.clone();
+        let reader_handle = tokio::spawn(async move { conn_reader.run(reader_done).await });
+        // send ping, expect pong
+        let data = b"pingpong";
+        crate::hp::derp::client::send_ping(&mut writer, data).await?;
+        let pong = send_pong_r.recv().await.unwrap();
+        assert_eq!(*data, pong);
+
+        // change preferred to false
+        crate::hp::derp::client::send_note_preferred(&mut writer, false).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(false, preferred.load(Ordering::Relaxed));
+
+        // change preferred to true
+        crate::hp::derp::client::send_note_preferred(&mut writer, true).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(preferred.fetch_and(true, Ordering::Relaxed));
+
+        // add this client as a watcher
+        crate::hp::derp::client::watch_connection_changes(&mut writer).await?;
+        let got_key = add_watcher_r.recv().await.unwrap();
+        assert_eq!(key, got_key);
+
+        // send message to close a peer
+        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
+        crate::hp::derp::client::close_peer(&mut writer, target.clone()).await?;
+        let got_target = close_peer_r.recv().await.unwrap();
+        assert_eq!(target, got_target);
+
+        // send packet
+        let data = b"hello world!";
+        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), data).await?;
+        let (got_target, packet) = send_queue_r.recv().await.unwrap();
+        assert_eq!(target, got_target);
+        assert_eq!(key, packet.src);
+        assert_eq!(&data[..], &packet.bytes);
+
+        // send disco packet
+        // starts with `MAGIC` & key, then data
+        let mut disco_data = crate::hp::disco::MAGIC.as_bytes().to_vec();
+        disco_data.extend_from_slice(target.as_bytes());
+        disco_data.extend_from_slice(data);
+        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), &disco_data)
+            .await?;
+        let (got_target, packet) = disco_send_queue_r.recv().await.unwrap();
+        assert_eq!(target, got_target);
+        assert_eq!(key, packet.src);
+        assert_eq!(&disco_data[..], &packet.bytes);
+
+        // forward packet
+        let fwd_key = PublicKey::from([0x03; PUBLIC_KEY_LENGTH]);
+        crate::hp::derp::client::forward_packet(&mut writer, fwd_key.clone(), target.clone(), data)
+            .await?;
+        let (got_target, packet) = send_queue_r.recv().await.unwrap();
+        assert_eq!(target, got_target);
+        assert_eq!(fwd_key, packet.src);
+        assert_eq!(&data[..], &packet.bytes);
+
+        // forward disco packet
+        crate::hp::derp::client::forward_packet(
+            &mut writer,
+            fwd_key.clone(),
+            target.clone(),
+            &disco_data,
+        )
+        .await?;
+        let (got_target, packet) = disco_send_queue_r.recv().await.unwrap();
+        assert_eq!(target, got_target);
+        assert_eq!(fwd_key, packet.src);
+        assert_eq!(&disco_data[..], &packet.bytes);
+
+        done.cancel();
+        reader_handle.await??;
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_client_conn_writer_basic() -> Result<()> {
-        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let (mut reader, writer) = tokio::io::duplex(1024);
         let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
@@ -757,7 +863,7 @@ mod tests {
         let conn_writer = ClientConnWriter {
             can_mesh: true,
             writer,
-            timeout: WRITE_TIMEOUT,
+            timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             send_pong: send_pong_r,
