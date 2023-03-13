@@ -7,7 +7,7 @@ use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
 use rand::{RngCore, SeedableRng};
-use tempfile::tempdir;
+use testdir::testdir;
 
 const ADDR: &str = "127.0.0.1:0";
 
@@ -20,8 +20,8 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
 
 #[test]
 fn cli_provide_one_file() -> Result<()> {
-    let dir = tempdir()?;
-    let path = dir.path().join("foo");
+    let dir = testdir!();
+    let path = dir.join("foo");
     make_rand_file(1000, &path)?;
     // provide a path to a file, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&path, Input::Path, Output::Path)
@@ -29,19 +29,19 @@ fn cli_provide_one_file() -> Result<()> {
 
 #[test]
 fn cli_provide_folder() -> Result<()> {
-    let dir = tempdir()?;
-    let foo_path = dir.path().join("foo");
-    let bar_path = dir.path().join("bar");
+    let dir = testdir!();
+    let foo_path = dir.join("foo");
+    let bar_path = dir.join("bar");
     make_rand_file(1000, &foo_path)?;
     make_rand_file(10000, &bar_path)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
-    test_provide_get_loop(dir.path(), Input::Path, Output::Path)
+    test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
-    let dir = tempdir()?;
-    let path = dir.path().join("foo");
+    let dir = testdir!();
+    let path = dir.join("foo");
     make_rand_file(1000, &path)?;
     // provide a file, pipe content to the provider's stdin, pipe content to the getter's stdout
     test_provide_get_loop(&path, Input::Stdin, Output::Stdout)
@@ -79,8 +79,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let out = if output == Output::Stdout {
         None
     } else {
-        let dir = tempdir()?;
-        Some(dir.path().join("out"))
+        let dir = testdir!();
+        Some(dir.join("out"))
     };
 
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -11,10 +11,7 @@ use indicatif::{
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
-use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
-};
+use iroh::rpc_protocol::*;
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -37,6 +34,42 @@ struct Cli {
     keylog: bool,
 }
 
+#[derive(Debug, Clone)]
+enum ProviderRpcPort {
+    Enabled(u16),
+    Disabled,
+}
+
+impl From<ProviderRpcPort> for Option<u16> {
+    fn from(value: ProviderRpcPort) -> Self {
+        match value {
+            ProviderRpcPort::Enabled(port) => Some(port),
+            ProviderRpcPort::Disabled => None,
+        }
+    }
+}
+
+impl fmt::Display for ProviderRpcPort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderRpcPort::Enabled(port) => write!(f, "{port}"),
+            ProviderRpcPort::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
+impl FromStr for ProviderRpcPort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "disabled" {
+            Ok(ProviderRpcPort::Disabled)
+        } else {
+            Ok(ProviderRpcPort::Enabled(s.parse()?))
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
@@ -54,13 +87,31 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
-        /// Optional rpc port, defaults to 4919
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
+        /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
+        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
+        rpc_port: ProviderRpcPort,
     },
     /// List hashes
     #[clap(about = "List hashes")]
     List {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Shutdown
+    #[clap(about = "Shutdown provider")]
+    Shutdown {
+        /// Shutdown mode.
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Identity
+    #[clap(about = "Identify provider")]
+    Id {
         /// Optional rpc port, defaults to 4919
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -316,7 +367,7 @@ async fn main_impl() -> Result<()> {
             key,
             rpc_port,
         } => {
-            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
+            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port.into()).await?;
             let controller = provider.controller();
             let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
@@ -342,14 +393,21 @@ async fn main_impl() -> Result<()> {
 
                 print_add_response(hash, entries);
                 ticket.hash = hash;
-                println!("All-in-one ticket: {}", ticket);
+                println!("All-in-one ticket: {ticket}");
                 anyhow::Ok(tmp_path)
             });
 
-            tokio::signal::ctrl_c().await?;
-            println!("Shutting down provider...");
-            provider.shutdown();
-            provider.await?;
+            let cancel_token = provider.cancel_token();
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutting down provider...");
+                    cancel_token.cancel();
+                }
+                res = provider => {
+                    res?;
+                }
+            }
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.
@@ -371,6 +429,20 @@ async fn main_impl() -> Result<()> {
             }
             Ok(())
         }
+        Commands::Shutdown { force, rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            client.rpc(ShutdownRequest { force }).await?;
+            Ok(())
+        }
+        Commands::Id { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(IdRequest).await?;
+
+            println!("Listening address: {}", response.listen_addr);
+            println!("PeerID: {}", response.peer_id);
+            println!("Auth token: {}", response.auth_token);
+            Ok(())
+        }
         Commands::Add { path, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
             println!("Adding {}...", path.display());
@@ -387,17 +459,12 @@ async fn provide(
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
-    rpc_port: u16,
+    rpc_port: Option<u16>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
-    // create the rpc endpoint as well as a handle that can be used to control the service locally.
-    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
 
     let db = Database::default();
-    let mut builder = provider::Provider::builder(db)
-        .rpc_endpoint(rpc_endpoint)
-        .keypair(keypair)
-        .keylog(keylog);
+    let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
@@ -405,7 +472,15 @@ async fn provide(
         let auth_token = AuthToken::from_str(encoded)?;
         builder = builder.auth_token(auth_token);
     }
-    let provider = builder.spawn()?;
+    let provider = if let Some(rpc_port) = rpc_port {
+        let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
+        builder
+            .rpc_endpoint(rpc_endpoint)
+            .keypair(keypair)
+            .spawn()?
+    } else {
+        builder.keypair(keypair).spawn()?
+    };
 
     println!("Listening address: {}", provider.listen_addr());
     println!("PeerID: {}", provider.peer_id());
