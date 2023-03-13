@@ -25,12 +25,15 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::hp::{
-    cfg::{self, DERP_MAGIC_IP},
-    derp::{self, DerpMap},
-    disco, interfaces, key,
-    magicsock::{rebinding_conn, SESSION_ACTIVE_TIMEOUT},
-    monitor, netcheck, netmap, portmapper, stun,
+use crate::{
+    hp::{
+        cfg::{self, DERP_MAGIC_IP},
+        derp::{self, DerpMap},
+        disco, key,
+        magicsock::{rebinding_conn, SESSION_ACTIVE_TIMEOUT},
+        monitor, netcheck, netmap, portmapper, stun,
+    },
+    net::LocalAddresses,
 };
 
 use super::{
@@ -940,7 +943,10 @@ impl Conn {
 
         if let Ok(local_addr) = self.pconn4.local_addr().await {
             if local_addr.ip().is_unspecified() {
-                let (mut ips, loopback) = interfaces::local_addresses();
+                let LocalAddresses {
+                    regular: mut ips,
+                    loopback,
+                } = LocalAddresses::new();
 
                 if ips.is_empty() && eps.is_empty() {
                     // Only include loopback addresses if we have no

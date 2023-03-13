@@ -9,7 +9,7 @@ pub use stun_rs::{
     TransactionId,
 };
 
-use crate::hp::to_canonical;
+use crate::net::to_canonical;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

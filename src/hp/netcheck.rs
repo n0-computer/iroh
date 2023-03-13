@@ -22,7 +22,7 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::hp::to_canonical;
+use crate::net::to_canonical;
 
 use super::{
     clock::Clock,
@@ -1620,7 +1620,6 @@ fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     #[tokio::test]
     async fn test_hairpin_stun() {
@@ -1710,6 +1709,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_udp_blocked() -> Result<(), Error> {
+        // use tracing_subscriber::{prelude::*, EnvFilter};
         // tracing_subscriber::registry()
         //     .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         //     .with(EnvFilter::from_default_env())

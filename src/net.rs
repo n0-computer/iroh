@@ -91,11 +91,11 @@ impl LocalAddresses {
     }
 }
 
-const fn is_up(interface: &default_net::Interface) -> bool {
+pub(crate) const fn is_up(interface: &default_net::Interface) -> bool {
     interface.flags & IFF_UP != 0
 }
 
-const fn is_loopback(interface: &default_net::Interface) -> bool {
+pub(crate) const fn is_loopback(interface: &default_net::Interface) -> bool {
     interface.flags & IFF_LOOPBACK != 0
 }
 
@@ -128,8 +128,9 @@ fn is_link_local(ip: IpAddr) -> bool {
     }
 }
 
+/// Converts this address to an IpAddr::V4 if it is an IPv4-mapped IPv6 addresses, otherwise it return self as-is.
 // TODO: replace with IpAddr::to_canoncial once stabilized.
-fn to_canonical(ip: IpAddr) -> IpAddr {
+pub fn to_canonical(ip: IpAddr) -> IpAddr {
     match ip {
         ip @ IpAddr::V4(_) => ip,
         IpAddr::V6(ip) => {
@@ -141,8 +142,10 @@ fn to_canonical(ip: IpAddr) -> IpAddr {
         }
     }
 }
+
+/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
 // Copied from std lib, not stable yet
-const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
+pub const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 

@@ -23,8 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
-    disco, is_unicast_link_local, key, stun,
+    disco, key, stun,
 };
+use crate::net::is_unicast_link_local;
 
 use super::{
     conn::DiscoInfo, Conn, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer,

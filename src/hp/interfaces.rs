@@ -18,95 +18,7 @@ mod linux;
 
 use default_net::ip::{Ipv4Net, Ipv6Net};
 
-use crate::hp::{is_unicast_link_local, to_canonical};
-
-const IFF_UP: u32 = 0x1;
-const IFF_LOOPBACK: u32 = 0x8;
-
-const fn is_up(interface: &default_net::Interface) -> bool {
-    interface.flags & IFF_UP != 0
-}
-
-const fn is_loopback(interface: &default_net::Interface) -> bool {
-    interface.flags & IFF_LOOPBACK != 0
-}
-
-/// Returns the machine's IP addresses, separated by
-/// whether they're loopback addresses. If there are no regular addresses
-/// it will return any IPv4 linklocal or IPv6 unique local addresses because we
-/// know of environments where these are used with NAT to provide connectivity.
-pub fn local_addresses() -> (Vec<IpAddr>, Vec<IpAddr>) {
-    let ifaces = default_net::interface::get_interfaces();
-
-    // TODO: don't serve interface addresses that we are routing
-
-    let mut loopback = Vec::new();
-    let mut regular4 = Vec::new();
-    let mut regular6 = Vec::new();
-    let mut linklocal4 = Vec::new();
-    let mut ula6 = Vec::new();
-
-    for iface in ifaces {
-        if !is_up(&iface) {
-            // Skip down interfaces and ones that are
-            // problematic that we don't want to try to
-            // send Tailscale traffic over.
-            continue;
-        }
-        let ifc_is_loopback = is_loopback(&iface);
-        let addrs = iface
-            .ipv4
-            .iter()
-            .map(|a| IpAddr::V4(a.addr))
-            .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr)));
-
-        for ip in addrs {
-            let ip = to_canonical(ip);
-
-            if ip.is_loopback() || ifc_is_loopback {
-                loopback.push(ip);
-            } else if is_link_local(ip) {
-                if ip.is_ipv4() {
-                    linklocal4.push(ip);
-                }
-
-                // We know of no cases where the IPv6 fe80:: addresses
-                // are used to provide WAN connectivity. It is also very
-                // common for users to have no IPv6 WAN connectivity,
-                // but their OS supports IPv6 so they have an fe80::
-                // address. We don't want to report all of those
-                // IPv6 LL to Control.
-            } else if ip.is_ipv6() && is_private(&ip) {
-                // Google Cloud Run uses NAT with IPv6 Unique
-                // Local Addresses to provide IPv6 connectivity.
-                ula6.push(ip);
-            } else if ip.is_ipv4() {
-                regular4.push(ip);
-            } else {
-                regular6.push(ip);
-            }
-        }
-    }
-
-    if regular4.is_empty() && regular6.is_empty() {
-        // if we have no usable IP addresses then be willing to accept
-        // addresses we otherwise wouldn't, like:
-        //   + 169.254.x.x (AWS Lambda uses NAT with these)
-        //   + IPv6 ULA (Google Cloud Run uses these with address translation)
-        // TODO: hostinfo
-        // if hostinfo.GetEnvType() == hostinfo.AWSLambda {
-        // regular4 = linklocal4
-        // }
-        regular6 = ula6;
-    }
-    let mut regular = regular4;
-    regular.extend(regular6);
-
-    regular.sort();
-    loopback.sort();
-
-    (regular, loopback)
-}
+use crate::net::{is_loopback, is_unicast_link_local, is_up};
 
 /// Reports whether ip is a private address, according to RFC 1918
 /// (IPv4 addresses) and RFC 4193 (IPv6 addresses). That is, it reports whether
@@ -476,19 +388,6 @@ fn is_link_local(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip.is_link_local(),
         IpAddr::V6(ip) => is_unicast_link_local(ip),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_local_addresses() {
-        let (a, b) = local_addresses();
-        dbg!(&a, &b);
-        assert!(!a.is_empty());
-        assert!(!b.is_empty());
     }
 }
 
