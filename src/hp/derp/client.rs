@@ -7,36 +7,36 @@ use std::time::Duration;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
-use quinn::AsyncUdpSocket;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use super::{
-    read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER,
-    FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PING,
-    FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_WATCH_CONNS, MAGIC,
-    MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    conn::Conn, read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO,
+    FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE,
+    FRAME_PING, FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO,
+    FRAME_WATCH_CONNS, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
 };
+use super::{NOT_PREFERRED, PREFERRED};
 use crate::hp::{
     derp::{
         FRAME_KEEP_ALIVE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, FRAME_SERVER_KEY, MAX_FRAME_SIZE,
         MAX_INFO_LEN, NONCE_LEN,
     },
     key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
-    magicsock::Conn,
 };
 
 /// A DERP Client.
-pub struct Client<W, R>
+pub struct Client<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
     /// The public/private keypair
     secret_key: SecretKey,
-    conn: Conn,
+    conn: C,
     reader: R,
     /// TODO: This is a string in the go impl, using bytes here to make it easier for postcard
     /// to serialize. 32 is a random number I chose. Need to figure out what the `mesh_key`
@@ -55,10 +55,11 @@ where
     is_dead: AtomicBool,
 }
 
-impl<W, R> Client<W, R>
+impl<W, R, C> Client<W, R, C>
 where
     W: AsyncWrite + Unpin + Send,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     async fn recv_server_key(&mut self) -> Result<PublicKey> {
         recv_server_key(&mut self.reader).await
@@ -67,12 +68,8 @@ where
     async fn parse_server_info(&self, buf: &mut [u8]) -> Result<ServerInfo> {
         let max_len = NONCE_LEN + MAX_INFO_LEN;
         let frame_len = buf.len();
-        if frame_len < NONCE_LEN {
-            bail!("short ServerInfo frame");
-        }
-        if frame_len > max_len {
-            bail!("long ServerInfo frame");
-        }
+        ensure!(frame_len > NONCE_LEN, "short ServerInfo frame");
+        ensure!(frame_len < max_len, "long ServerInfo frame");
 
         let msg = self
             .secret_key
@@ -100,9 +97,11 @@ where
         write_frame(
             &mut self.writer,
             FRAME_CLIENT_INFO,
-            vec![self.secret_key.verifying_key().as_bytes(), &sealed_msg],
+            &[self.secret_key.verifying_key().as_bytes(), &sealed_msg],
         )
-        .await
+        .await?;
+        self.writer.flush().await?;
+        Ok(())
     }
 
     /// Returns a reference to the server's public key.
@@ -113,28 +112,16 @@ where
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
+    // TODO: the rate limiter is only on this method, is it because it's the only method that
+    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
     pub async fn send(&mut self, dstkey: PublicKey, packet: &[u8]) -> Result<()> {
-        if packet.len() > MAX_PACKET_SIZE {
-            bail!("packet too big: {}", packet.len());
-        }
-        let frame_len = PUBLIC_KEY_LENGTH + packet.len();
-        if let Some(rate_limiter) = &self.rate_limiter {
-            match rate_limiter.check_n(frame_len) {
-                Ok(_) => {}
-                Err(_) => {
-                    tracing::warn!("dropping send: rate limit reached");
-                    return Ok(());
-                }
-            };
-        }
-        write_frame(
-            &mut self.writer,
-            FRAME_SEND_PACKET,
-            vec![dstkey.as_bytes(), packet],
-        )
-        .await
+        send_packet(&mut self.writer, &self.rate_limiter, dstkey, packet).await
     }
 
+    /// Used by mesh peers to forward packets.
+    ///
+    // TODO: this is the only method with a timeout, why? Why does it have a timeout and no rate
+    // limiter?
     pub async fn forward_packet(
         &mut self,
         srckey: PublicKey,
@@ -143,7 +130,7 @@ where
     ) -> Result<()> {
         tokio::select! {
             biased;
-            res = self.forward_packet_0(srckey, dstkey, packet) => {
+            res = forward_packet(&mut self.writer, srckey, dstkey, packet) => {
                 res
             }
             _ = tokio::time::sleep(Duration::from_secs(5)) => {
@@ -152,65 +139,35 @@ where
         }
     }
 
-    async fn forward_packet_0(
-        &mut self,
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        packet: &[u8],
-    ) -> Result<()> {
-        if packet.len() > MAX_PACKET_SIZE {
-            bail!("packet too big: {}", packet.len());
-        }
-
-        write_frame(
-            &mut self.writer,
-            FRAME_FORWARD_PACKET,
-            vec![srckey.as_bytes(), dstkey.as_bytes(), packet],
-        )
-        .await
-    }
-
     async fn write_timeout_fired(&self) -> Result<()> {
-        self.conn.close().await
+        self.conn.close()
     }
 
-    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        self.send_ping_or_pong(FRAME_PING, data).await
+    pub async fn send_ping(&mut self, data: &[u8; 8]) -> Result<()> {
+        send_ping(&mut self.writer, data).await
     }
 
-    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        self.send_ping_or_pong(FRAME_PONG, data).await
-    }
-
-    async fn send_ping_or_pong(&mut self, frame_type: FrameType, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, frame_type, vec![&data]).await
+    pub async fn send_pong(&mut self, data: &[u8; 8]) -> Result<()> {
+        send_pong(&mut self.writer, data).await
     }
 
     /// Sends a packet that tells the server whether this
     /// client is the user's preferred server. This is only
     /// used in the server for stats.
     pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        let byte = {
-            if preferred {
-                [0x00]
-            } else {
-                [0x01]
-            }
-        };
-        write_frame(&mut self.writer, FRAME_NOTE_PREFERRED, vec![&byte]).await
+        send_note_preferred(&mut self.writer, preferred).await
     }
 
     /// Sends a request to subscribe to the peer's connection list.
     /// It's a fatal error if the client wasn't created using [`MeshKey`].
     pub async fn watch_connection_changes(&mut self) -> Result<()> {
-        write_frame(&mut self.writer, FRAME_WATCH_CONNS, vec![]).await
+        watch_connection_changes(&mut self.writer).await
     }
 
     /// Asks the server to close the target's TCP connection.
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
     pub async fn close_peer(&mut self, target: PublicKey) -> Result<()> {
-        write_frame(&mut self.writer, FRAME_CLOSE_PEER, vec![target.as_bytes()]).await?;
-        Ok(())
+        close_peer(&mut self.writer, target).await
     }
 
     async fn set_send_rate_limiter(&mut self, sm: ReceivedMessage) {
@@ -236,7 +193,7 @@ where
                 bail!("Client is dead");
             }
         }
-        Ok(self.conn.local_addr()?)
+        Ok(self.conn.local_addr())
     }
 
     /// Reads a messages from a DERP server.
@@ -308,8 +265,9 @@ where
                         );
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
-                    return Ok(ReceivedMessage::PeerGone(PublicKey::from(key)));
+                    return Ok(ReceivedMessage::PeerGone(PublicKey::try_from(
+                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                    )?));
                 }
                 FRAME_PEER_PRESENT => {
                     if (frame_len) < PUBLIC_KEY_LENGTH {
@@ -318,18 +276,19 @@ where
                         );
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
-                    return Ok(ReceivedMessage::PeerPresent(PublicKey::from(key)));
+                    return Ok(ReceivedMessage::PeerPresent(PublicKey::try_from(
+                        &frame_payload[..PUBLIC_KEY_LENGTH],
+                    )?));
                 }
                 FRAME_RECV_PACKET => {
                     if (frame_len) < PUBLIC_KEY_LENGTH {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
-                    let key = get_key_from_slice(&frame_payload[..])?;
+                    let (source, data) = parse_recv_frame(&frame_payload)?;
                     let packet = ReceivedMessage::ReceivedPacket {
-                        source: key,
-                        data: frame_payload[PUBLIC_KEY_LENGTH..].to_vec(),
+                        source,
+                        data: data.to_vec(),
                     };
                     return Ok(packet);
                 }
@@ -376,13 +335,14 @@ where
     }
 }
 
-pub struct ClientBuilder<W, R>
+pub struct ClientBuilder<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
     secret_key: SecretKey,
-    conn: Conn,
+    conn: C,
     reader: R,
     writer: W,
     mesh_key: Option<[u8; 32]>,
@@ -391,12 +351,13 @@ where
     can_ack_pings: bool,
 }
 
-impl<W, R> ClientBuilder<W, R>
+impl<W, R, C> ClientBuilder<W, R, C>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
+    C: Conn,
 {
-    pub fn new(secret_key: SecretKey, conn: Conn, reader: R, writer: W) -> Self {
+    pub fn new(secret_key: SecretKey, conn: C, reader: R, writer: W) -> Self {
         Self {
             secret_key,
             conn,
@@ -429,10 +390,11 @@ where
         self
     }
 
-    pub async fn build(mut self) -> Result<Client<W, R>>
+    pub async fn build(mut self) -> Result<Client<W, R, C>>
     where
         W: AsyncWrite + Send + Unpin + 'static,
         R: AsyncRead + Unpin,
+        C: Conn,
     {
         // NEXT: BUILD CLIENT
 
@@ -484,7 +446,7 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
-#[derive(Serialize, Deserialize, MaxSize)]
+#[derive(Debug, Serialize, Deserialize, MaxSize)]
 pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].
@@ -560,7 +522,7 @@ pub enum ReceivedMessage {
     },
 }
 
-struct RateLimiter {
+pub(crate) struct RateLimiter {
     inner: governor::RateLimiter<
         governor::state::direct::NotKeyed,
         governor::state::InMemoryState,
@@ -590,4 +552,109 @@ impl RateLimiter {
             Err(_) => bail!("batch cannot go through"),
         }
     }
+}
+
+pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    rate_limiter: &Option<RateLimiter>,
+    dstkey: PublicKey,
+    packet: &[u8],
+) -> Result<()> {
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
+    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+    if let Some(rate_limiter) = rate_limiter {
+        if rate_limiter.check_n(frame_len).is_err() {
+            tracing::warn!("dropping send: rate limit reached");
+            return Ok(());
+        }
+    }
+    write_frame(&mut writer, FRAME_SEND_PACKET, &[dstkey.as_bytes(), packet]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn forward_packet<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    srckey: PublicKey,
+    dstkey: PublicKey,
+    packet: &[u8],
+) -> Result<()> {
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
+
+    write_frame(
+        &mut writer,
+        FRAME_FORWARD_PACKET,
+        &[srckey.as_bytes(), dstkey.as_bytes(), packet],
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn send_ping<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
+    send_ping_or_pong(&mut writer, FRAME_PING, data).await
+}
+
+async fn send_pong<W: AsyncWrite + Unpin>(mut writer: W, data: &[u8; 8]) -> Result<()> {
+    send_ping_or_pong(&mut writer, FRAME_PONG, data).await
+}
+
+async fn send_ping_or_pong<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    frame_type: FrameType,
+    data: &[u8; 8],
+) -> Result<()> {
+    write_frame(&mut writer, frame_type, &[data]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub async fn send_note_preferred<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    preferred: bool,
+) -> Result<()> {
+    let byte = {
+        if preferred {
+            [PREFERRED]
+        } else {
+            [NOT_PREFERRED]
+        }
+    };
+    write_frame(&mut writer, FRAME_NOTE_PREFERRED, &[&byte]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn watch_connection_changes<W: AsyncWrite + Unpin>(mut writer: W) -> Result<()> {
+    write_frame(&mut writer, FRAME_WATCH_CONNS, &[]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    target: PublicKey,
+) -> Result<()> {
+    write_frame(&mut writer, FRAME_CLOSE_PEER, &[target.as_bytes()]).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
+    ensure!(
+        frame.len() >= PUBLIC_KEY_LENGTH,
+        "frame is shorter than expected"
+    );
+    Ok((
+        PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
+        &frame[PUBLIC_KEY_LENGTH..],
+    ))
 }
