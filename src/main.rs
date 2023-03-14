@@ -1,4 +1,3 @@
-use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -11,7 +10,7 @@ use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
 use iroh::protocol::AuthToken;
-use iroh::provider::{Database, Provider, Snapshot, Ticket};
+use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
     ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
@@ -298,13 +297,7 @@ async fn main_impl() -> Result<()> {
             let use_data_root = persistent.unwrap_or_default();
             let iroh_data_root = iroh_data_root()?;
             let db = if use_data_root {
-                tokio::task::block_in_place(|| {
-                    tracing::info!("Loading snapshot from {}...", iroh_data_root.display());
-                    let snapshot = Snapshot::load(&iroh_data_root)?;
-                    tracing::info!("Loading database from snapshot");
-                    let db = Database::from_snapshot(snapshot)?;
-                    anyhow::Ok(db)
-                })?
+                Database::load(&iroh_data_root).await?
             } else {
                 Database::default()
             };
@@ -361,11 +354,7 @@ async fn main_impl() -> Result<()> {
             }
             // persist the db to disk. this is blocking code.
             if use_data_root {
-                tokio::task::block_in_place(|| {
-                    let snapshot = db.snapshot();
-                    snapshot.persist(iroh_data_root)?;
-                    io::Result::Ok(())
-                })?;
+                db.save(&iroh_data_root).await?;
             }
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)

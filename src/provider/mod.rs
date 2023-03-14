@@ -48,7 +48,7 @@ use crate::rpc_protocol::{
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 mod database;
-pub use database::{Database, Snapshot};
+pub use database::Database;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -1051,6 +1051,8 @@ mod tests {
     use proptest::prelude::*;
     use std::str::FromStr;
     use testdir::testdir;
+
+    use crate::provider::database::Snapshot;
 
     use super::*;
 

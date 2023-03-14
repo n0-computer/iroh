@@ -24,7 +24,7 @@ impl From<HashMap<Hash, BlobOrCollection>> for Database {
 ///
 /// `E` can be `Infallible` if we take a snapshot from an in memory database,
 /// or `io::Error` if we read a database from disk.
-pub struct Snapshot<E> {
+pub(crate) struct Snapshot<E> {
     /// list of paths we have, hash is the hash of the blob or collection
     paths: Box<dyn Iterator<Item = (Hash, u64, Option<PathBuf>)>>,
     /// map of hash to outboard, hash is the hash of the outboard and is unique
@@ -186,7 +186,36 @@ where
 
 impl Database {
     /// Load a database from disk.
-    pub fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
+    pub async fn load(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let db = tokio::task::spawn_blocking(|| {
+            tracing::info!("Loading snapshot from {}...", dir.display());
+            let snapshot = Snapshot::load(dir)?;
+            let db = Self::from_snapshot(snapshot)?;
+            tracing::info!("Database loaded");
+            anyhow::Ok(db)
+        })
+        .await??;
+        Ok(db)
+    }
+
+    /// Save a database to disk.
+    pub async fn save(&self, dir: impl AsRef<Path>) -> io::Result<()> {
+        let dir = dir.as_ref().to_path_buf();
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            tracing::info!("Persisting database to {}...", dir.display());
+            let snapshot = db.snapshot();
+            snapshot.persist(dir)?;
+            tracing::info!("Database stored");
+            io::Result::Ok(())
+        })
+        .await??;
+        Ok(())
+    }
+
+    /// Load a database from disk.
+    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
         let Snapshot {
             outboards,
             collections,
@@ -227,7 +256,7 @@ impl Database {
     }
 
     /// take a snapshot of the database
-    pub fn snapshot(&self) -> Snapshot<NoError> {
+    pub(crate) fn snapshot(&self) -> Snapshot<NoError> {
         let this = self.0.read().unwrap();
         let outboards = this
             .iter()
