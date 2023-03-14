@@ -309,8 +309,9 @@ async fn main_impl() -> Result<()> {
             // task that will add data to the provider, either from a file or from stdin
             let fut = tokio::spawn(async move {
                 let (path, tmp_path) = if let Some(path) = path {
-                    println!("Adding {}...", path.display());
-                    (path, None)
+                    let absolute = path.canonicalize()?;
+                    println!("Adding {} as {}...", path.display(), absolute.display());
+                    (absolute, None)
                 } else {
                     // Store STDIN content into a temporary file
                     let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
@@ -382,9 +383,10 @@ async fn main_impl() -> Result<()> {
         }
         Commands::Add { path, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
-            println!("Adding {}...", path.display());
+            let absolute = path.canonicalize()?;
+            println!("Adding {} as {}...", path.display(), absolute.display());
             let ProvideResponse { hash, entries } =
-                client.rpc(ProvideRequest { path: path.clone() }).await??;
+                client.rpc(ProvideRequest { path: absolute }).await??;
             print_add_response(hash, entries);
             Ok(())
         }
