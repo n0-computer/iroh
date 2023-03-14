@@ -410,9 +410,18 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let files = read_dir_recursive(root)?;
-        let data_sources = files.into_iter().map(DataSource::File).collect();
-        println!("{:?}", data_sources);
+        let files = read_dir_recursive(&root)?;
+        let data_sources = files
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .strip_prefix(&root)?
+                    .to_str()
+                    .context("invalid unicode string")?
+                    .to_owned();
+                Ok(DataSource::NamedFile { name, path })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
@@ -888,13 +897,14 @@ async fn create_collection_inner(
         // allow at most num_cpus tasks at a time, otherwise we might get too many open files
         .buffer_unordered(num_cpus::get());
     // wait for completion and collect results
-    println!("computing the outboards");
     // weird massaging of the output to get rid of the results
-    let outboards = outboards
+    let mut outboards = outboards
         .collect::<Vec<_>>()
         .await
         .into_iter()
         .collect::<Result<Result<Vec<_>, _>, _>>()??;
+
+    outboards.sort();
 
     // compute information about the collection
     let entries = outboards

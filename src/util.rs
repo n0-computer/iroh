@@ -169,15 +169,15 @@ mod tests {
 }
 
 /// Enumerate all files in a directory recursively.
-pub fn read_dir_recursive(root: PathBuf) -> io::Result<Vec<PathBuf>> {
+pub fn read_dir_recursive(root: &PathBuf) -> io::Result<Vec<PathBuf>> {
     let mut res = Vec::new();
-    enumerate_rec(&root, &mut res)?;
+    enumerate_rec(root, &mut res)?;
     fn enumerate_rec(curr: &PathBuf, res: &mut Vec<PathBuf>) -> io::Result<()> {
         if curr.is_file() {
             let ds = curr.to_owned();
             res.push(ds);
         } else if curr.is_dir() {
-            for entry in fs::read_dir(&curr)? {
+            for entry in fs::read_dir(curr)? {
                 let entry = entry?;
                 enumerate_rec(&entry.path(), res)?;
             }

@@ -578,6 +578,11 @@ async fn get_interactive(
 
                 // Rename temp file, to target name
                 let filepath2 = filepath.clone();
+                if let Some(parent) = filepath2.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .context("Unable to create directory {parent}")?;
+                }
                 tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                     .await?
                     .context("Failed to write output file")?;
