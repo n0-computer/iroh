@@ -297,8 +297,15 @@ async fn main_impl() -> Result<()> {
             let use_data_root = persistent.unwrap_or_default();
             let iroh_data_root = iroh_data_root()?;
             let db = if use_data_root {
-                Database::load(&iroh_data_root).await?
+                if iroh_data_root.is_dir() {
+                    // try to load db
+                    Database::load(&iroh_data_root).await?
+                } else {
+                    // directory does not exist, create an empty db
+                    Database::default()
+                }
             } else {
+                // no persistence, so use fresh db
                 Database::default()
             };
 

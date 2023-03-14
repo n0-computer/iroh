@@ -60,8 +60,8 @@ struct DataPaths {
 impl DataPaths {
     fn new(data_dir: PathBuf) -> Self {
         Self {
-            outboards_dir: data_dir.join("collections"),
-            collections_dir: data_dir.join("outboards"),
+            outboards_dir: data_dir.join("outboards"),
+            collections_dir: data_dir.join("collections"),
             paths_file: data_dir.join("paths.bin"),
             data_dir,
         }
