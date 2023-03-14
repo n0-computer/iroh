@@ -93,6 +93,8 @@ enum Commands {
         #[clap(long)]
         auth_token: Option<String>,
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
+        ///
+        /// If this path is not provided and persistent is true, the private key will be persisted to the iroh data root.
         #[clap(long)]
         key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
@@ -307,6 +309,12 @@ async fn main_impl() -> Result<()> {
             } else {
                 // no persistence, so use fresh db
                 Database::default()
+            };
+            let key = if use_data_root & key.is_none() {
+                Some(iroh_data_root.join("keypair"))
+            } else {
+                // no persistence, so use key from cli
+                key
             };
 
             let provider = provide(
