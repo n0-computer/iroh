@@ -779,10 +779,10 @@ pub enum DataSource {
     /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
     /// name. Passing in the empty string will explicitly _not_ persist the filename.
     NamedFile {
-        /// Path to the file
-        path: PathBuf,
         /// Custom name
         name: String,
+        /// Path to the file
+        path: PathBuf,
     },
 }
 
@@ -867,7 +867,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
 /// a public Database.
 async fn create_collection_inner(
-    data_sources: Vec<DataSource>,
+    mut data_sources: Vec<DataSource>,
 ) -> Result<(
     HashMap<Hash, BlobOrCollection>,
     Vec<ProvideResponseEntry>,
@@ -878,6 +878,8 @@ async fn create_collection_inner(
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
     let mut blobs_encoded_size_estimate = 0;
+
+    data_sources.sort();
 
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = data_sources.into_iter().map(|data| {
