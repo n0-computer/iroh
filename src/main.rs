@@ -23,7 +23,9 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
-use main_util::{iroh_data_root, Blake3Cid};
+use main_util::Blake3Cid;
+
+use crate::main_util::iroh_data_root;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -97,6 +99,9 @@ enum Commands {
         /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
+        /// If true, the provider will read and write from the iroh data root to persist data.
+        #[clap(long, default_value = "true")]
+        persistent: Option<bool>,
     },
     /// List hashes
     #[clap(about = "List hashes")]
@@ -288,12 +293,21 @@ async fn main_impl() -> Result<()> {
             auth_token,
             key,
             rpc_port,
+            persistent,
         } => {
+            let use_data_root = persistent.unwrap_or_default();
             let iroh_data_root = iroh_data_root()?;
-            tracing::info!("Loading snapshot from {}...", iroh_data_root.display());
-            let snapshot = Snapshot::load(&iroh_data_root)?;
-            tracing::info!("Loading database from snapshot");
-            let db = Database::from_snapshot(snapshot)?;
+            let db = if use_data_root {
+                tokio::task::block_in_place(|| {
+                    tracing::info!("Loading snapshot from {}...", iroh_data_root.display());
+                    let snapshot = Snapshot::load(&iroh_data_root)?;
+                    tracing::info!("Loading database from snapshot");
+                    let db = Database::from_snapshot(snapshot)?;
+                    anyhow::Ok(db)
+                })?
+            } else {
+                Database::default()
+            };
 
             let provider = provide(
                 db.clone(),
@@ -345,12 +359,14 @@ async fn main_impl() -> Result<()> {
                     res?;
                 }
             }
-            // persist the db to disk. this is blocking code. data_dir: data_dir,
-            tokio::task::block_in_place(|| {
-                let snapshot = db.snapshot();
-                snapshot.persist(iroh_data_root)?;
-                io::Result::Ok(())
-            })?;
+            // persist the db to disk. this is blocking code.
+            if use_data_root {
+                tokio::task::block_in_place(|| {
+                    let snapshot = db.snapshot();
+                    snapshot.persist(iroh_data_root)?;
+                    io::Result::Ok(())
+                })?;
+            }
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.

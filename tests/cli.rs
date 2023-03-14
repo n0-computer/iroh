@@ -110,7 +110,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
                 .arg("--addr")
                 .arg(ADDR)
                 .arg("--rpc-port")
-                .arg("0")
+                .arg("disabled")
+                .arg("--persistent=false")
                 .spawn()?
         }
         Input::Path => Command::new(iroh)
@@ -122,7 +123,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
             .arg("--addr")
             .arg(ADDR)
             .arg("--rpc-port")
-            .arg("0")
+            .arg("disabled")
+            .arg("--persistent=false")
             .spawn()?,
     };
 
