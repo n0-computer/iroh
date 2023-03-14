@@ -3,12 +3,12 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+pub mod net;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
-
-pub mod net;
+pub mod rpc_util;
 
 mod tls;
 mod util;

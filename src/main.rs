@@ -12,14 +12,11 @@ use indicatif::{
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
-use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
-};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
+use iroh::rpc_util::RpcClientExt;
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
@@ -347,8 +344,9 @@ async fn main_impl() -> Result<()> {
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let ProvideResponse { hash, entries } =
-                    controller.rpc(ProvideRequest { path }).await??;
+                let ProvideResponse { hash, entries } = controller
+                    .rpc_with_progress(ProvideRequest { path }, |_| async {})
+                    .await??;
 
                 print_add_response(hash, entries);
                 ticket.hash = hash;
@@ -410,8 +408,11 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let ProvideResponse { hash, entries } =
-                client.rpc(ProvideRequest { path: absolute }).await??;
+            let ProvideResponse { hash, entries } = client
+                .rpc_with_progress(ProvideRequest { path: absolute }, |p| async move {
+                    println!("{p:?}");
+                })
+                .await??;
             print_add_response(hash, entries);
             Ok(())
         }

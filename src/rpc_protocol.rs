@@ -1,7 +1,12 @@
 #![allow(missing_docs)]
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{protocol::AuthToken, util::RpcResult, Hash, PeerId};
+use crate::{
+    protocol::AuthToken,
+    rpc_util::{RpcWithProgress, RpcWithProgressMsg},
+    util::RpcResult,
+    Hash, PeerId,
+};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -27,8 +32,24 @@ pub struct ProvideResponseEntry {
     pub size: u64,
 }
 
-impl RpcMsg<ProviderService> for ProvideRequest {
+impl Msg<ProviderService> for ProvideRequest {
+    type Pattern = RpcWithProgress;
+}
+
+impl RpcWithProgressMsg<ProviderService> for ProvideRequest {
+    type Progress = ProvideProgress;
     type Response = RpcResult<ProvideResponse>;
+}
+
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProvideProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found { name: String, id: u64 },
+    /// We got progress ingesting item `id`
+    Progress { id: u64, offset: u64 },
+    /// We are done with `id`
+    Done { id: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,11 +139,13 @@ pub enum ProviderRequest {
 
 /// Response enum
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
+#[try_into(ref, ref_mut)]
 pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
+    ProvideProgress(ProvideProgress),
     Id(IdResponse),
     Shutdown(()),
 }

@@ -40,13 +40,10 @@ use crate::blobs::{Blob, Collection};
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
-use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
-};
+use crate::rpc_protocol::*;
+use crate::rpc_util::{ProgressCb, RpcChannelExt};
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash};
+use crate::util::{self, Hash, RpcError, RpcResult};
 mod database;
 pub use database::Database;
 
@@ -404,7 +401,19 @@ impl RpcHandler {
             .map(|(hash, path, size)| ListResponse { hash, path, size });
         futures::stream::iter(items)
     }
-    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+    async fn provide(
+        self,
+        msg: ProvideRequest,
+        progress: ProgressCb<ProvideProgress>,
+    ) -> RpcResult<ProvideResponse> {
+        self.provide0(msg, progress).await.map_err(RpcError::from)
+    }
+
+    async fn provide0(
+        self,
+        msg: ProvideRequest,
+        progress: ProgressCb<ProvideProgress>,
+    ) -> anyhow::Result<ProvideResponse> {
         let path = msg.path;
         let data_sources: Vec<DataSource> = if path.is_dir() {
             let mut paths = Vec::new();
@@ -421,8 +430,20 @@ impl RpcHandler {
             anyhow::bail!("path must be either a Directory or a File");
         };
         // create the collection
-        // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources).await?;
+        for (i, ds) in data_sources.iter().enumerate() {
+            progress.call(ProvideProgress::Found {
+                id: i as u64,
+                name: format!("{:?}", ds),
+            });
+        }
+        let progress = move |i, size: Option<u64>| {
+            let id = i as u64;
+            match size {
+                Some(offset) => progress.call(ProvideProgress::Progress { id, offset }),
+                None => progress.call(ProvideProgress::Done { id }),
+            }
+        };
+        let (db, entries, hash) = create_collection_inner(data_sources, progress).await?;
         self.inner.db.union_with(db);
 
         Ok(ProvideResponse { hash, entries })
@@ -473,7 +494,10 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
         use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
-            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Provide(msg) => {
+                chan.rpc_with_progress(msg, handler, RpcHandler::provide)
+                    .await
+            }
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
@@ -809,6 +833,37 @@ impl From<&std::path::Path> for DataSource {
     }
 }
 
+struct ProgressReader<R, F: Fn(Option<u64>)> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: Read, F: Fn(Option<u64>)> ProgressReader<R, F> {
+    fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: Read, F: Fn(Option<u64>)> Read for ProgressReader<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(Some(self.offset));
+        Ok(read)
+    }
+}
+
+impl<R, F: Fn(Option<u64>)> Drop for ProgressReader<R, F> {
+    fn drop(&mut self) {
+        (self.cb)(None);
+    }
+}
+
 /// Synchronously compute the outboard of a file, and return hash and outboard.
 ///
 /// It is assumed that the file is not modified while this is running.
@@ -823,6 +878,7 @@ impl From<&std::path::Path> for DataSource {
 fn compute_outboard(
     path: PathBuf,
     name: Option<String>,
+    cb: impl Fn(Option<u64>),
 ) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
@@ -846,7 +902,7 @@ fn compute_outboard(
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
     let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(ProgressReader::new(file, cb));
     // the length we have actually written, should be the same as the length of the file.
     let len2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
@@ -860,7 +916,7 @@ fn compute_outboard(
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, _, hash) = create_collection_inner(data_sources).await?;
+    let (db, _, hash) = create_collection_inner(data_sources, |_i, _o| {}).await?;
     Ok((Database::from(db), hash))
 }
 
@@ -868,6 +924,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     data_sources: Vec<DataSource>,
+    progress: impl Fn(usize, Option<u64>) + Send + Clone + 'static,
 ) -> Result<(
     HashMap<Hash, BlobOrCollection>,
     Vec<ProvideResponseEntry>,
@@ -880,12 +937,15 @@ async fn create_collection_inner(
     let mut blobs_encoded_size_estimate = 0;
 
     // compute outboards in parallel, using tokio's blocking thread pool
-    let outboards = data_sources.into_iter().map(|data| {
+    let outboards = data_sources.into_iter().enumerate().map(|(i, data)| {
         let (path, name) = match data {
             DataSource::File(path) => (path, None),
             DataSource::NamedFile { path, name } => (path, Some(name)),
         };
-        tokio::task::spawn_blocking(move || compute_outboard(path, name))
+        let progress = progress.clone();
+        tokio::task::spawn_blocking(move || {
+            compute_outboard(path, name, |offset| progress(i, offset))
+        })
     });
     // wait for completion and collect results
     let outboards = future::join_all(outboards)
