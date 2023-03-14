@@ -21,8 +21,8 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future::{self, BoxFuture, Shared};
-use futures::{FutureExt, Stream, TryFutureExt};
+use futures::future::{BoxFuture, Shared};
+use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -46,7 +46,7 @@ use crate::rpc_protocol::{
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash};
+use crate::util::{self, read_dir_recursive, Hash};
 mod database;
 pub use database::Database;
 
@@ -405,21 +405,14 @@ impl RpcHandler {
         futures::stream::iter(items)
     }
     async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
-        let path = msg.path;
-        let data_sources: Vec<DataSource> = if path.is_dir() {
-            let mut paths = Vec::new();
-            let mut iter = tokio::fs::read_dir(&path).await?;
-            while let Some(el) = iter.next_entry().await? {
-                if el.path().is_file() {
-                    paths.push(el.path().into());
-                }
-            }
-            paths
-        } else if path.is_file() {
-            vec![path.into()]
-        } else {
-            anyhow::bail!("path must be either a Directory or a File");
-        };
+        let root = msg.path;
+        anyhow::ensure!(
+            root.is_dir() || root.is_file(),
+            "path must be either a Directory or a File"
+        );
+        let files = read_dir_recursive(root)?;
+        let data_sources = files.into_iter().map(DataSource::File).collect();
+        println!("{:?}", data_sources);
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
@@ -829,6 +822,7 @@ fn compute_outboard(
         "can only transfer blob data: {}",
         path.display()
     );
+    tracing::debug!("computing outboard for {}", path.display());
     let file = std::fs::File::open(&path)?;
     let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
@@ -853,6 +847,7 @@ fn compute_outboard(
     ensure!(len == len2, "file changed during encoding");
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
+    tracing::debug!("done. hash for {} is {hash}", path.display());
 
     Ok((path, name, hash.into(), outboard))
 }
@@ -882,15 +877,21 @@ async fn create_collection_inner(
     data_sources.sort();
 
     // compute outboards in parallel, using tokio's blocking thread pool
-    let outboards = data_sources.into_iter().map(|data| {
-        let (path, name) = match data {
-            DataSource::File(path) => (path, None),
-            DataSource::NamedFile { path, name } => (path, Some(name)),
-        };
-        tokio::task::spawn_blocking(move || compute_outboard(path, name))
-    });
+    let outboards = stream::iter(data_sources)
+        .map(|data| {
+            let (path, name) = match data {
+                DataSource::File(path) => (path, None),
+                DataSource::NamedFile { path, name } => (path, Some(name)),
+            };
+            tokio::task::spawn_blocking(move || compute_outboard(path, name))
+        })
+        // allow at most num_cpus tasks at a time, otherwise we might get too many open files
+        .buffer_unordered(num_cpus::get());
     // wait for completion and collect results
-    let outboards = future::join_all(outboards)
+    println!("computing the outboards");
+    // weird massaging of the output to get rid of the results
+    let outboards = outboards
+        .collect::<Vec<_>>()
         .await
         .into_iter()
         .collect::<Result<Result<Vec<_>, _>, _>>()??;

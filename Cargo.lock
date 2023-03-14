@@ -945,6 +945,7 @@ dependencies = [
  "hex",
  "indicatif",
  "multibase",
+ "num_cpus",
  "portable-atomic 1.0.1",
  "postcard",
  "proptest",
