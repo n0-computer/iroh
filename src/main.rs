@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
@@ -7,7 +9,7 @@ use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
 use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle, MultiProgress,
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
@@ -407,11 +409,38 @@ async fn main_impl() -> Result<()> {
         Commands::Add { path, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
             let absolute = path.canonicalize()?;
+            let mp = MultiProgress::new();
+            let pbs = Arc::new(Mutex::new(BTreeMap::<u64, ProgressBar>::new()));
+            let progress_handler = move |pp: ProvideProgress| {
+                let mp = mp.clone();
+                let pbs = pbs.clone();
+                async move {
+                    let mut pbs = pbs.lock().unwrap();
+                    match pp {
+                        ProvideProgress::Found { name, id } => {
+                            let pb = mp.add(ProgressBar::new(0));
+                            pb.set_style(ProgressStyle::default_bar()
+                                .template("{spinner:.green} {wide_msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+                                .progress_chars("=>-"));
+                            pb.set_message(name);
+                            pbs.insert(id, pb);
+                        },
+                        ProvideProgress::Progress { id, offset } => {
+                            if let Some(pb) = pbs.get_mut(&id) {
+                                pb.set_position(offset);
+                            }
+                        },
+                        ProvideProgress::Done { id } => {
+                            if let Some(pb) = pbs.remove(&id) {
+                                pb.finish_and_clear();
+                            }
+                        },
+                    }
+                }
+            };
             println!("Adding {} as {}...", path.display(), absolute.display());
             let ProvideResponse { hash, entries } = client
-                .rpc_with_progress(ProvideRequest { path: absolute }, |p| async move {
-                    println!("{p:?}");
-                })
+                .rpc_with_progress(ProvideRequest { path: absolute }, progress_handler)
                 .await??;
             print_add_response(hash, entries);
             Ok(())
