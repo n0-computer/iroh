@@ -1,3 +1,4 @@
+use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -344,8 +345,12 @@ async fn main_impl() -> Result<()> {
                     res?;
                 }
             }
-            let snapshot = db.snapshot();
-            snapshot.persist(iroh_data_root)?;
+            // persist the db to disk. this is blocking code. data_dir: data_dir,
+            tokio::task::block_in_place(|| {
+                let snapshot = db.snapshot();
+                snapshot.persist(iroh_data_root)?;
+                io::Result::Ok(())
+            })?;
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.

@@ -63,7 +63,7 @@ impl DataPaths {
             outboards_dir: data_dir.join("collections"),
             collections_dir: data_dir.join("outboards"),
             paths_file: data_dir.join("paths.bin"),
-            data_dir: data_dir,
+            data_dir,
         }
     }
 }
@@ -177,9 +177,9 @@ where
             fs::write(path, &collection)?;
         }
         let mut paths = self.paths.collect::<Vec<_>>();
-        paths.sort_by_key(|(path, _, _)| path.clone());
+        paths.sort_by_key(|(path, _, _)| *path);
         let paths_content = postcard::to_stdvec(&paths).expect("failed to serialize paths file");
-        fs::write(&paths_file, &paths_content)?;
+        fs::write(paths_file, paths_content)?;
         Ok(())
     }
 }
@@ -200,17 +200,15 @@ impl Database {
             .map_err(Into::into)?;
         let mut db = HashMap::new();
         for (hash, size, path) in paths {
-            if let Some(path) = path {
-                if let Some(outboard) = outboards.get(&hash) {
-                    db.insert(
-                        hash,
-                        BlobOrCollection::Blob(Data {
-                            outboard: outboard.clone(),
-                            path,
-                            size,
-                        }),
-                    );
-                }
+            if let (Some(path), Some(outboard)) = (path, outboards.get(&hash)) {
+                db.insert(
+                    hash,
+                    BlobOrCollection::Blob(Data {
+                        outboard: outboard.clone(),
+                        path,
+                        size,
+                    }),
+                );
             }
         }
         for (hash, data) in collections {
