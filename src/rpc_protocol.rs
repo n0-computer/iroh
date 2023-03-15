@@ -45,7 +45,7 @@ impl RpcWithProgressMsg<ProviderService> for ProvideRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ProvideProgress {
     /// An item was found with name `name`, from now on referred to via `id`
-    Found { name: String, id: u64 },
+    Found { name: String, id: u64, size: u64 },
     /// We got progress ingesting item `id`
     Progress { id: u64, offset: u64 },
     /// We are done with `id`

@@ -431,10 +431,14 @@ impl RpcHandler {
         };
         // create the collection
         for (i, ds) in data_sources.iter().enumerate() {
-            progress.call(ProvideProgress::Found {
-                id: i as u64,
-                name: format!("{:?}", ds),
-            });
+            if let DataSource::File(path) = ds {
+                let size = tokio::fs::metadata(path).await?.len();
+                progress.call(ProvideProgress::Found {
+                    id: i as u64,
+                    name: path.display().to_string(),
+                    size,
+                });
+            }
         }
         let progress = move |i, p: ProgressReaderUpdate| {
             let id = i as u64;

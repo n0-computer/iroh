@@ -418,11 +418,12 @@ async fn main_impl() -> Result<()> {
                 async move {
                     let mut pbs = pbs.lock().unwrap();
                     match pp {
-                        ProvideProgress::Found { name, id } => {
+                        ProvideProgress::Found { name, id, size } => {
                             let pb = mp.add(ProgressBar::new(0));
                             pb.set_style(ProgressStyle::default_bar()
                                 .template("{spinner:.green} {wide_msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
                                 .progress_chars("=>-"));
+                            pb.set_length(size);
                             pb.set_message(name);
                             pbs.insert(id, pb);
                         }
