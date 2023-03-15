@@ -16,31 +16,32 @@ const RETRIES: usize = 3;
 
 /// Represents a connection to a client.
 ///
-/// From goimpl:
-///
-/// "Represents one or more connections to a client
-///
-/// In the common cast, the client should only have one connection to the DERP server for a given
-/// key. When they're connected multiple times, we record their set of connection, and keep their
-/// connections open to make them happy (to keep them from spinning, etc) and keep track of whihc
-/// is the lastest connection. If only the last is sending traffic, that last one is the active
-/// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
-/// connections doesn't receive data frames."
-// TODO: expand to allow for multiple connections associated with a single PublicKey. This
+// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
 // introduces some questions around which connection should be prioritized when forwarding packets
+//
+// From goimpl:
+//
+// "Represents one or more connections to a client
+//
+// In the common cast, the client should only have one connection to the DERP server for a given
+// key. When they're connected multiple times, we record their set of connection, and keep their
+// connections open to make them happy (to keep them from spinning, etc) and keep track of whihc
+// is the lastest connection. If only the last is sending traffic, that last one is the active
+// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
+// connections doesn't receive data frames."
 #[derive(Debug)]
 struct Client<C>
 where
     C: Conn,
 {
-    /// The set of all connections associated with the PublicKey
+    // The set of all connections associated with the PublicKey
     // conns: HashMap<usize, ClientConnManager<C>>,
-    /// The most recent edition to the set, or the last connection we have received data from. Can
-    /// be `None` if that particular connection has disconnected & we have no other previous
-    /// connections
+    // The most recent edition to the set, or the last connection we have received data from. Can
+    // be `None` if that particular connection has disconnected & we have no other previous
+    // connections
     // last: Option<usize>,
-    /// the "home" connection for the client.
-    /// TODO: expect for setting and unsetting, I do not see this used in the go impl.
+    // the "home" connection for the client.
+    // TODO: I do not see this used in the go impl, except for setting and un-setting.
     preferred: Option<usize>,
     /// the connection
     conn: ClientConnManager<C>,
@@ -79,6 +80,11 @@ where
     }
 }
 
+// TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
+// channels, so each client is able to drain any full channels of "older" packets
+// & attempt to try to send the message again. We can't drain any channels here,
+// so I'm not sure if we should come up with some mechanism to request the channel
+// be drained, or just leave it
 fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
     let mut msg = msg;
     for _ in 0..RETRIES {
@@ -272,23 +278,6 @@ mod tests {
 
         let mut clients = Clients::new();
         clients.register(conn_a).await;
-        // make conn A
-        // make conn B
-        // make `client` try to send a packet to a random key, no errors
-        // make `clients` and add conn_a & conn_b
-        // send packet to a, read it off a_reader
-        // send disco_packet to a, read it off a_reader
-        // send peer_gone to a, read it off a_reader,
-        // send mesh_update to a, read it off a_reader
-        //
-        // write to b_conn, this should cause a cascading fails
-        // attempt to send packet to b (should fail)
-        // try to get b, should not return anything
-        //
-        // unregister a
-        // try to get a, shouldn't get anything in reader
-        // shutdown a
-        // try to get a, shouldn't get anything
 
         // send packet
         let data = b"hello world!";
