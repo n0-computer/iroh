@@ -15,7 +15,6 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use super::client::ClientInfo;
 use super::conn::Conn;
 use super::{
     read_frame, write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
@@ -26,23 +25,23 @@ use super::{
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
-struct Packet {
+pub(crate) struct Packet {
     /// The sender of the packet
-    src: PublicKey,
+    pub(crate) src: PublicKey,
     /// When a packet was put onto a queue before it was sent,
     /// and is used for reporting metrics on the duration of packets
     /// in the queue.
-    enqueued_at: Instant,
+    pub(crate) enqueued_at: Instant,
 
     /// The data packet bytes.
-    bytes: Bytes,
+    pub(crate) bytes: Bytes,
 }
 
 /// PeerConnState represents whether or not a peer is connected to the server.
 #[derive(Debug, Clone)]
-struct PeerConnState {
-    peer: PublicKey,
-    present: bool,
+pub(crate) struct PeerConnState {
+    pub(crate) peer: PublicKey,
+    pub(crate) present: bool,
 }
 
 #[derive(Debug)]
@@ -50,12 +49,12 @@ struct PeerConnState {
 /// A handle?
 /// should have senders here, & be clonable, i think?
 /// should be able to be held by server
-struct ClientConnManager<C>
+pub(crate) struct ClientConnManager<C>
 where
     C: Conn,
 {
     /// Static after construction, process-wide unique counter, incremented each Accept
-    conn_num: i64,
+    pub(crate) conn_num: usize,
 
     // TODO: in the go impl, we have a ptr to the server & use that ptr to update stats
     // in rust, we should probably have a stats struct separate from the server that we
@@ -63,21 +62,10 @@ where
     // send updates
     // stats: Stats,
     conn: C,
-    key: PublicKey,
-    info: ClientInfo,
+    pub(crate) key: PublicKey,
     /// Sent when connection closes
     // TODO: maybe should be a receiver
     done: CancellationToken,
-    /// Usually ip:port from `SocketAddr`
-    remote_addr: String,
-    /// zero if remote_addr is not `ip:port`
-    remote_ip_port: u16,
-    /// When true, the [`ClientInfo`] had the correct mesh token for inter-region routing
-    can_mesh: bool,
-    /// Whether more than 1 `ClientConnManager` for one key is connected
-    is_dup: AtomicBool,
-    /// Whether sends to this peer are disabled due to active/active dups
-    is_disabled: AtomicBool,
 
     /// Controls how quickly two connections with the same client key can kick
     /// each other off the server by taking ownership of a key
@@ -94,7 +82,7 @@ where
     /// Channels that allow the ClientConnManager (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
     /// [`ClientConnWriter`].
-    client_channels: ClientChannels,
+    pub(crate) client_channels: ClientChannels,
 }
 
 /// Channels that the [`ClientConnReader`] needs in order to notify the server
@@ -105,16 +93,16 @@ where
 // use `send_timeout` in a newly spun up thread. It also may be benefitial to have editional channels where we can request
 // the server drop packets from the front of its queue so that newer packets are prioritized when
 // there is heavy load
-#[derive(Debug)]
-struct ServerChannels {
+#[derive(Debug, Clone)]
+pub(crate) struct ServerChannels {
     /// Send a notification to the Server to add this client as a watcher
-    add_watcher: mpsc::Sender<PublicKey>,
+    pub(crate) add_watcher: mpsc::Sender<PublicKey>,
     /// Send a notification to the Server to close connections to the given peer
-    close_peer: mpsc::Sender<PublicKey>,
+    pub(crate) close_peer: mpsc::Sender<PublicKey>,
     /// Send a notification to the server to send this packet to the destination
-    send_queue: mpsc::Sender<(PublicKey, Packet)>,
+    pub(crate) send_queue: mpsc::Sender<(PublicKey, Packet)>,
     /// Send a notification to the server to forward this pacekt to the destination
-    disco_send_queue: mpsc::Sender<(PublicKey, Packet)>,
+    pub(crate) disco_send_queue: mpsc::Sender<(PublicKey, Packet)>,
 }
 
 /// Channels that the [`ClientConnManager`] uses to communicate with the
@@ -124,37 +112,34 @@ struct ServerChannels {
 ///  - forwarded packets (if they are mesh client)
 ///  - packets sent to this client from another client in the network
 #[derive(Debug)]
-struct ClientChannels {
+pub(crate) struct ClientChannels {
     /// Queue of packets intended for the client
-    send_queue: mpsc::Sender<Packet>,
+    pub(crate) send_queue: mpsc::Sender<Packet>,
     /// Queue of important packets intended for the client
-    disco_send_queue: mpsc::Sender<Packet>,
+    pub(crate) disco_send_queue: mpsc::Sender<Packet>,
     /// Notify the client that a previous sender has disconnected (Not used by mesh peers)
-    peer_gone: mpsc::Sender<PublicKey>,
+    pub(crate) peer_gone: mpsc::Sender<PublicKey>,
     /// Send a client (if it is a mesh peer) records that will
     /// allow the client to update their map of who's connected
     /// to this node
-    mesh_update: mpsc::Sender<Vec<PeerConnState>>,
+    pub(crate) mesh_update: mpsc::Sender<Vec<PeerConnState>>,
 }
 
 impl<C> ClientConnManager<C>
 where
     C: Conn,
 {
-    async fn new<R, W>(
+    pub async fn new<R, W>(
         key: PublicKey,
-        conn_num: i64,
+        conn_num: usize,
         conn: C,
         reader: R,
         writer: W,
-        remote_addr: String,
-        remote_ip_port: u16,
         can_mesh: bool,
-        client_info: ClientInfo,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
         server_channels: ServerChannels,
-        shutdown_client: mpsc::Sender<(PublicKey, i64)>,
+        prune_client: mpsc::Sender<PublicKey>,
     ) -> Result<ClientConnManager<C>>
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -191,28 +176,46 @@ where
 
         // start writer loop
         let writer_done = done.clone();
-        let writer_shutdown_client = shutdown_client.clone();
         let writer_client_id = client_id.clone();
+        let writer_prune_client = prune_client.clone();
         let writer_handle = tokio::spawn(async move {
+            let key = writer_client_id.0;
+            let conn_num = writer_client_id.1;
             let res = conn_writer.run(writer_done).await;
-            if let Err(e) = writer_shutdown_client.try_send(writer_client_id.clone()) {
-                tracing::warn!(
-                    "unable to let server know to shut down client {writer_client_id:?}: {e:?}"
-                );
+            let _ = writer_prune_client.try_send(key.clone());
+            match res {
+                Err(e) => {
+                    tracing::warn!(
+                        "connection manager for {key:?} {conn_num}: writer closed in error {e}"
+                    );
+                    Err(e)
+                }
+                Ok(_) => {
+                    tracing::warn!("connection manager for {key:?} {conn_num}: writer closed");
+                    Ok(())
+                }
             }
-            res
         });
 
         // start reader loop
         let reader_done = done.clone();
         let reader_handle = tokio::spawn(async move {
+            let key = client_id.0;
+            let conn_num = client_id.1;
             let res = conn_reader.run(reader_done).await;
-            if let Err(e) = shutdown_client.try_send(client_id.clone()) {
-                tracing::warn!(
-                    "unable to let server know to shut down client {client_id:?}: {e:?}"
-                );
+            let _ = prune_client.try_send(key.clone());
+            match res {
+                Err(e) => {
+                    tracing::warn!(
+                        "connection manager for {key:?} {conn_num}: reader closed in error {e}"
+                    );
+                    Err(e)
+                }
+                Ok(_) => {
+                    tracing::warn!("connection manager for {key:?} {conn_num}: reader closed");
+                    Ok(())
+                }
             }
-            res
         });
 
         // return client conn to server
@@ -220,15 +223,9 @@ where
             conn_num,
             conn,
             key,
-            remote_addr,
-            remote_ip_port,
-            can_mesh,
-            is_dup: AtomicBool::from(false),
-            is_disabled: AtomicBool::from(false),
             connected_at: Instant::now(),
             writer_handle,
             reader_handle,
-            info: client_info,
             done,
             client_channels: ClientChannels {
                 send_queue: send_queue_s,
@@ -242,7 +239,7 @@ where
     /// Shutdown the `ClientConnManager` reader and writer loops and closes the "actual" connection.
     ///
     /// Logs any shutdown errors as warnings.
-    async fn shutdown(self) {
+    pub async fn shutdown(self) {
         self.done.cancel();
         if let Err(e) = self.writer_handle.await {
             tracing::warn!(
