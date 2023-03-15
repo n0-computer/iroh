@@ -1,6 +1,7 @@
 //! Utility functions and types.
 use std::{
     fmt::{self, Display},
+    io::Read,
     result,
     str::FromStr,
 };
@@ -163,5 +164,41 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+}
+
+pub(crate) enum ProgressReaderUpdate {
+    Progress(u64),
+    Done,
+}
+
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> Read for ProgressReader<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(ProgressReaderUpdate::Progress(self.offset));
+        Ok(read)
+    }
+}
+
+impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
+    fn drop(&mut self) {
+        (self.cb)(ProgressReaderUpdate::Done);
     }
 }

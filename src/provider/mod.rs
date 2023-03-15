@@ -43,7 +43,7 @@ use crate::protocol::{
 use crate::rpc_protocol::*;
 use crate::rpc_util::{ProgressCb, RpcChannelExt};
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash, RpcError, RpcResult};
+use crate::util::{self, Hash, ProgressReader, ProgressReaderUpdate, RpcError, RpcResult};
 mod database;
 pub use database::Database;
 
@@ -436,11 +436,13 @@ impl RpcHandler {
                 name: format!("{:?}", ds),
             });
         }
-        let progress = move |i, size: Option<u64>| {
+        let progress = move |i, p: ProgressReaderUpdate| {
             let id = i as u64;
-            match size {
-                Some(offset) => progress.call(ProvideProgress::Progress { id, offset }),
-                None => progress.call(ProvideProgress::Done { id }),
+            match p {
+                ProgressReaderUpdate::Progress(offset) => {
+                    progress.call(ProvideProgress::Progress { id, offset })
+                }
+                ProgressReaderUpdate::Done => progress.call(ProvideProgress::Done { id }),
             }
         };
         let (db, entries, hash) = create_collection_inner(data_sources, progress).await?;
@@ -833,37 +835,6 @@ impl From<&std::path::Path> for DataSource {
     }
 }
 
-struct ProgressReader<R, F: Fn(Option<u64>)> {
-    inner: R,
-    offset: u64,
-    cb: F,
-}
-
-impl<R: Read, F: Fn(Option<u64>)> ProgressReader<R, F> {
-    fn new(inner: R, cb: F) -> Self {
-        Self {
-            inner,
-            offset: 0,
-            cb,
-        }
-    }
-}
-
-impl<R: Read, F: Fn(Option<u64>)> Read for ProgressReader<R, F> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
-        self.offset += read as u64;
-        (self.cb)(Some(self.offset));
-        Ok(read)
-    }
-}
-
-impl<R, F: Fn(Option<u64>)> Drop for ProgressReader<R, F> {
-    fn drop(&mut self) {
-        (self.cb)(None);
-    }
-}
-
 /// Synchronously compute the outboard of a file, and return hash and outboard.
 ///
 /// It is assumed that the file is not modified while this is running.
@@ -878,7 +849,7 @@ impl<R, F: Fn(Option<u64>)> Drop for ProgressReader<R, F> {
 fn compute_outboard(
     path: PathBuf,
     name: Option<String>,
-    cb: impl Fn(Option<u64>),
+    cb: impl Fn(ProgressReaderUpdate),
 ) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
@@ -924,7 +895,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     data_sources: Vec<DataSource>,
-    progress: impl Fn(usize, Option<u64>) + Send + Clone + 'static,
+    progress: impl Fn(usize, ProgressReaderUpdate) + Send + Clone + 'static,
 ) -> Result<(
     HashMap<Hash, BlobOrCollection>,
     Vec<ProvideResponseEntry>,

@@ -9,7 +9,8 @@ use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
 use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle, MultiProgress,
+    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
+    ProgressStyle,
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
@@ -424,17 +425,17 @@ async fn main_impl() -> Result<()> {
                                 .progress_chars("=>-"));
                             pb.set_message(name);
                             pbs.insert(id, pb);
-                        },
+                        }
                         ProvideProgress::Progress { id, offset } => {
                             if let Some(pb) = pbs.get_mut(&id) {
                                 pb.set_position(offset);
                             }
-                        },
+                        }
                         ProvideProgress::Done { id } => {
                             if let Some(pb) = pbs.remove(&id) {
                                 pb.finish_and_clear();
                             }
-                        },
+                        }
                     }
                 }
             };
