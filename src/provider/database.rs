@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::{StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -260,7 +260,12 @@ impl Database {
     }
 
     /// Validate the entire database, including collections.
-    pub(crate) async fn validate(&self) -> anyhow::Result<Vec<(Hash, BaoValidationError)>> {
+    ///
+    /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
+    pub(crate) fn validate(
+        &self,
+        parallelism: usize,
+    ) -> impl Stream<Item = (Hash, u64, Option<PathBuf>, Option<BaoValidationError>)> {
         let mut data = self
             .0
             .read()
@@ -268,10 +273,16 @@ impl Database {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-        data.sort_by_key(|(k, _)| *k);
-        let errors = futures::stream::iter(data)
+        data.sort_by_key(|(k, e)| (e.is_blob(), e.data().map(|x| x.path.clone()), *k));
+        futures::stream::iter(data)
             .map(|(hash, boc)| {
                 tokio::task::spawn_blocking(move || {
+                    let path = if let BlobOrCollection::Blob(Data { path, .. }) = &boc {
+                        Some(path.clone())
+                    } else {
+                        None
+                    };
+                    let size = boc.size();
                     let res = match boc {
                         BlobOrCollection::Blob(Data { outboard, path, .. }) => {
                             match std::fs::File::open(&path) {
@@ -289,17 +300,15 @@ impl Database {
                             validate_bao(hash, data, outboard)
                         }
                     };
-                    res.map_err(|e| (hash, e))
+                    (hash, size, path, res.err())
                 })
             })
-            .buffer_unordered(8)
-            .try_collect::<Vec<_>>()
-            .await?;
-        let errors = errors
-            .into_iter()
-            .filter_map(|x| x.err())
-            .collect::<Vec<_>>();
-        Ok(errors)
+            .buffer_unordered(parallelism)
+            .map(|item| {
+                // unwrapping is fine here, because it will only happen if the task panicked
+                // basically we are just moving the panic on this task.
+                item.expect("task panicked")
+            })
     }
 
     /// take a snapshot of the database

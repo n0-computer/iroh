@@ -111,6 +111,13 @@ enum Commands {
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
+    /// Validate hashes
+    #[clap(about = "Validate hashes")]
+    Validate {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
     /// Shutdown
     #[clap(about = "Shutdown provider")]
     Shutdown {
@@ -388,6 +395,23 @@ async fn main_impl() -> Result<()> {
                     item.path.display(),
                     Blake3Cid(item.hash),
                     HumanBytes(item.size),
+                );
+            }
+            Ok(())
+        }
+        Commands::Validate { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let mut response = client.server_streaming(ValidateRequest).await?;
+            while let Some(item) = response.next().await {
+                let item = item?;
+                println!(
+                    "{} {} {} {}",
+                    item.path
+                        .map(|x| x.display().to_string())
+                        .unwrap_or("Collection".to_owned()),
+                    Blake3Cid(item.hash),
+                    HumanBytes(item.size),
+                    item.error.unwrap_or("OK".to_owned()),
                 );
             }
             Ok(())

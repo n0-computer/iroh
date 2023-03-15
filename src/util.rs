@@ -2,6 +2,7 @@
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
+use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -153,13 +154,14 @@ impl From<anyhow::Error> for RpcError {
 /// A serializable result type for use in RPC responses.
 pub type RpcResult<T> = result::Result<T, RpcError>;
 
+#[derive(Debug, Display, Error)]
 pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
     IoError(io::Error),
-    /// The hash of the data does not match the hash of the outboard.
-    HashMismatch,
-    /// The size of the data does not match the size of the outboard.
-    SizeMismatch,
+    // /// The hash of the data does not match the hash of the outboard.
+    // HashMismatch,
+    // /// The size of the data does not match the size of the outboard.
+    // SizeMismatch,
 }
 
 impl From<io::Error> for BaoValidationError {
