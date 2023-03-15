@@ -1,7 +1,11 @@
 use super::{BlobOrCollection, Data};
-use crate::Hash;
+use crate::{
+    util::{validate_bao, BaoValidationError},
+    Hash,
+};
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -253,6 +257,49 @@ impl Database {
         }
 
         Ok(Self(Arc::new(RwLock::new(db))))
+    }
+
+    /// Validate the entire database, including collections.
+    pub(crate) async fn validate(&self) -> anyhow::Result<Vec<(Hash, BaoValidationError)>> {
+        let mut data = self
+            .0
+            .read()
+            .unwrap()
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+        data.sort_by_key(|(k, _)| *k);
+        let errors = futures::stream::iter(data)
+            .map(|(hash, boc)| {
+                tokio::task::spawn_blocking(move || {
+                    let res = match boc {
+                        BlobOrCollection::Blob(Data { outboard, path, .. }) => {
+                            match std::fs::File::open(&path) {
+                                Ok(data) => {
+                                    tracing::info!("validating {}", path.display());
+                                    let res = validate_bao(hash, data, outboard);
+                                    tracing::info!("done validating {}", path.display());
+                                    res
+                                }
+                                Err(cause) => Err(BaoValidationError::from(cause)),
+                            }
+                        }
+                        BlobOrCollection::Collection { outboard, data } => {
+                            let data = std::io::Cursor::new(data);
+                            validate_bao(hash, data, outboard)
+                        }
+                    };
+                    res.map_err(|e| (hash, e))
+                })
+            })
+            .buffer_unordered(8)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let errors = errors
+            .into_iter()
+            .filter_map(|x| x.err())
+            .collect::<Vec<_>>();
+        Ok(errors)
     }
 
     /// take a snapshot of the database
