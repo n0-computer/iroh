@@ -482,6 +482,9 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
             } else {
                 let keypair = Keypair::generate();
                 let ser_key = keypair.to_openssh()?;
+                if let Some(parent) = key_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
                 tokio::fs::write(key_path, ser_key).await?;
                 Ok(keypair)
             }
