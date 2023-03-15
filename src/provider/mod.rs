@@ -22,7 +22,7 @@ use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
-use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
+use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -35,6 +35,7 @@ use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
+use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
 use crate::protocol::{
@@ -46,7 +47,7 @@ use crate::rpc_protocol::{
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, read_dir_recursive, Hash};
+use crate::util::{self, Hash};
 mod database;
 pub use database::Database;
 
@@ -410,17 +411,25 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let files = read_dir_recursive(&root)?;
-        let data_sources = files
-            .into_iter()
-            .map(|path| {
+        let files = futures::stream::iter(WalkDir::new(&root));
+        let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
+            let root = root.clone();
+            async move {
+                if !entry.file_type().is_file() {
+                    return Ok(None);
+                }
+                let path = entry.into_path();
                 let name = path
                     .strip_prefix(&root)?
                     .to_str()
                     .context("invalid unicode string")?
                     .to_owned();
-                Ok(DataSource::NamedFile { name, path })
-            })
+                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+            }
+        });
+        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>().await;
+        let data_sources = data_sources
+            .into_iter()
             .collect::<anyhow::Result<Vec<_>>>()?;
         // create the collection
         // todo: provide feedback for progress
