@@ -821,14 +821,14 @@ pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
     /// the filename.
     File(PathBuf),
-    /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
-    /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile {
-        /// Path to the file
-        path: PathBuf,
-        /// Custom name
-        name: String,
-    },
+    // /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
+    // /// name. Passing in the empty string will explicitly _not_ persist the filename.
+    // NamedFile {
+    //     /// Path to the file
+    //     path: PathBuf,
+    //     /// Custom name
+    //     name: String,
+    // },
 }
 
 impl DataSource {
@@ -836,10 +836,10 @@ impl DataSource {
     pub fn new(path: PathBuf) -> Self {
         DataSource::File(path)
     }
-    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
-    pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource::NamedFile { path, name }
-    }
+    // /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
+    // pub fn with_name(path: PathBuf, name: String) -> Self {
+    //     DataSource::NamedFile { path, name }
+    // }
 }
 
 impl From<PathBuf> for DataSource {
@@ -928,7 +928,7 @@ async fn create_collection_inner(
     let outboards = data_sources.into_iter().map(|data| {
         let (path, name) = match data {
             DataSource::File(path) => (path, None),
-            DataSource::NamedFile { path, name } => (path, Some(name)),
+            // DataSource::NamedFile { path, name } => (path, Some(name)),
         };
         tokio::task::spawn_blocking(move || compute_outboard(path, name))
     });
@@ -1112,23 +1112,23 @@ mod tests {
             hash,
         });
 
-        // DataSource::NamedFile
-        let bar = dir.join("bar");
-        tokio::fs::write(&bar, vec![]).await?;
-        let bar = DataSource::with_name(bar, "bat".to_string());
-        expect_blobs.push(Blob {
-            name: "bat".to_string(),
-            hash,
-        });
+        // // DataSource::NamedFile
+        // let bar = dir.join("bar");
+        // tokio::fs::write(&bar, vec![]).await?;
+        // let bar = DataSource::with_name(bar, "bat".to_string());
+        // expect_blobs.push(Blob {
+        //     name: "bat".to_string(),
+        //     hash,
+        // });
 
-        // DataSource::NamedFile, empty string name
-        let baz = dir.join("baz");
-        tokio::fs::write(&baz, vec![]).await?;
-        let baz = DataSource::with_name(baz, "".to_string());
-        expect_blobs.push(Blob {
-            name: "".to_string(),
-            hash,
-        });
+        // // DataSource::NamedFile, empty string name
+        // let baz = dir.join("baz");
+        // tokio::fs::write(&baz, vec![]).await?;
+        // let baz = DataSource::with_name(baz, "".to_string());
+        // expect_blobs.push(Blob {
+        //     name: "".to_string(),
+        //     hash,
+        // });
 
         let expect_collection = Collection {
             name: "collection".to_string(),
@@ -1136,7 +1136,7 @@ mod tests {
             total_blobs_size: 0,
         };
 
-        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
+        let (db, hash) = create_collection(vec![foo]).await?;
 
         let collection = {
             let c = db.get(&hash).unwrap();
