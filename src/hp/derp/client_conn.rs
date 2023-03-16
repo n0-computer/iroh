@@ -211,7 +211,7 @@ where
             let conn_num = writer_client_id.1;
             let res = conn_writer.run(writer_done).await;
             let _ = writer_server_channel
-                .send(ServerMessage::Unregister(key.clone()))
+                .send(ServerMessage::RemoveClient(key.clone()))
                 .await;
             match res {
                 Err(e) => {
@@ -234,7 +234,7 @@ where
             let conn_num = client_id.1;
             let res = conn_reader.run(reader_done).await;
             let _ = server_channel
-                .send(ServerMessage::Unregister(key.clone()))
+                .send(ServerMessage::RemoveClient(key.clone()))
                 .await;
             match res {
                 Err(e) => {
@@ -294,6 +294,13 @@ where
                 self.conn_num
             );
         }
+    }
+
+    /// Close the underlying connection to the client
+    // TODO: tbh I'm not sure why we have this & why we don't just remove the client,
+    // but it's part of the protocol
+    pub fn close_conn(&self) -> Result<()> {
+        self.conn.close()
     }
 }
 

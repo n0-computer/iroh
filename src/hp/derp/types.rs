@@ -109,7 +109,7 @@ where
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
     CreateClient(ClientBuilder<C, R, W, P>),
-    Unregister(PublicKey),
+    RemoveClient(PublicKey),
 }
 
 impl<C, R, W, P> std::fmt::Debug for ServerMessage<C, R, W, P>
@@ -136,7 +136,7 @@ where
                     client_builder.key, client_builder.conn_num
                 )
             }
-            ServerMessage::Unregister(key) => write!(f, "ServerMessage::Unregister({key:?})"),
+            ServerMessage::RemoveClient(key) => write!(f, "ServerMessage::RemoveClient({key:?})"),
         }
     }
 }

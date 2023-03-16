@@ -10,7 +10,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
-use super::types::{ClientInfo, PacketForwarder};
+use super::{
+    clients::Clients,
+    types::{ClientInfo, Conn, PacketForwarder, PeerConnState, ServerMessage},
+};
 // TODO: skiping `verboseDropKeys` for now
 
 /// The number of packets buffered for sending
@@ -336,4 +339,110 @@ enum DropReason {
     WriteError,
     /// The PublicKey is connected 2+ times (active/active, fighting)
     DupClient,
+}
+
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+pub(crate) struct ServerActor<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    key: PublicKey,
+    receiver: mpsc::Receiver<ServerMessage<C, R, W, P>>,
+    sender: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    /// All clients connected to this server
+    clients: Clients<C>,
+    /// Representation of the mesh network. Keys that are associated with `None` are strictly local
+    /// clients.
+    client_mesh: HashMap<PublicKey, Option<P>>,
+    /// Mesh clients that need to be appraised on the state of the network
+    watchers: HashSet<PublicKey>,
+}
+
+impl<C, R, W, P> ServerActor<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    pub(crate) fn new(key: PublicKey, channel_capacity: usize) -> Self {
+        let (sender, receiver) = mpsc::channel(channel_capacity);
+        Self {
+            key,
+            sender,
+            receiver,
+            clients: Clients::new(),
+            client_mesh: HashMap::default(),
+            watchers: HashSet::default(),
+        }
+    }
+
+    pub(crate) async fn run(mut self, done: CancellationToken) -> Result<()> {
+        loop {
+            tokio::select! {
+                biased;
+                _ = done.cancelled() => {
+                    tracing::warn!("server actor loop cancelled, closing loop");
+                    // TODO: stats: drain channel & count dropped packets etc
+                    return Ok(());
+                }
+                msg = self.receiver.recv() => {
+                    let msg = msg.expect("sender should never closed, since we hold one of the senders in `self`");
+                   match msg {
+                       ServerMessage::AddWatcher(key) => {
+                           // connecting to ourselves, ignore
+                           if key == self.key {
+                               continue;
+                           }
+                           // list of all connected clients
+                           let updates = self.clients.all_clients().map(|k| PeerConnState{ peer: k.clone(), present: true }).collect();
+                           // add to the list of watchers
+                           self.watchers.insert(key.clone());
+                           // send list of connected clients to the client
+                           self.clients.send_mesh_updates(&key, updates);
+                       },
+                       ServerMessage::ClosePeer(key) => {
+                           // close the actual underlying connection to the client, but don't remove it from
+                           // the list of clients
+                           self.clients.close_conn(&key);
+                       },
+                        ServerMessage::SendPacket((key, packet)) => {
+                            let src = packet.src.clone();
+                            if self.clients.send_packet(&key, packet).is_ok() {
+                                self.clients.record_send(&src, key);
+                            }
+                        }
+                       ServerMessage::SendDiscoPacket((key, packet)) => {
+                           let src = packet.src.clone();
+                           if self.clients.send_disco_packet(&key, packet).is_ok() {
+                               self.clients.record_send(&src, key);
+                           }
+                       }
+                       ServerMessage::CreateClient(client_builder) => {
+                           let key = client_builder.key.clone();
+                            self.clients.register(client_builder);
+                            // add to mesh, if it doesn't already exist
+                            // add to mesh w/ nil for packet fwd?
+                            // map the remote addr to the key
+                            // call broadcast peer state change locked w/ key, true
+                        }
+                       ServerMessage::RemoveClient(key) => {
+                           // remove from mesh
+                           // remove from remote addr to the key?
+                           self.clients.unregister(&key);
+                           // call broadcast peer state change?
+                           // send message to all `sent_to`?
+                       }
+                       // ServerMessage::AddPacketForwarder
+                       // ServerMessage::RemovePacketForwarder
+                   }
+                }
+            }
+        }
+    }
 }
