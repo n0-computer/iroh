@@ -14,7 +14,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::RwLock;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -22,8 +21,8 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future;
 use futures::Stream;
+use futures::{future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -31,7 +30,7 @@ use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
@@ -59,23 +58,16 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 
 impl Database {
-    fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
-        self.0.read().unwrap().get(key).cloned()
-    }
-
-    fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
-        let mut inner = self.0.write().unwrap();
-        for (k, v) in db {
-            inner.entry(k).or_insert(v);
-        }
+    async fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
+        let db = self.0.read().await;
+        db.get(key).cloned()
     }
 
     /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
-        let items = self
-            .0
-            .read()
-            .unwrap()
+    pub async fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
+        let db = self.0.read().await;
+
+        let items = db
             .iter()
             .filter_map(|(k, v)| match v {
                 BlobOrCollection::Blob(data) => Some((k, data)),
@@ -435,32 +427,30 @@ struct ProviderHandles {
 
 impl ProviderHandles {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
-        let items = self
-            .db
-            .blobs()
-            .map(|(hash, path, size)| ListResponse { hash, path, size });
-        futures::stream::iter(items)
+        futures::stream::once(async move { self.db.blobs().await })
+            .flat_map(|blobs| futures::stream::iter(blobs))
+            .map(|(hash, path, size)| ListResponse { hash, path, size })
     }
+
     async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
         let path = msg.path;
-        let data_sources: Vec<DataSource> = if path.is_dir() {
-            let mut paths = Vec::new();
+        let mut builder = CollectionBuilder::default();
+        if path.is_dir() {
             let mut iter = tokio::fs::read_dir(&path).await?;
             while let Some(el) = iter.next_entry().await? {
                 if el.path().is_file() {
-                    paths.push(el.path().into());
+                    builder.add_file(el.path());
                 }
             }
-            paths
         } else if path.is_file() {
-            vec![path.into()]
+            builder.add_file(path);
         } else {
             anyhow::bail!("path must be either a Directory or a File");
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources).await?;
-        self.db.union_with(db);
+        let mut db = self.db.0.write().await;
+        let (entries, hash) = builder.build_into_with_entries(&mut db).await?;
 
         Ok(ProvideResponse { hash, entries })
     }
@@ -723,7 +713,7 @@ async fn handle_stream(
     });
 
     // 4. Attempt to find hash
-    let (outboard, data) = match db.get(&hash) {
+    let (outboard, data) = match db.get(&hash).await {
         // We only respond to requests for collections, not individual blobs
         Some(BlobOrCollection::Collection(d)) => d,
         _ => {
@@ -769,7 +759,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     mut writer: W,
     buffer: &mut BytesMut,
 ) -> Result<(SentStatus, W)> {
-    match db.get(&name) {
+    match db.get(&name).await {
         Some(BlobOrCollection::Blob(Data {
             outboard,
             path,
@@ -903,95 +893,135 @@ fn compute_outboard(
     Ok((path, name, hash.into(), outboard))
 }
 
-/// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
-/// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, _, hash) = create_collection_inner(data_sources).await?;
-    Ok((Database(Arc::new(RwLock::new(db))), hash))
+/// Build a collection.
+#[derive(Debug, Default)]
+pub struct CollectionBuilder {
+    sources: Vec<DataSource>,
 }
 
-/// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
-/// a public Database.
-async fn create_collection_inner(
-    data_sources: Vec<DataSource>,
-) -> Result<(
-    HashMap<Hash, BlobOrCollection>,
-    Vec<ProvideResponseEntry>,
-    Hash,
-)> {
-    // +1 is for the collection itself
-    let mut db = HashMap::with_capacity(data_sources.len() + 1);
-    let mut blobs = Vec::with_capacity(data_sources.len());
-    let mut total_blobs_size: u64 = 0;
-
-    // compute outboards in parallel, using tokio's blocking thread pool
-    let outboards = data_sources.into_iter().map(|data| {
-        let (path, name) = match data {
-            DataSource::File(path) => (path, None),
-            DataSource::NamedFile { path, name } => (path, Some(name)),
-        };
-        tokio::task::spawn_blocking(move || compute_outboard(path, name))
-    });
-    // wait for completion and collect results
-    let outboards = future::join_all(outboards)
-        .await
-        .into_iter()
-        .collect::<Result<Result<Vec<_>, _>, _>>()??;
-
-    // compute information about the collection
-    let entries = outboards
-        .iter()
-        .map(|(path, name, hash, outboard)| {
-            let name = name
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| path.display().to_string());
-            ProvideResponseEntry {
-                name,
-                hash: *hash,
-                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
-            }
-        })
-        .collect();
-
-    // insert outboards into the database and build collection
-    for (path, name, hash, outboard) in outboards {
-        debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
-        let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
-        db.insert(
-            hash,
-            BlobOrCollection::Blob(Data {
-                outboard: Bytes::from(outboard),
-                path: path.clone(),
-                size,
-            }),
-        );
-        total_blobs_size += size;
-        // if the given name is `None`, use the filename from the given path as the name
-        let name = name.unwrap_or_else(|| {
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default()
-                .to_string()
-        });
-        blobs.push(Blob { name, hash });
+impl CollectionBuilder {
+    /// Creates a [`CollectionBuilder`] with the expected size.
+    pub fn with_capacity(cap: usize) -> Self {
+        CollectionBuilder {
+            sources: Vec::with_capacity(cap),
+        }
     }
 
-    let c = Collection {
-        name: "collection".to_string(),
-        blobs,
-        total_blobs_size,
-    };
+    /// Add a file by its path.
+    pub fn add_file(&mut self, file: PathBuf) -> &mut Self {
+        self.add_source(DataSource::File(file))
+    }
 
-    let data = postcard::to_stdvec(&c).context("blob encoding")?;
-    let (outboard, hash) = abao::encode::outboard(&data);
-    let hash = Hash::from(hash);
-    db.insert(
-        hash,
-        BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
-    );
+    /// Add a file by its path, specifying a specific name.
+    pub fn add_named_file(&mut self, name: String, path: PathBuf) -> &mut Self {
+        self.add_source(DataSource::NamedFile { name, path })
+    }
 
-    Ok((db, entries, hash))
+    /// Convenience method for creating a collection from a list of files.
+    pub fn from_files(files: Vec<PathBuf>) -> Self {
+        let mut builder = Self::with_capacity(files.len());
+        for file in files {
+            builder.add_file(file);
+        }
+        builder
+    }
+
+    fn add_source(&mut self, source: DataSource) -> &mut Self {
+        self.sources.push(source);
+        self
+    }
+
+    /// Create the actual collection.
+    pub async fn build(self) -> Result<(Database, Hash)> {
+        let (db, _, hash) = self.build_with_entries().await?;
+        Ok((db, hash))
+    }
+
+    /// Create the actual collection, including `ProvideResponseEntry`s.
+    /// Writing the data into the provided database.
+    async fn build_into_with_entries(
+        self,
+        db: &mut HashMap<Hash, BlobOrCollection>,
+    ) -> Result<(Vec<ProvideResponseEntry>, Hash)> {
+        // +1 is for the collection itself
+        let mut blobs = Vec::with_capacity(self.sources.len());
+        let mut total_blobs_size: u64 = 0;
+
+        // compute outboards in parallel, using tokio's blocking thread pool
+        let outboards = self.sources.into_iter().map(|data| {
+            let (path, name) = match data {
+                DataSource::File(path) => (path, None),
+                DataSource::NamedFile { path, name } => (path, Some(name)),
+            };
+            tokio::task::spawn_blocking(move || compute_outboard(path, name))
+        });
+        // wait for completion and collect results
+        let outboards = future::join_all(outboards)
+            .await
+            .into_iter()
+            .collect::<Result<Result<Vec<_>, _>, _>>()??;
+
+        // compute information about the collection
+        let entries = outboards
+            .iter()
+            .map(|(path, name, hash, outboard)| {
+                let name = name
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| path.display().to_string());
+                ProvideResponseEntry {
+                    name,
+                    hash: *hash,
+                    size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
+                }
+            })
+            .collect();
+
+        // insert outboards into the database and build collection
+        for (path, name, hash, outboard) in outboards {
+            debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
+            let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
+            db.entry(hash).or_insert_with(|| {
+                BlobOrCollection::Blob(Data {
+                    outboard: Bytes::from(outboard),
+                    path: path.clone(),
+                    size,
+                })
+            });
+            total_blobs_size += size;
+            // if the given name is `None`, use the filename from the given path as the name
+            let name = name.unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string()
+            });
+            blobs.push(Blob { name, hash });
+        }
+
+        let c = Collection {
+            name: "collection".to_string(),
+            blobs,
+            total_blobs_size,
+        };
+
+        let data = postcard::to_stdvec(&c).context("blob encoding")?;
+        let (outboard, hash) = abao::encode::outboard(&data);
+        let hash = Hash::from(hash);
+        db.entry(hash).or_insert_with(|| {
+            BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec())))
+        });
+
+        Ok((entries, hash))
+    }
+
+    /// Create the actual collection, including `ProvideResponseEntry`s.
+    pub async fn build_with_entries(self) -> Result<(Database, Vec<ProvideResponseEntry>, Hash)> {
+        let mut db = HashMap::with_capacity(self.sources.len() + 1);
+        let (entries, hash) = self.build_into_with_entries(&mut db).await?;
+        let db = Database(Arc::new(RwLock::new(db)));
+        Ok((db, entries, hash))
+    }
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
@@ -1095,20 +1125,21 @@ mod tests {
         let mut expect_blobs = vec![];
         let (_, hash) = abao::encode::outboard(vec![]);
         let hash = Hash::from(hash);
+        let mut builder = CollectionBuilder::default();
 
         // DataSource::File
         let foo = dir.join("foo");
         tokio::fs::write(&foo, vec![]).await?;
-        let foo = DataSource::new(foo);
         expect_blobs.push(Blob {
             name: "foo".to_string(),
             hash,
         });
+        builder.add_file(foo);
 
         // DataSource::NamedFile
         let bar = dir.join("bar");
         tokio::fs::write(&bar, vec![]).await?;
-        let bar = DataSource::with_name(bar, "bat".to_string());
+        builder.add_named_file("bat".to_string(), bar);
         expect_blobs.push(Blob {
             name: "bat".to_string(),
             hash,
@@ -1117,7 +1148,7 @@ mod tests {
         // DataSource::NamedFile, empty string name
         let baz = dir.join("baz");
         tokio::fs::write(&baz, vec![]).await?;
-        let baz = DataSource::with_name(baz, "".to_string());
+        builder.add_named_file("".to_string(), baz);
         expect_blobs.push(Blob {
             name: "".to_string(),
             hash,
@@ -1129,11 +1160,11 @@ mod tests {
             total_blobs_size: 0,
         };
 
-        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
+        let (db, hash) = builder.build().await?;
 
         let collection = {
-            let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection((_, data)) = c {
+            let c = db.get(&hash).await;
+            if let Some(BlobOrCollection::Collection((_, data))) = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");

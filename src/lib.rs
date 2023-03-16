@@ -33,7 +33,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::protocol::AuthToken;
-    use crate::provider::{create_collection, Event, Provider};
+    use crate::provider::{CollectionBuilder, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
 
@@ -113,8 +113,7 @@ mod tests {
         let (_, expect_hash) = abao::encode::outboard(&data);
         let expect_name = filename.to_string();
 
-        let (db, hash) =
-            provider::create_collection(vec![provider::DataSource::File(path)]).await?;
+        let (db, hash) = CollectionBuilder::from_files(vec![path]).build().await?;
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         async fn run_client(
@@ -211,13 +210,13 @@ mod tests {
             let hash = Hash::from(hash);
 
             tokio::fs::write(&path, data).await?;
-            files.push(provider::DataSource::File(path.clone()));
+            files.push(path.clone());
 
             // keep track of expected values
             expects.push((name, path, hash));
         }
 
-        let (db, collection_hash) = provider::create_collection(files).await?;
+        let (db, collection_hash) = CollectionBuilder::from_files(files).build().await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
@@ -308,7 +307,10 @@ mod tests {
         let dir = testdir!();
         let src = dir.join("src");
         fs::write(&src, "hello there").await.unwrap();
-        let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
+        let (db, hash) = CollectionBuilder::from_files(vec![src.into()])
+            .build()
+            .await
+            .unwrap();
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
@@ -382,7 +384,9 @@ mod tests {
             }
         }
         fs::write(&src1, "hello world").await?;
-        let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
+        let (db, hash) = CollectionBuilder::from_files(vec![src0.into(), src1.into()])
+            .build()
+            .await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()?;
@@ -421,7 +425,10 @@ mod tests {
     #[tokio::test]
     async fn test_ipv6() {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let (db, hash) = CollectionBuilder::from_files(vec![readme.into()])
+            .build()
+            .await
+            .unwrap();
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
             .spawn()
