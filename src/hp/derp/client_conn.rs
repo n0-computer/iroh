@@ -15,10 +15,9 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use super::types::PacketForwarder;
 use super::{
     read_frame,
-    types::{Conn, Packet, PeerConnState, ServerMessage},
+    types::{Conn, Packet, PacketForwarder, PeerConnState, ServerMessage},
     write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_SEND_PACKET, FRAME_WATCH_CONNS, KEEP_ALIVE, MAX_FRAME_SIZE,

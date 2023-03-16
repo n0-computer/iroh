@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use super::{
     client_conn::{ClientBuilder, ClientConnManager},
@@ -72,6 +73,10 @@ where
             self.conn.shutdown().await;
             // notify peers of disconnect?
         });
+    }
+
+    pub async fn shutdown_await(self) {
+        self.conn.shutdown().await;
     }
 
     pub fn close_conn(&self) {
@@ -153,10 +158,12 @@ where
         }
     }
 
-    pub fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) {
+        let mut set = JoinSet::new();
         for (_, client) in self.inner.drain() {
-            client.shutdown();
+            set.spawn(async move { client.shutdown_await().await });
         }
+        while let Some(_) = set.join_next().await {}
     }
 
     pub fn close_conn(&mut self, key: &PublicKey) {
@@ -176,10 +183,16 @@ where
         self.inner.keys()
     }
 
-    pub fn broadcast_peer_state_change(&mut self, key: PublicKey, present: bool) {
-        let updates = vec![PeerConnState { peer: key, present }];
-        let keys: Vec<_> = self.all_clients().cloned().collect();
-        for k in keys.iter() {
+    pub fn contains_key(&self, key: &PublicKey) -> bool {
+        self.inner.contains_key(key)
+    }
+
+    pub fn broadcast_peer_state_change<'a>(
+        &mut self,
+        keys: impl Iterator<Item = &'a PublicKey>,
+        updates: Vec<PeerConnState>,
+    ) {
+        for k in keys {
             self.send_mesh_updates(&k, updates.clone());
         }
     }
@@ -203,9 +216,16 @@ where
         }
     }
 
-    pub fn unregister(&mut self, key: &PublicKey) {
-        if let Some(client) = self.inner.remove(key) {
-            tracing::warn!("pruning connection {key:?}");
+    /// Removes the client from the map of clients, & sends a notification
+    /// to each client that peers has sent data to, to let them know that
+    /// peer is gone from the network.
+    pub fn unregister(&mut self, peer: &PublicKey) {
+        if let Some(client) = self.inner.remove(peer) {
+            // go impl `notePeerGoneFromRegion`
+            for key in client.sent_to.iter() {
+                self.send_peer_gone(key, peer.clone());
+            }
+            tracing::warn!("pruning connection {peer:?}");
             client.shutdown();
         }
     }
@@ -298,7 +318,7 @@ mod tests {
         }
     }
 
-    async fn test_client_builder(
+    fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
     ) -> (
@@ -330,7 +350,8 @@ mod tests {
     async fn test_clients() -> Result<()> {
         let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
         let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
-        let (builder_a, mut a_reader, _a_writer) = test_client_builder(a_key.clone(), 0).await;
+
+        let (builder_a, mut a_reader, _a_writer) = test_client_builder(a_key.clone(), 0);
 
         let mut clients = Clients::new();
         clients.register(builder_a);
@@ -342,7 +363,7 @@ mod tests {
             enqueued_at: Instant::now(),
             bytes: Bytes::from(&data[..]),
         };
-        clients.send_packet(&a_key.clone(), expect_packet.clone());
+        clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
@@ -351,7 +372,7 @@ mod tests {
         assert_eq!(data, got_frame);
 
         // send disco packet
-        clients.send_disco_packet(&a_key.clone(), expect_packet);
+        clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
@@ -392,7 +413,7 @@ mod tests {
 
         assert!(clients.inner.get(&a_key).is_none());
 
-        clients.shutdown();
+        clients.shutdown().await;
         Ok(())
     }
 }
