@@ -4,10 +4,11 @@
 use crate::hp::key::node::PublicKey;
 use std::collections::HashMap;
 
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use super::{
-    client_conn::{ClientConnManager, Packet, PeerConnState},
+    client_conn::{ClientBuilder, ClientConnManager, Packet, PeerConnState},
     conn::Conn,
 };
 
@@ -58,9 +59,11 @@ where
         }
     }
 
-    pub async fn shutdown(self) {
-        self.conn.shutdown().await;
-        // notify peers of disconnect?
+    pub fn shutdown(self) {
+        tokio::spawn(async move {
+            self.conn.shutdown().await;
+            // notify peers of disconnect?
+        });
     }
 
     pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
@@ -130,69 +133,70 @@ where
         }
     }
 
-    pub async fn shutdown(&mut self) {
-        let mut set = tokio::task::JoinSet::new();
+    pub fn shutdown(&mut self) {
         for (_, client) in self.inner.drain() {
-            set.spawn(async move {
-                client.shutdown().await;
-            });
+            client.shutdown();
         }
-        while let Some(_) = set.join_next().await {}
     }
 
-    pub async fn register(&mut self, client: ClientConnManager<C>) {
+    pub fn register<R, W>(&mut self, client: ClientBuilder<C, R, W>)
+    where
+        R: AsyncRead + Unpin + Send + Sync + 'static,
+        W: AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        // this builds the client handler & starts the read & write loops to that client connection
+        let client = client.build();
+        let key = client.key.clone();
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when mulitple connections exist.
-        let key = client.key.clone();
-        if let Some(old_client) = self.inner.remove(&key) {
-            tracing::warn!("multiple connections found for {key:?}, pruning old connection",);
-            old_client.shutdown().await;
-        }
         let client = Client::new(client);
-        self.inner.insert(key, client);
+        if let Some(old_client) = self.inner.insert(key.clone(), client) {
+            tracing::warn!("multiple connections found for {key:?}, pruning old connection",);
+            old_client.shutdown();
+        }
     }
 
-    pub async fn unregister(&mut self, key: &PublicKey) {
+    pub fn unregister(&mut self, key: &PublicKey) {
         if let Some(client) = self.inner.remove(key) {
             tracing::warn!("pruning connection {key:?}");
-            client.shutdown().await;
+            client.shutdown();
         }
     }
 
-    pub async fn send_packet(&mut self, key: &PublicKey, packet: Packet) {
+    pub fn send_packet(&mut self, key: &PublicKey, packet: Packet) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_packet(packet);
-            self.process_result(key, res).await;
+            self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    pub async fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) {
+    pub fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_disco_packet(packet);
-            self.process_result(key, res).await;
+            self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    pub async fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
+    pub fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_peer_gone(peer);
-            self.process_result(key, res).await;
+            self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    pub async fn send_mesh_updates(&mut self, key: &PublicKey, updates: Vec<PeerConnState>) {
+    pub fn send_mesh_updates(&mut self, key: &PublicKey, updates: Vec<PeerConnState>) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_mesh_updates(updates);
-            self.process_result(key, res).await;
+            self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    async fn process_result(&mut self, key: &PublicKey, res: Result<(), SendError>) {
+    fn process_result(&mut self, key: &PublicKey, res: Result<(), SendError>) {
         match res {
             Ok(_) => {}
             Err(SendError::PacketDropped) => {
@@ -200,7 +204,7 @@ where
             }
             Err(SendError::SenderClosed) => {
                 tracing::warn!("Can no longer write to client {key:?}, dropping message and pruning connection");
-                self.unregister(key).await;
+                self.unregister(key);
             }
         }
     }
@@ -213,7 +217,6 @@ mod tests {
 
     use super::*;
 
-    use crate::hp::derp::client_conn::ServerChannels;
     use crate::hp::derp::{
         read_frame, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, MAX_PACKET_SIZE,
     };
@@ -221,6 +224,7 @@ mod tests {
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
     use ed25519_dalek::PUBLIC_KEY_LENGTH;
+    use tokio::io::DuplexStream;
 
     struct MockConn {}
     impl Conn for MockConn {
@@ -232,52 +236,42 @@ mod tests {
         }
     }
 
-    async fn build_test_conn_manager(
+    async fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
     ) -> (
-        ClientConnManager<MockConn>,
-        tokio::io::DuplexStream,
-        tokio::io::DuplexStream,
+        ClientBuilder<MockConn, DuplexStream, DuplexStream>,
+        DuplexStream,
+        DuplexStream,
     ) {
         let (test_reader, writer) = tokio::io::duplex(1024);
         let (reader, test_writer) = tokio::io::duplex(1024);
-        let (send_queue_s, _) = mpsc::channel(10);
-        let (disco_send_queue_s, _) = mpsc::channel(10);
-        let (close_peer_s, _) = mpsc::channel(10);
-        let (add_watcher_s, _) = mpsc::channel(10);
-        let server_channels = ServerChannels {
-            add_watcher: add_watcher_s,
-            close_peer: close_peer_s,
-            send_queue: send_queue_s,
-            disco_send_queue: disco_send_queue_s,
-        };
-        let (prune_client_s, _) = mpsc::channel(10);
-        let conn_manager = ClientConnManager::new(
-            key,
-            conn_num,
-            MockConn {},
-            reader,
-            writer,
-            true,
-            None,
-            10,
-            server_channels,
-            prune_client_s,
+        let (server_channel, _) = mpsc::channel(10);
+        (
+            ClientBuilder {
+                key,
+                conn_num,
+                conn: MockConn {},
+                reader,
+                writer,
+                can_mesh: true,
+                write_timeout: None,
+                channel_capacity: 10,
+                server_channel,
+            },
+            test_reader,
+            test_writer,
         )
-        .await
-        .unwrap();
-        (conn_manager, test_reader, test_writer)
     }
 
     #[tokio::test]
     async fn test_clients() -> Result<()> {
         let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
         let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
-        let (conn_a, mut a_reader, a_writer) = build_test_conn_manager(a_key.clone(), 0).await;
+        let (builder_a, mut a_reader, _) = test_client_builder(a_key.clone(), 0).await;
 
         let mut clients = Clients::new();
-        clients.register(conn_a).await;
+        clients.register(builder_a);
 
         // send packet
         let data = b"hello world!";
@@ -286,22 +280,18 @@ mod tests {
             enqueued_at: Instant::now(),
             bytes: Bytes::from(&data[..]),
         };
-        clients
-            .send_packet(&a_key.clone(), expect_packet.clone())
-            .await;
+        clients.send_packet(&a_key.clone(), expect_packet.clone());
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
 
         // send disco packet
-        clients
-            .send_disco_packet(&a_key.clone(), expect_packet)
-            .await;
+        clients.send_disco_packet(&a_key.clone(), expect_packet);
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
 
         // send peer_gone
-        clients.send_peer_gone(&a_key.clone(), b_key.clone()).await;
+        clients.send_peer_gone(&a_key.clone(), b_key.clone());
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
 
@@ -317,18 +307,18 @@ mod tests {
             },
         ];
 
-        clients.send_mesh_updates(&a_key.clone(), updates).await;
+        clients.send_mesh_updates(&a_key.clone(), updates);
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_PRESENT);
 
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
 
-        clients.unregister(&a_key.clone()).await;
+        clients.unregister(&a_key.clone());
 
         assert!(clients.inner.get(&a_key).is_none());
 
-        clients.shutdown().await;
+        clients.shutdown();
         Ok(())
     }
 }

@@ -16,6 +16,7 @@ use crate::hp::{
 };
 
 use super::conn::Conn;
+use super::server::ServerMessage;
 use super::{
     read_frame, write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
@@ -125,11 +126,56 @@ pub(crate) struct ClientChannels {
     pub(crate) mesh_update: mpsc::Sender<Vec<PeerConnState>>,
 }
 
+#[derive(Debug)]
+// TODO: Not really the way we usually think of a builder, clean this up
+pub struct ClientBuilder<C, R, W>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    pub(crate) key: PublicKey,
+    pub(crate) conn_num: usize,
+    pub(crate) conn: C,
+    pub(crate) reader: R,
+    pub(crate) writer: W,
+    pub(crate) can_mesh: bool,
+    pub(crate) write_timeout: Option<Duration>,
+    pub(crate) channel_capacity: usize,
+    pub(crate) server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
+}
+
+impl<C, R, W> ClientBuilder<C, R, W>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    /// Creates a client from a connection, which starts a read and write loop to handle
+    /// io to the client
+    pub(crate) fn build(self) -> ClientConnManager<C> {
+        ClientConnManager::new(
+            self.key,
+            self.conn_num,
+            self.conn,
+            self.reader,
+            self.writer,
+            self.can_mesh,
+            self.write_timeout,
+            self.channel_capacity,
+            self.server_channel,
+        )
+    }
+}
+
 impl<C> ClientConnManager<C>
 where
     C: Conn,
 {
-    pub async fn new<R, W>(
+    /// Creates a client from a connection & starts a read and write loop to handle io to and from
+    /// the client
+    /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
+    pub fn new<R, W>(
         key: PublicKey,
         conn_num: usize,
         conn: C,
@@ -138,9 +184,8 @@ where
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
-        server_channels: ServerChannels,
-        prune_client: mpsc::Sender<PublicKey>,
-    ) -> Result<ClientConnManager<C>>
+        server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
+    ) -> ClientConnManager<C>
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
         W: AsyncWrite + Unpin + Send + Sync + 'static,
@@ -170,19 +215,21 @@ where
             reader,
             key: key.clone(),
             send_pong: send_pong_s,
-            server_channels,
+            server_channel: server_channel.clone(),
             preferred: Arc::from(AtomicBool::from(false)),
         };
 
         // start writer loop
         let writer_done = done.clone();
         let writer_client_id = client_id.clone();
-        let writer_prune_client = prune_client.clone();
+        let writer_server_channel = server_channel.clone();
         let writer_handle = tokio::spawn(async move {
             let key = writer_client_id.0;
             let conn_num = writer_client_id.1;
             let res = conn_writer.run(writer_done).await;
-            let _ = writer_prune_client.try_send(key.clone());
+            let _ = writer_server_channel
+                .send(ServerMessage::Unregister(key.clone()))
+                .await;
             match res {
                 Err(e) => {
                     tracing::warn!(
@@ -203,7 +250,9 @@ where
             let key = client_id.0;
             let conn_num = client_id.1;
             let res = conn_reader.run(reader_done).await;
-            let _ = prune_client.try_send(key.clone());
+            let _ = server_channel
+                .send(ServerMessage::Unregister(key.clone()))
+                .await;
             match res {
                 Err(e) => {
                     tracing::warn!(
@@ -219,7 +268,7 @@ where
         });
 
         // return client conn to server
-        Ok(ClientConnManager {
+        ClientConnManager {
             conn_num,
             conn,
             key,
@@ -233,7 +282,7 @@ where
                 peer_gone: peer_gone_s,
                 mesh_update: mesh_update_s,
             },
-        })
+        }
     }
 
     /// Shutdown the `ClientConnManager` reader and writer loops and closes the "actual" connection.
@@ -493,9 +542,11 @@ where
 ///     - tell the server to add the current client as a watcher TODO: what is a watcher?
 ///     - tell the server to close a given peer
 ///     - tell the server to forward a packet from another peer.
-struct ClientConnReader<R>
+struct ClientConnReader<C, R, W>
 where
-    R: AsyncRead + Unpin + Send + Sync,
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
 {
     /// Indicates whether this client can mesh
     can_mesh: bool,
@@ -508,7 +559,7 @@ where
 
     /// Channels used to communicate with the server about actions
     /// it needs to take on behalf of the client
-    server_channels: ServerChannels,
+    server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
@@ -521,9 +572,11 @@ where
     preferred: Arc<AtomicBool>,
 }
 
-impl<R> ClientConnReader<R>
+impl<C, R, W> ClientConnReader<C, R, W>
 where
+    C: Conn,
     R: AsyncRead + Unpin + Send + Sync,
+    W: AsyncWrite + Unpin + Send + Sync,
 {
     async fn run(mut self, done: CancellationToken) -> Result<()> {
         tokio::select! {
@@ -616,9 +669,8 @@ where
             "FRAME_WATCH_CONNS content is an unexpected size"
         );
         ensure!(self.can_mesh, "insufficient permissions");
-        self.server_channels
-            .add_watcher
-            .send(self.key.clone())
+        self.server_channel
+            .send(ServerMessage::AddWatcher(self.key.clone()))
             .await?;
         Ok(())
     }
@@ -643,7 +695,9 @@ where
     async fn handle_frame_close_peer(&self, data: &[u8]) -> Result<()> {
         ensure!(self.can_mesh, "insufficient permissions");
         let key = PublicKey::try_from(data)?;
-        self.server_channels.close_peer.send(key).await?;
+        self.server_channel
+            .send(ServerMessage::ClosePeer(key))
+            .await?;
         Ok(())
     }
 
@@ -694,17 +748,13 @@ where
     /// not fit any more messages in its queue.
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
         if looks_like_disco_wrapper(&packet.bytes) {
-            self.server_channels
-                .disco_send_queue
-                .send((dstkey, packet))
-                .await
-                .expect("server disco_send_queue dropped");
+            self.server_channel
+                .send(ServerMessage::SendDiscoPacket((dstkey, packet)))
+                .await?;
         } else {
-            self.server_channels
-                .send_queue
-                .send((dstkey, packet))
-                .await
-                .expect("server send_queue dropped");
+            self.server_channel
+                .send(ServerMessage::SendPacket((dstkey, packet)))
+                .await?;
         }
         Ok(())
     }
@@ -743,33 +793,37 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::bail;
     use std::sync::Arc;
+    use tokio::io::DuplexStream;
+
+    struct MockConn {}
+    impl Conn for MockConn {
+        fn close(&self) -> Result<()> {
+            Ok(())
+        }
+        fn local_addr(&self) -> std::net::SocketAddr {
+            "127.0.0.1:3333".parse().unwrap()
+        }
+    }
 
     #[tokio::test]
     async fn test_client_conn_reader_basic() -> Result<()> {
         let (reader, mut writer) = tokio::io::duplex(1024);
         let (send_pong_s, mut send_pong_r) = mpsc::channel(10);
-        let (send_queue_s, mut send_queue_r) = mpsc::channel(10);
-        let (disco_send_queue_s, mut disco_send_queue_r) = mpsc::channel(10);
-        let (close_peer_s, mut close_peer_r) = mpsc::channel(10);
-        let (add_watcher_s, mut add_watcher_r) = mpsc::channel(10);
-        let server_channels = ServerChannels {
-            add_watcher: add_watcher_s,
-            close_peer: close_peer_s,
-            send_queue: send_queue_s,
-            disco_send_queue: disco_send_queue_s,
-        };
+        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let conn_reader = ClientConnReader {
-            key: key.clone(),
-            can_mesh: true,
-            reader,
-            send_pong: send_pong_s,
-            server_channels,
-            preferred: Arc::clone(&preferred),
-        };
+        let conn_reader: ClientConnReader<MockConn, DuplexStream, DuplexStream> =
+            ClientConnReader {
+                key: key.clone(),
+                can_mesh: true,
+                reader,
+                send_pong: send_pong_s,
+                server_channel: server_channel_s,
+                preferred: Arc::clone(&preferred),
+            };
 
         let done = CancellationToken::new();
         let reader_done = done.clone();
@@ -792,22 +846,39 @@ mod tests {
 
         // add this client as a watcher
         crate::hp::derp::client::watch_connection_changes(&mut writer).await?;
-        let got_key = add_watcher_r.recv().await.unwrap();
-        assert_eq!(key, got_key);
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
+            m => {
+                bail!("expected ServerMessage::AddWatcher, got {m:?}");
+            }
+        }
 
         // send message to close a peer
         let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
         crate::hp::derp::client::close_peer(&mut writer, target.clone()).await?;
-        let got_target = close_peer_r.recv().await.unwrap();
-        assert_eq!(target, got_target);
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
+            m => {
+                bail!("expected ServerMessage::ClosePeer, got {m:?}");
+            }
+        }
 
         // send packet
         let data = b"hello world!";
         crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), data).await?;
-        let (got_target, packet) = send_queue_r.recv().await.unwrap();
-        assert_eq!(target, got_target);
-        assert_eq!(key, packet.src);
-        assert_eq!(&data[..], &packet.bytes);
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::SendPacket((got_target, packet)) => {
+                assert_eq!(target, got_target);
+                assert_eq!(key, packet.src);
+                assert_eq!(&data[..], &packet.bytes);
+            }
+            m => {
+                bail!("expected ServerMessage::SendPacket, got {m:?}");
+            }
+        }
 
         // send disco packet
         // starts with `MAGIC` & key, then data
@@ -816,19 +887,33 @@ mod tests {
         disco_data.extend_from_slice(data);
         crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), &disco_data)
             .await?;
-        let (got_target, packet) = disco_send_queue_r.recv().await.unwrap();
-        assert_eq!(target, got_target);
-        assert_eq!(key, packet.src);
-        assert_eq!(&disco_data[..], &packet.bytes);
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::SendDiscoPacket((got_target, packet)) => {
+                assert_eq!(target, got_target);
+                assert_eq!(key, packet.src);
+                assert_eq!(&disco_data[..], &packet.bytes);
+            }
+            m => {
+                bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
+            }
+        }
 
         // forward packet
         let fwd_key = PublicKey::from([0x03; PUBLIC_KEY_LENGTH]);
         crate::hp::derp::client::forward_packet(&mut writer, fwd_key.clone(), target.clone(), data)
             .await?;
-        let (got_target, packet) = send_queue_r.recv().await.unwrap();
-        assert_eq!(target, got_target);
-        assert_eq!(fwd_key, packet.src);
-        assert_eq!(&data[..], &packet.bytes);
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::SendPacket((got_target, packet)) => {
+                assert_eq!(target, got_target);
+                assert_eq!(fwd_key, packet.src);
+                assert_eq!(&data[..], &packet.bytes);
+            }
+            m => {
+                bail!("expected ServerMessage::SendPacket, got {m:?}");
+            }
+        }
 
         // forward disco packet
         crate::hp::derp::client::forward_packet(
@@ -838,11 +923,17 @@ mod tests {
             &disco_data,
         )
         .await?;
-        let (got_target, packet) = disco_send_queue_r.recv().await.unwrap();
-        assert_eq!(target, got_target);
-        assert_eq!(fwd_key, packet.src);
-        assert_eq!(&disco_data[..], &packet.bytes);
-
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::SendDiscoPacket((got_target, packet)) => {
+                assert_eq!(target, got_target);
+                assert_eq!(fwd_key, packet.src);
+                assert_eq!(&disco_data[..], &packet.bytes);
+            }
+            m => {
+                bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
+            }
+        }
         done.cancel();
         reader_handle.await??;
         Ok(())

@@ -39,10 +39,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 /// A DERP server.
-pub struct Server<'a, C>
-where
-    C: Conn,
-{
+pub struct Server<'a> {
     /// Optionally specifies how long to wait before failing when writing
     /// to a cliet
     write_timeout: Option<Duration>,
@@ -97,7 +94,7 @@ where
 
     closed: AtomicBool,
 
-    clients: Arc<Mutex<Clients<C>>>,
+    // clients: Arc<Mutex<Clients<C>>>,
     watchers: HashSet<PublicKey>,
     // TODO: how is this used, should it be a `Sender`?
     // net_conns: HashMap<C, Receiver<()>>,
@@ -118,10 +115,7 @@ where
     key_of_addr: HashMap<SocketAddr, PublicKey>,
 }
 
-impl<'a, C> Server<'a, C>
-where
-    C: Conn,
-{
+impl<'a> Server<'a> {
     /// replace with builder
     pub fn new(key: SecretKey) -> Self {
         // TODO:
@@ -369,4 +363,50 @@ pub(crate) struct ServerInfo {
     pub(crate) version: usize,
     pub(crate) token_bucket_bytes_per_second: usize,
     pub(crate) token_bucket_bytes_burst: usize,
+}
+
+use super::client_conn::ClientBuilder;
+// TODO: need a types module
+use super::client_conn::Packet;
+
+pub(crate) enum ServerMessage<C, R, W>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    AddWatcher(PublicKey),
+    ClosePeer(PublicKey),
+    SendPacket((PublicKey, Packet)),
+    SendDiscoPacket((PublicKey, Packet)),
+    CreateClient(ClientBuilder<C, R, W>),
+    Unregister(PublicKey),
+}
+
+impl<C, R, W> std::fmt::Debug for ServerMessage<C, R, W>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServerMessage::AddWatcher(key) => write!(f, "ServerMessage::AddWatcher({key:?})"),
+            ServerMessage::ClosePeer(key) => write!(f, "ServerMessage::ClosePeer({key:?})"),
+            ServerMessage::SendPacket((key, packet)) => {
+                write!(f, "ServerMessage::SendPacket(({key:?}, {packet:?}))")
+            }
+            ServerMessage::SendDiscoPacket((key, packet)) => {
+                write!(f, "ServerMessage::SendDiscoPacket(({key:?}, {packet:?}))")
+            }
+            ServerMessage::CreateClient(client_builder) => {
+                write!(
+                    f,
+                    "ServerMessage::CreateClient({:?}, {})",
+                    client_builder.key, client_builder.conn_num
+                )
+            }
+            ServerMessage::Unregister(key) => write!(f, "ServerMessage::Unregister({key:?})"),
+        }
+    }
 }
