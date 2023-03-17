@@ -1335,7 +1335,7 @@ mod tests {
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
             .unwrap();
-        let _drop_guard = provider.cancel_token.clone().drop_guard();
+        let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash);
         println!("addrs: {:?}", ticket.addrs);
         assert!(!ticket.addrs.is_empty());
