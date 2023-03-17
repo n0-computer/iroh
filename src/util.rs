@@ -8,8 +8,11 @@ use std::{
 
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose, Engine as _};
+use bytes::Bytes;
+use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use std::io::{self, Seek};
 use thiserror::Error;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
@@ -152,6 +155,49 @@ impl From<anyhow::Error> for RpcError {
 
 /// A serializable result type for use in RPC responses.
 pub type RpcResult<T> = result::Result<T, RpcError>;
+
+/// Todo: gather more information about validation errors. E.g. offset
+///
+/// io::Error should be just the fallback when a more specific error is not available.
+#[derive(Debug, Display, Error)]
+pub(crate) enum BaoValidationError {
+    /// Generic io error. We were unable to read the data.
+    IoError(io::Error),
+    // /// The hash of the data does not match the hash of the outboard.
+    // HashMismatch,
+    // /// The size of the data does not match the size of the outboard.
+    // SizeMismatch,
+}
+
+impl From<io::Error> for BaoValidationError {
+    fn from(e: io::Error) -> Self {
+        BaoValidationError::IoError(e)
+    }
+}
+
+/// Validate that the data matches the outboard.
+pub(crate) fn validate_bao(
+    hash: Hash,
+    data_reader: impl Read + Seek,
+    outboard: Bytes,
+) -> result::Result<(), BaoValidationError> {
+    let hash = blake3::Hash::from(hash);
+    let outboard_reader = io::Cursor::new(outboard);
+    let mut decoder = abao::decode::Decoder::new_outboard(data_reader, outboard_reader, &hash);
+    // todo: expose chunk group size in abao, so people can allocate good sized buffers
+    let mut buffer = vec![0u8; 1024 * 16 + 4096];
+    loop {
+        match decoder.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(err) => {
+                // todo: figure out exactly what went wrong
+                return Err(BaoValidationError::IoError(err));
+            }
+        }
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

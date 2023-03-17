@@ -946,6 +946,7 @@ dependencies = [
  "indicatif",
  "multibase",
  "nix",
+ "num_cpus",
  "portable-atomic 1.0.1",
  "postcard",
  "proptest",

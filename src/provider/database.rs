@@ -1,7 +1,9 @@
 use super::{BlobOrCollection, Data};
+use crate::util::{validate_bao, BaoValidationError};
 use crate::Hash;
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -269,6 +271,59 @@ impl Database {
         }
 
         Ok(Self(Arc::new(RwLock::new(db))))
+    }
+
+    /// Validate the entire database, including collections.
+    ///
+    /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
+    pub(crate) fn validate(
+        &self,
+        parallelism: usize,
+    ) -> impl Stream<Item = (Hash, u64, Option<PathBuf>, Option<BaoValidationError>)> {
+        // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
+        let mut data = self
+            .0
+            .read()
+            .unwrap()
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+        data.sort_by_key(|(k, e)| (e.is_blob(), e.data().map(|x| x.path.clone()), *k));
+        futures::stream::iter(data)
+            .map(|(hash, boc)| {
+                tokio::task::spawn_blocking(move || {
+                    let path = if let BlobOrCollection::Blob(Data { path, .. }) = &boc {
+                        Some(path.clone())
+                    } else {
+                        None
+                    };
+                    let size = boc.size();
+                    let res = match boc {
+                        BlobOrCollection::Blob(Data { outboard, path, .. }) => {
+                            match std::fs::File::open(&path) {
+                                Ok(data) => {
+                                    tracing::info!("validating {}", path.display());
+                                    let res = validate_bao(hash, data, outboard);
+                                    tracing::info!("done validating {}", path.display());
+                                    res
+                                }
+                                Err(cause) => Err(BaoValidationError::from(cause)),
+                            }
+                        }
+                        BlobOrCollection::Collection { outboard, data } => {
+                            let data = std::io::Cursor::new(data);
+                            validate_bao(hash, data, outboard)
+                        }
+                    };
+                    (hash, size, path, res.err())
+                })
+            })
+            .buffer_unordered(parallelism)
+            .map(|item| {
+                // unwrapping is fine here, because it will only happen if the task panicked
+                // basically we are just moving the panic on this task.
+                item.expect("task panicked")
+            })
     }
 
     /// take a snapshot of the database
