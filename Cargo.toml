@@ -23,8 +23,10 @@ data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.13.0"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = "0.99.17"
+dirs-next = "2.0.0"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 futures = "0.3.25"
+hex = "0.4.3"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
 portable-atomic = "1"
@@ -50,15 +52,16 @@ x509-parser = "0.14"
 zeroize = "1.5"
 
 [dev-dependencies]
-hex = "0.4.3"
 proptest = "1.0.0"
 rand = "0.7"
 testdir = "0.7.2"
 regex = { version = "1.7.1", features = ["std"] }
+nix = "0.26.2"
 
 [features]
 default = ["cli"]
 cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
+test = []
 
 [[bin]]
 name = "iroh"
