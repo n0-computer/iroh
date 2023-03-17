@@ -93,6 +93,10 @@ impl BlobOrCollection {
         }
     }
 
+    /// Returns the size of the blob or collection.
+    ///
+    /// For collections this is the size of the serialized collection.
+    /// For blobs it is the blob size.
     pub fn size(&self) -> u64 {
         match self {
             BlobOrCollection::Blob(data) => data.size,
@@ -436,7 +440,7 @@ impl RpcHandler {
     ) -> impl Stream<Item = ValidateResponse> + Send + 'static {
         self.inner
             .db
-            .validate(4)
+            .validate(num_cpus::get())
             .map(|(hash, size, path, error)| ValidateResponse {
                 hash,
                 size,

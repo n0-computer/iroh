@@ -180,7 +180,7 @@ pub(crate) fn validate_bao(
     let outboard_reader = io::Cursor::new(outboard);
     let mut decoder = abao::decode::Decoder::new_outboard(data_reader, outboard_reader, &hash);
     // todo: expose chunk group size in abao, so people can allocate good sized buffers
-    let mut buffer = [0u8; 1024 * 16 + 4096];
+    let mut buffer = vec![0u8; 1024 * 16 + 4096];
     loop {
         match decoder.read(&mut buffer) {
             Ok(0) => break,

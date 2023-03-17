@@ -282,6 +282,7 @@ impl Database {
         &self,
         parallelism: usize,
     ) -> impl Stream<Item = (Hash, u64, Option<PathBuf>, Option<BaoValidationError>)> {
+        // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
         let mut data = self
             .0
             .read()
