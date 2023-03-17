@@ -327,12 +327,36 @@ pub enum Event {
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
-    /// A request was completed and the data was sent to the client.
-    TransferCompleted {
+    /// A collection has been found and is being transferred.
+    TransferCollectionStarted {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// The number of blobs in the collection.
+        num_blobs: u64,
+        /// The total blob size of the data.
+        total_blobs_size: u64,
+    },
+    /// A collection request was completed and the data was sent to the client.
+    TransferCollectionCompleted {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+    },
+    /// A blob in a collection was transferred.
+    TransferBlobCompleted {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// The hash of the blob
+        hash: Hash,
+        /// The index of the blob in the collection.
+        index: u64,
+        /// The size of the blob transferred.
+        size: u64,
     },
     /// A request was aborted because the client disconnected.
     TransferAborted {
@@ -625,6 +649,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
+#[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
     // Database from which to fetch blobs.
     db: &Database,
@@ -636,6 +661,9 @@ async fn transfer_collection(
     outboard: &Bytes,
     // The actual blob data.
     data: &Bytes,
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+    request_id: u64,
 ) -> Result<SentStatus> {
     // We only respond to requests for collections, not individual blobs
     let mut extractor = SliceExtractor::new_outboard(
@@ -652,6 +680,13 @@ async fn transfer_collection(
 
     let c: Collection = postcard::from_bytes(data)?;
 
+    let _ = events.send(Event::TransferCollectionStarted {
+        connection_id,
+        request_id,
+        num_blobs: c.blobs.len() as u64,
+        total_blobs_size: c.total_blobs_size,
+    });
+
     // TODO: we should check if the blobs referenced in this container
     // actually exist in this provider before returning `FoundCollection`
     write_response(
@@ -667,12 +702,21 @@ async fn transfer_collection(
     writer.write_buf(&mut data).await?;
     for (i, blob) in c.blobs.iter().enumerate() {
         debug!("writing blob {}/{}", i, c.blobs.len());
-        let (status, writer1) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
+        tokio::task::yield_now().await;
+        let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
         writer = writer1;
         if SentStatus::NotFound == status {
             writer.finish().await?;
             return Ok(status);
         }
+
+        let _ = events.send(Event::TransferBlobCompleted {
+            connection_id,
+            request_id,
+            hash: blob.hash,
+            index: i as u64,
+            size,
+        });
     }
 
     writer.finish().await?;
@@ -740,9 +784,20 @@ async fn handle_stream(
     };
 
     // 5. Transfer data!
-    match transfer_collection(&db, writer, &mut out_buffer, &outboard, &data).await {
+    match transfer_collection(
+        &db,
+        writer,
+        &mut out_buffer,
+        &outboard,
+        &data,
+        events.clone(),
+        connection_id,
+        request_id,
+    )
+    .await
+    {
         Ok(SentStatus::Sent) => {
-            let _ = events.send(Event::TransferCompleted {
+            let _ = events.send(Event::TransferCollectionCompleted {
                 connection_id,
                 request_id,
             });
@@ -771,7 +826,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     name: Hash,
     mut writer: W,
     buffer: &mut BytesMut,
-) -> Result<(SentStatus, W)> {
+) -> Result<(SentStatus, W, u64)> {
     match db.get(&name) {
         Some(BlobOrCollection::Blob(Data {
             outboard,
@@ -796,11 +851,12 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 std::io::Result::Ok(writer)
             })
             .await??;
-            Ok((SentStatus::Sent, writer))
+
+            Ok((SentStatus::Sent, writer, size))
         }
         _ => {
             write_response(&mut writer, buffer, Res::NotFound).await?;
-            Ok((SentStatus::NotFound, writer))
+            Ok((SentStatus::NotFound, writer, 0))
         }
     }
 }
