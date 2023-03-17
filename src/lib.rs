@@ -237,7 +237,7 @@ mod tests {
         });
 
         let opts = get::Options {
-            addr: provider.listen_addr(),
+            addr: dbg!(provider.listen_addr()),
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
