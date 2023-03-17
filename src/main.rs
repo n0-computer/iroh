@@ -92,17 +92,9 @@ enum Commands {
         /// Auth token, defaults to random generated.
         #[clap(long)]
         auth_token: Option<String>,
-        /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
-        ///
-        /// If this path is not provided and persistent is true, the private key will be persisted to the iroh data root.
-        #[clap(long)]
-        key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
-        /// If true, the provider will read and write from the iroh data root to persist data.
-        #[clap(long, default_value = "true")]
-        persistent: Option<bool>,
     },
     /// List hashes
     #[clap(about = "List hashes")]
@@ -292,13 +284,10 @@ async fn main_impl() -> Result<()> {
             path,
             addr,
             auth_token,
-            key,
             rpc_port,
-            persistent,
         } => {
-            let use_data_root = persistent.unwrap_or_default();
             let iroh_data_root = iroh_data_root()?;
-            let db = if use_data_root {
+            let db = {
                 if iroh_data_root.is_dir() {
                     // try to load db
                     Database::load(&iroh_data_root).await?
@@ -306,16 +295,8 @@ async fn main_impl() -> Result<()> {
                     // directory does not exist, create an empty db
                     Database::default()
                 }
-            } else {
-                // no persistence, so use fresh db
-                Database::default()
             };
-            let key = if use_data_root & key.is_none() {
-                Some(iroh_data_root.join("keypair"))
-            } else {
-                // no persistence, so use key from cli
-                key
-            };
+            let key = Some(iroh_data_root.join("keypair"));
 
             let provider = provide(
                 db.clone(),
@@ -367,10 +348,9 @@ async fn main_impl() -> Result<()> {
                     res?;
                 }
             }
-            // persist the db to disk. this is blocking code.
-            if use_data_root {
-                db.save(&iroh_data_root).await?;
-            }
+            // persist the db to disk.
+            db.save(&iroh_data_root).await?;
+
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.
@@ -482,6 +462,9 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
             } else {
                 let keypair = Keypair::generate();
                 let ser_key = keypair.to_openssh()?;
+                if let Some(parent) = key_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
                 tokio::fs::write(key_path, ser_key).await?;
                 Ok(keypair)
             }

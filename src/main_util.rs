@@ -50,7 +50,6 @@ pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
-#[allow(dead_code)]
 pub fn iroh_data_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_DATA_DIR") {
         return Ok(PathBuf::from(val));
