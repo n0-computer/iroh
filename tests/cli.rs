@@ -47,9 +47,9 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     test_provide_get_loop(&path, Input::Stdin, Output::Stdout)
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn cli_provide_persistence() -> anyhow::Result<()> {
+#[cfg(all(unix, feature = "cli"))]
+#[test]
+fn cli_provide_persistence() -> anyhow::Result<()> {
     use iroh::provider::Database;
     use nix::{
         sys::signal::{self, Signal},
@@ -75,7 +75,6 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
             .arg("provide")
             .arg("--addr")
             .arg(ADDR)
-            .arg("--persistent=true")
             .arg("--rpc-port")
             .arg("disabled")
             .arg(path)
@@ -91,22 +90,22 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
         // wait for the provider to exit and make sure that it exited successfully
         let status = child.wait()?;
         // comment out to get debug output from the child process
-        // std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
+        std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
         assert!(status.success());
         anyhow::Ok(())
     };
     provide_1sec(&foo_path)?;
     // should have some data now
-    let db = Database::load(&iroh_data_dir).await?;
+    let db = Database::load_test(iroh_data_dir.clone())?;
     let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
     assert_eq!(blobs, vec![foo_path.clone()]);
 
     provide_1sec(&bar_path)?;
     // should have more data now
-    let db = Database::load(&iroh_data_dir).await?;
+    let db = Database::load_test(&iroh_data_dir)?;
     let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
     blobs.sort();
-    assert_eq!(blobs, vec![bar_path.clone(), foo_path.clone()]);
+    assert_eq!(blobs, vec![bar_path, foo_path]);
 
     Ok(())
 }
@@ -136,19 +135,24 @@ fn iroh_bin() -> &'static str {
     env!("CARGO_BIN_EXE_iroh")
 }
 
-fn make_provider(path: &Path, input: &Input) -> Result<ProvideProcess> {
+fn make_provider(path: &Path, input: &Input, home: impl AsRef<Path>) -> Result<ProvideProcess> {
     // spawn a provider & optionally provide from stdin
     let mut command = Command::new(iroh_bin());
     let res = command
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
+        .env("RUST_LOG", "debug")
+        .env(
+            "IROH_DATA_DIR",
+            home.as_ref().join("iroh_data_dir").as_os_str(),
+        )
+        .stderr(Stdio::piped())
         .arg("provide")
         .arg(path)
         .arg("--addr")
         .arg(ADDR)
         .arg("--rpc-port")
-        .arg("disabled")
-        .arg("--persistent=false");
+        .arg("disabled");
 
     let provider = match input {
         Input::Stdin => {
@@ -190,7 +194,10 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         1
     };
 
-    let mut provider = make_provider(&path, &input)?;
+    let home = testdir!();
+    let mut provider = make_provider(&path, &input, home)?;
+    // std::io::copy(&mut provider.child.stderr.take().unwrap(), &mut std::io::stderr())?;
+
     let stdout = provider.child.stdout.take().unwrap();
     let stdout = BufReader::new(stdout);
 

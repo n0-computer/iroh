@@ -50,6 +50,8 @@ use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 mod database;
 pub use database::Database;
+#[cfg(cli)]
+pub use database::Snapshot;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
