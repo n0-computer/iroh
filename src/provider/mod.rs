@@ -39,14 +39,14 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
-use crate::net::LocalAddresses;
+use crate::net::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
@@ -58,6 +58,8 @@ pub use database::Snapshot;
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Default bind address for the provider.
+pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -110,7 +112,7 @@ impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
     pub fn with_db(db: Database) -> Self {
         Self {
-            bind_addr: "127.0.0.1:4433".parse().unwrap(),
+            bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
@@ -437,6 +439,12 @@ impl Provider {
         }
     }
 
+    /// Returns all available addresses on the local machine.
+    pub fn available_addresses(&self) -> Vec<SocketAddr> {
+        let addrs = find_local_addresses(self.inner.listen_addr);
+        addrs
+    }
+
     /// Aborts the provider.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
@@ -560,6 +568,11 @@ impl RpcHandler {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
+    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
+        AddrsResponse {
+            addrs: find_local_addresses(self.inner.listen_addr),
+        }
+    }
     async fn shutdown(self, request: ShutdownRequest) {
         if request.force {
             tracing::info!("hard shutdown requested");
@@ -600,6 +613,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
             Validate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::validate)

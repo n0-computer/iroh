@@ -1,6 +1,6 @@
 //! Networking related utilities
 
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
@@ -144,6 +144,30 @@ fn to_canonical(ip: IpAddr) -> IpAddr {
 // Copied from std lib, not stable yet
 const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
+}
+
+/// Given a listen/bind address, finds all the local addresses for that address family.
+pub fn find_local_addresses(listen_addr: SocketAddr) -> Vec<SocketAddr> {
+    let listen_ip = listen_addr.ip();
+    let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
+        true => {
+            // Find all the local addresses for this address family.
+            let addrs = LocalAddresses::new();
+            addrs
+                .regular
+                .iter()
+                .filter(|addr| match addr {
+                    IpAddr::V4(_) if listen_ip.is_ipv4() => true,
+                    IpAddr::V6(_) if listen_ip.is_ipv6() => true,
+                    _ => false,
+                })
+                .copied()
+                .map(|addr| SocketAddr::from((addr, listen_addr.port())))
+                .collect()
+        }
+        false => vec![listen_addr],
+    };
+    addrs
 }
 
 #[cfg(test)]
