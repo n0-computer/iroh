@@ -28,8 +28,8 @@ mod tests {
     use anyhow::{anyhow, Context, Result};
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::fs;
     use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+    use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::protocol::AuthToken;
@@ -60,7 +60,7 @@ mod tests {
     async fn many_files() -> Result<()> {
         let num_files = [10, 100, 1000, 10000];
         for num in num_files {
-            println!("NUM_FILES: {}", num);
+            println!("NUM_FILES: {num}");
             let file_opts = (0..num).map(|i| (i.to_string(), 10)).collect();
             transfer_random_data(file_opts).await?;
         }
@@ -224,20 +224,31 @@ mod tests {
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
-            while let Ok(event) = provider_events.recv().await {
-                match event {
-                    Event::TransferCompleted { .. } | Event::TransferAborted { .. } => {
-                        events.push(event);
-                        break;
-                    }
-                    _ => events.push(event),
+            loop {
+                match provider_events.recv().await {
+                    Ok(event) => match event {
+                        Event::TransferCollectionCompleted { .. }
+                        | Event::TransferAborted { .. } => {
+                            events.push(event);
+                            break;
+                        }
+                        _ => events.push(event),
+                    },
+                    Err(e) => match e {
+                        broadcast::error::RecvError::Closed => {
+                            break;
+                        }
+                        broadcast::error::RecvError::Lagged(num) => {
+                            panic!("unable to keep up, skipped {num} messages");
+                        }
+                    },
                 }
             }
             events
         });
 
         let opts = get::Options {
-            addr: provider.listen_addr(),
+            addr: dbg!(provider.listen_addr()),
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -281,16 +292,35 @@ mod tests {
         provider.shutdown();
         provider.await?;
 
-        assert_events(events);
+        assert_events(events, num_blobs);
 
         Ok(())
     }
 
-    fn assert_events(events: Vec<Event>) {
-        assert_eq!(events.len(), 3);
+    fn assert_events(events: Vec<Event>, num_blobs: usize) {
+        let num_basic_events = 4;
+        let num_total_events = num_basic_events + num_blobs;
+        assert_eq!(
+            events.len(),
+            num_total_events,
+            "missing events, only got {:#?}",
+            events
+        );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
         assert!(matches!(events[1], Event::RequestReceived { .. }));
-        assert!(matches!(events[2], Event::TransferCompleted { .. }));
+        assert!(matches!(events[2], Event::TransferCollectionStarted { .. }));
+        for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
+            match event {
+                Event::TransferBlobCompleted { index, .. } => {
+                    assert_eq!(*index, i as u64);
+                }
+                _ => panic!("unexpected event {:?}", event),
+            }
+        }
+        assert!(matches!(
+            events.last().unwrap(),
+            Event::TransferCollectionCompleted { .. }
+        ));
     }
 
     fn setup_logging() {
@@ -328,7 +358,7 @@ mod tests {
                         match maybe_event {
                             Ok(event) => {
                                 match event {
-                                    Event::TransferCompleted { .. } => provider.shutdown(),
+                                    Event::TransferCollectionCompleted { .. } => provider.shutdown(),
                                     Event::TransferAborted { .. } => {
                                         break Err(anyhow!("transfer aborted"));
                                     }
