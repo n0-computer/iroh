@@ -28,8 +28,8 @@ mod tests {
     use anyhow::{anyhow, Context, Result};
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::fs;
     use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+    use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::protocol::AuthToken;
@@ -224,13 +224,24 @@ mod tests {
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
-            while let Ok(event) = provider_events.recv().await {
-                match event {
-                    Event::TransferCollectionCompleted { .. } | Event::TransferAborted { .. } => {
-                        events.push(event);
-                        break;
-                    }
-                    _ => events.push(event),
+            loop {
+                match provider_events.recv().await {
+                    Ok(event) => match event {
+                        Event::TransferCollectionCompleted { .. }
+                        | Event::TransferAborted { .. } => {
+                            events.push(event);
+                            break;
+                        }
+                        _ => events.push(event),
+                    },
+                    Err(e) => match e {
+                        broadcast::error::RecvError::Closed => {
+                            break;
+                        }
+                        broadcast::error::RecvError::Lagged(num) => {
+                            panic!("unable to keep up, skipped {num} messages");
+                        }
+                    },
                 }
             }
             events
