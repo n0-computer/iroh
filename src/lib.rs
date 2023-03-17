@@ -289,7 +289,12 @@ mod tests {
     fn assert_events(events: Vec<Event>, num_blobs: usize) {
         let num_basic_events = 4;
         let num_total_events = num_basic_events + num_blobs;
-        assert_eq!(events.len(), num_total_events);
+        assert_eq!(
+            events.len(),
+            num_total_events,
+            "missing events, only got {:#?}",
+            events
+        );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
         assert!(matches!(events[1], Event::RequestReceived { .. }));
         assert!(matches!(events[2], Event::TransferCollectionStarted { .. }));
