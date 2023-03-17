@@ -357,10 +357,11 @@ where
                            }
                            // list of all connected clients
                            let updates = self.clients.all_clients().map(|k| PeerConnState{ peer: k.clone(), present: true }).collect();
-                           // add to the list of watchers
-                           self.watchers.insert(key.clone());
                            // send list of connected clients to the client
                            self.clients.send_mesh_updates(&key, updates);
+
+                           // add to the list of watchers
+                           self.watchers.insert(key.clone());
                        },
                        ServerMessage::ClosePeer(key) => {
                            // close the actual underlying connection to the client, but don't remove it from
@@ -456,10 +457,16 @@ where
 mod tests {
     use super::*;
 
-    use crate::hp::derp::client_conn::ClientBuilder;
-    use crate::hp::key::node::PUBLIC_KEY_LENGTH;
+    use crate::hp::{
+        derp::{
+            client_conn::ClientBuilder, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET,
+            MAX_FRAME_SIZE,
+        },
+        key::node::PUBLIC_KEY_LENGTH,
+    };
 
     use anyhow::Result;
+    use bytes::BytesMut;
     use tokio::io::DuplexStream;
 
     struct MockConn {}
@@ -472,10 +479,13 @@ mod tests {
         }
     }
 
-    struct MockPacketForwarder {}
+    struct MockPacketForwarder {
+        packets: mpsc::Sender<(PublicKey, PublicKey, bytes::Bytes)>,
+    }
+
     impl PacketForwarder for MockPacketForwarder {
-        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: bytes::Bytes) {
-            tracing::info!("forwarding packet from {srckey:?} to {dstkey:?}");
+        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
+            let _ = self.packets.try_send((srckey, dstkey, packet));
         }
     }
 
@@ -522,7 +532,7 @@ mod tests {
         let server_task = tokio::spawn(async move { server_actor.run(server_done).await });
 
         let key_a = PublicKey::from([3u8; PUBLIC_KEY_LENGTH]);
-        let (client_a, a_reader, a_writer) =
+        let (client_a, mut a_reader, _a_writer) =
             test_client_builder(key_a.clone(), 1, server_channel.clone());
         // create client a
         server_channel
@@ -533,31 +543,116 @@ mod tests {
             .send(ServerMessage::AddWatcher(key_a.clone()))
             .await?;
 
-        // TODO: expect empty message on client a
+        // a expects mesh peer update about itself, aka the only peer in the network currently
+        let mut buf = BytesMut::new();
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(key_a.as_bytes()[..], buf[..]);
 
-        let key_b = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
+        let key_b = PublicKey::from([9u8; PUBLIC_KEY_LENGTH]);
 
         // server message: create client b
-        let (client_b, b_reader, b_writer) =
+        let (client_b, _b_reader, mut b_writer) =
             test_client_builder(key_b.clone(), 2, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_b))
             .await?;
+
         // expect mesh update message on client a
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(key_b.as_bytes()[..], buf[..]);
+
         // server message: create client c
+        let key_c = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
+        let (client_c, mut c_reader, _c_writer) =
+            test_client_builder(key_c.clone(), 3, server_channel.clone());
+        server_channel
+            .send(ServerMessage::CreateClient(client_c))
+            .await?;
+
+        // expect mesh update message on client_a
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(key_c.as_bytes()[..], buf[..]);
+
         // server message: add client c as watcher
-        // expect mesh update message on client c about a & b
-        // add packet forwarder for client c
+        server_channel
+            .send(ServerMessage::AddWatcher(key_c.clone()))
+            .await?;
+
+        // expect mesh update message on client c about all peers in the network (a, b, & c)
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        let mut peers = vec![buf[..PUBLIC_KEY_LENGTH].to_vec()];
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
+        assert!(peers.contains(&key_a.as_bytes().to_vec()));
+        assert!(peers.contains(&key_b.as_bytes().to_vec()));
+        assert!(peers.contains(&key_c.as_bytes().to_vec()));
+
+        // add packet forwarder for client d
+        let key_d = PublicKey::from([11u8; PUBLIC_KEY_LENGTH]);
+        let (packet_s, mut packet_r) = mpsc::channel(10);
+        let fwd_d = MockPacketForwarder { packets: packet_s };
+        server_channel
+            .send(ServerMessage::AddPacketForwarder((key_d.clone(), fwd_d)))
+            .await?;
+
         // write message from b to a
+        let msg = b"hello world!";
+        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), msg).await?;
         // get message on a reader
-        // write disco message from b to c
-        // get message on c reader
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(key_b, key);
+        assert_eq!(msg, frame);
+
+        // write disco message from b to d
+        let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
+        disco_msg.extend_from_slice(key_b.as_bytes());
+        disco_msg.extend_from_slice(msg);
+        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &disco_msg)
+            .await?;
+        // get message on d reader
+        let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
+        assert_eq!(got_src, key_b);
+        assert_eq!(got_dst, key_d);
+        assert_eq!(disco_msg, got_packet.to_vec());
         // remove b
+        server_channel
+            .send(ServerMessage::RemoveClient(key_b.clone()))
+            .await?;
+
         // get peer gone message on a
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+
         // get mesh update on a & c
-        // cancel loop
-        // cannot write to client
-        // fail on write to server channel?
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(&key_b.as_bytes()[..], &buf[..]);
+
         done.cancel();
         server_task.await??;
         Ok(())
