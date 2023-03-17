@@ -18,7 +18,6 @@ use backoff::backoff::Backoff;
 use futures::{future::BoxFuture, Future};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
-use subtle::ConstantTimeEq;
 use tokio::{
     sync::{self, Mutex, RwLock},
     task::JoinHandle,
@@ -81,7 +80,6 @@ impl From<Network> for socket2::Domain {
 }
 
 /// Contains options for `Conn::listen`.
-#[derive(Default)]
 pub struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
@@ -113,6 +111,24 @@ pub struct Options {
 
     /// The link monitor to use. With one, the portmapper won't be used.
     pub link_monitor: Option<monitor::Monitor>,
+
+    /// Private key for this node.
+    pub private_key: key::node::SecretKey,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            port: 0,
+            on_endpoints: None,
+            on_derp_active: None,
+            idle_for: None,
+            on_net_info: None,
+            on_note_recv_activity: None,
+            link_monitor: None,
+            private_key: key::node::SecretKey::generate(),
+        }
+    }
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
@@ -194,24 +210,12 @@ pub struct Inner {
     /// with IPv4 or IPv6). It's used to suppress log spam and prevent new connection that'll fail.
     network_up: AtomicBool,
 
-    /// Whether privateKey is non-zero.
-    have_private_key: AtomicBool,
-
-    /// Read only duplicate of state.public key, to avoid reading it without locks
-    pub(super) public_key_atomic: RwLock<Option<key::node::PublicKey>>,
+    pub(super) public_key: key::node::PublicKey,
     last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
 
     /// Preferred port from opts.Port; 0 means auto.
     port: AtomicU16,
 
-    // TODO
-    // Maintains per-connection counters. (atomic pointer originally)
-    // stats: RwLock<connstats.Statistics>
-
-    //     // ============================================================
-    //     // mu guards all following fields; see userspaceEngine lock
-    //     // ordering rules against the engine. For derphttp, mu must
-    //     // be held before derphttp.Client.mu.
     state: Mutex<ConnState>,
     /// Close is in progress (or done)
     closing: AtomicBool,
@@ -286,9 +290,7 @@ pub(super) struct ConnState {
 
     net_map: Option<netmap::NetworkMap>,
     /// WireGuard private key for this node
-    private_key: Option<key::node::SecretKey>,
-    /// Whether we ever had a non-zero private key
-    ever_had_key: bool,
+    private_key: key::node::SecretKey,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: usize,
     // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
@@ -304,10 +306,11 @@ pub(super) struct ConnState {
     derp_route: HashMap<key::node::PublicKey, DerpRoute>,
 }
 
-impl Default for ConnState {
-    fn default() -> Self {
+impl ConnState {
+    fn new(private_key: key::node::SecretKey) -> Self {
         let disco_private = key::disco::SecretKey::generate();
         let disco_public = disco_private.public();
+
         ConnState {
             closed: false,
             derp_cleanup_timer: None,
@@ -323,8 +326,7 @@ impl Default for ConnState {
             disco_info: HashMap::new(),
             net_info_last: None,
             net_map: None,
-            private_key: None,
-            ever_had_key: false,
+            private_key,
             my_derp: 0,
             active_derp: HashMap::new(),
             prev_derp: HashMap::new(),
@@ -383,6 +385,7 @@ impl Conn {
             on_net_info,
             on_note_recv_activity,
             link_monitor,
+            private_key,
         } = opts;
 
         if let Some(ref _link_monitor) = link_monitor {
@@ -404,8 +407,7 @@ impl Conn {
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
-            have_private_key: AtomicBool::new(false),
-            public_key_atomic: Default::default(),
+            public_key: private_key.verifying_key().into(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
             pconn4: RebindingUdpConn::default(),
@@ -413,7 +415,7 @@ impl Conn {
             socket_endpoint4: SocketEndpointCache::default(),
             socket_endpoint6: SocketEndpointCache::default(),
             on_stun_receive: Default::default(),
-            state: Default::default(),
+            state: ConnState::new(private_key).into(),
             close_disco4: None,
             close_disco6: None,
             closing: AtomicBool::new(false),
@@ -479,7 +481,6 @@ impl Conn {
                 }
             }
 
-            debug!("endpoint update done ({})", why);
             let mut state = self.state.lock().await;
             let new_why = state.endpoints_update_state.want_update.take();
             if !state.closed {
@@ -517,6 +518,8 @@ impl Conn {
                     self.stop_periodic_re_stun_timer(&mut state).await;
                 }
             }
+
+            debug!("endpoint update done ({})", why);
         })
     }
 
@@ -738,12 +741,6 @@ impl Conn {
     {
         let state = self.state.lock().await;
 
-        if state.private_key.is_none() {
-            res.err = Some("local node stopped".to_string());
-            cb(res);
-            return;
-        }
-
         res.node_ip = peer.addresses.get(0).copied();
         res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
             Some(name) => {
@@ -822,12 +819,6 @@ impl Conn {
         }
         state.my_derp = derp_num;
 
-        if state.private_key.is_none() {
-            // No private key yet, so DERP connections won't come up anyway.
-            // Return early rather than ultimately log a couple lines of noise.
-            return true;
-        }
-
         // On change, notify all currently connected DERP servers and
         // start connecting to our home DERP if we are not already.
         let derp_map = self.derp_map.read().await;
@@ -860,7 +851,7 @@ impl Conn {
         self.go_derp_connect(state.my_derp);
     }
 
-    /// Starts a goroutine to start connecting to the given DERP node.
+    /// Starts a task to start connecting to the given DERP node.
     fn go_derp_connect(&self, node: usize) {
         if node == 0 {
             return;
@@ -1085,10 +1076,6 @@ impl Conn {
         if !derp_map.as_ref().unwrap().regions.contains_key(&region_id) {
             return None;
         }
-        if state.private_key.is_none() {
-            debug!("DERP lookup of {} with no private key; ignoring", addr);
-            return None;
-        }
 
         // See if we have a connection open to that DERP node ID
         // first. If so, might as well use it. (It's a little
@@ -1132,32 +1119,29 @@ impl Conn {
         // Note that derp::http.new_region_client does not dial the server
         // (it doesn't block) so it is safe to do under the state lock.
         let this = self.clone();
-        let dc = derp::http::Client::new_region(
-            state.private_key.clone().expect("checked for key earlier"),
-            move || {
-                let this = this.clone();
-                Box::pin(async move {
-                    // Warning: it is not legal to acquire
-                    // magicsock.Conn.mu from this callback.
-                    // It's run from derp::http::Client.connect (via Send, etc)
-                    // and the lock ordering rules are that magicsock.Conn.mu
-                    // must be acquired before derp::http.Client.mu
+        let dc = derp::http::Client::new_region(state.private_key.clone(), move || {
+            let this = this.clone();
+            Box::pin(async move {
+                // Warning: it is not legal to acquire
+                // magicsock.Conn.mu from this callback.
+                // It's run from derp::http::Client.connect (via Send, etc)
+                // and the lock ordering rules are that magicsock.Conn.mu
+                // must be acquired before derp::http.Client.mu
 
-                    if this.is_closing() {
-                        // We're closing anyway; return to stop dialing.
-                        return None;
-                    }
+                if this.is_closing() {
+                    // We're closing anyway; return to stop dialing.
+                    return None;
+                }
 
-                    // Need to load the derp map without aquiring the lock
+                // Need to load the derp map without aquiring the lock
 
-                    let derp_map = &*this.derp_map.read().await;
-                    match derp_map {
-                        None => None,
-                        Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
-                    }
-                })
-            },
-        );
+                let derp_map = &*this.derp_map.read().await;
+                match derp_map {
+                    None => None,
+                    Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
+                }
+            })
+        });
 
         dc.set_can_ack_pings(true);
         dc.note_preferred(state.my_derp == region_id);
@@ -1351,7 +1335,11 @@ impl Conn {
                                 src: source,
                                 buf: data,
                             };
-                            self.derp_recv_ch.0.send_async(res).await;
+                            self.derp_recv_ch
+                                .0
+                                .send_async(res)
+                                .await
+                                .expect("derp_recv_ch gone");
                         }
                         derp::ReceivedMessage::Ping(data) => {
                             // Best effort reply to the ping.
@@ -1451,12 +1439,6 @@ impl Conn {
         }
         if self.handle_disco_message(b, meta.addr, None) {
             debug!("received DISCO message {}", b.len());
-            return false;
-        }
-        if !self.have_private_key.load(Ordering::Relaxed) {
-            debug!("skipping receive, no key available");
-            // If we have no private key, we're logged out or
-            // stopped. Don't try to pass these packets along
             return false;
         }
 
@@ -1647,7 +1629,7 @@ impl Conn {
         let (source, sealed_box) = source.unwrap();
 
         let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
-        if state.closed || state.private_key.is_none() {
+        if state.closed {
             return true;
         }
 
@@ -2068,59 +2050,6 @@ impl Conn {
         self.reset_endpoint_states().await;
     }
 
-    /// Sets the connection's secret key.
-    ///
-    /// This is only used to be able prove our identity when connecting to DERP servers.
-    ///
-    /// If the secret key changes, any DERP connections are torn down & recreated when needed.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub async fn set_private_key(&self, new_key: key::node::SecretKey) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        let old_key = &state.private_key;
-        if old_key.is_some()
-            && old_key
-                .as_ref()
-                .unwrap()
-                .to_bytes()
-                .ct_eq(&new_key.to_bytes())
-                .into()
-        {
-            return Ok(());
-        }
-        self.0
-            .public_key_atomic
-            .write()
-            .await
-            .replace(new_key.verifying_key().into());
-        let old_key = state.private_key.replace(new_key);
-        self.have_private_key.store(true, Ordering::Relaxed);
-
-        if old_key.is_none() {
-            state.ever_had_key = true;
-            info!("set_private_key called (init)");
-
-            let this = self.clone();
-            tokio::task::spawn(async move {
-                this.re_stun("set-private-key").await;
-            });
-        } else {
-            info!("set_private_key called (changed)");
-            self.close_all_derp_locked(&mut state, "new-private-key");
-        }
-
-        // Key changed. Close existing DERP connections and reconnect to home.
-        if state.my_derp != 0 {
-            info!(
-                "private key changed, reconnecting to home derp-{}",
-                state.my_derp
-            );
-            self.start_derp_home_connect_locked(&mut state);
-        }
-
-        Ok(())
-    }
-
     /// Called when the set of peers changes. It then removes any state for old peers.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn update_peers(&self, new_peers: HashSet<key::node::PublicKey>) {
@@ -2343,7 +2272,7 @@ impl Conn {
         state: &mut ConnState,
     ) {
         self.close_derp_locked(region_id, why, &mut state.active_derp);
-        if state.private_key.is_some() && state.my_derp == region_id {
+        if state.my_derp == region_id {
             self.start_derp_home_connect_locked(state);
         }
     }
@@ -2559,9 +2488,8 @@ impl Conn {
         if self.network_down() {
             return false;
         }
-        if state.peer_set.is_empty() || state.private_key.is_none() {
+        if state.peer_set.is_empty() {
             // If no peers, not worth doing.
-            // Also don't if there's no key (not running).
             return false;
         }
         if let Some(ref f) = self.idle_for {
@@ -2591,18 +2519,11 @@ impl Conn {
         // TODO:
         // metricReSTUNCalls.Add(1)
 
-        // If the user stopped the app, stop doing work. (When the
-        // user stops we get reconfigures the engine with a no private key.)
-        if state.private_key.is_none() && state.ever_had_key {
-            debug!("re_stun({}) ignored; stopped, no private key", why);
-            return;
-        }
-
         if state.endpoints_update_state.is_running() {
             if Some(why) != state.endpoints_update_state.want_update {
                 debug!(
-                    "re_stun({}): endpoint update active, need another later",
-                    why
+                    "re_stun({:?}): endpoint update active, need another later: {:?}",
+                    state.endpoints_update_state.want_update, why
                 );
                 state.endpoints_update_state.want_update.replace(why);
             }
@@ -3409,24 +3330,20 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
-            let key = key::node::SecretKey::generate();
-            Self::with_key(key, derp_map).await
-        }
-
-        async fn with_key(key: key::node::SecretKey, derp_map: DerpMap) -> Result<Self> {
             let (ep_s, ep_r) = flume::bounded(16);
+            let opts = Options {
+                on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
+                    ep_s.send(eps.to_vec()).unwrap();
+                })),
+                ..Default::default()
+            };
+            let key = opts.private_key.clone();
             let conn = Conn::new(
                 format!("magic-{}", hex::encode(&key.verifying_key().as_ref()[..8])),
-                Options {
-                    on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
-                        ep_s.send(eps.to_vec()).unwrap();
-                    })),
-                    ..Default::default()
-                },
+                opts,
             )
             .await?;
             conn.set_derp_map(Some(derp_map)).await;
-            conn.set_private_key(key.clone()).await?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
