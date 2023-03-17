@@ -159,7 +159,7 @@ pub struct Inner {
 
     // TODO:
     // closeDisco4 and closeDisco6 are io.Closers to shut down the raw
-    // disco packet receivers. If nil, no raw disco receiver is running for the given family.
+    // disco packet receivers. If None, no raw disco receiver is running for the given family.
     close_disco4: Option<()>, // io.Closer
     close_disco6: Option<()>, // io.Closer
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
@@ -199,7 +199,7 @@ pub struct Inner {
 
     /// Read only duplicate of state.public key, to avoid reading it without locks
     pub(super) public_key_atomic: RwLock<Option<key::node::PublicKey>>,
-    last_net_check_report: RwLock<Option<netcheck::Report>>,
+    last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
 
     /// Preferred port from opts.Port; 0 means auto.
     port: AtomicU16,
@@ -571,7 +571,7 @@ impl Conn {
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn update_net_info(&self) -> Result<netcheck::Report> {
+    async fn update_net_info(&self) -> Result<Arc<netcheck::Report>> {
         let dm = self.derp_map.read().await.clone();
         if dm.is_none() || self.network_down() {
             return Ok(Default::default());
@@ -589,7 +589,7 @@ impl Conn {
             }));
             let report = self.net_checker.get_report(&dm).await?;
             *self.last_net_check_report.write().await = Some(report.clone());
-            let r = report.read().await;
+            let r = &report;
             self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
 
             let mut ni = cfg::NetInfo {
@@ -913,7 +913,6 @@ impl Conn {
             self.set_net_info_have_port_map().await;
         }
 
-        let nr = nr.read().await;
         if let Some(global_v4) = nr.global_v4 {
             add_addr!(already, eps, global_v4, cfg::EndpointType::Stun);
 
@@ -1168,8 +1167,7 @@ impl Conn {
             Box::pin(async move {
                 // TODO: use atomic read?
                 if let Some(r) = &*this.last_net_check_report.read().await {
-                    // TODO: avoid locking on the report
-                    return r.read().await.ipv6;
+                    return r.ipv6;
                 }
                 false
             })
