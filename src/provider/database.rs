@@ -189,17 +189,40 @@ where
 }
 
 impl Database {
+    /// Load a database from disk for testing. Synchronous.
+    #[cfg(feature = "cli")]
+    pub fn load_test(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        Self::load_internal(dir)
+    }
+
+    /// Save a database to disk for testing. Synchronous.
+    #[cfg(feature = "cli")]
+    pub fn save_test(&self, dir: impl AsRef<Path>) -> io::Result<()> {
+        let dir = dir.as_ref().to_path_buf();
+        self.save_internal(dir)
+    }
+
+    fn load_internal(dir: PathBuf) -> anyhow::Result<Self> {
+        tracing::info!("Loading snapshot from {}...", dir.display());
+        let snapshot = Snapshot::load(dir)?;
+        let db = Self::from_snapshot(snapshot)?;
+        tracing::info!("Database loaded");
+        anyhow::Ok(db)
+    }
+
+    fn save_internal(&self, dir: PathBuf) -> io::Result<()> {
+        tracing::info!("Persisting database to {}...", dir.display());
+        let snapshot = self.snapshot();
+        snapshot.persist(dir)?;
+        tracing::info!("Database stored");
+        io::Result::Ok(())
+    }
+
     /// Load a database from disk.
     pub async fn load(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
-        let db = tokio::task::spawn_blocking(|| {
-            tracing::info!("Loading snapshot from {}...", dir.display());
-            let snapshot = Snapshot::load(dir)?;
-            let db = Self::from_snapshot(snapshot)?;
-            tracing::info!("Database loaded");
-            anyhow::Ok(db)
-        })
-        .await??;
+        let db = tokio::task::spawn_blocking(|| Self::load_internal(dir)).await??;
         Ok(db)
     }
 
@@ -207,14 +230,7 @@ impl Database {
     pub async fn save(&self, dir: impl AsRef<Path>) -> io::Result<()> {
         let dir = dir.as_ref().to_path_buf();
         let db = self.clone();
-        tokio::task::spawn_blocking(move || {
-            tracing::info!("Persisting database to {}...", dir.display());
-            let snapshot = db.snapshot();
-            snapshot.persist(dir)?;
-            tracing::info!("Database stored");
-            io::Result::Ok(())
-        })
-        .await??;
+        tokio::task::spawn_blocking(move || db.save_internal(dir)).await??;
         Ok(())
     }
 

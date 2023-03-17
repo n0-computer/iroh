@@ -23,6 +23,7 @@ use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -50,6 +51,8 @@ use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 mod database;
 pub use database::Database;
+#[cfg(cli)]
+pub use database::Snapshot;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -919,7 +922,6 @@ async fn create_collection_inner(
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
-    let mut blobs_encoded_size_estimate = 0;
 
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = data_sources.into_iter().map(|data| {
@@ -971,7 +973,6 @@ async fn create_collection_inner(
                 .unwrap_or_default()
                 .to_string()
         });
-        blobs_encoded_size_estimate += name.len() + 32;
         blobs.push(Blob { name, hash });
     }
 
@@ -980,14 +981,8 @@ async fn create_collection_inner(
         blobs,
         total_blobs_size,
     };
-    blobs_encoded_size_estimate += c.name.len();
 
-    // NOTE: we can't use the postcard::MaxSize to estimate the encoding buffer size
-    // because the Collection and Blobs have `String` fields.
-    // So instead, we are tracking the filename + hash sizes of each blob, plus an extra 1024
-    // to account for any postcard encoding data.
-    let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
-    let data = postcard::to_slice(&c, &mut buffer)?;
+    let data = postcard::to_stdvec(&c).context("blob encoding")?;
     let (outboard, hash) = abao::encode::outboard(&data);
     let hash = Hash::from(hash);
     db.insert(
@@ -1009,8 +1004,8 @@ async fn write_response<W: AsyncWrite + Unpin>(
     let response = Response { data: res };
 
     // TODO: do not transfer blob data as part of the responses
-    if buffer.len() < 1024 {
-        buffer.resize(1024, 0u8);
+    if buffer.len() < Response::POSTCARD_MAX_SIZE {
+        buffer.resize(Response::POSTCARD_MAX_SIZE, 0u8);
     }
     let used = postcard::to_slice(&response, buffer)?;
 
