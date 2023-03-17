@@ -14,7 +14,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::RwLock;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -22,8 +21,8 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future;
-use futures::Stream;
+use futures::future::{self, BoxFuture, Shared};
+use futures::{FutureExt, Stream, TryFutureExt};
 use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -32,7 +31,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinError;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
@@ -49,45 +48,14 @@ use crate::rpc_protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
+mod database;
+pub use database::Database;
+#[cfg(cli)]
+pub use database::Snapshot;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
-
-/// Database containing content-addressed data (blobs or collections).
-#[derive(Debug, Clone, Default)]
-pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
-
-impl Database {
-    fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
-        self.0.read().unwrap().get(key).cloned()
-    }
-
-    fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
-        let mut inner = self.0.write().unwrap();
-        for (k, v) in db {
-            inner.entry(k).or_insert(v);
-        }
-    }
-
-    /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
-        let items = self
-            .0
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob(data) => Some((k, data)),
-                BlobOrCollection::Collection(_) => None,
-            })
-            .map(|(k, data)| (*k, data.path.clone(), data.size))
-            .collect::<Vec<_>>();
-        // todo: make this a proper lazy iterator at some point
-        // e.g. by using an immutable map or a real database that supports snapshots.
-        items.into_iter()
-    }
-}
 
 /// Builder for the [`Provider`].
 ///
@@ -106,10 +74,10 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     keylog: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BlobOrCollection {
     Blob(Data),
-    Collection((Bytes, Bytes)),
+    Collection { outboard: Bytes, data: Bytes },
 }
 
 impl Builder {
@@ -197,14 +165,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let cancel_token = CancellationToken::new();
         tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let inner = Arc::new(ProviderInner {
+            db: self.db,
+            listen_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            events,
+            controller,
+            cancel_token,
+        });
         let task = {
-            let cancel_token = cancel_token.clone();
-            let handler = ProviderHandles {
-                peer_id: self.keypair.public().into(),
-                db: self.db,
-                auth_token: self.auth_token,
-                shutdown: cancel_token,
-                listen_addr,
+            let handler = RpcHandler {
+                inner: inner.clone(),
             };
             tokio::spawn(async move {
                 Self::run(
@@ -217,22 +189,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 .await
             })
         };
+        let provider = Provider {
+            inner,
+            task: task.map_err(Arc::new).boxed().shared(),
+        };
 
-        Ok(Provider {
-            listen_addr,
-            keypair: self.keypair,
-            auth_token: self.auth_token,
-            task,
-            events,
-            controller,
-            cancel_token,
-        })
+        Ok(provider)
     }
 
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
-        handler: ProviderHandles,
+        handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
     ) {
@@ -241,7 +209,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
-        let cancel_token = handler.shutdown.clone();
+        let cancel_token = handler.inner.cancel_token.clone();
         loop {
             tokio::select! {
                 biased;
@@ -272,9 +240,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 },
                 // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
-                    let db = handler.db.clone();
+                    let db = handler.inner.db.clone();
                     let events = events.clone();
-                    let auth_token = handler.auth_token;
+                    let auth_token = handler.inner.auth_token;
                     tokio::spawn(handle_connection(connecting, db, auth_token, events));
                 }
                 else => break,
@@ -300,12 +268,18 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
 /// This runs a tokio task which can be aborted and joined if desired.  To join the task
 /// await the [`Provider`] struct directly, it will complete when the task completes.  If
 /// this is dropped the provider task is not stopped but keeps running.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Provider {
+    inner: Arc<ProviderInner>,
+    task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
+}
+
+#[derive(Debug)]
+struct ProviderInner {
+    db: Database,
     listen_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
-    task: JoinHandle<()>,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
@@ -354,30 +328,30 @@ impl Provider {
 
     /// Returns the address on which the server is listening for connections.
     pub fn listen_addr(&self) -> SocketAddr {
-        self.listen_addr
+        self.inner.listen_addr
     }
 
     /// Returns the [`PeerId`] of the provider.
     pub fn peer_id(&self) -> PeerId {
-        self.keypair.public().into()
+        self.inner.keypair.public().into()
     }
 
     /// Returns the [`AuthToken`] needed to connect to the provider.
     pub fn auth_token(&self) -> AuthToken {
-        self.auth_token
+        self.inner.auth_token
     }
 
     /// Subscribe to [`Event`]s emitted from the provider, informing about connections and
     /// progress.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        self.events.subscribe()
+        self.inner.events.subscribe()
     }
 
     /// Returns a handle that can be used to do RPC calls to the provider internally.
     pub fn controller(
         &self,
     ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
-        RpcClient::new(self.controller.clone())
+        RpcClient::new(self.inner.controller.clone())
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -388,8 +362,8 @@ impl Provider {
         Ticket {
             hash,
             peer: self.peer_id(),
-            addr: self.listen_addr,
-            token: self.auth_token,
+            addr: self.inner.listen_addr,
+            token: self.inner.auth_token,
         }
     }
 
@@ -401,18 +375,18 @@ impl Provider {
     ///
     /// The shutdown behaviour will become more graceful in the future.
     pub fn shutdown(&self) {
-        self.cancel_token.cancel();
+        self.inner.cancel_token.cancel();
     }
 
     /// Returns a token that can be used to cancel the provider.
     pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel_token.clone()
+        self.inner.cancel_token.clone()
     }
 }
 
 /// The future completes when the spawned tokio task finishes.
 impl Future for Provider {
-    type Output = Result<(), JoinError>;
+    type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
@@ -420,22 +394,14 @@ impl Future for Provider {
 }
 
 #[derive(Debug, Clone)]
-struct ProviderHandles {
-    /// database handle
-    pub db: Database,
-    /// cancellation token
-    pub shutdown: CancellationToken,
-    /// peer id
-    pub peer_id: PeerId,
-    /// auth token
-    pub auth_token: AuthToken,
-    /// listen address
-    pub listen_addr: SocketAddr,
+struct RpcHandler {
+    inner: Arc<ProviderInner>,
 }
 
-impl ProviderHandles {
+impl RpcHandler {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
         let items = self
+            .inner
             .db
             .blobs()
             .map(|(hash, path, size)| ListResponse { hash, path, size });
@@ -460,7 +426,7 @@ impl ProviderHandles {
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
-        self.db.union_with(db);
+        self.inner.db.union_with(db);
 
         Ok(ProvideResponse { hash, entries })
     }
@@ -471,9 +437,9 @@ impl ProviderHandles {
     }
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
-            peer_id: Box::new(self.peer_id),
-            auth_token: Box::new(self.auth_token),
-            listen_addr: Box::new(self.listen_addr),
+            peer_id: Box::new(self.inner.keypair.public().into()),
+            auth_token: Box::new(self.inner.auth_token),
+            listen_addr: Box::new(self.inner.listen_addr),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
@@ -484,7 +450,7 @@ impl ProviderHandles {
         } else {
             // trigger a graceful shutdown
             tracing::info!("graceful shutdown requested");
-            self.shutdown.cancel();
+            self.inner.cancel_token.cancel();
         }
     }
     fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
@@ -503,27 +469,18 @@ impl ProviderHandles {
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    handler: &ProviderHandles,
+    handler: &RpcHandler,
 ) {
     let handler = handler.clone();
     tokio::spawn(async move {
         use ProviderRequest::*;
         match msg {
-            List(msg) => {
-                chan.server_streaming(msg, handler, ProviderHandles::list)
-                    .await
-            }
-            Provide(msg) => {
-                chan.rpc_map_err(msg, handler, ProviderHandles::provide)
-                    .await
-            }
-            Watch(msg) => {
-                chan.server_streaming(msg, handler, ProviderHandles::watch)
-                    .await
-            }
-            Version(msg) => chan.rpc(msg, handler, ProviderHandles::version).await,
-            Id(msg) => chan.rpc(msg, handler, ProviderHandles::id).await,
-            Shutdown(msg) => chan.rpc(msg, handler, ProviderHandles::shutdown).await,
+            List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
+            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
+            Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
+            Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
         }
     });
 }
@@ -725,7 +682,7 @@ async fn handle_stream(
     // 4. Attempt to find hash
     let (outboard, data) = match db.get(&hash) {
         // We only respond to requests for collections, not individual blobs
-        Some(BlobOrCollection::Collection(d)) => d,
+        Some(BlobOrCollection::Collection { outboard, data }) => (outboard, data),
         _ => {
             debug!("not found {}", hash);
             notify_transfer_aborted(events, connection_id, request_id);
@@ -907,7 +864,7 @@ fn compute_outboard(
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, _, hash) = create_collection_inner(data_sources).await?;
-    Ok((Database(Arc::new(RwLock::new(db))), hash))
+    Ok((Database::from(db), hash))
 }
 
 /// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
@@ -988,7 +945,10 @@ async fn create_collection_inner(
     let hash = Hash::from(hash);
     db.insert(
         hash,
-        BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
+        BlobOrCollection::Collection {
+            outboard: Bytes::from(outboard),
+            data: Bytes::from(data.to_vec()),
+        },
     );
 
     Ok((db, entries, hash))
@@ -1061,12 +1021,109 @@ impl FromStr for Ticket {
     }
 }
 
+/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+pub fn make_server_config(
+    keypair: &Keypair,
+    max_streams: u64,
+    max_connections: u32,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(max_streams.try_into()?)
+        .max_concurrent_uni_streams(0u32.into());
+
+    server_config
+        .transport_config(Arc::new(transport_config))
+        .concurrent_connections(max_connections);
+    Ok(server_config)
+}
+
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use std::str::FromStr;
     use testdir::testdir;
 
+    use crate::provider::database::Snapshot;
+
     use super::*;
+
+    fn blob(size: usize) -> impl Strategy<Value = Bytes> {
+        proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
+    }
+
+    fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
+        proptest::collection::vec(blob(size), 0..count)
+    }
+
+    fn db(blob_count: usize, blob_size: usize) -> impl Strategy<Value = Database> {
+        let blobs = blobs(blob_count, blob_size);
+        blobs.prop_map(|blobs| {
+            let mut map = HashMap::new();
+            let mut cblobs = Vec::new();
+            let mut total_blobs_size = 0u64;
+            for blob in blobs {
+                let size = blob.len() as u64;
+                total_blobs_size += size;
+                let (outboard, hash) = abao::encode::outboard(&blob);
+                let outboard = Bytes::from(outboard);
+                let hash = Hash::from(hash);
+                let path = PathBuf::from_str(&hash.to_string()).unwrap();
+                cblobs.push(Blob {
+                    name: hash.to_string(),
+                    hash,
+                });
+                map.insert(
+                    hash,
+                    BlobOrCollection::Blob(Data {
+                        outboard,
+                        size,
+                        path,
+                    }),
+                );
+            }
+            let collection = Collection {
+                blobs: cblobs,
+                total_blobs_size,
+                name: "".to_string(),
+            };
+            // encode collection and add it
+            {
+                let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
+                let (outboard, hash) = abao::encode::outboard(&data);
+                let outboard = Bytes::from(outboard);
+                let hash = Hash::from(hash);
+                map.insert(hash, BlobOrCollection::Collection { outboard, data });
+            }
+            let db = Database::default();
+            db.union_with(map);
+            db
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn database_snapshot_roundtrip(db in db(10, 1024 * 64)) {
+            let snapshot = db.snapshot();
+            let db2 = Database::from_snapshot(snapshot).unwrap();
+            prop_assert_eq!(db.to_inner(), db2.to_inner());
+        }
+
+        #[test]
+        fn database_persistence_roundtrip(db in db(10, 1024 * 64)) {
+            let dir = tempfile::tempdir().unwrap();
+            let snapshot = db.snapshot();
+            snapshot.persist(&dir).unwrap();
+            let snapshot2 = Snapshot::load(&dir).unwrap();
+            let db2 = Database::from_snapshot(snapshot2).unwrap();
+            let db = db.to_inner();
+            let db2 = db2.to_inner();
+            prop_assert_eq!(db, db2);
+        }
+    }
 
     #[test]
     fn test_ticket_base64_roundtrip() {
@@ -1133,7 +1190,7 @@ mod tests {
 
         let collection = {
             let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection((_, data)) = c {
+            if let BlobOrCollection::Collection { data, .. } = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
@@ -1144,24 +1201,4 @@ mod tests {
 
         Ok(())
     }
-}
-
-/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
-pub fn make_server_config(
-    keypair: &Keypair,
-    max_streams: u64,
-    max_connections: u32,
-    alpn_protocols: Vec<Vec<u8>>,
-) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(max_streams.try_into()?)
-        .max_concurrent_uni_streams(0u32.into());
-
-    server_config
-        .transport_config(Arc::new(transport_config))
-        .concurrent_connections(max_connections);
-    Ok(server_config)
 }

@@ -60,7 +60,7 @@ mod tests {
     async fn many_files() -> Result<()> {
         let num_files = [10, 100, 1000, 10000];
         for num in num_files {
-            println!("NUM_FILES: {}", num);
+            println!("NUM_FILES: {num}");
             let file_opts = (0..num).map(|i| (i.to_string(), 10)).collect();
             transfer_random_data(file_opts).await?;
         }

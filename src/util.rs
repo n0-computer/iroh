@@ -1,10 +1,11 @@
+//! Utility functions and types.
 use std::{
     fmt::{self, Display},
     result,
     str::FromStr,
 };
 
-use anyhow::ensure;
+use anyhow::{ensure, Result};
 use base64::{engine::general_purpose, Engine as _};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -53,6 +54,18 @@ impl From<blake3::Hash> for Hash {
 impl From<[u8; 32]> for Hash {
     fn from(value: [u8; 32]) -> Self {
         Hash(blake3::Hash::from(value))
+    }
+}
+
+impl PartialOrd for Hash {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.0.as_bytes().cmp(other.0.as_bytes()))
+    }
+}
+
+impl Ord for Hash {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
@@ -136,6 +149,7 @@ impl From<anyhow::Error> for RpcError {
     }
 }
 
+/// A serializable result type for use in RPC responses.
 pub type RpcResult<T> = result::Result<T, RpcError>;
 
 #[cfg(test)]

@@ -12,11 +12,19 @@ use indicatif::{
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
+use iroh::rpc_protocol::{
+    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
+    ProviderResponse, ProviderService, VersionRequest,
+};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
+mod main_util;
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
+use main_util::Blake3Cid;
+
+use crate::main_util::iroh_data_root;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -84,9 +92,6 @@ enum Commands {
         /// Auth token, defaults to random generated.
         #[clap(long)]
         auth_token: Option<String>,
-        /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
-        #[clap(long)]
-        key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
@@ -169,91 +174,6 @@ macro_rules! progress {
     ($fmt:expr $(, $args:expr)*) => {{
         eprintln!($fmt $(, $args)*);
     }};
-}
-
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Blake3Cid(Hash);
-
-const CID_PREFIX: [u8; 4] = [
-    0x01, // version
-    0x55, // raw codec
-    0x1e, // hash function, blake3
-    0x20, // hash size, 32 bytes
-];
-
-impl Blake3Cid {
-    pub fn new(hash: Hash) -> Self {
-        Blake3Cid(hash)
-    }
-
-    pub fn as_hash(&self) -> &Hash {
-        &self.0
-    }
-
-    pub fn as_bytes(&self) -> [u8; 36] {
-        let hash: [u8; 32] = self.0.as_ref().try_into().unwrap();
-        let mut res = [0u8; 36];
-        res[0..4].copy_from_slice(&CID_PREFIX);
-        res[4..36].copy_from_slice(&hash);
-        res
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == 36,
-            "invalid cid length, expected 36, got {}",
-            bytes.len()
-        );
-        anyhow::ensure!(bytes[0..4] == CID_PREFIX, "invalid cid prefix");
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&bytes[4..36]);
-        Ok(Blake3Cid(Hash::from(hash)))
-    }
-}
-
-impl fmt::Display for Blake3Cid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // result will be 58 bytes plus prefix
-        let mut res = [b'b'; 59];
-        // write the encoded bytes
-        data_encoding::BASE32_NOPAD.encode_mut(&self.as_bytes(), &mut res[1..]);
-        // convert to string, this is guaranteed to succeed
-        let t = std::str::from_utf8_mut(res.as_mut()).unwrap();
-        // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
-        t.make_ascii_lowercase();
-        // write the str, no allocations
-        f.write_str(t)
-    }
-}
-
-impl FromStr for Blake3Cid {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let sb = s.as_bytes();
-        if sb.len() == 59 && sb[0] == b'b' {
-            // this is a base32 encoded cid, we can decode it directly
-            let mut t = [0u8; 58];
-            t.copy_from_slice(&sb[1..]);
-            // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
-            std::str::from_utf8_mut(t.as_mut())
-                .unwrap()
-                .make_ascii_uppercase();
-            // decode the bytes
-            let mut res = [0u8; 36];
-            data_encoding::BASE32_NOPAD
-                .decode_mut(&t, &mut res)
-                .map_err(|_e| anyhow::anyhow!("invalid base32"))?;
-            // convert to cid, this will check the prefix
-            Self::from_bytes(&res)
-        } else {
-            // if we want to support all the weird multibase prefixes, we have no choice
-            // but to use the multibase crate
-            let (_base, bytes) = multibase::decode(s)?;
-            Self::from_bytes(bytes.as_ref())
-        }
-    }
 }
 
 async fn make_rpc_client(
@@ -364,10 +284,29 @@ async fn main_impl() -> Result<()> {
             path,
             addr,
             auth_token,
-            key,
             rpc_port,
         } => {
-            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port.into()).await?;
+            let iroh_data_root = iroh_data_root()?;
+            let db = {
+                if iroh_data_root.is_dir() {
+                    // try to load db
+                    Database::load(&iroh_data_root).await?
+                } else {
+                    // directory does not exist, create an empty db
+                    Database::default()
+                }
+            };
+            let key = Some(iroh_data_root.join("keypair"));
+
+            let provider = provide(
+                db.clone(),
+                addr,
+                auth_token,
+                key,
+                cli.keylog,
+                rpc_port.into(),
+            )
+            .await?;
             let controller = provider.controller();
             let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
@@ -398,17 +337,20 @@ async fn main_impl() -> Result<()> {
                 anyhow::Ok(tmp_path)
             });
 
-            let cancel_token = provider.cancel_token();
+            let provider2 = provider.clone();
             tokio::select! {
                 biased;
                 _ = tokio::signal::ctrl_c() => {
                     println!("Shutting down provider...");
-                    cancel_token.cancel();
+                    provider2.shutdown();
                 }
                 res = provider => {
                     res?;
                 }
             }
+            // persist the db to disk.
+            db.save(&iroh_data_root).await?;
+
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
             // makes this explicit.
@@ -457,6 +399,7 @@ async fn main_impl() -> Result<()> {
 }
 
 async fn provide(
+    db: Database,
     addr: Option<SocketAddr>,
     auth_token: Option<String>,
     key: Option<PathBuf>,
@@ -465,7 +408,6 @@ async fn provide(
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
-    let db = Database::default();
     let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
@@ -520,6 +462,9 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
             } else {
                 let keypair = Keypair::generate();
                 let ser_key = keypair.to_openssh()?;
+                if let Some(parent) = key_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
                 tokio::fs::write(key_path, ser_key).await?;
                 Ok(keypair)
             }
