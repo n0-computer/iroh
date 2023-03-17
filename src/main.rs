@@ -4,7 +4,7 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use console::style;
+use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
@@ -99,6 +99,13 @@ enum Commands {
     /// List hashes
     #[clap(about = "List hashes")]
     List {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Validate hashes
+    #[clap(about = "Validate hashes")]
+    Validate {
         /// Optional rpc port, defaults to 4919
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -368,6 +375,29 @@ async fn main_impl() -> Result<()> {
                     item.path.display(),
                     Blake3Cid(item.hash),
                     HumanBytes(item.size),
+                );
+            }
+            Ok(())
+        }
+        Commands::Validate { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let mut response = client.server_streaming(ValidateRequest).await?;
+            let ok_char = style(Emoji("✔", "OK")).green();
+            let fail_char = style(Emoji("✗", "Error")).red();
+            while let Some(item) = response.next().await {
+                let item = item?;
+                println!(
+                    "{} {} {} {}{}",
+                    item.path
+                        .map(|x| x.display().to_string())
+                        .unwrap_or("Collection".to_owned()),
+                    Blake3Cid(item.hash),
+                    HumanBytes(item.size),
+                    item.error
+                        .as_ref()
+                        .map(|x| format!("{} ", x))
+                        .unwrap_or("".to_owned()),
+                    item.error.map(|_| &fail_char).unwrap_or(&ok_char),
                 );
             }
             Ok(())

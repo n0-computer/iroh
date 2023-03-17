@@ -32,6 +32,25 @@ impl RpcMsg<ProviderService> for ProvideRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ValidateRequest;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ValidateResponse {
+    pub hash: Hash,
+    pub path: Option<PathBuf>,
+    pub size: u64,
+    pub error: Option<String>,
+}
+
+impl Msg<ProviderService> for ValidateRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ValidateRequest {
+    type Response = ValidateResponse;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListRequest;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -114,6 +133,7 @@ pub enum ProviderRequest {
     Provide(ProvideRequest),
     Id(IdRequest),
     Shutdown(ShutdownRequest),
+    Validate(ValidateRequest),
 }
 
 /// Response enum
@@ -124,6 +144,7 @@ pub enum ProviderResponse {
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
     Id(IdResponse),
+    Validate(ValidateResponse),
     Shutdown(()),
 }
 

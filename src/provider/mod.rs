@@ -22,7 +22,7 @@ use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::{self, BoxFuture, Shared};
-use futures::{FutureExt, Stream, TryFutureExt};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -44,7 +44,8 @@ use crate::protocol::{
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
     ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
@@ -78,6 +79,30 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
 pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection { outboard: Bytes, data: Bytes },
+}
+
+impl BlobOrCollection {
+    pub fn is_blob(&self) -> bool {
+        matches!(self, BlobOrCollection::Blob(_))
+    }
+
+    pub fn data(&self) -> Option<&Data> {
+        match self {
+            BlobOrCollection::Blob(data) => Some(data),
+            BlobOrCollection::Collection { .. } => None,
+        }
+    }
+
+    /// Returns the size of the blob or collection.
+    ///
+    /// For collections this is the size of the serialized collection.
+    /// For blobs it is the blob size.
+    pub fn size(&self) -> u64 {
+        match self {
+            BlobOrCollection::Blob(data) => data.size,
+            BlobOrCollection::Collection { data, .. } => data.len() as u64,
+        }
+    }
 }
 
 impl Builder {
@@ -407,6 +432,23 @@ impl RpcHandler {
             .map(|(hash, path, size)| ListResponse { hash, path, size });
         futures::stream::iter(items)
     }
+
+    /// Invoke validate on the database and stream out the result
+    fn validate(
+        self,
+        _msg: ValidateRequest,
+    ) -> impl Stream<Item = ValidateResponse> + Send + 'static {
+        self.inner
+            .db
+            .validate(num_cpus::get())
+            .map(|(hash, size, path, error)| ValidateResponse {
+                hash,
+                size,
+                path,
+                error: error.map(|e| e.to_string()),
+            })
+    }
+
     async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
         let path = msg.path;
         let data_sources: Vec<DataSource> = if path.is_dir() {
@@ -481,6 +523,10 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
+            Validate(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::validate)
+                    .await
+            }
         }
     });
 }

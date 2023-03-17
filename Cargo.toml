@@ -29,6 +29,7 @@ futures = "0.3.25"
 hex = "0.4.3"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
+num_cpus = "1.15.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.5", default-features = false, features = ["quinn-transport", "flume-transport"] }
