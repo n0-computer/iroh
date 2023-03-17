@@ -16,14 +16,12 @@ use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
-use iroh::rpc_util::RpcClientExt;
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
@@ -205,16 +203,16 @@ async fn make_rpc_client(
     Ok(client)
 }
 
-fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
-    let mut total_size = 0;
-    for ProvideResponseEntry { name, size, .. } in entries {
-        total_size += size;
-        println!("- {}: {}", name, HumanBytes(size));
-    }
-    println!("Total: {}", HumanBytes(total_size));
-    println!();
-    println!("Collection: {}", Blake3Cid::new(hash));
-}
+// fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
+//     let mut total_size = 0;
+//     for ProvideResponseEntry { name, size, .. } in entries {
+//         total_size += size;
+//         println!("- {}: {}", name, HumanBytes(size));
+//     }
+//     println!("Total: {}", HumanBytes(total_size));
+//     println!();
+//     println!("Collection: {}", Blake3Cid::new(hash));
+// }
 
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
@@ -339,13 +337,12 @@ async fn main_impl() -> Result<()> {
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let ProvideResponse { hash, entries } = controller
-                    .rpc_with_progress(ProvideRequest { path }, |_| async {})
-                    .await??;
+                let stream = controller.server_streaming(ProvideRequest { path }).await?;
 
-                print_add_response(hash, entries);
-                ticket.hash = hash;
-                println!("All-in-one ticket: {ticket}");
+                todo!();
+                // print_add_response(hash, entries);
+                // ticket.hash = hash;
+                // println!("All-in-one ticket: {ticket}");
                 anyhow::Ok(tmp_path)
             });
 
@@ -455,10 +452,11 @@ async fn main_impl() -> Result<()> {
                 }
             };
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let ProvideResponse { hash, entries } = client
-                .rpc_with_progress(ProvideRequest { path: absolute }, progress_handler)
-                .await??;
-            print_add_response(hash, entries);
+            let stream = client
+                .server_streaming(ProvideRequest { path: absolute })
+                .await?;
+            todo!();
+            // print_add_response(hash, entries);
             Ok(())
         }
     }

@@ -1,12 +1,7 @@
 #![allow(missing_docs)]
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{
-    protocol::AuthToken,
-    rpc_util::{RpcWithProgress, RpcWithProgressMsg},
-    util::RpcResult,
-    Hash, PeerId,
-};
+use crate::{protocol::AuthToken, util::RpcResult, Hash, PeerId};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -19,26 +14,12 @@ pub struct ProvideRequest {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProvideResponse {
-    pub hash: Hash,
-    pub entries: Vec<ProvideResponseEntry>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProvideResponseEntry {
-    pub name: String,
-    pub hash: Hash,
-    pub size: u64,
-}
-
 impl Msg<ProviderService> for ProvideRequest {
-    type Pattern = RpcWithProgress;
+    type Pattern = ServerStreaming;
 }
 
-impl RpcWithProgressMsg<ProviderService> for ProvideRequest {
-    type Progress = ProvideProgress;
-    type Response = RpcResult<ProvideResponse>;
+impl ServerStreamingMsg<ProviderService> for ProvideRequest {
+    type Response = ProvideProgress;
 }
 
 /// Progress updates for the provide operation
@@ -164,8 +145,7 @@ pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     List(ListResponse),
-    Provide(RpcResult<ProvideResponse>),
-    ProvideProgress(ProvideProgress),
+    Provide(ProvideProgress),
     Id(IdResponse),
     Validate(ValidateResponse),
     Shutdown(()),

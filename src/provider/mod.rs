@@ -43,12 +43,10 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::*;
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProviderRequest,
+    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, ValidateResponse,
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::rpc_util::{ProgressCb, RpcChannelExt};
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash, ProgressReader, ProgressReaderUpdate, RpcError, RpcResult};
 mod database;
@@ -451,58 +449,51 @@ impl RpcHandler {
             })
     }
 
-    async fn provide(
-        self,
-        msg: ProvideRequest,
-        progress: ProgressCb<ProvideProgress>,
-    ) -> RpcResult<ProvideResponse> {
-        self.provide0(msg, progress).await.map_err(RpcError::from)
+    fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
+        self.provide0(msg)
     }
 
-    async fn provide0(
-        self,
-        msg: ProvideRequest,
-        progress: ProgressCb<ProvideProgress>,
-    ) -> anyhow::Result<ProvideResponse> {
-        let path = msg.path;
-        let data_sources: Vec<DataSource> = if path.is_dir() {
-            let mut paths = Vec::new();
-            let mut iter = tokio::fs::read_dir(&path).await?;
-            while let Some(el) = iter.next_entry().await? {
-                if el.path().is_file() {
-                    paths.push(el.path().into());
-                }
-            }
-            paths
-        } else if path.is_file() {
-            vec![path.into()]
-        } else {
-            anyhow::bail!("path must be either a Directory or a File");
-        };
-        // create the collection
-        for (i, ds) in data_sources.iter().enumerate() {
-            if let DataSource::File(path) = ds {
-                let size = tokio::fs::metadata(path).await?.len();
-                progress.call(ProvideProgress::Found {
-                    id: i as u64,
-                    name: path.display().to_string(),
-                    size,
-                });
-            }
-        }
-        let progress = move |i, p: ProgressReaderUpdate| {
-            let id = i as u64;
-            match p {
-                ProgressReaderUpdate::Progress(offset) => {
-                    progress.call(ProvideProgress::Progress { id, offset })
-                }
-                ProgressReaderUpdate::Done => progress.call(ProvideProgress::Done { id }),
-            }
-        };
-        let (db, entries, hash) = create_collection_inner(data_sources, progress).await?;
-        self.inner.db.union_with(db);
+    fn provide0(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
+        futures::stream::empty()
+        // let path = msg.path;
+        // let data_sources: Vec<DataSource> = if path.is_dir() {
+        //     let mut paths = Vec::new();
+        //     let mut iter = tokio::fs::read_dir(&path).await?;
+        //     while let Some(el) = iter.next_entry().await? {
+        //         if el.path().is_file() {
+        //             paths.push(el.path().into());
+        //         }
+        //     }
+        //     paths
+        // } else if path.is_file() {
+        //     vec![path.into()]
+        // } else {
+        //     anyhow::bail!("path must be either a Directory or a File");
+        // };
+        // // create the collection
+        // for (i, ds) in data_sources.iter().enumerate() {
+        //     if let DataSource::File(path) = ds {
+        //         let size = tokio::fs::metadata(path).await?.len();
+        //         progress.call(ProvideProgress::Found {
+        //             id: i as u64,
+        //             name: path.display().to_string(),
+        //             size,
+        //         });
+        //     }
+        // }
+        // let progress = move |i, p: ProgressReaderUpdate| {
+        //     let id = i as u64;
+        //     match p {
+        //         ProgressReaderUpdate::Progress(offset) => {
+        //             progress.call(ProvideProgress::Progress { id, offset })
+        //         }
+        //         ProgressReaderUpdate::Done => progress.call(ProvideProgress::Done { id }),
+        //     }
+        // };
+        // let (db, entries, hash) = create_collection_inner(data_sources, progress).await?;
+        // self.inner.db.union_with(db);
 
-        Ok(ProvideResponse { hash, entries })
+        // Ok(ProvideResponse { hash, entries })
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
@@ -551,7 +542,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
         match msg {
             List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
             Provide(msg) => {
-                chan.rpc_with_progress(msg, handler, RpcHandler::provide)
+                chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
             }
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
@@ -947,6 +938,12 @@ fn compute_outboard(
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, _, hash) = create_collection_inner(data_sources, |_i, _o| {}).await?;
     Ok((Database::from(db), hash))
+}
+
+struct ProvideResponseEntry {
+    pub name: String,
+    pub hash: Hash,
+    pub size: u64,
 }
 
 /// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
