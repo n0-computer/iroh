@@ -702,6 +702,7 @@ async fn transfer_collection(
     writer.write_buf(&mut data).await?;
     for (i, blob) in c.blobs.iter().enumerate() {
         debug!("writing blob {}/{}", i, c.blobs.len());
+        tokio::task::yield_now().await;
         let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
         writer = writer1;
         if SentStatus::NotFound == status {
