@@ -154,6 +154,9 @@ impl From<anyhow::Error> for RpcError {
 /// A serializable result type for use in RPC responses.
 pub type RpcResult<T> = result::Result<T, RpcError>;
 
+/// Todo: gather more information about validation errors. E.g. offset
+///
+/// io::Error should be just the fallback when a more specific error is not available.
 #[derive(Debug, Display, Error)]
 pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
