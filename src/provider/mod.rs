@@ -837,10 +837,18 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             // need to thread the writer though the spawn_blocking, since
             // taking a reference does not work. spawn_blocking requires
             // 'static lifetime.
+
             writer = tokio::task::spawn_blocking(move || {
+                // Compress data
+                let mut compressed_writer =
+                    async_compression::tokio::write::ZstdEncoder::with_quality(
+                        writer,
+                        async_compression::Level::Fastest,
+                    );
+
                 let file_reader = std::fs::File::open(&path)?;
                 let outboard_reader = std::io::Cursor::new(outboard);
-                let mut wrapper = SyncIoBridge::new(&mut writer);
+                let mut wrapper = SyncIoBridge::new(&mut compressed_writer);
                 let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
                     file_reader,
                     outboard_reader,
@@ -848,7 +856,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                     size,
                 );
                 let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
-                std::io::Result::Ok(writer)
+                std::io::Result::Ok(compressed_writer.into_inner())
             })
             .await??;
 
@@ -1069,6 +1077,7 @@ async fn write_response<W: AsyncWrite + Unpin>(
     }
     let used = postcard::to_slice(&response, buffer)?;
 
+    // Write lp
     write_lp(&mut writer, used).await?;
 
     debug!("written response of length {}", used.len());

@@ -19,7 +19,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
-use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader, ReadBuf};
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -103,10 +103,13 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncSliceDecoder<quinn::RecvStream>);
+pub struct DataStream(AsyncSliceDecoder<RecvStream>);
+
+type RecvStream =
+    async_compression::tokio::bufread::ZstdDecoder<tokio::io::BufReader<quinn::RecvStream>>;
 
 impl DataStream {
-    fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
+    fn new(inner: RecvStream, hash: Hash) -> Self {
         DataStream(AsyncSliceDecoder::new(inner, &hash.into(), 0, u64::MAX))
     }
 
@@ -114,7 +117,7 @@ impl DataStream {
         self.0.read_size().await
     }
 
-    fn into_inner(self) -> quinn::RecvStream {
+    fn into_inner(self) -> RecvStream {
         self.0.into_inner()
     }
 }
@@ -149,7 +152,7 @@ where
     let now = Instant::now();
     let connection = setup(opts).await?;
 
-    let (mut writer, mut reader) = connection.open_bi().await?;
+    let (mut writer, reader) = connection.open_bi().await?;
 
     on_connected().await?;
 
@@ -181,6 +184,7 @@ where
     {
         debug!("reading response");
         let mut in_buffer = BytesMut::with_capacity(1024);
+        let mut reader = BufReader::new(reader);
 
         // track total amount of blob data transferred
         let mut data_len = 0;
@@ -218,7 +222,7 @@ where
                             if blob_reader.read_exact(&mut [0u8; 1]).await.is_ok() {
                                 bail!("`on_blob` callback did not fully read the blob content")
                             }
-                            reader = blob_reader.into_inner();
+                            reader = blob_reader.into_inner().into_inner();
                         }
                     }
 
@@ -236,11 +240,12 @@ where
                 }
 
                 // Shut down the stream
-                if let Some(chunk) = reader.read_chunk(8, false).await? {
-                    reader.stop(0u8.into()).ok();
-                    error!("Received unexpected data from the provider: {chunk:?}");
+                if let Ok(bytes) = reader.read_u8().await {
+                    reader.into_inner().stop(0u8.into()).ok();
+                    error!("Received unexpected data from the provider: {bytes:?}");
+                } else {
+                    drop(reader);
                 }
-                drop(reader);
 
                 let elapsed = now.elapsed();
 
@@ -261,7 +266,7 @@ where
 /// The `AsyncReader` can be used to read the content.
 async fn handle_blob_response(
     hash: Hash,
-    mut reader: quinn::RecvStream,
+    mut reader: BufReader<quinn::RecvStream>,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
     match read_lp(&mut reader, buffer).await? {
@@ -277,7 +282,10 @@ async fn handle_blob_response(
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = DataStream::new(reader, hash);
+                    // Decompress data
+                    let decompress_reader =
+                        async_compression::tokio::bufread::ZstdDecoder::new(reader);
+                    let decoder = DataStream::new(decompress_reader, hash);
                     Ok(decoder)
                 }
             }
