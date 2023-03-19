@@ -838,14 +838,10 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             // taking a reference does not work. spawn_blocking requires
             // 'static lifetime.
 
-            writer = tokio::task::spawn_blocking(move || {
-                // Compress data
-                let mut compressed_writer =
-                    async_compression::tokio::write::ZstdEncoder::with_quality(
-                        writer,
-                        async_compression::Level::Fastest,
-                    );
+            // Compress data
+            let mut compressed_writer = async_compression::tokio::write::BrotliEncoder::new(writer);
 
+            compressed_writer = tokio::task::spawn_blocking(move || {
                 let file_reader = std::fs::File::open(&path)?;
                 let outboard_reader = std::io::Cursor::new(outboard);
                 let mut wrapper = SyncIoBridge::new(&mut compressed_writer);
@@ -856,9 +852,12 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                     size,
                 );
                 let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
-                std::io::Result::Ok(compressed_writer.into_inner())
+                std::io::Result::Ok(compressed_writer)
             })
             .await??;
+
+            compressed_writer.flush().await?;
+            let writer = compressed_writer.into_inner();
 
             Ok((SentStatus::Sent, writer, size))
         }

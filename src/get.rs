@@ -106,7 +106,7 @@ impl Stats {
 pub struct DataStream(AsyncSliceDecoder<RecvStream>);
 
 type RecvStream =
-    async_compression::tokio::bufread::ZstdDecoder<tokio::io::BufReader<quinn::RecvStream>>;
+    async_compression::tokio::bufread::BrotliDecoder<tokio::io::BufReader<quinn::RecvStream>>;
 
 impl DataStream {
     fn new(inner: RecvStream, hash: Hash) -> Self {
@@ -284,7 +284,7 @@ async fn handle_blob_response(
                     assert!(buffer.is_empty());
                     // Decompress data
                     let decompress_reader =
-                        async_compression::tokio::bufread::ZstdDecoder::new(reader);
+                        async_compression::tokio::bufread::BrotliDecoder::new(reader);
                     let decoder = DataStream::new(decompress_reader, hash);
                     Ok(decoder)
                 }
