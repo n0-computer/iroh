@@ -169,12 +169,17 @@ impl Endpoint {
     pub fn note_recv_activity(&self) {
         if let Some(ref on_recv) = self.c.on_note_recv_activity {
             let now = Instant::now();
-            if let Some(last_recv) = &*self.last_recv.blocking_read() {
-                if last_recv.elapsed() > Duration::from_secs(10) {
-                    drop(last_recv);
-                    self.last_recv.blocking_write().replace(now);
-                    on_recv(&self.public_key);
-                }
+
+            let last_recv = &*self.last_recv.blocking_read();
+            if last_recv.is_none()
+                || last_recv
+                    .as_ref()
+                    .map(|l| l.elapsed() > Duration::from_secs(10))
+                    .expect("checked")
+            {
+                drop(last_recv);
+                self.last_recv.blocking_write().replace(now);
+                on_recv(&self.public_key);
             }
         }
     }
@@ -441,27 +446,26 @@ impl Endpoint {
             true
         });
 
-        let mut pings = Vec::new();
-        for (ep, st) in &state.endpoint_state {
-            if st.last_ping.is_some()
-                && st.last_ping.as_ref().unwrap().duration_since(now) < DISCO_PING_INTERVAL
-            {
-                continue;
-            }
-            pings.push(ep.clone());
-        }
+        let pings: Vec<_> = state
+            .endpoint_state
+            .iter()
+            .filter_map(|(ep, st)| {
+                if st.last_ping.is_some()
+                    && st.last_ping.as_ref().unwrap().duration_since(now) < DISCO_PING_INTERVAL
+                {
+                    return None;
+                }
+                Some(ep.clone())
+            })
+            .collect();
 
         let sent_any = !pings.is_empty();
-        let mut first_ping = true;
-        for ep in pings {
-            if first_ping && send_call_me_maybe {
+        for (i, ep) in pings.into_iter().enumerate() {
+            if i == 0 && send_call_me_maybe {
                 info!(
                     "disco: send, starting discovery for {:?} ({:?})",
                     self.public_key, state.disco_key,
                 );
-            }
-            if first_ping {
-                first_ping = false;
             }
 
             self.start_ping(state, ep, now, DiscoPingPurpose::Discovery);
@@ -500,11 +504,7 @@ impl Endpoint {
         for (_, st) in &mut state.endpoint_state {
             st.index = Index::Deleted; // assume deleted until updated in next loop
         }
-        for (i, ep) in n.endpoints.iter().enumerate() {
-            if i > u16::MAX as usize {
-                // Seems unlikely.
-                continue;
-            }
+        for (i, ep) in n.endpoints.iter().take(u16::MAX as usize).enumerate() {
             let index = Index::Some(i);
             if let Some(st) = state.endpoint_state.get_mut(ep) {
                 st.index = index
@@ -518,8 +518,8 @@ impl Endpoint {
                 );
             }
         }
-        // Now delete anything unless it's still in the network map or was a recently discovered endpoint.
 
+        // Now delete anything unless it's still in the network map or was a recently discovered endpoint.
         state.endpoint_state.retain(|ep, st| {
             if st.should_delete() {
                 // Inlined delete_endpoint
@@ -532,9 +532,9 @@ impl Endpoint {
         });
     }
 
-    // Clears all the endpoint's p2p state, reverting it to a
-    // DERP-only endpoint. It does not stop the endpoint's heartbeat
-    // timer, if one is running.
+    /// Clears all the endpoint's p2p state, reverting it to a
+    /// DERP-only endpoint. It does not stop the endpoint's heartbeat
+    /// timer, if one is running.
     async fn reset(&self, state: &mut InnerMutEndpoint) {
         state.last_send = None;
         state.last_full_ping = None;
@@ -559,7 +559,6 @@ impl Endpoint {
         ep: SocketAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        // (duplicatePing bool) {
         let state = &mut *tokio::task::block_in_place(|| self.state.blocking_lock());
 
         if let Some(st) = state.endpoint_state.get_mut(&ep) {
@@ -612,8 +611,8 @@ impl Endpoint {
         false
     }
 
-    /// Called when connectivity changes enough
-    /// that we should question our earlier assumptions about which paths work.
+    /// Called when connectivity changes enough that we should question our earlier
+    /// assumptions about which paths work.
     pub(super) async fn note_connectivity_change(&self) {
         let mut state = self.state.lock().await;
         state.trust_best_addr_until = None;
@@ -634,9 +633,8 @@ impl Endpoint {
     }
 
     /// Handles a Pong message (a reply to an earlier ping).
-    /// It should be called with the Conn.mu held.
     ///
-    /// It reports whether m.TxID corresponds to a ping that this endpoint sent.
+    /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
     pub(super) fn handle_pong_conn(
         &self,
         peer_map: &mut PeerMap,
@@ -863,18 +861,13 @@ impl Endpoint {
         };
         if let Some(derp_addr) = derp_addr {
             let mut sent = 0;
-            for t in transmits {
-                let transmit = quinn::Transmit {
-                    destination: derp_addr,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(), // TODO: avoid clone
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                };
-                match self
-                    .c
-                    .poll_send_addr(udp_state, cx, Some(&self.public_key), transmit)
-                {
+            for t in transmits.chunks_exact(1) {
+                match self.c.poll_send_addr(
+                    udp_state,
+                    cx,
+                    Some(&self.public_key),
+                    <&[quinn_proto::Transmit; 1]>::try_from(t).unwrap().into(),
+                ) {
                     Poll::Pending => {}
                     Poll::Ready(Ok(n)) => {
                         sent += n;

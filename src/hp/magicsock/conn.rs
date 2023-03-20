@@ -16,7 +16,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
 use futures::{future::BoxFuture, Future};
-use quinn::AsyncUdpSocket;
+use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     sync::{self, Mutex, RwLock},
@@ -988,13 +988,13 @@ impl Conn {
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
         pub_key: Option<&key::node::PublicKey>,
-        transmit: quinn_proto::Transmit,
+        transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        if transmit.destination.ip() != DERP_MAGIC_IP {
+        if transmit[0].destination.ip() != DERP_MAGIC_IP {
             return self.poll_send_udp(udp_state, cx, transmit);
         }
 
-        match self.derp_write_chan_of_addr(transmit.destination, pub_key) {
+        match self.derp_write_chan_of_addr(transmit[0].destination, pub_key) {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
@@ -1007,11 +1007,14 @@ impl Conn {
                         "connection closed",
                     )));
                 }
-
+                let (addr, content) = match transmit {
+                    TransmitCow::Borrowed(t) => (t[0].destination, t[0].contents.clone()),
+                    TransmitCow::Owned([t]) => (t.destination, t.contents),
+                };
                 match ch.try_send(DerpWriteRequest {
                     pub_key: pub_key.cloned(),
-                    addr: transmit.destination,
-                    content: transmit.contents,
+                    addr,
+                    content,
                 }) {
                     Ok(_) => {
                         //   metricSendDERPQueued.Add(1)
@@ -1035,14 +1038,13 @@ impl Conn {
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmit: quinn_proto::Transmit,
+        transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        let transmits = [transmit];
-        match transmits[0].destination {
-            SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmits),
+        match transmit[0].destination {
+            SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmit),
             SocketAddr::V6(_) => {
                 if let Some(ref conn) = self.pconn6 {
-                    conn.poll_send(udp_state, cx, &transmits)
+                    conn.poll_send(udp_state, cx, &transmit)
                 } else {
                     Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -1571,7 +1573,8 @@ impl Conn {
                     ecn: None,
                     segment_size: None, // TODO: make sure this is correct
                     src_ip: None,       // TODO
-                },
+                }
+                .into(),
             )
         })
         .await;
@@ -3022,6 +3025,36 @@ where
 
     // Last group.
     g(&transmits[start..end])
+}
+
+/// Hack around the usage of `&[Transmit]` in AsyncUdpSocket methods, to avoid copies.
+#[derive(Debug)]
+pub(super) enum TransmitCow<'a> {
+    Borrowed(&'a [Transmit; 1]),
+    Owned([Transmit; 1]),
+}
+
+impl Deref for TransmitCow<'_> {
+    type Target = [Transmit];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            TransmitCow::Borrowed(t) => &t[..],
+            TransmitCow::Owned(t) => &t[..],
+        }
+    }
+}
+
+impl<'a> From<&'a [Transmit; 1]> for TransmitCow<'a> {
+    fn from(value: &'a [Transmit; 1]) -> Self {
+        TransmitCow::Borrowed(value)
+    }
+}
+
+impl From<Transmit> for TransmitCow<'_> {
+    fn from(value: Transmit) -> Self {
+        TransmitCow::Owned([value])
+    }
 }
 
 #[cfg(test)]
