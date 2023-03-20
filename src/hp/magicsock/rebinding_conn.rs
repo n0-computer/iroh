@@ -19,42 +19,6 @@ use tracing::{debug, info};
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("no connection set")]
-    NoConn,
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-
-impl Error {
-    /// Reports whether err is an error from a UDP send
-    /// operation that should be treated as a UDP packet that just got lost.
-    ///
-    /// Notably, on Linux this reports true for EPERM errors (from outbound
-    /// firewall blocks) which aren't really send errors; they're just
-    /// sends that are never going to make it because the local OS blocked it.
-    pub fn treat_as_lost_udp(&self) -> bool {
-        if let Error::Io(io_err) = self {
-            // Linux, while not documented in the man page,
-            // returns EPERM when there's an OUTPUT rule with -j
-            // DROP or -j REJECT.  We use this very specific
-            // Linux+EPERM check rather than something super broad
-            // like net.Error.Temporary which could be anything.
-            //
-            // For now we only do this on Linux, as such outgoing
-            // firewall violations mapping to syscall errors
-            // hasn't yet been observed on other OSes.
-            if let Some(raw_os_err) = io_err.raw_os_error() {
-                if raw_os_err == libc::EPERM {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-}
-
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
 pub struct RebindingUdpConn {
     pub(super) inner: Arc<RwLock<Inner>>,
@@ -118,7 +82,7 @@ impl RebindingUdpConn {
         self.inner.read().await.port
     }
 
-    pub async fn close(&self) -> Result<(), Error> {
+    pub async fn close(&self) -> Result<(), io::Error> {
         let mut state = self.inner.write().await;
         state.close()
     }
@@ -223,7 +187,7 @@ impl Inner {
         self.port = port;
     }
 
-    pub fn close(&mut self) -> Result<(), Error> {
+    pub fn close(&mut self) -> Result<(), io::Error> {
         self.port = 0;
         // pconn.close() is not available, so we just drop for now
         // TODO: make sure the recv loops get shutdown
@@ -465,14 +429,13 @@ mod tests {
     async fn test_rebinding_conn_send_recv() -> Result<()> {
         let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
         let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);
-        let (m1, m1_key) = wrap_socket(m1)?;
+        let (m1, _m1_key) = wrap_socket(m1)?;
 
         let m2 = std::net::UdpSocket::bind("127.0.0.1:0")?;
         let m2 = RebindingUdpConn::from_socket(UdpSocket::from_std(m2)?);
-        let (m2, m2_key) = wrap_socket(m2)?;
+        let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m1.local_addr()?.port());
-        let m2_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m2.local_addr()?.port());
         let (m1_send, m1_recv) = flume::bounded(8);
 
         let m1_task = tokio::task::spawn(async move {

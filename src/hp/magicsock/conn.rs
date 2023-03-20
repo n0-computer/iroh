@@ -701,6 +701,7 @@ impl Conn {
 
     /// Makes addr a validated disco address for discoKey.
     /// Used to provide user/externally discovered addresses.
+    #[cfg(test)]
     async fn add_valid_disco_path_for_test(
         &self,
         node_key: &key::node::PublicKey,
@@ -735,8 +736,6 @@ impl Conn {
     where
         F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
-        let state = self.state.lock().await;
-
         res.node_ip = peer.addresses.get(0).copied();
         res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
             Some(name) => {
@@ -765,7 +764,7 @@ impl Conn {
         }
     }
 
-    pub(super) fn populate_cli_ping_response_locked(
+    pub(super) fn populate_cli_ping_response(
         &self,
         res: &mut cfg::PingResult,
         latency: Duration,
@@ -778,10 +777,10 @@ impl Conn {
         }
         let region_id = usize::from(ep.port());
         res.derp_region_id = Some(region_id);
-        res.derp_region_code = self.derp_region_code_locked(region_id);
+        res.derp_region_code = self.derp_region_code(region_id);
     }
 
-    fn derp_region_code_locked(&self, region_id: usize) -> String {
+    fn derp_region_code(&self, region_id: usize) -> String {
         match &*tokio::task::block_in_place(|| self.derp_map.blocking_read()) {
             Some(ref dm) => match dm.regions.get(&region_id) {
                 Some(dr) => dr.region_code.clone(),
@@ -843,7 +842,7 @@ impl Conn {
     }
 
     /// Starts connecting to our DERP home, if any.
-    fn start_derp_home_connect_locked(&self, state: &mut ConnState) {
+    fn start_derp_home_connect(&self, state: &mut ConnState) {
         self.go_derp_connect(state.my_derp);
     }
 
@@ -1177,12 +1176,12 @@ impl Conn {
 
         // TODO:
         // metricNumDERPConns.Set(int64(len(c.activeDerp)))
-        self.log_active_derp_locked(&mut state);
+        self.log_active_derp(&mut state);
 
         let this = self.clone();
         tokio::task::spawn(async move {
             let mut state = this.state.lock().await;
-            this.schedule_clean_stale_derp_locked(&mut state).await;
+            this.schedule_clean_stale_derp(&mut state).await;
         });
 
         // Build a start_gate for the derp reader+writer tasks, so they don't start running
@@ -1548,7 +1547,7 @@ impl Conn {
             disco_private,
             ..
         } = &mut *state;
-        let di = disco_info_locked(disco_info, &*disco_private, dst_disco);
+        let di = get_disco_info(disco_info, &*disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
         drop(state);
 
@@ -1581,7 +1580,7 @@ impl Conn {
                 // Can't send. (e.g. no IPv6 locally)
                 Ok(false)
             }
-            Ok(n) => {
+            Ok(_n) => {
                 // TODO:
                 // if is_derp {
                 //     metricSentDiscoDERP.Add(1);
@@ -1658,7 +1657,7 @@ impl Conn {
             disco_public,
             ..
         } = &mut *state;
-        let di = disco_info_locked(disco_info, &*disco_private, &sender);
+        let di = get_disco_info(disco_info, &*disco_private, &sender);
         let payload = di.shared_key.open(&sealed_box);
         if payload.is_err() {
             // This might be have been intended for a previous
@@ -1705,14 +1704,7 @@ impl Conn {
         match dm {
             disco::Message::Ping(ping) => {
                 // metricRecvDiscoPing.Add(1)
-                self.handle_ping_locked(
-                    &mut state,
-                    &mut peer_map,
-                    ping,
-                    &sender,
-                    src,
-                    derp_node_src,
-                );
+                self.handle_ping(&mut state, &mut peer_map, ping, &sender, src, derp_node_src);
                 true
             }
             disco::Message::Pong(pong) => {
@@ -1726,7 +1718,7 @@ impl Conn {
                     .cloned()
                     .collect();
                 for ep in eps {
-                    if ep.handle_pong_conn_locked(&mut *peer_map, &disco_public, &pong, di, src) {
+                    if ep.handle_pong_conn(&mut *peer_map, &disco_public, &pong, di, src) {
                         break;
                     }
                 }
@@ -1766,7 +1758,7 @@ impl Conn {
                         disco_private,
                         ..
                     } = &mut *state;
-                    let di = disco_info_locked(disco_info, &*disco_private, &sender);
+                    let di = get_disco_info(disco_info, &*disco_private, &sender);
                     di.set_node_key(node_key.clone());
                 }
                 info!(
@@ -1792,7 +1784,7 @@ impl Conn {
     ///
     /// derp_node_src is `Some` if the disco ping arrived via DERP.
     #[instrument(skip_all, fields(self.name = %self.name))]
-    fn unambiguous_node_key_of_ping_locked(
+    fn unambiguous_node_key_of_ping(
         &self,
         peer_map: &PeerMap,
         dm: &disco::Ping,
@@ -1828,7 +1820,7 @@ impl Conn {
     /// di is the DiscoInfo of the source of the ping.
     /// derp_node_src is non-zero if the ping arrived via DERP.
     #[instrument(skip_all, fields(self.name = %self.name))]
-    fn handle_ping_locked(
+    fn handle_ping(
         &self,
         state: &mut ConnState,
         peer_map: &mut PeerMap,
@@ -1843,7 +1835,7 @@ impl Conn {
             disco_public,
             ..
         } = &mut *state;
-        let di = disco_info_locked(disco_info, &*disco_private, &sender);
+        let di = get_disco_info(disco_info, &*disco_private, &sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -1860,7 +1852,7 @@ impl Conn {
         // reliant on DERP call-me-maybe to establish the disco<>node
         // mapping, and on subsequent disco handlePongLocked to establish the IP<>disco mapping.
         if let Some(nk) =
-            self.unambiguous_node_key_of_ping_locked(&*peer_map, &dm, &di.disco_key, derp_node_src)
+            self.unambiguous_node_key_of_ping(&*peer_map, &dm, &di.disco_key, derp_node_src)
         {
             if !is_derp {
                 peer_map.set_node_key_for_ip_port(&src, &nk);
@@ -2032,10 +2024,10 @@ impl Conn {
         self.network_up.store(up, Ordering::Relaxed);
 
         if up {
-            self.start_derp_home_connect_locked(&mut state);
+            self.start_derp_home_connect(&mut state);
         } else {
             self.port_mapper.note_network_down();
-            self.close_all_derp_locked(&mut state, "network-down");
+            self.close_all_derp(&mut state, "network-down");
         }
     }
 
@@ -2089,7 +2081,7 @@ impl Conn {
         let derp_map = derp_map_locked.clone();
         drop(derp_map_locked); // clone and unlock
         if derp_map.is_none() {
-            self.close_all_derp_locked(&mut state, "derp-disabled");
+            self.close_all_derp(&mut state, "derp-disabled");
             return;
         }
 
@@ -2106,10 +2098,10 @@ impl Conn {
                 if rid == state.my_derp {
                     state.my_derp = 0;
                 }
-                self.close_derp_locked(rid, "derp-region-redefined", &mut state.active_derp);
+                self.close_derp(rid, "derp-region-redefined", &mut state.active_derp);
             }
             if changes {
-                self.log_active_derp_locked(&mut state);
+                self.log_active_derp(&mut state);
             }
         }
 
@@ -2206,16 +2198,16 @@ impl Conn {
         disco_info.retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
     }
 
-    fn close_all_derp_locked(&self, state: &mut ConnState, why: &'static str) {
+    fn close_all_derp(&self, state: &mut ConnState, why: &'static str) {
         if state.active_derp.is_empty() {
             return; // without the useless log statement
         }
         // Need to collect to avoid double borrow
         let regions: Vec<_> = state.active_derp.keys().copied().collect();
         for region in regions {
-            self.close_derp_locked(region, why, &mut state.active_derp);
+            self.close_derp(region, why, &mut state.active_derp);
         }
-        self.log_active_derp_locked(state);
+        self.log_active_derp(state);
     }
 
     /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
@@ -2246,12 +2238,8 @@ impl Conn {
                 tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
                     if let Err(_err) = dc.ping().await {
                         let mut state = this.state.lock().await;
-                        this.close_or_reconnect_derp_locked(
-                            region_id,
-                            "rebind-ping-fail",
-                            &mut state,
-                        )
-                        .await;
+                        this.close_or_reconnect_derp(region_id, "rebind-ping-fail", &mut state)
+                            .await;
                         return;
                     }
                     debug!("post-rebind ping of DERP region {} okay", region_id);
@@ -2260,30 +2248,30 @@ impl Conn {
         }
 
         for (region_id, why) in tasks {
-            self.close_or_reconnect_derp_locked(region_id, why, &mut state)
+            self.close_or_reconnect_derp(region_id, why, &mut state)
                 .await;
         }
 
-        self.log_active_derp_locked(&mut state);
+        self.log_active_derp(&mut state);
     }
 
     /// Closes the DERP connection to the provided `region_id` and starts reconnecting it if it's
     /// our current home DERP.
-    async fn close_or_reconnect_derp_locked(
+    async fn close_or_reconnect_derp(
         &self,
         region_id: usize,
         why: &'static str,
         state: &mut ConnState,
     ) {
-        self.close_derp_locked(region_id, why, &mut state.active_derp);
+        self.close_derp(region_id, why, &mut state.active_derp);
         if state.my_derp == region_id {
-            self.start_derp_home_connect_locked(state);
+            self.start_derp_home_connect(state);
         }
     }
 
-    /// It is the responsibility of the caller to call `log_active_derp_locked` after any set of closes.
+    /// It is the responsibility of the caller to call `log_active_derp` after any set of closes.
     #[instrument(skip_all, fields(self.name = %self.name))]
-    fn close_derp_locked(
+    fn close_derp(
         &self,
         region_id: usize,
         why: &'static str,
@@ -2299,7 +2287,7 @@ impl Conn {
 
             let ActiveDerp { c, cancel, .. } = ad;
             tokio::task::spawn(c.close());
-            cancel.send(true);
+            let _ = cancel.send(true);
 
             // TODO:
             // metricNumDERPConns.Set(int64(len(c.activeDerp)))
@@ -2307,7 +2295,7 @@ impl Conn {
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
-    fn log_active_derp_locked(&self, state: &mut ConnState) {
+    fn log_active_derp(&self, state: &mut ConnState) {
         let now = Instant::now();
         debug!("{} active derp conns{}", state.active_derp.len(), {
             let mut s = String::new();
@@ -2374,18 +2362,18 @@ impl Conn {
             }
         }
         for i in to_close {
-            self.close_derp_locked(i, "idle", &mut state.active_derp);
+            self.close_derp(i, "idle", &mut state.active_derp);
         }
         if dirty {
-            self.log_active_derp_locked(&mut state);
+            self.log_active_derp(&mut state);
         }
         if some_non_home_open {
-            self.schedule_clean_stale_derp_locked(&mut state).await;
+            self.schedule_clean_stale_derp(&mut state).await;
         }
     }
 
     // uses Pin<Box>> to avoid cycles in type inf
-    fn schedule_clean_stale_derp_locked<'a, 'b: 'a>(
+    fn schedule_clean_stale_derp<'a, 'b: 'a>(
         &'a self,
         state: &'b mut ConnState,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + 'a>> {
@@ -2414,18 +2402,18 @@ impl Conn {
         self.state.lock().await.active_derp.len()
     }
 
-    async fn derp_region_code_of_addr_locked(&self, ip_port: &str) -> String {
+    async fn derp_region_code_of_addr(&self, ip_port: &str) -> String {
         let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
         match addr {
             Ok(addr) => {
                 let region_id = usize::from(addr.port());
-                self.derp_region_code_of_id_locked(region_id).await
+                self.derp_region_code_of_id(region_id).await
             }
             Err(_) => String::new(),
         }
     }
 
-    async fn derp_region_code_of_id_locked(&self, region_id: usize) -> String {
+    async fn derp_region_code_of_id(&self, region_id: usize) -> String {
         if let Some(ref dm) = &*self.derp_map.read().await {
             if let Some(r) = dm.regions.get(&region_id) {
                 return r.region_code.clone();
@@ -2462,7 +2450,7 @@ impl Conn {
 
         state.closed = true;
         // c.connCtxCancel()
-        self.close_all_derp_locked(&mut state, "conn-close");
+        self.close_all_derp(&mut state, "conn-close");
         // Ignore errors from c.pconnN.Close.
         // They will frequently have been closed already by a call to connBind.Close.
         if let Some(ref conn) = self.pconn6 {
@@ -2474,13 +2462,13 @@ impl Conn {
         // already closed. We want everything else in the Conn to be
         // consistently in the closed state before we release mu to wait
         // on the endpoint updater & derphttp.Connect.
-        self.tasks_running_locked(&mut state).await;
+        self.tasks_running(&mut state).await;
 
         Ok(())
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn tasks_running_locked(&self, state: &mut ConnState) {
+    async fn tasks_running(&self, state: &mut ConnState) {
         if let Some(handle) = state.endpoints_update_state.running.take() {
             if let Err(err) = handle.await {
                 debug!("endpoint update error: {:?}", err);
@@ -2972,7 +2960,7 @@ struct ActiveDerp {
 }
 
 /// Returns the previous or new DiscoInfo for `k`.
-fn disco_info_locked<'a>(
+fn get_disco_info<'a>(
     disco_info: &'a mut HashMap<key::disco::PublicKey, DiscoInfo>,
     disco_private: &key::disco::SecretKey,
     k: &key::disco::PublicKey,
@@ -3191,8 +3179,6 @@ mod tests {
     }
 
     struct Devices {
-        m1_ip: IpAddr,
-        m2_ip: IpAddr,
         stun_ip: IpAddr,
     }
 
@@ -3422,8 +3408,6 @@ mod tests {
             .ok();
 
         let devices = Devices {
-            m1_ip: "127.0.0.1".parse()?,
-            m2_ip: "127.0.0.1".parse()?,
             stun_ip: "127.0.0.1".parse()?,
         };
 

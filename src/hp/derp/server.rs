@@ -8,12 +8,10 @@ use std::time::Duration;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::oneshot::Receiver;
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
 use super::client::ClientInfo;
-use super::conn::Conn;
 
 // TODO: skiping `verboseDropKeys` for now
 

@@ -22,19 +22,6 @@ use self::endpoint::Endpoint;
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 
-/// Reports whether magicsock should enable the DERP return path optimization (Issue 150).
-fn use_derp_route() -> bool {
-    // if b, ok := debugUseDerpRoute().Get(); ok {
-    //     return b;
-    // }
-
-    // ob := controlclient.DERPRouteFlag();
-    // if v, ok := ob.Get(); ok {
-    //     return v
-    // }
-    true
-}
-
 /// All the information magicsock tracks about a particular peer.
 #[derive(Clone, Debug)]
 pub struct PeerInfo {
