@@ -20,6 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
+use async_compression::tokio::write::BrotliEncoder;
 use bytes::{Bytes, BytesMut};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -697,15 +698,19 @@ async fn transfer_collection(
         },
     )
     .await?;
+    let mut compressed_writer = BrotliEncoder::new(ShutdownCatcher(writer));
 
     let mut data = BytesMut::from(&encoded[..]);
-    writer.write_buf(&mut data).await?;
+    compressed_writer.write_buf(&mut data).await?;
     for (i, blob) in c.blobs.iter().enumerate() {
         debug!("writing blob {}/{}", i, c.blobs.len());
         tokio::task::yield_now().await;
-        let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
-        writer = writer1;
+        let (status, writer1, size) =
+            send_blob(db.clone(), blob.hash, compressed_writer, buffer).await?;
+        compressed_writer = writer1;
         if SentStatus::NotFound == status {
+            compressed_writer.shutdown().await?;
+            let mut writer = compressed_writer.into_inner().into_inner();
             writer.finish().await?;
             return Ok(status);
         }
@@ -719,6 +724,8 @@ async fn transfer_collection(
         });
     }
 
+    compressed_writer.shutdown().await?;
+    let mut writer = compressed_writer.into_inner().into_inner();
     writer.finish().await?;
     Ok(SentStatus::Sent)
 }
@@ -870,14 +877,10 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             // taking a reference does not work. spawn_blocking requires
             // 'static lifetime.
 
-            // Compress data
-            let mut compressed_writer =
-                async_compression::tokio::write::BrotliEncoder::new(ShutdownCatcher(writer));
-
-            compressed_writer = tokio::task::spawn_blocking(move || {
+            writer = tokio::task::spawn_blocking(move || {
                 let file_reader = std::fs::File::open(&path)?;
                 let outboard_reader = std::io::Cursor::new(outboard);
-                let mut wrapper = SyncIoBridge::new(&mut compressed_writer);
+                let mut wrapper = SyncIoBridge::new(&mut writer);
                 let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
                     file_reader,
                     outboard_reader,
@@ -885,12 +888,9 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                     size,
                 );
                 let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
-                std::io::Result::Ok(compressed_writer)
+                std::io::Result::Ok(writer)
             })
             .await??;
-
-            compressed_writer.shutdown().await?;
-            let writer = compressed_writer.into_inner().into_inner();
 
             Ok((SentStatus::Sent, writer, size))
         }

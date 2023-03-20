@@ -16,6 +16,7 @@ use crate::protocol::{
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
 use anyhow::{anyhow, bail, Context, Result};
+use async_compression::tokio::bufread::BrotliDecoder;
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
@@ -105,8 +106,7 @@ impl Stats {
 #[derive(Debug)]
 pub struct DataStream(AsyncSliceDecoder<RecvStream>);
 
-type RecvStream =
-    async_compression::tokio::bufread::BrotliDecoder<tokio::io::BufReader<quinn::RecvStream>>;
+type RecvStream = BrotliDecoder<tokio::io::BufReader<quinn::RecvStream>>;
 
 impl DataStream {
     fn new(inner: RecvStream, hash: Hash) -> Self {
@@ -196,9 +196,10 @@ where
                     // server is sending over a collection of blobs
                     Res::FoundCollection { total_blobs_size } => {
                         data_len = total_blobs_size;
+                        let mut compressed_reader = BrotliDecoder::new(reader);
 
                         // read entire collection data into buffer
-                        let data = read_bao_encoded(&mut reader, hash).await?;
+                        let data = read_bao_encoded(&mut compressed_reader, hash).await?;
 
                         // decode the collection
                         let collection = Collection::from_bytes(&data)?;
@@ -208,7 +209,8 @@ where
                         let mut remaining_size = total_blobs_size;
                         for blob in collection.blobs {
                             let mut blob_reader =
-                                handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
+                                handle_blob_response(blob.hash, compressed_reader, &mut in_buffer)
+                                    .await?;
 
                             let size = blob_reader.read_size().await?;
                             anyhow::ensure!(
@@ -222,8 +224,9 @@ where
                             if blob_reader.read_exact(&mut [0u8; 1]).await.is_ok() {
                                 bail!("`on_blob` callback did not fully read the blob content")
                             }
-                            reader = blob_reader.into_inner().into_inner();
+                            compressed_reader = blob_reader.into_inner();
                         }
+                        reader = compressed_reader.into_inner();
                     }
 
                     // unexpected message
@@ -266,7 +269,7 @@ where
 /// The `AsyncReader` can be used to read the content.
 async fn handle_blob_response(
     hash: Hash,
-    mut reader: BufReader<quinn::RecvStream>,
+    mut reader: BrotliDecoder<BufReader<quinn::RecvStream>>,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
     match read_lp(&mut reader, buffer).await? {
@@ -282,10 +285,7 @@ async fn handle_blob_response(
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    // Decompress data
-                    let decompress_reader =
-                        async_compression::tokio::bufread::BrotliDecoder::new(reader);
-                    let decoder = DataStream::new(decompress_reader, hash);
+                    let decoder = DataStream::new(reader, hash);
                     Ok(decoder)
                 }
             }
