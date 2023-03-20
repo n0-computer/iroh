@@ -15,35 +15,15 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use super::conn::Conn;
-use super::server::ServerMessage;
+use super::types::PacketForwarder;
 use super::{
-    read_frame, write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
+    read_frame,
+    types::{Conn, Packet, PeerConnState, ServerMessage},
+    write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_SEND_PACKET, FRAME_WATCH_CONNS, KEEP_ALIVE, MAX_FRAME_SIZE,
     MAX_PACKET_SIZE, PREFERRED,
 };
-
-/// A request to write a dataframe to a Client
-#[derive(Debug, Clone)]
-pub(crate) struct Packet {
-    /// The sender of the packet
-    pub(crate) src: PublicKey,
-    /// When a packet was put onto a queue before it was sent,
-    /// and is used for reporting metrics on the duration of packets
-    /// in the queue.
-    pub(crate) enqueued_at: Instant,
-
-    /// The data packet bytes.
-    pub(crate) bytes: Bytes,
-}
-
-/// PeerConnState represents whether or not a peer is connected to the server.
-#[derive(Debug, Clone)]
-pub(crate) struct PeerConnState {
-    pub(crate) peer: PublicKey,
-    pub(crate) present: bool,
-}
 
 #[derive(Debug)]
 /// A client's connection to the server
@@ -128,11 +108,12 @@ pub(crate) struct ClientChannels {
 
 #[derive(Debug)]
 // TODO: Not really the way we usually think of a builder, clean this up
-pub struct ClientBuilder<C, R, W>
+pub struct ClientBuilder<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
@@ -142,14 +123,15 @@ where
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
-    pub(crate) server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
+    pub(crate) server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
 }
 
-impl<C, R, W> ClientBuilder<C, R, W>
+impl<C, R, W, P> ClientBuilder<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
 {
     /// Creates a client from a connection, which starts a read and write loop to handle
     /// io to the client
@@ -175,7 +157,7 @@ where
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
-    pub fn new<R, W>(
+    pub fn new<R, W, P>(
         key: PublicKey,
         conn_num: usize,
         conn: C,
@@ -184,11 +166,12 @@ where
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
-        server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
+        server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
     ) -> ClientConnManager<C>
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
         W: AsyncWrite + Unpin + Send + Sync + 'static,
+        P: PacketForwarder,
     {
         let done = CancellationToken::new();
         let client_id = (key.clone(), conn_num);
@@ -542,11 +525,12 @@ where
 ///     - tell the server to add the current client as a watcher TODO: what is a watcher?
 ///     - tell the server to close a given peer
 ///     - tell the server to forward a packet from another peer.
-struct ClientConnReader<C, R, W>
+struct ClientConnReader<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
 {
     /// Indicates whether this client can mesh
     can_mesh: bool,
@@ -559,7 +543,7 @@ where
 
     /// Channels used to communicate with the server about actions
     /// it needs to take on behalf of the client
-    server_channel: mpsc::Sender<ServerMessage<C, R, W>>,
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
@@ -572,11 +556,12 @@ where
     preferred: Arc<AtomicBool>,
 }
 
-impl<C, R, W> ClientConnReader<C, R, W>
+impl<C, R, W, P> ClientConnReader<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync,
     W: AsyncWrite + Unpin + Send + Sync,
+    P: PacketForwarder,
 {
     async fn run(mut self, done: CancellationToken) -> Result<()> {
         tokio::select! {
@@ -807,6 +792,13 @@ mod tests {
         }
     }
 
+    struct MockPacketForwarder {}
+    impl PacketForwarder for MockPacketForwarder {
+        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: Bytes) {
+            tracing::info!("forwarding packet from {srckey:?} to {dstkey:?}");
+        }
+    }
+
     #[tokio::test]
     async fn test_client_conn_reader_basic() -> Result<()> {
         let (reader, mut writer) = tokio::io::duplex(1024);
@@ -815,15 +807,19 @@ mod tests {
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let conn_reader: ClientConnReader<MockConn, DuplexStream, DuplexStream> =
-            ClientConnReader {
-                key: key.clone(),
-                can_mesh: true,
-                reader,
-                send_pong: send_pong_s,
-                server_channel: server_channel_s,
-                preferred: Arc::clone(&preferred),
-            };
+        let conn_reader: ClientConnReader<
+            MockConn,
+            DuplexStream,
+            DuplexStream,
+            MockPacketForwarder,
+        > = ClientConnReader {
+            key: key.clone(),
+            can_mesh: true,
+            reader,
+            send_pong: send_pong_s,
+            server_channel: server_channel_s,
+            preferred: Arc::clone(&preferred),
+        };
 
         let done = CancellationToken::new();
         let reader_done = done.clone();

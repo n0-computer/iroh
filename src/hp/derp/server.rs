@@ -3,19 +3,14 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
-use super::client::ClientInfo;
-use super::clients::Clients;
-use super::conn::Conn;
-
+use super::types::{ClientInfo, PacketForwarder};
 // TODO: skiping `verboseDropKeys` for now
 
 /// The number of packets buffered for sending
@@ -99,18 +94,6 @@ pub struct Server<'a> {
     // TODO: how is this used, should it be a `Sender`?
     // net_conns: HashMap<C, Receiver<()>>,
     // clients: HashMap<PublicKey, ClientSet>,
-    // watchers: HashMap<ClientConn, bool>,
-    /// Tracks all clients in the cluster, both locally and to mesh peers.
-    /// If the value is nil, that means the peer is only local (And thus in
-    /// the clients Map, but not remote). If the value is non-nil, it's remote
-    /// (+ maybe also local).
-    clients_mesh: HashMap<PublicKey, Option<PacketForwarder>>,
-    /// Tracks which peers have sent to which other peers, and at which
-    /// connection number. This isn't on sclient because it includes intra-region
-    /// forwarded packets as the src.
-    /// src => dst => dst's latest sclient.connNum
-    sent_to: HashMap<PublicKey, HashSet<PublicKey>>,
-
     /// Maps from netip.AddrPort to a client's public key
     key_of_addr: HashMap<SocketAddr, PublicKey>,
 }
@@ -320,11 +303,11 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: PacketForwarder) {
+    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
         todo!();
     }
 
-    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: PacketForwarder) {
+    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
         todo!();
     }
 
@@ -353,60 +336,4 @@ enum DropReason {
     WriteError,
     /// The PublicKey is connected 2+ times (active/active, fighting)
     DupClient,
-}
-
-#[derive(Debug)]
-pub struct PacketForwarder {}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct ServerInfo {
-    pub(crate) version: usize,
-    pub(crate) token_bucket_bytes_per_second: usize,
-    pub(crate) token_bucket_bytes_burst: usize,
-}
-
-use super::client_conn::ClientBuilder;
-// TODO: need a types module
-use super::client_conn::Packet;
-
-pub(crate) enum ServerMessage<C, R, W>
-where
-    C: Conn,
-    R: AsyncRead + Unpin + Send + Sync + 'static,
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
-{
-    AddWatcher(PublicKey),
-    ClosePeer(PublicKey),
-    SendPacket((PublicKey, Packet)),
-    SendDiscoPacket((PublicKey, Packet)),
-    CreateClient(ClientBuilder<C, R, W>),
-    Unregister(PublicKey),
-}
-
-impl<C, R, W> std::fmt::Debug for ServerMessage<C, R, W>
-where
-    C: Conn,
-    R: AsyncRead + Unpin + Send + Sync + 'static,
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ServerMessage::AddWatcher(key) => write!(f, "ServerMessage::AddWatcher({key:?})"),
-            ServerMessage::ClosePeer(key) => write!(f, "ServerMessage::ClosePeer({key:?})"),
-            ServerMessage::SendPacket((key, packet)) => {
-                write!(f, "ServerMessage::SendPacket(({key:?}, {packet:?}))")
-            }
-            ServerMessage::SendDiscoPacket((key, packet)) => {
-                write!(f, "ServerMessage::SendDiscoPacket(({key:?}, {packet:?}))")
-            }
-            ServerMessage::CreateClient(client_builder) => {
-                write!(
-                    f,
-                    "ServerMessage::CreateClient({:?}, {})",
-                    client_builder.key, client_builder.conn_num
-                )
-            }
-            ServerMessage::Unregister(key) => write!(f, "ServerMessage::Unregister({key:?})"),
-        }
-    }
 }

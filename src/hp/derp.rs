@@ -12,10 +12,10 @@
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
-pub(crate) mod conn;
 pub mod http;
 mod map;
 mod server;
+pub(crate) mod types;
 
 pub use self::client::ReceivedMessage;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};

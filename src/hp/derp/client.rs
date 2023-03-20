@@ -1,29 +1,24 @@
 //! based on tailscale/derp/derp_client.go
 use std::net::SocketAddr;
-use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use super::{
-    conn::Conn, read_frame, server::ServerInfo, write_frame, FrameType, FRAME_CLIENT_INFO,
-    FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE,
-    FRAME_PING, FRAME_PONG, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO,
-    FRAME_WATCH_CONNS, MAGIC, MAX_PACKET_SIZE, PROTOCOL_VERSION,
+    read_frame,
+    types::{ClientInfo, Conn, RateLimiter, ServerInfo},
+    write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET,
+    FRAME_HEALTH, FRAME_KEEP_ALIVE, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
+    FRAME_PING, FRAME_PONG, FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET,
+    FRAME_SERVER_INFO, FRAME_SERVER_KEY, FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN,
+    MAX_PACKET_SIZE, NONCE_LEN, NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
 };
-use super::{NOT_PREFERRED, PREFERRED};
-use crate::hp::{
-    derp::{
-        FRAME_KEEP_ALIVE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, FRAME_SERVER_KEY, MAX_FRAME_SIZE,
-        MAX_INFO_LEN, NONCE_LEN,
-    },
-    key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH},
-};
+
+use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 /// A DERP Client.
 pub struct Client<W, R, C>
@@ -446,23 +441,6 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
-#[derive(Debug, Serialize, Deserialize, MaxSize)]
-pub(crate) struct ClientInfo {
-    /// The DERP protocol version that the client was built with.
-    /// See [`PROTOCOL_VERSION`].
-    version: usize,
-    /// Optionally specifies a pre-shared key used by trusted clients.
-    /// It's required to subscribe to the connection list and forward
-    /// packets. It's empty for regular users.
-    /// TODO: this is a string in the go-impl, using an Option<array> here
-    /// to satisfy postcard's `MaxSize` trait
-    mesh_key: Option<[u8; 32]>,
-    /// Whether the client declares it's able to ack pings
-    can_ack_pings: bool,
-    /// Whether this client is a prober.
-    is_prober: bool,
-}
-
 #[derive(Debug, Clone)]
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
@@ -520,38 +498,6 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
-}
-
-pub(crate) struct RateLimiter {
-    inner: governor::RateLimiter<
-        governor::state::direct::NotKeyed,
-        governor::state::InMemoryState,
-        governor::clock::DefaultClock,
-        governor::middleware::NoOpMiddleware,
-    >,
-}
-
-impl RateLimiter {
-    fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Self> {
-        ensure!(bytes_per_second != 0);
-        ensure!(bytes_burst != 0);
-        let bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)?).unwrap();
-        let bytes_burst = NonZeroU32::new(u32::try_from(bytes_burst)?).unwrap();
-        Ok(Self {
-            inner: governor::RateLimiter::direct(
-                governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
-            ),
-        })
-    }
-
-    fn check_n(&self, n: usize) -> Result<()> {
-        ensure!(n != 0);
-        let n = NonZeroU32::new(u32::try_from(n)?).unwrap();
-        match self.inner.check_n(n) {
-            Ok(_) => Ok(()),
-            Err(_) => bail!("batch cannot go through"),
-        }
-    }
 }
 
 pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
