@@ -47,6 +47,69 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     test_provide_get_loop(&path, Input::Stdin, Output::Stdout)
 }
 
+#[cfg(all(unix, feature = "cli"))]
+#[test]
+fn cli_provide_persistence() -> anyhow::Result<()> {
+    use iroh::provider::Database;
+    use nix::{
+        sys::signal::{self, Signal},
+        unistd::Pid,
+    };
+
+    let dir = testdir!();
+    let iroh_data_dir = dir.join("iroh_data_dir");
+
+    let foo_path = dir.join("foo");
+    std::fs::write(&foo_path, b"foo")?;
+    let bar_path = dir.join("bar");
+    std::fs::write(&bar_path, b"bar")?;
+    // spawn iroh in provide mode
+    let iroh_provide = |path| {
+        Command::new(iroh_bin())
+            .env("IROH_DATA_DIR", &iroh_data_dir)
+            // comment out to get debug output from the child process
+            // .env("RUST_LOG", "debug")
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .arg("provide")
+            .arg("--addr")
+            .arg(ADDR)
+            .arg("--rpc-port")
+            .arg("disabled")
+            .arg(path)
+            .spawn()
+    };
+    // provide for 1 sec, then stop with control-c
+    let provide_1sec = |path| {
+        let mut child = iroh_provide(path)?;
+        // wait for the provider to start
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        // kill the provider via Control-C
+        signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
+        // wait for the provider to exit and make sure that it exited successfully
+        let status = child.wait()?;
+        // comment out to get debug output from the child process
+        std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
+        assert!(status.success());
+        anyhow::Ok(())
+    };
+    provide_1sec(&foo_path)?;
+    // should have some data now
+    let db = Database::load_test(iroh_data_dir.clone())?;
+    let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    assert_eq!(blobs, vec![foo_path.clone()]);
+
+    provide_1sec(&bar_path)?;
+    // should have more data now
+    let db = Database::load_test(&iroh_data_dir)?;
+    let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    blobs.sort();
+    assert_eq!(blobs, vec![bar_path, foo_path]);
+
+    Ok(())
+}
+
 /// Parameter for `test_provide_get_loop`, that determines how we handle the fetched data from the
 /// `iroh get` command
 #[derive(Debug, PartialEq)]
@@ -66,6 +129,42 @@ enum Input {
     Path,
     /// Idincates we should pipe the content via `stdin` to the `iroh provide` command
     Stdin,
+}
+
+fn iroh_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_iroh")
+}
+
+fn make_provider(path: &Path, input: &Input, home: impl AsRef<Path>) -> Result<ProvideProcess> {
+    // spawn a provider & optionally provide from stdin
+    let mut command = Command::new(iroh_bin());
+    let res = command
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .env("RUST_LOG", "debug")
+        .env(
+            "IROH_DATA_DIR",
+            home.as_ref().join("iroh_data_dir").as_os_str(),
+        )
+        .stderr(Stdio::piped())
+        .arg("provide")
+        .arg(path)
+        .arg("--addr")
+        .arg(ADDR)
+        .arg("--rpc-port")
+        .arg("disabled");
+
+    let provider = match input {
+        Input::Stdin => {
+            let f = File::open(path)?;
+            let stdin = Stdio::from(f);
+            res.stdin(stdin).spawn()?
+        }
+        Input::Path => res.stdin(Stdio::null()).spawn()?,
+    };
+
+    // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
+    Ok(ProvideProcess { child: provider })
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -95,39 +194,10 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         1
     };
 
-    let iroh = env!("CARGO_BIN_EXE_iroh");
+    let home = testdir!();
+    let mut provider = make_provider(&path, &input, home)?;
+    // std::io::copy(&mut provider.child.stderr.take().unwrap(), &mut std::io::stderr())?;
 
-    // spawn a provider & optionally provide from stdin
-    let provider = match input {
-        Input::Stdin => {
-            let f = File::open(&path)?;
-            let stdin = Stdio::from(f);
-            Command::new(iroh)
-                .stderr(Stdio::null())
-                .stdout(Stdio::piped())
-                .stdin(stdin)
-                .arg("provide")
-                .arg("--addr")
-                .arg(ADDR)
-                .arg("--rpc-port")
-                .arg("0")
-                .spawn()?
-        }
-        Input::Path => Command::new(iroh)
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .stdin(Stdio::null())
-            .arg("provide")
-            .arg(&path)
-            .arg("--addr")
-            .arg(ADDR)
-            .arg("--rpc-port")
-            .arg("0")
-            .spawn()?,
-    };
-
-    // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
-    let mut provider = ProvideProcess { child: provider };
     let stdout = provider.child.stdout.take().unwrap();
     let stdout = BufReader::new(stdout);
 
@@ -135,7 +205,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let all_in_one = match_provide_output(stdout, num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut cmd = Command::new(iroh);
+    let mut cmd = Command::new(iroh_bin());
     cmd.arg("get-ticket").arg(all_in_one);
     let cmd = if let Some(ref out) = out {
         cmd.arg("--out").arg(out)
