@@ -821,6 +821,38 @@ enum SentStatus {
     NotFound,
 }
 
+struct ShutdownCatcher<W>(W);
+
+impl<W> ShutdownCatcher<W> {
+    fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for ShutdownCatcher<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+}
+
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: Database,
     name: Hash,
@@ -839,7 +871,8 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             // 'static lifetime.
 
             // Compress data
-            let mut compressed_writer = async_compression::tokio::write::BrotliEncoder::new(writer);
+            let mut compressed_writer =
+                async_compression::tokio::write::BrotliEncoder::new(ShutdownCatcher(writer));
 
             compressed_writer = tokio::task::spawn_blocking(move || {
                 let file_reader = std::fs::File::open(&path)?;
@@ -856,8 +889,8 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             })
             .await??;
 
-            compressed_writer.flush().await?;
-            let writer = compressed_writer.into_inner();
+            compressed_writer.shutdown().await?;
+            let writer = compressed_writer.into_inner().into_inner();
 
             Ok((SentStatus::Sent, writer, size))
         }
