@@ -67,3 +67,11 @@ test = []
 [[bin]]
 name = "iroh"
 required-features = ["cli"]
+
+[profile.optimized-release]
+inherits = 'release'
+lto = true
+debug-assertions = false
+opt-level = 3
+panic = 'abort'
+incremental = false
