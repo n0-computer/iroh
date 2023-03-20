@@ -2,8 +2,9 @@
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 use crate::hp::key::node::PublicKey;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use futures::future::join_all;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -46,6 +47,8 @@ where
     preferred: Option<usize>,
     /// the connection
     conn: ClientConnManager<C>,
+    /// list of peers we have sent messages to
+    sent_to: HashSet<PublicKey>,
 }
 
 impl<C> Client<C>
@@ -56,7 +59,13 @@ where
         Self {
             preferred: None,
             conn,
+            sent_to: HashSet::default(),
         }
+    }
+
+    /// Record that this client sent a packet to the `dst` client
+    pub fn record_send(&mut self, dst: PublicKey) {
+        self.sent_to.insert(dst);
     }
 
     pub fn shutdown(self) {
@@ -64,6 +73,21 @@ where
             self.conn.shutdown().await;
             // notify peers of disconnect?
         });
+    }
+
+    pub async fn shutdown_await(self) {
+        self.conn.shutdown().await;
+    }
+
+    pub fn close_conn(&self) {
+        if let Err(e) = self.conn.close_conn() {
+            tracing::warn!(
+                "error closing connection for {:?} {}: {}",
+                self.conn.key,
+                self.conn.conn_num,
+                e
+            );
+        }
     }
 
     pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
@@ -134,9 +158,42 @@ where
         }
     }
 
-    pub fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) {
+        let mut handles = Vec::new();
         for (_, client) in self.inner.drain() {
-            client.shutdown();
+            handles.push(tokio::spawn(async move { client.shutdown_await().await }));
+        }
+        join_all(handles).await;
+    }
+
+    pub fn close_conn(&mut self, key: &PublicKey) {
+        if let Some(client) = self.inner.get(key) {
+            client.close_conn();
+        }
+    }
+
+    /// Record that `src` sent or forwarded a packet to `dst`
+    pub fn record_send(&mut self, src: &PublicKey, dst: PublicKey) {
+        if let Some(client) = self.inner.get_mut(src) {
+            client.record_send(dst);
+        }
+    }
+
+    pub fn all_clients(&mut self) -> impl Iterator<Item = &PublicKey> {
+        self.inner.keys()
+    }
+
+    pub fn contains_key(&self, key: &PublicKey) -> bool {
+        self.inner.contains_key(key)
+    }
+
+    pub fn broadcast_peer_state_change<'a>(
+        &mut self,
+        keys: impl Iterator<Item = &'a PublicKey>,
+        updates: Vec<PeerConnState>,
+    ) {
+        for k in keys {
+            self.send_mesh_updates(&k, updates.clone());
         }
     }
 
@@ -159,33 +216,43 @@ where
         }
     }
 
-    pub fn unregister(&mut self, key: &PublicKey) {
-        if let Some(client) = self.inner.remove(key) {
-            tracing::warn!("pruning connection {key:?}");
+    /// Removes the client from the map of clients, & sends a notification
+    /// to each client that peers has sent data to, to let them know that
+    /// peer is gone from the network.
+    pub fn unregister(&mut self, peer: &PublicKey) {
+        if let Some(client) = self.inner.remove(peer) {
+            // go impl `notePeerGoneFromRegion`
+            for key in client.sent_to.iter() {
+                self.send_peer_gone(key, peer.clone());
+            }
+            tracing::warn!("pruning connection {peer:?}");
             client.shutdown();
         }
     }
 
-    pub fn send_packet(&mut self, key: &PublicKey, packet: Packet) {
+    /// Attempt to send a packet to client with [`PublicKey`] `key`
+    pub fn send_packet(&mut self, key: &PublicKey, packet: Packet) -> anyhow::Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_packet(packet);
-            self.process_result(key, res);
+            return self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
+        anyhow::bail!("Could not find client for {key:?}, dropped packet");
     }
 
-    pub fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) {
+    pub fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) -> anyhow::Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_disco_packet(packet);
-            self.process_result(key, res);
+            return self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
+        anyhow::bail!("Could not find client for {key:?}, dropped packet");
     }
 
     pub fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_peer_gone(peer);
-            self.process_result(key, res);
+            let _ = self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
@@ -193,14 +260,18 @@ where
     pub fn send_mesh_updates(&mut self, key: &PublicKey, updates: Vec<PeerConnState>) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_mesh_updates(updates);
-            self.process_result(key, res);
+            let _ = self.process_result(key, res);
         };
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    fn process_result(&mut self, key: &PublicKey, res: Result<(), SendError>) {
+    fn process_result(
+        &mut self,
+        key: &PublicKey,
+        res: Result<(), SendError>,
+    ) -> anyhow::Result<()> {
         match res {
-            Ok(_) => {}
+            Ok(_) => return Ok(()),
             Err(SendError::PacketDropped) => {
                 tracing::warn!("client {key:?} too busy to receive packet, dropping packet");
             }
@@ -209,6 +280,7 @@ where
                 self.unregister(key);
             }
         }
+        anyhow::bail!("unable to send msg");
     }
 }
 
@@ -245,7 +317,7 @@ mod tests {
         }
     }
 
-    async fn test_client_builder(
+    fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
     ) -> (
@@ -277,7 +349,8 @@ mod tests {
     async fn test_clients() -> Result<()> {
         let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
         let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
-        let (builder_a, mut a_reader, _a_writer) = test_client_builder(a_key.clone(), 0).await;
+
+        let (builder_a, mut a_reader, _a_writer) = test_client_builder(a_key.clone(), 0);
 
         let mut clients = Clients::new();
         clients.register(builder_a);
@@ -289,7 +362,7 @@ mod tests {
             enqueued_at: Instant::now(),
             bytes: Bytes::from(&data[..]),
         };
-        clients.send_packet(&a_key.clone(), expect_packet.clone());
+        clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
@@ -298,7 +371,7 @@ mod tests {
         assert_eq!(data, got_frame);
 
         // send disco packet
-        clients.send_disco_packet(&a_key.clone(), expect_packet);
+        clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_RECV_PACKET);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
@@ -339,7 +412,7 @@ mod tests {
 
         assert!(clients.inner.get(&a_key).is_none());
 
-        clients.shutdown();
+        clients.shutdown().await;
         Ok(())
     }
 }
