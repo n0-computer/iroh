@@ -1,18 +1,16 @@
 //! based on tailscale/derp/derp_server.go
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
-use super::client::ClientInfo;
-
+use super::types::{ClientInfo, PacketForwarder};
 // TODO: skiping `verboseDropKeys` for now
 
 /// The number of packets buffered for sending
@@ -20,17 +18,19 @@ const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A temporary (2021-08-30) mechanism to change the policy
-/// of how duplicate connections for the same key are handled.
-#[derive(Debug)]
-enum DupPolicy {
-    /// A DupPolicy where the last connection to send traffic for a peer
-    /// if the active one.
-    LastWriterIsActive,
-    /// A DupPolicy that detects if peers are trying to send traffic interleaved
-    /// with each other and then disables all of them
-    DisabledFighters,
-}
+// TODO: handle duplicate connections, we currently just replace the most recent connection with
+// any previous connection
+// /// A temporary (2021-08-30) mechanism to change the policy
+// /// of how duplicate connections for the same key are handled.
+// #[derive(Debug)]
+// enum DupPolicy {
+//     /// A DupPolicy where the last connection to send traffic for a peer
+//     /// if the active one.
+//     LastWriterIsActive,
+//     /// A DupPolicy that detects if peers are trying to send traffic interleaved
+//     /// with each other and then disables all of them
+//     DisabledFighters,
+// }
 
 #[derive(Debug)]
 /// A DERP server.
@@ -39,9 +39,6 @@ pub struct Server<'a> {
     /// to a cliet
     write_timeout: Option<Duration>,
     secret_key: SecretKey,
-    // TODO: what is this?
-    /// "runtime.MemStats.Sys at start (or early-ish)
-    mem_sys_0: u64,
     // TODO: this is a string in the go impl, I made it a standard length array
     // of bytes in this impl for ease of serializing. (Postcard cannot estimate
     // the size of the serialized struct if this field is a `String`). This should
@@ -49,8 +46,6 @@ pub struct Server<'a> {
     mesh_key: [u8; 32],
     /// the encoded x509 cert to send after `LetsEncrypt` cert+intermediate
     meta_cert: &'a [u8],
-    dup_policy: DupPolicy,
-    debug: bool,
 
     /// Counters:
     // TODO: this is the go impl, need to add this in
@@ -93,21 +88,12 @@ pub struct Server<'a> {
     verify_clients: bool,
 
     closed: AtomicBool,
+
+    // clients: Arc<Mutex<Clients<C>>>,
+    watchers: HashSet<PublicKey>,
     // TODO: how is this used, should it be a `Sender`?
     // net_conns: HashMap<C, Receiver<()>>,
-    clients: HashMap<PublicKey, ClientSet>,
-    watchers: HashMap<ClientConn, bool>,
-    /// Tracks all clients in the cluster, both locally and to mesh peers.
-    /// If the value is nil, that means the peer is only local (And thus in
-    /// the clients Map, but not remote). If the value is non-nil, it's remote
-    /// (+ maybe also local).
-    clients_mesh: HashMap<PublicKey, PacketForwarder>,
-    /// Tracks which peers have sent to which other peers, and at which
-    /// connection number. This isn't on sclient because it includes intra-region
-    /// forwarded packets as the src.
-    /// src => dst => dst's latest sclient.connNum
-    sent_to: HashMap<PublicKey, HashMap<PublicKey, i64>>,
-
+    // clients: HashMap<PublicKey, ClientSet>,
     /// Maps from netip.AddrPort to a client's public key
     key_of_addr: HashMap<SocketAddr, PublicKey>,
 }
@@ -223,9 +209,9 @@ impl<'a> Server<'a> {
     /// are placed in a non-active state where we read from them (primarily to
     /// observe EOFs/timeouts) but won't send them frames on the assumption
     /// that they're dead.
-    fn register_client(&mut self, client: ClientConn) {
-        todo!();
-    }
+    // fn register_client(&mut self, client: ClientConn) {
+    //     todo!();
+    // }
 
     /// Enqueues a message to all watchers (other DERP nodes in the region or
     /// trusted clients) that peer's presence changed.
@@ -233,10 +219,10 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    /// Removes a client from the server
-    fn unregister_client(&mut self, client: ClientConn) {
-        todo!();
-    }
+    // /// Removes a client from the server
+    // fn unregister_client(&mut self, client: ClientConn) {
+    //     todo!();
+    // }
 
     /// Sends [`PEER_GONE`] frames to parties that `key` has sent to previously
     /// (whether those sends were from a local client or forward). It must only
@@ -245,9 +231,9 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    fn add_watcher(&self, client: ClientConn) {
-        todo!();
-    }
+    // fn add_watcher(&self, client: ClientConn) {
+    //     todo!();
+    // }
 
     fn accept_0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         &mut self,
@@ -260,9 +246,9 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    fn note_peer_send(&self, key: PublicKey, dst: ClientConn) {
-        todo!();
-    }
+    //     fn note_peer_send(&self, key: PublicKey, dst: ClientConn) {
+    //         todo!();
+    //     }
 
     fn record_drop(
         &self,
@@ -282,9 +268,9 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    fn note_client_activity(&self, client: ClientConn) {
-        todo!();
-    }
+    // fn note_client_activity(&self, client: ClientConn) {
+    // todo!();
+    // }
 
     fn send_server_info<W: AsyncWrite + Unpin>(
         &self,
@@ -317,11 +303,11 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: PacketForwarder) {
+    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
         todo!();
     }
 
-    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: PacketForwarder) {
+    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
         todo!();
     }
 
@@ -350,20 +336,4 @@ enum DropReason {
     WriteError,
     /// The PublicKey is connected 2+ times (active/active, fighting)
     DupClient,
-}
-
-#[derive(Debug)]
-struct ClientConn {}
-
-#[derive(Debug)]
-struct ClientSet {}
-
-#[derive(Debug)]
-pub struct PacketForwarder {}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct ServerInfo {
-    pub(crate) version: usize,
-    pub(crate) token_bucket_bytes_per_second: usize,
-    pub(crate) token_bucket_bytes_burst: usize,
 }

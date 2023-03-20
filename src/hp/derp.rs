@@ -10,11 +10,12 @@
 //! Based on tailscale/derp/derp.go
 
 pub(crate) mod client;
-mod client_conn;
-mod conn;
+pub(crate) mod client_conn;
+pub(crate) mod clients;
 pub mod http;
 mod map;
 mod server;
+pub(crate) mod types;
 
 pub use self::client::ReceivedMessage;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
