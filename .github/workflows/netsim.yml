@@ -18,7 +18,7 @@ jobs:
     if: >-
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
-          github.event.comment.body == '/netsim') || github.event_name != 'issue_comment'
+          startsWith(github.event.comment.body, '/netsim')) || github.event_name != 'issue_comment'
     runs-on: [self-hosted, linux, X64]
     permissions:
       issues: write
@@ -55,6 +55,21 @@ jobs:
       run: |
         cp target/release/iroh chuck/netsim/bins/iroh
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
+    
+    - name: Detect comment commands
+      if: github.event_name == 'issue_comment'
+      id: detect_comment_config
+      run: |
+        a='${{ github.event.comment.body }}'
+        if [[ $a == '/netsim config'* ]];
+        then
+          a=$(echo "'$a'" | tr '\n' ' ' | tr -s " " | sed -e 's/.*```\(.*\)```.*/\1/')
+          export NETSIM_CONFIG="$a"
+          echo "NETSIM_CONFIG<<EOFMARKER" >> ${GITHUB_OUTPUT}
+          echo "${NETSIM_CONFIG}" >> ${GITHUB_OUTPUT}
+          echo "EOFMARKER" >> ${GITHUB_OUTPUT}
+        fi
+        echo "'$NETSIM_CONFIG'"
 
     - name: Run tests
       run: |
@@ -62,6 +77,20 @@ jobs:
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
         sudo python3 main.py sims/standard
+
+    - name: Run tests
+      run: |
+        cd chuck/netsim
+        sudo kill -9 $(pgrep ovs)
+        sudo mn --clean
+        c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
+        if [ -z "${c}" ];
+        then
+          sudo python3 main.py sims/standard
+        else
+          echo $c >> custom_sim.json
+          sudo python3 main.py custom_sim.json
+        fi
 
     - name: Generate report
       id: generate_report
@@ -73,16 +102,29 @@ jobs:
         echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
         echo "EOFMARKER" >> ${GITHUB_OUTPUT}
 
+    - name: Setup Environment
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=unknown" >> ${GITHUB_ENV}  
+        echo "HEAD_REF=unknown" >> ${GITHUB_ENV}  
+    - name: Setup Environment (Issue)  
+      if: ${{ github.event_name == 'issue_comment' }}  
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.issue.pull_request.head.sha }})" >> ${GITHUB_ENV}  
+        echo "HEAD_REF=${{ github.event.issue.pull_request.head.ref }}" >> ${GITHUB_ENV}
     - name: Setup Environment (PR)  
       if: ${{ github.event_name == 'pull_request' }}  
       shell: bash  
       run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
+        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
     - name: Setup Environment (Push)  
       if: ${{ github.event_name == 'push' }}  
       shell: bash  
       run: |  
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
 
     - name: Respond Issue
       uses: peter-evans/create-or-update-comment@v2
@@ -90,9 +132,8 @@ jobs:
       with:
         issue-number: ${{ github.event.issue.number }}
         body: |
-          body: |
-          `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          Perf report
+          `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
+          Perf report:
           ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Respond PR
@@ -101,9 +142,15 @@ jobs:
       with:
         issue-number: ${{ github.event.pull_request.number }}
         body: |
-          `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          Perf report
+          `${{ env.HEAD_REF }}.${{ env.LAST_COMMIT_SHA }}`
+          Perf report:
           ${{ steps.generate_report.outputs.NETSIM_REPORT }}
+
+    - name: Generate reports
+      run: |
+        cd chuck/netsim
+        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
 
     - name: Dump report
       run: |
@@ -116,12 +163,11 @@ jobs:
         sudo ./aws/install --update
 
         cd chuck/netsim
-        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
 
-        tar cvzf report.tar.gz report_prom.txt report.txt logs/ report/
+        tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt logs/ report/
         aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
 
-        instance=$(echo "${{ github.head_ref }}" | tr -c '[:alnum:]' '_')
+        instance=$(echo "${{ env.HEAD_REF }}" | tr -c '[:alnum:]' '_')
         d=$(cat report_prom.txt)
         prom_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
@@ -130,7 +176,6 @@ jobs:
       if: github.ref_name=='main'
       run: |
         cd chuck/netsim
-        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
         d=$(cat report_metro.txt)
         metro_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
