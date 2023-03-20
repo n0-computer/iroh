@@ -359,19 +359,20 @@ impl Endpoint {
         disco_key: &key::disco::PublicKey,
         tx_id: stun::TransactionId,
     ) {
-        let sent = if let Some(node_key) = self.c.public_key_atomic.read().await.clone() {
-            self.c
-                .send_disco_message(
-                    ep,
-                    Some(&self.public_key),
-                    disco_key,
-                    disco::Message::Ping(disco::Ping { tx_id, node_key }),
-                )
-                .await
-                .unwrap_or_default()
-        } else {
-            false
-        };
+        let sent = self
+            .c
+            .send_disco_message(
+                ep,
+                Some(&self.public_key),
+                disco_key,
+                disco::Message::Ping(disco::Ping {
+                    tx_id,
+                    node_key: self.c.public_key.clone(),
+                }),
+            )
+            .await
+            .unwrap_or_default();
+
         debug!("disco ping was sent? {}", sent);
         if !sent {
             self.forget_ping(tx_id).await;

@@ -7,15 +7,17 @@ use std::{
     task::{Context, Poll},
 };
 
+use anyhow::bail;
 use futures::{future::poll_fn, ready, Future, FutureExt};
 use quinn::AsyncUdpSocket;
 use tokio::{
     io::Interest,
     sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
 };
-use tracing::debug;
+use tracing::{debug, info};
 
-use super::conn::Network;
+use super::conn::{CurrentPortFate, Network};
+use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -54,7 +56,6 @@ impl Error {
 }
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
-#[derive(Default)]
 pub struct RebindingUdpConn {
     pub(super) inner: Arc<RwLock<Inner>>,
     /// Used to aquire a read lock to inner in poll functions.
@@ -82,22 +83,37 @@ impl Debug for RebindingUdpConn {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(super) struct Inner {
-    // TODO: evaluate which locking strategy to use
-    // pconnAtomic is a pointer to the value stored in pconn, but doesn't
-    // require acquiring mu. It's used for reads/writes and only upon failure
-    // do the reads/writes then check pconn (after acquiring mu) to see if
-    // there's been a rebind meanwhile.
-    // pconn isn't really needed, but makes some of the code simpler
-    // to keep it distinct.
-    // Neither is expected to be nil, sockets are bound on creation.
-    // pconn_atomic: atomic.Pointer[nettype.PacketConn],
-    pub(super) pconn: Option<UdpSocket>,
+    pub(super) pconn: UdpSocket,
     pub(super) port: u16,
 }
 
 impl RebindingUdpConn {
+    pub(super) async fn rebind(
+        &self,
+        port: u16,
+        network: Network,
+        cur_port_fate: CurrentPortFate,
+    ) -> anyhow::Result<()> {
+        // Do not bother rebinding if we are keeping the port.
+        if self.port().await == port && cur_port_fate == CurrentPortFate::Keep {
+            return Ok(());
+        }
+
+        // Hold the lock the entire time, so that the close+bind is atomic.
+        let mut inner = self.inner.write().await;
+        let pconn = bind(Some(&mut inner), port, network, cur_port_fate).await?;
+        inner.set_conn(pconn, network);
+        Ok(())
+    }
+
+    pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
+        let pconn = bind(None, port, network, CurrentPortFate::Keep).await?;
+
+        Ok(Self::from_socket(pconn))
+    }
+
     pub async fn port(&self) -> u16 {
         self.inner.read().await.port
     }
@@ -109,11 +125,8 @@ impl RebindingUdpConn {
 
     pub async fn send_to(&self, addr: SocketAddr, b: &[u8]) -> io::Result<bool> {
         let mut state = self.inner.write().await;
-        if let Some(ref mut conn) = state.pconn {
-            conn.send_to(addr, b).await
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, "no connection"))
-        }
+        let res = state.pconn.send_to(addr, b).await?;
+        Ok(res)
     }
 
     pub fn poll_send(
@@ -122,28 +135,28 @@ impl RebindingUdpConn {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let mut write_mutex = self.write_mutex.lock().unwrap();
+        let mut writemutex = self.write_mutex.lock().unwrap();
 
-        if write_mutex.is_none() {
+        if writemutex.is_none() {
             // Fast path, see if we can just grab the lock
             if let Ok(ref mut guard) = self.inner.try_write() {
-                return poll_send(&mut guard.pconn, state, cx, transmits);
+                return guard.pconn.poll_send(state, cx, transmits);
             }
 
             // Otherwise prepare a lock.
             let fut = Box::pin(self.inner.clone().write_owned());
-            write_mutex.replace(fut);
+            writemutex.replace(fut);
         }
 
         // Waiting on aquiring the lock
-        let mut fut = write_mutex.take().expect("just set");
+        let mut fut = writemutex.take().expect("just set");
 
         match fut.poll_unpin(cx) {
             Poll::Pending => {
-                write_mutex.replace(fut);
+                writemutex.replace(fut);
                 Poll::Pending
             }
-            Poll::Ready(mut guard) => poll_send(&mut guard.pconn, state, cx, transmits),
+            Poll::Ready(mut guard) => guard.pconn.poll_send(state, cx, transmits),
         }
     }
 
@@ -158,7 +171,7 @@ impl RebindingUdpConn {
         if read_mutex.is_none() {
             // Fast path, see if we can just grab the lock
             if let Ok(ref mut guard) = self.inner.try_read() {
-                return poll_recv(&guard.pconn, cx, bufs, meta);
+                return guard.pconn.poll_recv(cx, bufs, meta);
             }
 
             // Otherwise prepare a lock.
@@ -173,7 +186,7 @@ impl RebindingUdpConn {
                 read_mutex.replace(fut);
                 return Poll::Pending;
             }
-            Poll::Ready(guard) => poll_recv(&guard.pconn, cx, bufs, meta),
+            Poll::Ready(guard) => guard.pconn.poll_recv(cx, bufs, meta),
         }
     }
 
@@ -187,15 +200,12 @@ impl RebindingUdpConn {
         Ok(addr)
     }
 
-    fn from_socket(p: UdpSocket) -> Self {
-        let port = p.local_addr().map(|a| a.port()).unwrap_or_default();
+    pub(super) fn from_socket(pconn: UdpSocket) -> Self {
+        let port = pconn.local_addr().map(|a| a.port()).unwrap_or_default();
         RebindingUdpConn {
-            inner: Arc::new(RwLock::new(Inner {
-                pconn: Some(p),
-                port,
-            })),
-            write_mutex: Default::default(),
+            inner: Arc::new(RwLock::new(Inner { pconn, port })),
             read_mutex: Default::default(),
+            write_mutex: Default::default(),
         }
     }
 }
@@ -209,28 +219,19 @@ impl Inner {
     pub fn set_conn(&mut self, p: UdpSocket, _network: Network) {
         // upc := upgradePacketConn(p, network)
         let port = p.local_addr().expect("missing addr").port();
-        self.pconn = Some(p);
+        self.pconn = p;
         self.port = port;
     }
 
     pub fn close(&mut self) -> Result<(), Error> {
-        match self.pconn.take() {
-            Some(_pconn) => {
-                self.port = 0;
-                // pconn.close() is not available, so we just drop for now
-                // TODO: make sure the recv loops get shutdown
-                Ok(())
-            }
-            None => Err(Error::NoConn),
-        }
+        self.port = 0;
+        // pconn.close() is not available, so we just drop for now
+        // TODO: make sure the recv loops get shutdown
+        Ok(())
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        let pconn = self
-            .pconn
-            .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no connection"))?;
-        pconn.local_addr()
+        self.pconn.local_addr()
     }
 }
 
@@ -261,30 +262,6 @@ impl UdpSocket {
         }];
         let n = poll_fn(|cx| self.poll_send(&state, cx, &transmits[..])).await?;
         Ok(n > 0)
-    }
-}
-
-fn poll_send(
-    this: &mut Option<UdpSocket>,
-    state: &quinn_udp::UdpState,
-    cx: &mut Context,
-    transmits: &[quinn_proto::Transmit],
-) -> Poll<io::Result<usize>> {
-    match this {
-        Some(ref mut pconn) => pconn.poll_send(state, cx, transmits),
-        None => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "no connection"))),
-    }
-}
-
-fn poll_recv(
-    this: &Option<UdpSocket>,
-    cx: &mut Context,
-    bufs: &mut [io::IoSliceMut<'_>],
-    meta: &mut [quinn_udp::RecvMeta],
-) -> Poll<io::Result<usize>> {
-    match this {
-        Some(ref pconn) => pconn.poll_recv(cx, bufs, meta),
-        None => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "no connection"))),
     }
 }
 
@@ -361,6 +338,97 @@ impl AsyncUdpSocket for UdpSocket {
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
         self.io.local_addr()
     }
+}
+
+async fn bind(
+    mut inner: Option<&mut Inner>,
+    port: u16,
+    network: Network,
+    cur_port_fate: CurrentPortFate,
+) -> anyhow::Result<UdpSocket> {
+    debug!(
+        "bind_socket: network={:?} cur_port_fate={:?}",
+        network, cur_port_fate
+    );
+
+    // Build a list of preferred ports.
+    // - Best is the port that the user requested.
+    // - Second best is the port that is currently in use.
+    // - If those fail, fall back to 0.
+
+    let mut ports = Vec::new();
+    if port != 0 {
+        ports.push(port);
+    }
+    if cur_port_fate == CurrentPortFate::Keep {
+        if let Some(cur_addr) = inner.as_ref().and_then(|i| i.local_addr().ok()) {
+            ports.push(cur_addr.port());
+        }
+    }
+    // Backup port
+    ports.push(0);
+    // Remove duplicates. (All duplicates are consecutive.)
+    ports.dedup();
+    debug!("bind_socket: candidate ports: {:?}", ports);
+
+    for port in &ports {
+        // Close the existing conn, in case it is sitting on the port we want.
+        if let Some(ref mut inner) = inner {
+            if let Err(err) = inner.close() {
+                info!("bind_socket {:?} close failed: {:?}", network, err);
+            }
+        }
+        // Open a new one with the desired port.
+        match listen_packet(network, *port).await {
+            Ok(pconn) => {
+                debug!(
+                    "bind_socket: successfully listened {:?} port {}",
+                    network, port
+                );
+                return Ok(pconn);
+            }
+            Err(err) => {
+                info!(
+                    "bind_socket: unable to bind {:?} port {}: {:?}",
+                    network, port, err
+                );
+                continue;
+            }
+        }
+    }
+
+    // Failed to bind, including on port 0 (!).
+    bail!("failed to bind any ports (tried {:?})", ports);
+}
+
+/// Opens a packet listener.
+async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket> {
+    let addr = SocketAddr::new(network.default_addr(), port);
+    let socket = socket2::Socket::new(
+        network.into(),
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+
+    if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
+        info!(
+            "failed to set recv_buffer_size to {}: {:?}",
+            SOCKET_BUFFER_SIZE, err
+        );
+    }
+    if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
+        info!(
+            "failed to set send_buffer_size to {}: {:?}",
+            SOCKET_BUFFER_SIZE, err
+        );
+    }
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    let socket = UdpSocket::from_std(socket.into())?;
+
+    debug!("bound to {}", socket.local_addr()?);
+
+    Ok(socket)
 }
 
 #[cfg(test)]

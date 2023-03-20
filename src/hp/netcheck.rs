@@ -2,17 +2,17 @@
 //! Based on https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go
 
 use std::{
-    cmp::Ordering,
     collections::HashMap,
     fmt::Debug,
     net::{IpAddr, SocketAddr},
     ops::Deref,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
 };
 
 use anyhow::{ensure, Context, Error};
 use async_time_mock_tokio::Instant;
 use futures::{future::BoxFuture, FutureExt};
+use portable_atomic::AtomicBool;
 use rand::seq::IteratorRandom;
 use tokio::{
     net,
@@ -61,19 +61,8 @@ const DEFAULT_ACTIVE_RETRANSMIT_TIME: Duration = Duration::from_millis(200);
 /// [`DEFAULT_ACTIVE_RETRANSMIT_TIME`]. A few extra packets at startup is fine.
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
-#[derive(Default, Debug, Clone)]
-pub struct Report(Arc<RwLock<InnerReport>>);
-
-impl Deref for Report {
-    type Target = RwLock<InnerReport>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Default, Debug, PartialEq, Eq)]
-pub struct InnerReport {
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub struct Report {
     /// A UDP STUN round trip completed.
     pub udp: bool,
     /// An IPv6 STUN round trip completed.
@@ -125,7 +114,7 @@ pub struct InnerReport {
     pub captive_portal: Option<bool>,
 }
 
-impl InnerReport {
+impl Report {
     /// Reports whether any of UPnP, PMP, or PCP are non-empty.
     pub fn any_port_mapping_checked(&self) -> bool {
         self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
@@ -153,6 +142,9 @@ pub struct Client {
     got_hair_stun: broadcast::Sender<SocketAddr>,
 
     reports: Arc<Mutex<Reports>>,
+
+    /// Is a current `get_report` running.
+    is_running: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -160,13 +152,34 @@ struct Reports {
     /// Do a full region scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
-    prev: HashMap<Instant, Report>,
+    prev: HashMap<Instant, Arc<Report>>,
     /// Most recent report.
-    last: Option<Report>,
+    last: Option<Arc<Report>>,
     /// Time of last full (non-incremental) report.
     last_full: Instant,
-    /// `Some` if we're in a call to `get_report`.
-    cur_state: Option<ReportState>,
+    /// Current hair pinning tx
+    current_hair_tx: Option<stun::TransactionId>,
+    in_flight: InFlightMap,
+}
+
+#[derive(Default, Clone)]
+struct InFlightMap(
+    Arc<
+        Mutex<
+            HashMap<
+                stun::TransactionId,
+                Box<dyn Fn(SocketAddr) -> BoxFuture<'static, ()> + Sync + Send>,
+            >,
+        >,
+    >,
+);
+
+impl Debug for InFlightMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InFlightMap")
+            .field("0", &format!("Arc<Mutex<HashMap<TransactionId, CB>>>"))
+            .finish()
+    }
 }
 
 const ENOUGH_REGIONS: usize = 3;
@@ -190,8 +203,10 @@ impl Default for Client {
                 prev: Default::default(),
                 last: None,
                 last_full,
-                cur_state: None,
+                current_hair_tx: None,
+                in_flight: Default::default(),
             })),
+            is_running: Default::default(),
         }
     }
 }
@@ -200,15 +215,20 @@ impl Client {
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
     async fn handle_hair_stun_locked(&self, pkt: &[u8], src: SocketAddr) -> bool {
         let reports = &*self.reports.lock().await;
-        if let Some(ref rs) = reports.cur_state {
-            if let Ok(tx) = stun::parse_binding_request(pkt) {
-                if tx == rs.hair_tx {
+        if let Some(ref hair_tx) = reports.current_hair_tx {
+            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
+                if tx == hair_tx {
                     self.got_hair_stun.send(src).ok();
                     return true;
                 }
             }
         }
         false
+    }
+
+    /// Is there a call to `get_report` currently running?
+    fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::Relaxed)
     }
 
     /// Forces the next `get_report` call to be a full (non-incremental) probe of all DERP regions.
@@ -227,36 +247,35 @@ impl Client {
             // metricSTUNRecv6.Add(1)
         }
 
+        if !self.is_running() {
+            return;
+        }
+
         if self.handle_hair_stun_locked(pkt, src).await {
             return;
         }
-        if self.reports.lock().await.cur_state.is_none() {
-            return;
-        }
 
-        let res = stun::parse_response(pkt);
-        if let Err(err) = res {
-            if stun::parse_binding_request(pkt).is_ok() {
-                // This was probably our own netcheck hairpin
-                // check probe coming in late. Ignore.
-                return;
+        match stun::parse_response(pkt) {
+            Ok((tx, addr_port)) => {
+                let mut in_flight = {
+                    let reports = self.reports.lock().await;
+                    let in_flight = &mut *reports.in_flight.0.lock().await;
+                    std::mem::take(in_flight)
+                };
+                while let Some(on_done) = in_flight.remove(&tx) {
+                    on_done(addr_port).await;
+                }
             }
-            info!(
-                "received unexpected STUN message response from {}: {:?}",
-                src, err
-            );
-            return;
-        };
-        let (tx, addr_port) = res.unwrap();
-
-        let mut reports = self.reports.lock().await;
-        if let Some(ref mut rs) = reports.cur_state {
-            // TODO: avoid lock
-            let mut rs_state = rs.state.lock().await;
-            if let Some(on_done) = rs_state.in_flight.remove(&tx) {
-                drop(rs_state);
-                drop(reports);
-                on_done(addr_port).await;
+            Err(err) => {
+                if stun::parse_binding_request(pkt).is_ok() {
+                    // This was probably our own netcheck hairpin
+                    // check probe coming in late. Ignore.
+                    return;
+                }
+                info!(
+                    "received unexpected STUN message response from {}: {:?}",
+                    src, err
+                );
             }
         }
     }
@@ -281,7 +300,6 @@ impl Client {
                 }
             }
         }
-        // TODO: close pc
     }
 
     fn udp_bind_addr_v6(&self) -> SocketAddr {
@@ -303,25 +321,39 @@ impl Client {
     /// Gets a report.
     ///
     /// It may not be called concurrently with itself.
-    pub async fn get_report(&self, dm: &DerpMap) -> Result<Report, Error> {
+    pub async fn get_report(&self, dm: &DerpMap) -> Result<Arc<Report>, Error> {
+        debug!("get_report:start");
         // TODO
         // metricNumGetReport.Add(1)
 
         // Wrap in timeout
-        let report = self
+        let report_state = self
             .clock
             .timeout(OVERALL_PROBE_TIMEOUT, self.clone().get_report_inner(dm))
             .await??;
-        let report = self.finish_and_store_report(&report, dm).await;
+        let report = self.finish_and_store_report(report_state, dm).await;
+        debug!("get_report:end");
         Ok(report)
     }
 
     async fn get_report_inner(&mut self, dm: &DerpMap) -> Result<ReportState, Error> {
-        let mut reports = self.reports.lock().await;
+        let was_already_running = self.is_running.swap(true, Ordering::Relaxed);
         ensure!(
-            reports.cur_state.is_none(),
+            !was_already_running,
             "invalid concurrent call to get_report"
         );
+
+        // always clear `is_running`
+        struct DropGuard(Arc<AtomicBool>);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
+
+        let _guard = DropGuard(self.is_running.clone());
+
+        let mut reports = self.reports.lock().await;
 
         // Create a UDP4 socket used for sending to our discovered IPv4 address.
         let pc4_hair = net::UdpSocket::bind("0.0.0.0:0")
@@ -337,10 +369,9 @@ impl Client {
             hair_timeout: Arc::new(sync::Notify::new()),
             stop_probe: Arc::new(sync::Notify::new()),
             wait_port_map: wg::AsyncWaitGroup::new(),
-            report: Report::default(),
+            report: Default::default(),
             state: Arc::new(Mutex::new(InnerReportState {
                 sent_hair_check: false,
-                in_flight: Default::default(),
                 got_ep4: None,
                 timers: Default::default(),
             })),
@@ -348,13 +379,13 @@ impl Client {
             hair_tx: stun::TransactionId::default(), // random payload
             got_hair_stun: Arc::new(Mutex::new(got_hair_stun_r)),
         };
-
-        let mut last = reports.last.clone();
+        // Store the last hair_tx to make sure we can check against hair pins.
+        reports.current_hair_tx = Some(rs.hair_tx);
 
         // Even if we're doing a non-incremental update, we may want to try our
         // preferred DERP region for captive portal detection. Save that, if we have it.
-        let preferred_derp = if let Some(ref last) = last {
-            Some(last.0.read().await.preferred_derp)
+        let preferred_derp = if let Some(ref last) = reports.last {
+            Some(last.preferred_derp)
         } else {
             None
         };
@@ -371,26 +402,24 @@ impl Client {
         // captive portal blocking us. If so, make this report a full
         // (non-incremental) one.
         if !do_full {
-            if let Some(ref last) = last {
-                let last = last.0.read().await;
+            if let Some(ref last) = reports.last {
+                // let last = last.0.read().await;
                 do_full = !last.udp && last.captive_portal.unwrap_or_default();
             }
         }
         if do_full {
-            last = None; // causes makeProbePlan below to do a full (initial) plan
+            reports.last = None; // causes makeProbePlan below to do a full (initial) plan
             reports.next_full = false;
             reports.last_full = now;
 
             // TODO
             // metricNumGetReportFull.Add(1);
         }
-
-        rs.incremental = last.is_some();
-        reports.cur_state = Some(rs.clone());
+        let last = reports.last.clone();
+        let in_flight = reports.in_flight.clone();
         drop(reports);
 
-        // TODO: always clear `cur_state`
-        // defer func() { c.curState = nil }()
+        rs.incremental = last.is_some();
 
         let if_state = interfaces::State::new().await;
 
@@ -398,16 +427,19 @@ impl Client {
         {
             let v6udp = net::UdpSocket::bind("[::1]:0").await;
             if v6udp.is_ok() {
-                rs.report.0.write().await.os_has_ipv6 = true;
+                rs.report.write().await.os_has_ipv6 = true;
             }
         }
+
+        // Tracks various tasks
+        let mut socket_tasks = JoinSet::new();
 
         if !self.skip_external_network {
             if let Some(ref port_mapper) = self.port_mapper {
                 let worker = rs.wait_port_map.add(1);
                 let rs = rs.clone();
                 let port_mapper = port_mapper.clone();
-                tokio::task::spawn(async move {
+                socket_tasks.spawn(async move {
                     rs.probe_port_map_services(port_mapper).await;
                     worker.done();
                 });
@@ -441,7 +473,7 @@ impl Client {
             rs.pc4 = Some(u4.clone());
             // TODO: track task
             let this = self.clone();
-            tokio::task::spawn(async move { this.read_packets(u4).await });
+            socket_tasks.spawn(async move { this.read_packets(u4).await });
         }
 
         if if_state.have_v6 {
@@ -452,18 +484,17 @@ impl Client {
             rs.pc6 = Some(u6.clone());
             // TODO: track task
             let this = self.clone();
-            tokio::task::spawn(async move { this.read_packets(u6).await });
+            socket_tasks.spawn(async move { this.read_packets(u6).await });
         }
 
-        let plan = make_probe_plan(dm, &if_state, last.as_ref()).await;
+        let plan = make_probe_plan(dm, &if_state, last.as_deref()).await;
 
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
-        let (done_send, captive_portal_done) = oneshot::channel();
+        let (captive_done_send, captive_portal_done) = oneshot::channel();
         let mut captive_task = None;
         if !rs.incremental {
-            // TODO: track task
             let rs = rs.clone();
             let delay = CAPTIVE_PORTAL_DELAY;
             let dm = dm.clone(); // TODO: avoid or make cheap
@@ -473,27 +504,33 @@ impl Client {
                 clock.sleep(delay).await;
                 match check_captive_portal(&dm, preferred_derp).await {
                     Ok(found) => {
-                        rs.report.0.write().await.captive_portal = Some(found);
+                        rs.report.write().await.captive_portal = Some(found);
                     }
                     Err(err) => {
                         info!("check_captive_portal error: {:?}", err);
                     }
                 }
-                let _ = done_send.send(());
+                let _ = captive_done_send.send(());
+                debug!("captive_portal done");
             }));
+        } else {
+            // make sure to mark the channel as done
+            let _ = captive_done_send.send(());
         }
 
         let mut task_set = JoinSet::new();
-        let probe_done = Arc::new(sync::Notify::new());
         for probe_set in plan.values() {
             for probe in probe_set {
                 let probe = probe.clone();
                 let rs = rs.clone();
                 let dm = dm.clone(); // TODO: avoid or make cheap
-                let probe_done = probe_done.clone();
+
+                let probe_done = Arc::new(sync::Notify::new());
+                let in_flight = in_flight.clone();
                 task_set.spawn(async move {
                     let notified = probe_done.notified();
-                    rs.run_probe(&dm, probe, probe_done.clone()).await;
+                    rs.run_probe(&dm, probe, probe_done.clone(), in_flight)
+                        .await;
                     // wait for the probe to actually finish
                     notified.await;
                 });
@@ -536,7 +573,7 @@ impl Client {
 
         {
             let reports = self.reports.lock().await;
-            rs.wait_hair_check(reports.last.as_ref()).await;
+            rs.wait_hair_check(last.as_deref()).await;
             debug!("hair_check done");
         }
 
@@ -581,7 +618,7 @@ impl Client {
                 task_set.spawn(async move {
                     match measure_https_latency(&reg).await {
                         Ok((d, ip)) => {
-                            let mut report = rs.report.0.write().await;
+                            let mut report = rs.report.write().await;
                             let l = report.region_latency.entry(reg.region_id).or_insert(d);
                             if *l >= d {
                                 *l = d;
@@ -611,24 +648,30 @@ impl Client {
                 t?;
             }
         }
+
         // Wait for captive portal check before finishing the report.
         // If the task is aborted, this will error, so ignore potential task joining errors.
         captive_portal_done.await.ok();
 
+        // Cleanup in_flights
+        in_flight.0.lock().await.clear();
+
+        // Cleanup socket tasks
+        socket_tasks.abort_all();
+
         Ok(rs)
     }
 
-    async fn finish_and_store_report(&self, rs: &ReportState, dm: &DerpMap) -> Report {
-        let mut report = rs.report.clone();
-        self.add_report_history_and_set_preferred_derp(&mut report)
-            .await;
+    async fn finish_and_store_report(&self, rs: ReportState, dm: &DerpMap) -> Arc<Report> {
+        let ReportState { report, .. } = rs;
+        let report = RwLock::into_inner(Arc::try_unwrap(report).expect("should be the last one"));
+        let report = self.add_report_history_and_set_preferred_derp(report).await;
         self.log_concise_report(&report, dm).await;
 
         report
     }
 
     async fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        let r = &*r.0.read().await;
         let mut log = "report: ".to_string();
         log += &format!("udp={}", r.udp);
         if !r.ipv4 {
@@ -687,29 +730,33 @@ impl Client {
     }
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
-    async fn add_report_history_and_set_preferred_derp(&self, r: &mut Report) {
+    /// `r` is stored ref counted and a reference is returned.
+    async fn add_report_history_and_set_preferred_derp(&self, mut r: Report) -> Arc<Report> {
         let mut reports = self.reports.lock().await;
         let mut prev_derp = 0;
         if let Some(ref last) = reports.last {
-            prev_derp = last.0.read().await.preferred_derp;
+            prev_derp = last.preferred_derp;
         }
         let now = self.clock.now();
-
-        reports.prev.insert(now, r.clone());
-        reports.last = Some(r.clone());
 
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
         // region ID => its best recent latency in last MAX_AGE
         let mut best_recent = HashMap::new();
 
+        // chain the current report as we are still mutating it
+        let prevs_iter = reports
+            .prev
+            .iter()
+            .map(|(a, b)| -> (&Instant, &Report) { (a, &*b) })
+            .chain(std::iter::once((&now, &r)));
+
         let mut to_remove = Vec::new();
-        for (t, pr) in &reports.prev {
+        for (t, pr) in prevs_iter {
             if now.duration_since(*t) > MAX_AGE {
                 to_remove.push(*t);
                 continue;
             }
-            let pr = pr.0.read().await;
             for (region_id, d) in &pr.region_latency {
                 let bd = best_recent.entry(*region_id).or_insert(*d);
                 if d < bd {
@@ -727,7 +774,6 @@ impl Client {
         let mut best_any = Duration::default();
         let mut old_region_cur_latency = Duration::default();
         {
-            let r = &mut *r.0.write().await;
             for (region_id, d) in &r.region_latency {
                 if *region_id == prev_derp {
                     old_region_cur_latency = *d;
@@ -750,6 +796,12 @@ impl Client {
                 r.preferred_derp = prev_derp;
             }
         }
+
+        let r = Arc::new(r);
+        reports.prev.insert(now, r.clone());
+        reports.last = Some(r.clone());
+
+        r
     }
 }
 
@@ -813,7 +865,7 @@ async fn measure_all_icmp_latency(
                                 "ICMP latency of {} ({}): {:?}",
                                 reg.region_code, reg.region_id, d
                             );
-                            let mut report = rs.report.0.write().await;
+                            let mut report = rs.report.write().await;
                             let l = report.region_latency.entry(reg.region_id).or_insert(d);
                             if *l >= d {
                                 *l = d;
@@ -1053,18 +1105,18 @@ impl Deref for ProbePlan {
 
 /// Returns the regions of dm first sorted from fastest to slowest (based on the 'last' report),
 /// end in regions that have no data.
-fn sort_regions<'a>(dm: &'a DerpMap, last: &InnerReport) -> Vec<&'a DerpRegion> {
+fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
     let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
     prev.sort_by(|a, b| {
         let da = last.region_latency.get(&a.region_id);
         let db = last.region_latency.get(&b.region_id);
         if db.is_none() && da.is_some() {
             // Non-zero sorts before zero.
-            return Ordering::Greater;
+            return std::cmp::Ordering::Greater;
         }
         if da.is_none() {
             // Zero can't sort before anything else.
-            return Ordering::Less;
+            return std::cmp::Ordering::Less;
         }
         da.cmp(&db)
     });
@@ -1083,10 +1135,10 @@ async fn make_probe_plan(
     if_state: &interfaces::State,
     last: Option<&Report>,
 ) -> ProbePlan {
-    if last.is_none() || last.unwrap().0.read().await.region_latency.is_empty() {
+    if last.is_none() || last.unwrap().region_latency.is_empty() {
         return make_probe_plan_initial(dm, if_state);
     }
-    let last = last.unwrap().0.read().await;
+    let last = last.unwrap();
     let have6if = if_state.have_v6;
     let have4if = if_state.have_v4;
     let mut plan = ProbePlan::default();
@@ -1248,32 +1300,16 @@ struct ReportState {
     stop_probe: Arc<sync::Notify>,
     wait_port_map: wg::AsyncWaitGroup,
     // to be returned by GetReport
-    report: Report,
+    report: Arc<RwLock<Report>>,
     clock: Clock,
     state: Arc<Mutex<InnerReportState>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct InnerReportState {
     sent_hair_check: bool,
-    // TODO: called without lock held
-    in_flight: HashMap<
-        stun::TransactionId,
-        Box<dyn Fn(SocketAddr) -> BoxFuture<'static, ()> + Sync + Send>,
-    >,
     got_ep4: Option<SocketAddr>,
     timers: JoinSet<()>,
-}
-
-impl Debug for InnerReportState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InnerReportState")
-            .field("sent_hair_check", &self.sent_hair_check)
-            .field("in_flight", &self.in_flight.keys().collect::<Vec<_>>())
-            .field("got_ep4", &self.got_ep4)
-            .field("timers", &self.timers)
-            .finish()
-    }
 }
 
 impl ReportState {
@@ -1300,12 +1336,11 @@ impl ReportState {
     }
 
     async fn any_udp(&self) -> bool {
-        self.report.0.read().await.udp
+        self.report.read().await.udp
     }
 
     async fn have_region_latency(&self, region_id: usize) -> bool {
         self.report
-            .0
             .read()
             .await
             .region_latency
@@ -1316,7 +1351,7 @@ impl ReportState {
     /// The given node is provided just because the sole caller already has it
     /// and it saves a lookup.
     async fn probe_would_help(&self, probe: &Probe, node: &DerpNode) -> bool {
-        let report = self.report.0.read().await;
+        let report = self.report.read().await;
         // If the probe is for a region we don't yet know about, that would help.
 
         if report.region_latency.contains_key(&node.region_id) {
@@ -1369,8 +1404,8 @@ impl ReportState {
         let rs = &mut *self.state.lock().await;
         if self.incremental {
             if let Some(ref last) = last {
-                let last_val = last.0.read().await.hair_pinning;
-                self.report.0.write().await.hair_pinning = last_val;
+                let last_val = last.hair_pinning;
+                self.report.write().await.hair_pinning = last_val;
             }
             return;
         }
@@ -1381,11 +1416,11 @@ impl ReportState {
         let mut got_hair_stun = self.got_hair_stun.lock().await;
         tokio::select! {
             _ = got_hair_stun.recv() => {
-                self.report.0.write().await.hair_pinning = Some(true);
+                self.report.write().await.hair_pinning = Some(true);
             }
             _ = self.hair_timeout.notified() => {
                 debug!("hair_check timeout");
-                self.report.0.write().await.hair_pinning = Some(false);
+                self.report.write().await.hair_pinning = Some(false);
             }
         }
     }
@@ -1399,7 +1434,7 @@ impl ReportState {
     async fn add_node_latency(&self, node: &DerpNode, ipp: Option<SocketAddr>, d: Duration) {
         debug!("add node latency: {} - {}ms", node.name, d.as_millis());
         let mut rs = self.state.lock().await;
-        let mut report = self.report.0.write().await;
+        let report = &mut self.report.write().await;
         report.udp = true;
         update_latency(&mut report.region_latency, node.region_id, d);
 
@@ -1456,7 +1491,7 @@ impl ReportState {
         let _guard = Guard(self.wait_port_map.clone());
 
         {
-            let mut report = self.report.0.write().await;
+            let mut report = self.report.write().await;
             report.upnp = Some(false);
             report.pmp = Some(false);
             report.pcp = Some(false);
@@ -1472,7 +1507,7 @@ impl ReportState {
                 // }
             }
             Ok(res) => {
-                let mut report = self.report.0.write().await;
+                let mut report = self.report.write().await;
                 report.upnp = Some(res.upnp);
                 report.pmp = Some(res.pmp);
                 report.pcp = Some(res.pcp);
@@ -1480,7 +1515,13 @@ impl ReportState {
         }
     }
 
-    async fn run_probe(&self, dm: &DerpMap, probe: Probe, done: Arc<sync::Notify>) {
+    async fn run_probe(
+        &self,
+        dm: &DerpMap,
+        probe: Probe,
+        done: Arc<sync::Notify>,
+        in_flight: InFlightMap,
+    ) {
         debug!("run_probe: {:?}", probe);
         let node = named_node(dm, &probe.node);
         if node.is_none() {
@@ -1516,13 +1557,12 @@ impl ReportState {
         let sent = self.clock.now(); // after DNS lookup above
 
         {
-            let mut state = self.state.lock().await;
             // TODO: reduce cloning below
             let this = self.clone();
             let node = node.clone();
             let done = done.clone();
 
-            state.in_flight.insert(
+            in_flight.0.lock().await.insert(
                 txid,
                 Box::new(move |ipp| {
                     let node = node.clone();
@@ -1548,7 +1588,7 @@ impl ReportState {
                     debug!("sending probe IPV4: {:?}", n);
                     // TODO:  || neterror.TreatAsLostUDP(err)
                     if n.is_ok() && n.unwrap() == req.len() {
-                        self.report.0.write().await.ipv4_can_send = true;
+                        self.report.write().await.ipv4_can_send = true;
                     }
                 }
             }
@@ -1560,7 +1600,7 @@ impl ReportState {
                     let n = pc6.send_to(&req, addr).await;
                     // TODO:  || neterror.TreatAsLostUDP(err)
                     if n.is_ok() && n.unwrap() == req.len() {
-                        self.report.0.write().await.ipv6_can_send = true;
+                        self.report.write().await.ipv6_can_send = true;
                     }
                 }
             }
@@ -1620,6 +1660,7 @@ fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     #[tokio::test]
     async fn test_hairpin_stun() {
@@ -1628,7 +1669,8 @@ mod tests {
         let hs_r = Arc::new(Mutex::new(client.got_hair_stun.subscribe()));
         let s = ReportState::new(hs_r.clone(), pc4_hair, client.clock.clone());
         let tx = s.hair_tx;
-        client.reports.lock().await.cur_state = Some(s);
+        client.reports.lock().await.current_hair_tx = Some(tx);
+        client.is_running.store(true, Ordering::Relaxed);
 
         let req = stun::request(tx);
         assert!(stun::is(&req));
@@ -1641,36 +1683,45 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_basic() -> Result<(), Error> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let (stun_addr, stun_stats, done) = stun::test::serve().await?;
 
         let mut client = Client::default();
         client.udp_bind_addr = "0.0.0.0:0".parse().unwrap();
 
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
-        let r = client.get_report(&dm).await?;
-        let r = &*r.0.read().await;
 
-        assert!(r.udp, "want UDP");
-        assert_eq!(
-            r.region_latency.len(),
-            1,
-            "expected 1 key in DERPLatency; got {}",
-            r.region_latency.len()
-        );
-        assert!(
-            r.region_latency.get(&1).is_some(),
-            "expected key 1 in DERPLatency; got {:?}",
-            r.region_latency
-        );
-        assert!(r.global_v4.is_some(), "expected globalV4 set");
-        assert_eq!(
-            r.preferred_derp, 1,
-            "preferred_derp = {}; want 1",
-            r.preferred_derp
-        );
+        for i in 0..5 {
+            println!("--round {}", i);
+            let r = client.get_report(&dm).await?;
+
+            assert!(r.udp, "want UDP");
+            assert_eq!(
+                r.region_latency.len(),
+                1,
+                "expected 1 key in DERPLatency; got {}",
+                r.region_latency.len()
+            );
+            assert!(
+                r.region_latency.get(&1).is_some(),
+                "expected key 1 in DERPLatency; got {:?}",
+                r.region_latency
+            );
+            assert!(r.global_v4.is_some(), "expected globalV4 set");
+            assert_eq!(
+                r.preferred_derp, 1,
+                "preferred_derp = {}; want 1",
+                r.preferred_derp
+            );
+        }
 
         done.send(()).unwrap();
-        assert_eq!(stun_stats.total().await, 1, "expected 1 stun");
+        assert!(stun_stats.total().await > 5, "expected at least 5 stun");
 
         Ok(())
     }
@@ -1709,11 +1760,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_udp_blocked() -> Result<(), Error> {
-        // use tracing_subscriber::{prelude::*, EnvFilter};
-        // tracing_subscriber::registry()
-        //     .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        //     .with(EnvFilter::from_default_env())
-        //     .init();
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
 
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
@@ -1723,13 +1774,12 @@ mod tests {
         let client = Client::default();
 
         let r = client.get_report(&dm).await?;
-        let r = &mut *r.0.write().await;
+        let mut r: Report = (&*r).clone();
         r.upnp = None;
         r.pmp = None;
         r.pcp = None;
 
-        let want_source = Report::default();
-        let want = &mut *want_source.0.write().await;
+        let mut want = Report::default();
 
         // The ip_v4_can_send flag gets set differently across platforms.
         // On Windows this test detects false, while on Linux detects true.
@@ -1750,22 +1800,22 @@ mod tests {
         let clock = Clock::mock();
 
         // report returns a *Report from (DERP host, Duration)+ pairs.
-        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Report {
-            let report = Report::default();
-            {
-                let r = &mut *report.0.try_write().unwrap();
-                for (s, d) in a {
-                    assert!(s.starts_with("d"), "invalid derp server key");
-                    let region_id: usize = s[1..].parse().unwrap();
-                    r.region_latency.insert(region_id, Duration::from_secs(d));
-                }
+        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
+            let mut report = Report::default();
+            for (s, d) in a {
+                assert!(s.starts_with("d"), "invalid derp server key");
+                let region_id: usize = s[1..].parse().unwrap();
+                report
+                    .region_latency
+                    .insert(region_id, Duration::from_secs(d));
             }
-            report
+
+            Some(Arc::new(report))
         }
         struct Step {
             /// Delay in seconds
             after: u64,
-            r: Report,
+            r: Option<Arc<Report>>,
         }
         struct Test {
             name: &'static str,
@@ -1915,15 +1965,14 @@ mod tests {
                     .unwrap()
                     .advance_time(Duration::from_secs(s.after))
                     .await;
-                client
-                    .add_report_history_and_set_preferred_derp(&mut s.r)
-                    .await;
+                let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
+                s.r = Some(client.add_report_history_and_set_preferred_derp(r).await);
             }
-            let last_report = tt.steps[tt.steps.len() - 1].r.clone();
+            let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
             let got = client.reports.lock().await.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
-            let got = last_report.0.read().await.preferred_derp;
+            let got = last_report.preferred_derp;
             let want = tt.want_derp;
             assert_eq!(got, want, "preferred_derp");
         }

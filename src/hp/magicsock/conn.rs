@@ -18,29 +18,27 @@ use backoff::backoff::Backoff;
 use futures::{future::BoxFuture, Future};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
-use subtle::ConstantTimeEq;
 use tokio::{
     sync::{self, Mutex, RwLock},
+    task::JoinHandle,
     time,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
         derp::{self, DerpMap},
         disco, key,
-        magicsock::{rebinding_conn, SESSION_ACTIVE_TIMEOUT},
+        magicsock::SESSION_ACTIVE_TIMEOUT,
         monitor, netcheck, netmap, portmapper, stun,
     },
     net::LocalAddresses,
 };
 
 use super::{
-    endpoint::PeerMap,
-    rebinding_conn::{RebindingUdpConn, UdpSocket},
-    Endpoint, Timer, DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME,
-    ENDPOINTS_FRESH_ENOUGH_DURATION, SOCKET_BUFFER_SIZE,
+    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, Endpoint, Timer,
+    DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME, ENDPOINTS_FRESH_ENOUGH_DURATION,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -50,7 +48,7 @@ use super::{
 const BUFFERED_DERP_WRITES_BEFORE_DROP: usize = 32;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum CurrentPortFate {
+pub(super) enum CurrentPortFate {
     Keep,
     Drop,
 }
@@ -62,7 +60,7 @@ pub(super) enum Network {
 }
 
 impl Network {
-    fn default_addr(&self) -> IpAddr {
+    pub(super) fn default_addr(&self) -> IpAddr {
         match self {
             Self::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
             Self::Ip6 => Ipv6Addr::UNSPECIFIED.into(),
@@ -80,7 +78,6 @@ impl From<Network> for socket2::Domain {
 }
 
 /// Contains options for `Conn::listen`.
-#[derive(Default)]
 pub struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
@@ -112,6 +109,24 @@ pub struct Options {
 
     /// The link monitor to use. With one, the portmapper won't be used.
     pub link_monitor: Option<monitor::Monitor>,
+
+    /// Private key for this node.
+    pub private_key: key::node::SecretKey,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            port: 0,
+            on_endpoints: None,
+            on_derp_active: None,
+            idle_for: None,
+            on_net_info: None,
+            on_note_recv_activity: None,
+            link_monitor: None,
+            private_key: key::node::SecretKey::generate(),
+        }
+    }
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
@@ -134,6 +149,7 @@ impl Debug for Inner {
 }
 
 pub struct Inner {
+    name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
@@ -143,21 +159,17 @@ pub struct Inner {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
-    // ================================================================
-    // No locking required to access these fields, either because
-    // they're static after construction, or are wholly owned by a single goroutine.
-
     // TODO
     // connCtx:       context.Context, // closed on Conn.Close
     // connCtxCancel: func(),          // closes connCtx
 
     // The underlying UDP sockets used to send/rcv packets for wireguard and other magicsock protocols.
     pconn4: RebindingUdpConn,
-    pconn6: RebindingUdpConn,
+    pconn6: Option<RebindingUdpConn>,
 
     // TODO:
     // closeDisco4 and closeDisco6 are io.Closers to shut down the raw
-    // disco packet receivers. If nil, no raw disco receiver is running for the given family.
+    // disco packet receivers. If None, no raw disco receiver is running for the given family.
     close_disco4: Option<()>, // io.Closer
     close_disco6: Option<()>, // io.Closer
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
@@ -192,26 +204,13 @@ pub struct Inner {
     /// with IPv4 or IPv6). It's used to suppress log spam and prevent new connection that'll fail.
     network_up: AtomicBool,
 
-    /// Whether privateKey is non-zero.
-    have_private_key: AtomicBool,
-
-    /// Read only duplicate of state.public key, to avoid reading it without locks
-    pub(super) public_key_atomic: RwLock<Option<key::node::PublicKey>>,
-    last_net_check_report: RwLock<Option<netcheck::Report>>,
+    pub(super) public_key: key::node::PublicKey,
+    last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
 
     /// Preferred port from opts.Port; 0 means auto.
     port: AtomicU16,
 
-    // TODO
-    // Maintains per-connection counters. (atomic pointer originally)
-    // stats: RwLock<connstats.Statistics>
-
-    //     // ============================================================
-    //     // mu guards all following fields; see userspaceEngine lock
-    //     // ordering rules against the engine. For derphttp, mu must
-    //     // be held before derphttp.Client.mu.
     state: Mutex<ConnState>,
-    state_notifier: sync::Notify,
     /// Close is in progress (or done)
     closing: AtomicBool,
 
@@ -223,8 +222,25 @@ pub struct Inner {
     pub(super) peer_map: RwLock<PeerMap>,
 }
 
+#[derive(Debug, Default)]
+struct EndpointUpdateState {
+    /// If running, set to the task handle of the update.
+    running: Option<JoinHandle<()>>,
+    want_update: Option<&'static str>,
+}
+
+impl EndpointUpdateState {
+    /// Returns `true` if an update is currently in progress.
+    fn is_running(&self) -> bool {
+        match self.running {
+            Some(ref handle) => !handle.is_finished(),
+            None => false,
+        }
+    }
+}
+
 pub(super) struct ConnState {
-    /// Close was called
+    /// Close was called.
     closed: bool,
 
     /// A timer that fires to occasionally clean up idle DERP connections.
@@ -236,12 +252,8 @@ pub(super) struct ConnState {
     // When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
     periodic_re_stun_timer: Option<Timer>,
 
-    /// Indicates that update_endpoints is currently running. It's used to deduplicate
-    /// concurrent endpoint update requests.
-    endpoints_update_active: bool,
-    /// If set, means that a new endpoints update should begin immediately after the currently-running one
-    /// completes. It can only be non-empty if `endpoints_update_active == true`.
-    want_endpoints_update: Option<&'static str>,
+    /// Indicates the update endpoint state.
+    endpoints_update_state: EndpointUpdateState,
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
     last_endpoints: Vec<cfg::Endpoint>,
@@ -272,9 +284,7 @@ pub(super) struct ConnState {
 
     net_map: Option<netmap::NetworkMap>,
     /// WireGuard private key for this node
-    private_key: Option<key::node::SecretKey>,
-    /// Whether we ever had a non-zero private key
-    ever_had_key: bool,
+    private_key: key::node::SecretKey,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: usize,
     // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
@@ -290,17 +300,17 @@ pub(super) struct ConnState {
     derp_route: HashMap<key::node::PublicKey, DerpRoute>,
 }
 
-impl Default for ConnState {
-    fn default() -> Self {
+impl ConnState {
+    fn new(private_key: key::node::SecretKey) -> Self {
         let disco_private = key::disco::SecretKey::generate();
         let disco_public = disco_private.public();
+
         ConnState {
             closed: false,
             derp_cleanup_timer: None,
             derp_cleanup_timer_armed: false,
             periodic_re_stun_timer: None,
-            endpoints_update_active: false,
-            want_endpoints_update: None,
+            endpoints_update_state: Default::default(),
             last_endpoints: Vec::new(),
             last_endpoints_time: None,
             on_endpoint_refreshed: HashMap::new(),
@@ -310,8 +320,7 @@ impl Default for ConnState {
             disco_info: HashMap::new(),
             net_info_last: None,
             net_map: None,
-            private_key: None,
-            ever_had_key: false,
+            private_key,
             my_derp: 0,
             active_derp: HashMap::new(),
             prev_derp: HashMap::new(),
@@ -353,7 +362,7 @@ impl Conn {
 
     /// Creates a magic `Conn` listening on `opts.port`.
     /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
-    pub async fn new(opts: Options) -> Result<Self> {
+    pub async fn new(name: String, opts: Options) -> Result<Self> {
         let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
         let mut net_checker = netcheck::Client::default();
         // TODO:
@@ -370,6 +379,7 @@ impl Conn {
             on_net_info,
             on_note_recv_activity,
             link_monitor,
+            private_key,
         } = opts;
 
         if let Some(ref _link_monitor) = link_monitor {
@@ -379,7 +389,12 @@ impl Conn {
 
         let derp_recv_ch = flume::bounded(64);
 
-        let mut c = Conn(Arc::new(Inner {
+        let (pconn4, pconn6) = Self::bind(port).await?;
+        let port = pconn4.port().await;
+        port_mapper.set_local_port(port).await;
+
+        let c = Conn(Arc::new(Inner {
+            name,
             on_endpoints,
             on_derp_active,
             idle_for,
@@ -390,17 +405,15 @@ impl Conn {
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
-            have_private_key: AtomicBool::new(false),
-            public_key_atomic: Default::default(),
+            public_key: private_key.verifying_key().into(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
-            pconn4: RebindingUdpConn::default(),
-            pconn6: RebindingUdpConn::default(),
+            pconn4,
+            pconn6,
             socket_endpoint4: SocketEndpointCache::default(),
             socket_endpoint6: SocketEndpointCache::default(),
-            state_notifier: sync::Notify::new(),
             on_stun_receive: Default::default(),
-            state: Default::default(),
+            state: ConnState::new(private_key).into(),
             close_disco4: None,
             close_disco6: None,
             closing: AtomicBool::new(false),
@@ -409,47 +422,12 @@ impl Conn {
             peer_map: Default::default(),
         }));
 
-        c.rebind(CurrentPortFate::Keep).await?;
-
-        // TODO:
-        // c.connCtx, c.connCtxCancel = context.WithCancel(context.Background())
-
-        match c.listen_raw_disco("ip4") {
-            Ok(d4) => {
-                info!("using BPF disco receiver for IPv4");
-                Arc::get_mut(&mut c.0).unwrap().close_disco4 = Some(d4);
-            }
-            Err(err) => {
-                info!(
-                    "couldn't create raw v4 disco listener, using regular listener instead: {:?}",
-                    err
-                );
-            }
-        }
-        match c.listen_raw_disco("ip6") {
-            Ok(d6) => {
-                info!("[v1] using BPF disco receiver for IPv6");
-                Arc::get_mut(&mut c.0).unwrap().close_disco6 = Some(d6);
-            }
-            Err(err) => {
-                info!(
-                    "couldn't create raw v6 disco listener, using regular listener instead: {:?}",
-                    err
-                );
-            }
-        }
-
         Ok(c)
     }
 
     /// Sets a STUN packet processing func that does nothing.
     async fn ignore_stun_packets(&self) {
         *self.on_stun_receive.write().await = None;
-    }
-
-    fn listen_raw_disco(&self, _family: &str) -> Result<()> {
-        // TODO: figure out support & if it is needed for different OSes
-        bail!("not supported on this OS");
     }
 
     pub(super) fn is_closing(&self) -> bool {
@@ -467,73 +445,82 @@ impl Conn {
         }
     }
 
-    async fn update_endpoints_after(&self) {
-        let mut state = self.state.lock().await;
-        let why = state.want_endpoints_update.take();
-        if !state.closed {
-            if let Some(why) = why {
-                let this = self.clone();
-                tokio::task::spawn(async move { this.update_endpoints(why).await });
-                return;
-            }
-            if self.should_do_periodic_re_stun(&mut state) {
-                // Pick a random duration between 20 and 26 seconds (just under 30s,
-                // a common UDP NAT timeout on Linux,etc)
-                let mut rng = rand::thread_rng();
-                let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
-                if let Some(ref mut t) = state.periodic_re_stun_timer {
-                    t.reset(d).await;
-                } else {
-                    debug!("scheduling periodic_stun to run in {}s", d.as_secs());
-                    let this = self.clone();
-                    state.periodic_re_stun_timer =
-                        Some(Timer::after(
-                            d,
-                            async move { this.do_periodic_stun().await },
-                        ));
-                }
-            } else {
-                debug!("periodic STUN idle");
-                self.stop_periodic_re_stun_timer(&mut state).await;
-            }
-        }
-        state.endpoints_update_active = false;
-        self.state_notifier.notify_waiters();
-    }
-
     // c.mu must NOT be held.
-    async fn update_endpoints(&self, why: &'static str) {
-        // TODO:
-        // metricUpdateEndpoints.Add(1)
+    #[instrument(skip_all, fields(self.name = %self.name))]
+    fn update_endpoints(&self, why: &'static str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            // TODO:
+            // metricUpdateEndpoints.Add(1)
 
-        debug!("starting endpoint update ({})", why);
-        if self.no_v4_send.load(Ordering::Relaxed) {
-            let closed = self.state.lock().await.closed;
-            if !closed {
-                debug!("last netcheck reported send error. Rebinding.");
-                self.rebind_all().await;
+            debug!("starting endpoint update ({})", why);
+            if self.no_v4_send.load(Ordering::Relaxed) {
+                let closed = self.state.lock().await.closed;
+                if !closed {
+                    debug!("last netcheck reported send error. Rebinding.");
+                    self.rebind_all().await;
+                }
             }
-        }
 
-        match self.determine_endpoints().await {
-            Ok(endpoints) => {
-                if self.set_endpoints(&endpoints).await {
-                    self.log_endpoint_change(&endpoints);
-                    if let Some(ref cb) = self.on_endpoints {
-                        cb(&endpoints[..]);
+            match self.determine_endpoints().await {
+                Ok(endpoints) => {
+                    if self.set_endpoints(&endpoints).await {
+                        self.log_endpoint_change(&endpoints);
+                        if let Some(ref cb) = self.on_endpoints {
+                            cb(&endpoints[..]);
+                        }
                     }
                 }
+                Err(err) => {
+                    info!("endpoint update ({}) failed: {:#?}", why, err);
+                    // TODO(crawshaw): are there any conditions under which
+                    // we should trigger a retry based on the error here?
+                }
             }
-            Err(err) => {
-                info!("endpoint update ({}) failed: {:?}", why, err);
-                // TODO(crawshaw): are there any conditions under which
-                // we should trigger a retry based on the error here?
-                return;
+
+            let mut state = self.state.lock().await;
+            let new_why = state.endpoints_update_state.want_update.take();
+            if !state.closed {
+                if let Some(new_why) = new_why {
+                    debug!("endpoint update: needed new ({})", new_why);
+                    let this = self.clone();
+                    state
+                        .endpoints_update_state
+                        .running
+                        .replace(tokio::task::spawn(async move {
+                            this.update_endpoints(new_why).await
+                        }));
+                    return;
+                }
+                if self.should_do_periodic_re_stun(&mut state) {
+                    // Pick a random duration between 20 and 26 seconds (just under 30s,
+                    // a common UDP NAT timeout on Linux,etc)
+                    let d: Duration = {
+                        let mut rng = rand::thread_rng();
+                        rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26))
+                    };
+                    if let Some(ref mut t) = state.periodic_re_stun_timer {
+                        t.reset(d).await;
+                    } else {
+                        debug!("scheduling periodic_stun to run in {}s", d.as_secs());
+                        let this = self.clone();
+                        state.periodic_re_stun_timer =
+                            Some(Timer::after(
+                                d,
+                                async move { this.do_periodic_stun().await },
+                            ));
+                    }
+                } else {
+                    debug!("periodic STUN idle");
+                    self.stop_periodic_re_stun_timer(&mut state).await;
+                }
             }
-        }
+
+            debug!("endpoint update done ({})", why);
+        })
     }
 
     /// Records the new endpoints, reporting whether they're changed.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn set_endpoints(&self, endpoints: &[cfg::Endpoint]) -> bool {
         let any_stun = endpoints.iter().any(|ep| ep.typ == cfg::EndpointType::Stun);
 
@@ -582,7 +569,8 @@ impl Conn {
         }
     }
 
-    async fn update_net_info(&self) -> Result<netcheck::Report> {
+    #[instrument(skip_all, fields(self.name = %self.name))]
+    async fn update_net_info(&self) -> Result<Arc<netcheck::Report>> {
         let dm = self.derp_map.read().await.clone();
         if dm.is_none() || self.network_down() {
             return Ok(Default::default());
@@ -600,7 +588,7 @@ impl Conn {
             }));
             let report = self.net_checker.get_report(&dm).await?;
             *self.last_net_check_report.write().await = Some(report.clone());
-            let r = report.read().await;
+            let r = &report;
             self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
 
             let mut ni = cfg::NetInfo {
@@ -701,6 +689,7 @@ impl Conn {
         self.call_net_info_callback_locked(ni, &mut state);
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn call_net_info_callback_locked(&self, ni: cfg::NetInfo, state: &mut ConnState) {
         state.net_info_last = Some(ni.clone());
         if let Some(ref on_net_info) = self.on_net_info {
@@ -725,6 +714,7 @@ impl Conn {
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
         let peer_map = self.peer_map.read().await;
         match peer_map.endpoint_for_node_key(nk) {
@@ -740,17 +730,12 @@ impl Conn {
     }
 
     /// Handles a "ping" CLI query.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn ping<F>(&self, peer: cfg::Node, mut res: cfg::PingResult, cb: F)
     where
         F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
         let state = self.state.lock().await;
-
-        if state.private_key.is_none() {
-            res.err = Some("local node stopped".to_string());
-            cb(res);
-            return;
-        }
 
         res.node_ip = peer.addresses.get(0).copied();
         res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
@@ -830,12 +815,6 @@ impl Conn {
         }
         state.my_derp = derp_num;
 
-        if state.private_key.is_none() {
-            // No private key yet, so DERP connections won't come up anyway.
-            // Return early rather than ultimately log a couple lines of noise.
-            return true;
-        }
-
         // On change, notify all currently connected DERP servers and
         // start connecting to our home DERP if we are not already.
         let derp_map = self.derp_map.read().await;
@@ -868,7 +847,7 @@ impl Conn {
         self.go_derp_connect(state.my_derp);
     }
 
-    /// Starts a goroutine to start connecting to the given DERP node.
+    /// Starts a task to start connecting to the given DERP node.
     fn go_derp_connect(&self, node: usize) {
         if node == 0 {
             return;
@@ -884,6 +863,7 @@ impl Conn {
 
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn determine_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
         let mut portmap_ext = self
             .port_mapper
@@ -920,7 +900,6 @@ impl Conn {
             self.set_net_info_have_port_map().await;
         }
 
-        let nr = nr.read().await;
         if let Some(global_v4) = nr.global_v4 {
             add_addr!(already, eps, global_v4, cfg::EndpointType::Stun);
 
@@ -989,8 +968,7 @@ impl Conn {
 
     /// Returns the current IPv4 listener's port number.
     pub async fn local_port(&self) -> u16 {
-        let laddr = self.pconn4.local_addr().await;
-        laddr.map(|l| l.port()).unwrap_or_default()
+        self.pconn4.port().await
     }
 
     fn network_down(&self) -> bool {
@@ -1005,6 +983,7 @@ impl Conn {
     /// The returned sent is whether a packet went out at all. An example of when they might
     /// be different: sending to an IPv6 address when the local machine doesn't have IPv6 support
     /// returns Ok(false); it's not an error, but nothing was sent.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn poll_send_addr(
         &self,
         udp_state: &quinn_udp::UdpState,
@@ -1052,6 +1031,7 @@ impl Conn {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn poll_send_udp(
         &self,
         udp_state: &quinn_udp::UdpState,
@@ -1061,7 +1041,16 @@ impl Conn {
         let transmits = [transmit];
         match transmits[0].destination {
             SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmits),
-            SocketAddr::V6(_) => self.pconn6.poll_send(udp_state, cx, &transmits),
+            SocketAddr::V6(_) => {
+                if let Some(ref conn) = self.pconn6 {
+                    conn.poll_send(udp_state, cx, &transmits)
+                } else {
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "no IPv6 connection",
+                    )))
+                }
+            }
         }
     }
 
@@ -1069,6 +1058,7 @@ impl Conn {
     /// For real UDP addresses, it returns `None`.
     ///
     /// If peer is `Some`, it can be used to find an active reverse path, without using addr.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn derp_write_chan_of_addr(
         &self,
         addr: SocketAddr,
@@ -1088,10 +1078,6 @@ impl Conn {
             return None;
         }
         if !derp_map.as_ref().unwrap().regions.contains_key(&region_id) {
-            return None;
-        }
-        if state.private_key.is_none() {
-            debug!("DERP lookup of {} with no private key; ignoring", addr);
             return None;
         }
 
@@ -1137,32 +1123,29 @@ impl Conn {
         // Note that derp::http.new_region_client does not dial the server
         // (it doesn't block) so it is safe to do under the state lock.
         let this = self.clone();
-        let dc = derp::http::Client::new_region(
-            state.private_key.clone().expect("checked for key earlier"),
-            move || {
-                let this = this.clone();
-                Box::pin(async move {
-                    // Warning: it is not legal to acquire
-                    // magicsock.Conn.mu from this callback.
-                    // It's run from derp::http::Client.connect (via Send, etc)
-                    // and the lock ordering rules are that magicsock.Conn.mu
-                    // must be acquired before derp::http.Client.mu
+        let dc = derp::http::Client::new_region(state.private_key.clone(), move || {
+            let this = this.clone();
+            Box::pin(async move {
+                // Warning: it is not legal to acquire
+                // magicsock.Conn.mu from this callback.
+                // It's run from derp::http::Client.connect (via Send, etc)
+                // and the lock ordering rules are that magicsock.Conn.mu
+                // must be acquired before derp::http.Client.mu
 
-                    if this.is_closing() {
-                        // We're closing anyway; return to stop dialing.
-                        return None;
-                    }
+                if this.is_closing() {
+                    // We're closing anyway; return to stop dialing.
+                    return None;
+                }
 
-                    // Need to load the derp map without aquiring the lock
+                // Need to load the derp map without aquiring the lock
 
-                    let derp_map = &*this.derp_map.read().await;
-                    match derp_map {
-                        None => None,
-                        Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
-                    }
-                })
-            },
-        );
+                let derp_map = &*this.derp_map.read().await;
+                match derp_map {
+                    None => None,
+                    Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
+                }
+            })
+        });
 
         dc.set_can_ack_pings(true);
         dc.note_preferred(state.my_derp == region_id);
@@ -1172,8 +1155,7 @@ impl Conn {
             Box::pin(async move {
                 // TODO: use atomic read?
                 if let Some(r) = &*this.last_net_check_report.read().await {
-                    // TODO: avoid locking on the report
-                    return r.read().await.ipv6;
+                    return r.ipv6;
                 }
                 false
             })
@@ -1250,6 +1232,7 @@ impl Conn {
     }
 
     /// Runs in a task for the life of a DERP connection, handling received packets.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn run_derp_reader(
         &self,
         derp_fake_addr: SocketAddr,
@@ -1356,7 +1339,11 @@ impl Conn {
                                 src: source,
                                 buf: data,
                             };
-                            self.derp_recv_ch.0.send_async(res).await;
+                            self.derp_recv_ch
+                                .0
+                                .send_async(res)
+                                .await
+                                .expect("derp_recv_ch gone");
                         }
                         derp::ReceivedMessage::Ping(data) => {
                             // Best effort reply to the ping.
@@ -1390,6 +1377,7 @@ impl Conn {
 
     // runDerpWriter runs in a goroutine for the life of a DERP
     // connection, handling received packets.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn run_derp_writer(
         &self,
         dc: derp::http::Client,
@@ -1435,6 +1423,7 @@ impl Conn {
 
     /// Handles deciding if a received UDP packet should be reported to the above layer or not.
     /// Returns `false` if this is an internal packet and it should not be reported.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn receive_ip(
         &self,
         b: &mut io::IoSliceMut<'_>,
@@ -1454,12 +1443,6 @@ impl Conn {
         }
         if self.handle_disco_message(b, meta.addr, None) {
             debug!("received DISCO message {}", b.len());
-            return false;
-        }
-        if !self.have_private_key.load(Ordering::Relaxed) {
-            debug!("skipping receive, no key available");
-            // If we have no private key, we're logged out or
-            // stopped. Don't try to pass these packets along
             return false;
         }
 
@@ -1489,6 +1472,7 @@ impl Conn {
         true
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn process_derp_read_result(
         &self,
         dm: DerpReadResult,
@@ -1537,6 +1521,7 @@ impl Conn {
     /// If dst is a DERP IP:port, then dst_key must be Some.
     ///
     /// The dst_key should only be `Some` the dst_disco key unambiguously maps to exactly one peer.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) async fn send_disco_message(
         &self,
         dst: SocketAddr,
@@ -1565,11 +1550,6 @@ impl Conn {
         } = &mut *state;
         let di = disco_info_locked(disco_info, &*disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
-        debug!(
-            "sealing msg from {:?} to {:?}",
-            disco_private.public(),
-            dst_disco,
-        );
         drop(state);
 
         // TODO
@@ -1638,6 +1618,7 @@ impl Conn {
     ///
     /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
     /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn handle_disco_message(
         &self,
         msg: &[u8],
@@ -1652,7 +1633,7 @@ impl Conn {
         let (source, sealed_box) = source.unwrap();
 
         let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
-        if state.closed || state.private_key.is_none() {
+        if state.closed {
             return true;
         }
 
@@ -1810,6 +1791,7 @@ impl Conn {
     /// `None` if not unamabigous.
     ///
     /// derp_node_src is `Some` if the disco ping arrived via DERP.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn unambiguous_node_key_of_ping_locked(
         &self,
         peer_map: &PeerMap,
@@ -1845,6 +1827,7 @@ impl Conn {
 
     /// di is the DiscoInfo of the source of the ping.
     /// derp_node_src is non-zero if the ping arrived via DERP.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn handle_ping_locked(
         &self,
         state: &mut ConnState,
@@ -1971,6 +1954,7 @@ impl Conn {
     /// derpAddr is de.derpAddr at the time of send. It's assumed the peer won't be
     /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn enqueue_call_me_maybe(
         &self,
         derp_addr: SocketAddr,
@@ -1983,7 +1967,10 @@ impl Conn {
                 || state.last_endpoints_time.as_ref().unwrap().elapsed()
                     > ENDPOINTS_FRESH_ENOUGH_DURATION
             {
-                info!("want call-me-maybe but endpoints stale; restunning");
+                info!(
+                    "want call-me-maybe but endpoints stale; restunning ({:?})",
+                    state.last_endpoints_time
+                );
 
                 let this = self.clone();
                 state.on_endpoint_refreshed.insert(
@@ -2034,6 +2021,7 @@ impl Conn {
         })
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_network_up(&self, up: bool) {
         let mut state = self.state.lock().await;
         if self.network_up.load(Ordering::Relaxed) == up {
@@ -2052,6 +2040,7 @@ impl Conn {
     }
 
     /// Sets the connection's preferred local port.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_preferred_port(&self, port: u16) {
         let existing_port = self.port.swap(port, Ordering::Relaxed);
         if existing_port == port {
@@ -2065,59 +2054,8 @@ impl Conn {
         self.reset_endpoint_states().await;
     }
 
-    /// Sets the connection's secret key.
-    ///
-    /// This is only used to be able prove our identity when connecting to DERP servers.
-    ///
-    /// If the secret key changes, any DERP connections are torn down & recreated when needed.
-    pub async fn set_private_key(&self, new_key: key::node::SecretKey) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        let old_key = &state.private_key;
-        if old_key.is_some()
-            && old_key
-                .as_ref()
-                .unwrap()
-                .to_bytes()
-                .ct_eq(&new_key.to_bytes())
-                .into()
-        {
-            return Ok(());
-        }
-        self.0
-            .public_key_atomic
-            .write()
-            .await
-            .replace(new_key.verifying_key().into());
-        let old_key = state.private_key.replace(new_key);
-        self.have_private_key.store(true, Ordering::Relaxed);
-
-        if old_key.is_none() {
-            state.ever_had_key = true;
-            info!("set_private_key called (init)");
-
-            let this = self.clone();
-            tokio::task::spawn(async move {
-                this.re_stun("set-private-key").await;
-            });
-        } else {
-            info!("set_private_key called (changed)");
-            self.close_all_derp_locked(&mut state, "new-private-key");
-        }
-
-        // Key changed. Close existing DERP connections and reconnect to home.
-        if state.my_derp != 0 {
-            info!(
-                "private key changed, reconnecting to home derp-{}",
-                state.my_derp
-            );
-            self.start_derp_home_connect_locked(&mut state);
-        }
-
-        Ok(())
-    }
-
-    /// Called when the set of WireGuard peers changes. It then removes any state for old peers.
+    /// Called when the set of peers changes. It then removes any state for old peers.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn update_peers(&self, new_peers: HashSet<key::node::PublicKey>) {
         let mut state = self.state.lock().await;
 
@@ -2139,6 +2077,7 @@ impl Conn {
     }
 
     /// Controls which (if any) DERP servers are used. A `None` value means to disable DERP; it's disabled by default.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_derp_map(&self, dm: Option<derp::DerpMap>) {
         let mut state = self.state.lock().await;
         let derp_map_locked = &mut *self.derp_map.write().await;
@@ -2183,6 +2122,7 @@ impl Conn {
     /// Called when the control client gets a new network map from the control server.
     /// It should not use the DerpMap field of NetworkMap; that's
     /// conditionally sent to set_derp_map instead.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_network_map(&self, nm: netmap::NetworkMap) {
         let mut state = self.state.lock().await;
 
@@ -2280,6 +2220,7 @@ impl Conn {
 
     /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
     /// and pings all those that do.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn maybe_close_derps_on_rebind(&self, okay_local_ips: &[IpAddr]) {
         let mut state = self.state.lock().await;
 
@@ -2335,12 +2276,13 @@ impl Conn {
         state: &mut ConnState,
     ) {
         self.close_derp_locked(region_id, why, &mut state.active_derp);
-        if state.private_key.is_some() && state.my_derp == region_id {
+        if state.my_derp == region_id {
             self.start_derp_home_connect_locked(state);
         }
     }
 
     /// It is the responsibility of the caller to call `log_active_derp_locked` after any set of closes.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn close_derp_locked(
         &self,
         region_id: usize,
@@ -2364,6 +2306,7 @@ impl Conn {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn log_active_derp_locked(&self, state: &mut ConnState) {
         let now = Instant::now();
         debug!("{} active derp conns{}", state.active_derp.len(), {
@@ -2383,6 +2326,7 @@ impl Conn {
         });
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn log_endpoint_change(&self, endpoints: &[cfg::Endpoint]) {
         info!("endpoints changed: {}", {
             let mut s = String::new();
@@ -2494,6 +2438,7 @@ impl Conn {
     /// Close closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn close(&self) -> Result<()> {
         let mut state = self.state.lock().await;
         if state.closed {
@@ -2520,35 +2465,37 @@ impl Conn {
         self.close_all_derp_locked(&mut state, "conn-close");
         // Ignore errors from c.pconnN.Close.
         // They will frequently have been closed already by a call to connBind.Close.
-        self.pconn6.close().await.ok();
+        if let Some(ref conn) = self.pconn6 {
+            conn.close().await.ok();
+        }
         self.pconn4.close().await.ok();
 
         // Wait on tasks updating right at the end, once everything is
         // already closed. We want everything else in the Conn to be
         // consistently in the closed state before we release mu to wait
         // on the endpoint updater & derphttp.Connect.
-        while self.tasks_running_locked(&mut state).await {
-            self.state_notifier.notified().await;
-        }
+        self.tasks_running_locked(&mut state).await;
 
         Ok(())
     }
 
-    async fn tasks_running_locked(&self, state: &mut ConnState) -> bool {
-        if state.endpoints_update_active {
-            return true;
+    #[instrument(skip_all, fields(self.name = %self.name))]
+    async fn tasks_running_locked(&self, state: &mut ConnState) {
+        if let Some(handle) = state.endpoints_update_state.running.take() {
+            if let Err(err) = handle.await {
+                debug!("endpoint update error: {:?}", err);
+            };
         }
         // TODO: track spawned tasks and join them
-        false
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn should_do_periodic_re_stun(&self, state: &mut ConnState) -> bool {
         if self.network_down() {
             return false;
         }
-        if state.peer_set.is_empty() || state.private_key.is_none() {
+        if state.peer_set.is_empty() {
             // If no peers, not worth doing.
-            // Also don't if there's no key (not running).
             return false;
         }
         if let Some(ref f) = self.idle_for {
@@ -2568,6 +2515,7 @@ impl Conn {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn re_stun(&self, why: &'static str) {
         let mut state = self.state.lock().await;
         if state.closed {
@@ -2577,164 +2525,63 @@ impl Conn {
         // TODO:
         // metricReSTUNCalls.Add(1)
 
-        // If the user stopped the app, stop doing work. (When the
-        // user stops we get reconfigures the engine with a no private key.)
-        //
-        // This used to just check c.privateKey.IsZero, but that broke
-        // some end-to-end tests that didn't ever set a private
-        // key somehow. So for now, only stop doing work if we ever
-        // had a key, which helps real users, but appeases tests for
-        // now. TODO: rewrite those tests to be less brittle or more realistic.
-        if state.private_key.is_none() && state.ever_had_key {
-            debug!("re_stun({}) ignored; stopped, no private key", why);
-            return;
-        }
-
-        if state.endpoints_update_active {
-            if state.want_endpoints_update.is_none() || state.want_endpoints_update.unwrap() != why
-            {
+        if state.endpoints_update_state.is_running() {
+            if Some(why) != state.endpoints_update_state.want_update {
                 debug!(
-                    "re_stun({}): endpoint update active, need another later",
-                    why
+                    "re_stun({:?}): endpoint update active, need another later: {:?}",
+                    state.endpoints_update_state.want_update, why
                 );
-                state.want_endpoints_update = Some(why);
+                state.endpoints_update_state.want_update.replace(why);
             }
         } else {
             debug!("re_stun({}): started", why);
-            state.endpoints_update_active = true;
             let this = self.clone();
-            tokio::task::spawn(async move {
-                this.update_endpoints(why).await;
-            });
+            state
+                .endpoints_update_state
+                .running
+                .replace(tokio::task::spawn(async move {
+                    this.update_endpoints(why).await;
+                }));
         }
-    }
-
-    /// Opens a packet listener.
-    async fn listen_packet(&self, network: Network, port: u16) -> Result<UdpSocket> {
-        let addr = SocketAddr::new(network.default_addr(), port);
-        let socket = socket2::Socket::new(
-            network.into(),
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        )?;
-
-        if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-            info!(
-                "failed to set recv_buffer_size to {}: {:?}",
-                SOCKET_BUFFER_SIZE, err
-            );
-        }
-        if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-            info!(
-                "failed to set send_buffer_size to {}: {:?}",
-                SOCKET_BUFFER_SIZE, err
-            );
-        }
-        socket.set_nonblocking(true)?;
-        socket.bind(&addr.into())?;
-        let socket = UdpSocket::from_std(socket.into())?;
-
-        debug!("bound to {}", socket.local_addr()?);
-
-        Ok(socket)
-    }
-
-    // bindSocket initializes rucPtr if necessary and binds a UDP socket to it.
-    // Network indicates the UDP socket type; it must be "udp4" or "udp6".
-    // If rucPtr had an existing UDP socket bound, it closes that socket.
-    // The caller is responsible for informing the portMapper of any changes.
-    // If curPortFate is set to dropCurrentPort, no attempt is made to reuse
-    // the current port.
-    async fn bind_socket(
-        &self,
-        ruc: &RebindingUdpConn,
-        network: Network,
-        cur_port_fate: CurrentPortFate,
-    ) -> Result<()> {
-        debug!(
-            "bind_socket: network={:?} cur_port_fate={:?}",
-            network, cur_port_fate
-        );
-
-        // Hold the ruc lock the entire time, so that the close+bind is atomic from the perspective of ruc receive functions.
-        let mut ruc = ruc.inner.write().await;
-
-        // Build a list of preferred ports.
-        // - Best is the port that the user requested.
-        // - Second best is the port that is currently in use.
-        // - If those fail, fall back to 0.
-
-        let mut ports = Vec::new();
-        let port = self.port.load(Ordering::Relaxed);
-        if port != 0 {
-            ports.push(port);
-        }
-        if cur_port_fate == CurrentPortFate::Keep {
-            if let Ok(cur_addr) = ruc.local_addr() {
-                ports.push(cur_addr.port());
-            }
-        }
-        ports.push(0);
-        // Remove duplicates. (All duplicates are consecutive.)
-        ports.dedup();
-        debug!("bind_socket: candidate ports: {:?}", ports);
-
-        for port in &ports {
-            // Close the existing conn, in case it is sitting on the port we want.
-            if let Err(err) = ruc.close() {
-                if !matches!(rebinding_conn::Error::NoConn, err) {
-                    info!("bind_socket {:?} close failed: {:?}", network, err);
-                }
-            }
-            // Open a new one with the desired port.
-            match self.listen_packet(network, *port).await {
-                Ok(pconn) => {
-                    debug!(
-                        "bind_socket: successfully listened {:?} port {}",
-                        network, port
-                    );
-                    ruc.set_conn(pconn, network);
-                    return Ok(());
-                }
-                Err(err) => {
-                    info!(
-                        "bind_socket: unable to bind {:?} port {}: {:?}",
-                        network, port, err
-                    );
-                    continue;
-                }
-            }
-        }
-
-        // Failed to bind, including on port 0 (!).
-        // Set pconn to a dummy conn whose reads block until closed.
-        // This keeps the receive funcs alive for a future in which
-        // we get a link change and we can try binding again.
-
-        // TODO: is this needed?
-        // ruc.set_conn(newBlockForeverConn(), "");
-
-        bail!("failed to bind any ports (tried {:?})", ports);
     }
 
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
     async fn rebind(&self, cur_port_fate: CurrentPortFate) -> Result<()> {
-        if let Err(err) = self
-            .bind_socket(&self.pconn6, Network::Ip6, cur_port_fate)
-            .await
-        {
-            info!("rebind ignoring IPv6 bind failure: {:?}", err);
+        let port = self.local_port().await;
+        if let Some(ref conn) = self.pconn6 {
+            // If we were not able to bind ipv6 at program start, dont retry
+            if let Err(err) = conn.rebind(port, Network::Ip6, cur_port_fate).await {
+                info!("rebind ignoring IPv6 bind failure: {:?}", err);
+            }
         }
-        self.bind_socket(&self.pconn4, Network::Ip4, cur_port_fate)
+        self.pconn4
+            .rebind(port, Network::Ip4, cur_port_fate)
             .await
             .context("rebind IPv4 failed")?;
 
-        self.port_mapper
-            .set_local_port(self.local_port().await)
-            .await;
+        // reread, as it might have changed
+        let port = self.local_port().await;
+        self.port_mapper.set_local_port(port).await;
 
         Ok(())
+    }
+
+    /// Initial connection setup.
+    async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
+        let pconn6 = match RebindingUdpConn::bind(port, Network::Ip6).await {
+            Ok(conn) => Some(conn),
+            Err(err) => {
+                info!("rebind ignoring IPv6 bind failure: {:?}", err);
+                None
+            }
+        };
+
+        let pconn4 = RebindingUdpConn::bind(port, Network::Ip4)
+            .await
+            .context("rebind IPv4 failed")?;
+
+        Ok((pconn4, pconn6))
     }
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
@@ -2773,6 +2620,7 @@ impl Conn {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn poll_send_raw(
         &self,
         state: &quinn_udp::UdpState,
@@ -2788,7 +2636,14 @@ impl Conn {
             |a, b| a.destination.is_ipv6() == b.destination.is_ipv6(),
             |group| {
                 let res = if group[0].destination.is_ipv6() {
-                    self.pconn6.poll_send(state, cx, group)
+                    if let Some(ref conn) = self.pconn6 {
+                        conn.poll_send(state, cx, &transmits)
+                    } else {
+                        Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "no IPv6 connection",
+                        )))
+                    }
                 } else {
                     self.pconn4.poll_send(state, cx, group)
                 };
@@ -2898,6 +2753,7 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
 }
 
 impl AsyncUdpSocket for Conn {
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn poll_send(
         &mut self,
         udp_state: &quinn_udp::UdpState,
@@ -2924,11 +2780,7 @@ impl AsyncUdpSocket for Conn {
             |group| {
                 let dest = &group[0].destination;
                 let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-                let maybe_ep = peer_map.endpoint_for_ip_port(dest);
-                debug!("found ep: {:?}", maybe_ep);
-                debug!("peers: {:?}", peer_map);
-
-                match maybe_ep {
+                match peer_map.endpoint_for_ip_port(dest) {
                     Some(ep) => match ep.poll_send(udp_state, cx, &group) {
                         Poll::Pending => None,
                         Poll::Ready(Ok(n)) => {
@@ -2962,6 +2814,7 @@ impl AsyncUdpSocket for Conn {
         Poll::Pending
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -3003,34 +2856,33 @@ impl AsyncUdpSocket for Conn {
         }
         // IPv6
         if num_msgs_total < bufs.len() {
-            match self.pconn6.poll_recv(
-                cx,
-                &mut bufs[num_msgs_total..],
-                &mut meta[num_msgs_total..],
-            ) {
-                Poll::Pending => {}
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Err(err));
-                }
-                Poll::Ready(Ok(mut num_msgs)) => {
-                    debug!("received {} msgs on IPv6", num_msgs);
-                    debug_assert!(num_msgs + num_msgs_total < bufs.len());
-                    let mut i = num_msgs_total;
-                    while i < num_msgs + num_msgs_total {
-                        if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint6) {
-                            // move all following over
-                            for k in i..num_msgs + num_msgs_total - 1 {
-                                bufs.swap(k, k + 1);
-                                meta.swap(k, k + 1);
+            if let Some(ref conn) = self.pconn6 {
+                match conn.poll_recv(cx, &mut bufs[num_msgs_total..], &mut meta[num_msgs_total..]) {
+                    Poll::Pending => {}
+                    Poll::Ready(Err(err)) => {
+                        return Poll::Ready(Err(err));
+                    }
+                    Poll::Ready(Ok(mut num_msgs)) => {
+                        debug!("received {} msgs on IPv6", num_msgs);
+                        debug_assert!(num_msgs + num_msgs_total <= bufs.len());
+                        let mut i = num_msgs_total;
+                        while i < num_msgs + num_msgs_total {
+                            if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint6)
+                            {
+                                // move all following over
+                                for k in i..num_msgs + num_msgs_total - 1 {
+                                    bufs.swap(k, k + 1);
+                                    meta.swap(k, k + 1);
+                                }
+
+                                // reduce num_msgs
+                                num_msgs -= 1;
                             }
 
-                            // reduce num_msgs
-                            num_msgs -= 1;
+                            i += 1;
                         }
-
-                        i += 1;
+                        num_msgs_total += num_msgs;
                     }
-                    num_msgs_total += num_msgs;
                 }
             }
         }
@@ -3279,10 +3131,13 @@ mod tests {
     /// Returns a new Conn.
     async fn new_test_conn() -> Conn {
         let port = pick_port().await;
-        Conn::new(Options {
-            port,
-            ..Default::default()
-        })
+        Conn::new(
+            format!("test-{port}"),
+            Options {
+                port,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap()
     }
@@ -3360,7 +3215,7 @@ mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "test-node.unused".into(),
+                        host_name: "test-node.invalid".into(),
                         stun_only: true, // TODO: switch to false once derp is implemented,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
@@ -3398,21 +3253,20 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
-            let key = key::node::SecretKey::generate();
-            Self::with_key(key, derp_map).await
-        }
-
-        async fn with_key(key: key::node::SecretKey, derp_map: DerpMap) -> Result<Self> {
             let (ep_s, ep_r) = flume::bounded(16);
-            let conn = Conn::new(Options {
+            let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
                     ep_s.send(eps.to_vec()).unwrap();
                 })),
                 ..Default::default()
-            })
+            };
+            let key = opts.private_key.clone();
+            let conn = Conn::new(
+                format!("magic-{}", hex::encode(&key.verifying_key().as_ref()[..8])),
+                opts,
+            )
             .await?;
             conn.set_derp_map(Some(derp_map)).await;
-            conn.set_private_key(key.clone()).await?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
@@ -3538,7 +3392,6 @@ mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 loop {
-                    // TODO: check for shutdown
                     tokio::select! {
                         res = m.ep_ch.recv_async() => match res {
                             Ok(new_eps) => {
@@ -3565,7 +3418,8 @@ mod tests {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
-            .init();
+            .try_init()
+            .ok();
 
         let devices = Devices {
             m1_ip: "127.0.0.1".parse()?,
@@ -3592,80 +3446,25 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("failed to connect peers")?;
 
-        // m1cfg := &wgcfg.Config{
-        // 	Name:       "peer1",
-        // 	PrivateKey: m1.privateKey,
-        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
-        // 	Peers: []wgcfg.Peer{
-        // 		{
-        // 			PublicKey:  m2.privateKey.Public(),
-        // 			DiscoKey:   m2.conn.DiscoPublicKey(),
-        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
-        // 		},
-        // 	},
-        // }
-        // m2cfg := &wgcfg.Config{
-        // 	Name:       "peer2",
-        // 	PrivateKey: m2.privateKey,
-        // 	Addresses:  []netip.Prefix{netip.MustParsePrefix("1.0.0.2/32")},
-        // 	Peers: []wgcfg.Peer{
-        // 		{
-        // 			PublicKey:  m1.privateKey.Public(),
-        // 			DiscoKey:   m1.conn.DiscoPublicKey(),
-        // 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("1.0.0.1/32")},
-        // 		},
-        // 	},
-        // }
-
-        // if err := m1.Reconfig(m1cfg); err != nil {
-        // 	t.Fatal(err)
-        // }
-        // if err := m2.Reconfig(m2cfg); err != nil {
-        // 	t.Fatal(err)
-        // }
-
-        // In the normal case, pings succeed immediately.
-        // However, in the case of a handshake race, we need to retry.
-        // With very bad luck, we can need to retry multiple times.
-        const ALLOWED_RETRIES: usize = 3;
-
-        // Retries take 5s each. Add 1s for some processing time.
-        const PING_TIMEOUT: Duration = Duration::from_secs(5 * ALLOWED_RETRIES as u64 + 1);
-
-        // Sends msg using send, checking that it is received unchanged from recv.
-        // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
-        async fn send_with_timeout(
-            msg: &[u8],
-            recv: flume::Receiver<Vec<u8>>,
-            send: impl Fn(),
-        ) -> Result<()> {
-            time::timeout(PING_TIMEOUT, async move {
-                loop {
-                    send();
-                    tokio::select! {
-                        r = recv.recv_async() => {
-                            match r {
-                                Ok(val) => {
-                                    if val != msg {
-                                        bail!("value did not roundtrip: {:?} != {:?} ", msg, val);
-                                    }
-                                    return Ok(());
-                                }
-                                Err(err) => {
-                                    return Err(err.into());
-                                }
-                            }
-                        }
-                        _ = time::sleep(Duration::from_secs(1)) => {
-                            // try again
-                        }
-                    }
-                }
-            })
-            .await??;
-            Ok(())
+        // Setup connection information for discovery
+        {
+            let m1_addr = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                m1.quic_ep.local_addr()?.port(),
+            );
+            let m2_addr = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                m2.quic_ep.local_addr()?.port(),
+            );
+            m1.conn
+                .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
+                .await;
+            m2.conn
+                .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
+                .await;
         }
 
         // msg from  m2 -> m1
@@ -3687,14 +3486,6 @@ mod tests {
                     b_name,
                     b.quic_ep.local_addr()?
                 );
-
-                // Setup connection information for discovery
-                a.conn
-                    .add_valid_disco_path_for_test(&b.public(), &b_addr)
-                    .await;
-                b.conn
-                    .add_valid_disco_path_for_test(&a.public(), &a_addr)
-                    .await;
 
                 let b_task = tokio::task::spawn(async move {
                     info!("[{}] accepting conn", b_name);
@@ -3773,12 +3564,12 @@ mod tests {
         }
 
         for i in 0..10 {
-            info!("round {}", i + 1);
+            info!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello");
             roundtrip!(m2, m1, b"hello");
         }
 
-        info!("larger data");
+        info!("-- larger data");
         {
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
