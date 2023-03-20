@@ -4,9 +4,9 @@
 use crate::hp::key::node::PublicKey;
 use std::collections::{HashMap, HashSet};
 
+use futures::future::join_all;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use tokio::task::JoinSet;
 
 use super::{
     client_conn::{ClientBuilder, ClientConnManager},
@@ -159,11 +159,11 @@ where
     }
 
     pub async fn shutdown(&mut self) {
-        let mut set = JoinSet::new();
+        let mut handles = Vec::new();
         for (_, client) in self.inner.drain() {
-            set.spawn(async move { client.shutdown_await().await });
+            handles.push(tokio::spawn(async move { client.shutdown_await().await }));
         }
-        while let Some(_) = set.join_next().await {}
+        join_all(handles).await;
     }
 
     pub fn close_conn(&mut self, key: &PublicKey) {
@@ -265,7 +265,6 @@ where
         tracing::warn!("Could not find client for {key:?}, dropping packet");
     }
 
-    // TODO: send Ok or bail
     fn process_result(
         &mut self,
         key: &PublicKey,
