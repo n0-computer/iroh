@@ -212,9 +212,9 @@ fn make_provider(
         .arg("provide")
         .arg(path)
         .arg("--addr")
-        .arg(addr.unwrap_or_else(|| ADDR))
+        .arg(addr.unwrap_or(ADDR))
         .arg("--rpc-port")
-        .arg(rpc_port.unwrap_or_else(|| "disabled"));
+        .arg(rpc_port.unwrap_or("disabled"));
 
     let provider = match input {
         Input::Stdin => {

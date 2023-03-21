@@ -441,8 +441,7 @@ impl Provider {
 
     /// Returns all available addresses on the local machine.
     pub fn available_addresses(&self) -> Vec<SocketAddr> {
-        let addrs = find_local_addresses(self.inner.listen_addr);
-        addrs
+        find_local_addresses(self.inner.listen_addr)
     }
 
     /// Aborts the provider.

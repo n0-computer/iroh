@@ -6,7 +6,7 @@ const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
 
 /// List of machine's IP addresses.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalAddresses {
     /// Loopback addresses.
     pub loopback: Vec<IpAddr>,
