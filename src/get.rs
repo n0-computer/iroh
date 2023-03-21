@@ -202,7 +202,7 @@ where
 
                         // expect to get blob data in the order they appear in the collection
                         let mut remaining_size = total_blobs_size;
-                        for blob in collection.blobs {
+                        for blob in collection.into_inner() {
                             let mut blob_reader =
                                 handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
 

@@ -8,17 +8,34 @@ use crate::util::Hash;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
     /// Links to the blobs in this collection
-    pub(crate) blobs: Vec<Blob>,
+    blobs: Vec<Blob>,
     /// The total size of the raw_data referred to by all links
-    pub(crate) total_blobs_size: u64,
+    total_blobs_size: u64,
 }
 
 impl Collection {
+    pub(crate) fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> Self {
+        Self {
+            blobs,
+            total_blobs_size,
+        }
+    }
+
     /// Deserialize a collection from a byte slice
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
             postcard::from_bytes(data).context("failed to serialize Collection data")?;
         Ok(c)
+    }
+
+    /// Blobs in this collection
+    pub(crate) fn blobs(&self) -> &[Blob] {
+        &self.blobs
+    }
+
+    /// Take ownership of the blobs in this collection
+    pub(crate) fn into_inner(self) -> Vec<Blob> {
+        self.blobs
     }
 
     /// Total size of the raw data referred to by all blobs in this collection
