@@ -1,5 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Result};
+use async_compression::tokio::write::BrotliEncoder;
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -8,10 +9,13 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek},
+    pin::Pin,
     result,
     str::FromStr,
+    task::Poll,
 };
 use thiserror::Error;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -208,5 +212,78 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+}
+
+/// A wrapper around a `quinn::SendStream` that compresses data before sending it.
+pub struct CompressedWriter(BrotliEncoder<ShutdownCatcher<quinn::SendStream>>);
+
+impl CompressedWriter {
+    pub fn new(stream: quinn::SendStream) -> Self {
+        CompressedWriter(BrotliEncoder::new(ShutdownCatcher(stream)))
+    }
+
+    /// Finish this compressed writer, write the remaining compressed data,
+    /// and return the underlying `quinn::SendStream`.
+    pub async fn finish(self) -> io::Result<quinn::SendStream> {
+        let mut encoder = self.0;
+        encoder.shutdown().await?;
+        Ok(encoder.into_inner().into_inner())
+    }
+}
+
+impl AsyncWrite for CompressedWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+}
+
+struct ShutdownCatcher<W>(W);
+
+impl<W> ShutdownCatcher<W> {
+    fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for ShutdownCatcher<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
     }
 }

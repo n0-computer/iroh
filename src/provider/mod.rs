@@ -20,7 +20,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
-use async_compression::tokio::write::BrotliEncoder;
 use bytes::{Bytes, BytesMut};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -49,7 +48,7 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash};
+use crate::util::{self, CompressedWriter, Hash};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -698,7 +697,7 @@ async fn transfer_collection(
         },
     )
     .await?;
-    let mut compressed_writer = BrotliEncoder::new(ShutdownCatcher(writer));
+    let mut compressed_writer = CompressedWriter::new(writer);
 
     let mut data = BytesMut::from(&encoded[..]);
     compressed_writer.write_buf(&mut data).await?;
@@ -709,9 +708,7 @@ async fn transfer_collection(
             send_blob(db.clone(), blob.hash, compressed_writer, buffer).await?;
         compressed_writer = writer1;
         if SentStatus::NotFound == status {
-            compressed_writer.shutdown().await?;
-            let mut writer = compressed_writer.into_inner().into_inner();
-            writer.finish().await?;
+            compressed_writer.finish().await?;
             return Ok(status);
         }
 
@@ -724,9 +721,7 @@ async fn transfer_collection(
         });
     }
 
-    compressed_writer.shutdown().await?;
-    let mut writer = compressed_writer.into_inner().into_inner();
-    writer.finish().await?;
+    compressed_writer.finish().await?;
     Ok(SentStatus::Sent)
 }
 
@@ -826,38 +821,6 @@ async fn handle_stream(
 enum SentStatus {
     Sent,
     NotFound,
-}
-
-struct ShutdownCatcher<W>(W);
-
-impl<W> ShutdownCatcher<W> {
-    fn into_inner(self) -> W {
-        self.0
-    }
-}
-
-impl<W: AsyncWrite + Unpin> AsyncWrite for ShutdownCatcher<W> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::result::Result<usize, std::io::Error>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        Pin::new(&mut self.0).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        Pin::new(&mut self.0).poll_flush(cx)
-    }
 }
 
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(

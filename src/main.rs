@@ -395,7 +395,7 @@ async fn main_impl() -> Result<()> {
                     HumanBytes(item.size),
                     item.error
                         .as_ref()
-                        .map(|x| format!("{} ", x))
+                        .map(|x| format!("{x} "))
                         .unwrap_or("".to_owned()),
                     item.error.map(|_| &fail_char).unwrap_or(&ok_char),
                 );
