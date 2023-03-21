@@ -198,20 +198,6 @@ pub(crate) fn validate_bao(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash() {
-        let data = b"hello world";
-        let hash = Hash::new(data);
-
-        let encoded = hash.to_string();
-        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
-    }
-}
-
 /// converts a canonicalized relative path to a string, returning an error if
 /// the path is not valid unicode
 ///
@@ -236,4 +222,23 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash() {
+        let data = b"hello world";
+        let hash = Hash::new(data);
+
+        let encoded = hash.to_string();
+        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
 }
