@@ -216,6 +216,8 @@ mod tests {
             // keep track of expected values
             expects.push((name, path, hash));
         }
+        // sort expects by name to match the canonical order of blobs
+        expects.sort_by(|a, b| a.0.cmp(&b.0));
 
         let (db, collection_hash) = provider::create_collection(files).await?;
 
@@ -262,7 +264,7 @@ mod tests {
             opts,
             || async { Ok(()) },
             |collection| {
-                assert_eq!(collection.blobs.len(), num_blobs);
+                assert_eq!(collection.blobs().len(), num_blobs);
                 async { Ok(()) }
             },
             |got_hash, mut reader, got_name| {
