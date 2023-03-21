@@ -263,7 +263,7 @@ mod tests {
             opts,
             || async { Ok(()) },
             |collection| {
-                assert_eq!(collection.blobs.len(), num_blobs);
+                assert_eq!(collection.blobs().len(), num_blobs);
                 async { Ok(()) }
             },
             |got_hash, mut reader, got_name| {
