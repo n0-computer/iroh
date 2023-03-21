@@ -49,7 +49,7 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash};
+use crate::util::{self, canonicalize_path, Hash};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -490,11 +490,7 @@ impl RpcHandler {
                         return Ok(None);
                     }
                     let path = entry.into_path();
-                    let name = path
-                        .strip_prefix(&root)?
-                        .to_str()
-                        .context("invalid unicode string")?
-                        .to_owned();
+                    let name = canonicalize_path(path.strip_prefix(&root)?)?;
                     anyhow::Ok(Some(DataSource::NamedFile { name, path }))
                 }
             });
@@ -506,11 +502,7 @@ impl RpcHandler {
         } else {
             // A single file, use the file name as the name of the blob.
             vec![DataSource::NamedFile {
-                name: root
-                    .file_name()
-                    .context("path must be a file")?
-                    .to_string_lossy()
-                    .to_string(),
+                name: canonicalize_path(root.file_name().context("path must be a file")?)?,
                 path: root,
             }]
         };

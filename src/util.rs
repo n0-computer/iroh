@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -8,6 +8,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek},
+    path::{Component, Path},
     result,
     str::FromStr,
 };
@@ -209,4 +210,30 @@ mod tests {
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
     }
+}
+
+/// converts a canonicalized relative path to a string, returning an error if
+/// the path is not valid unicode
+///
+/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
+/// or if the path components contain any windows or unix path separators
+pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    let parts = path
+        .as_ref()
+        .components()
+        .map(|c| {
+            let c = if let Component::Normal(x) = c {
+                x.to_str().context("invalid character in path")?
+            } else {
+                anyhow::bail!("invalid path component {:?}", c)
+            };
+            anyhow::ensure!(
+                !c.contains('/') && !c.contains('\\'),
+                "invalid path component {:?}",
+                c
+            );
+            Ok(c)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(parts.join("/"))
 }
