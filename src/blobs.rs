@@ -15,6 +15,11 @@ pub struct Collection {
 
 impl Collection {
     pub(crate) fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> Self {
+        let mut blobs = blobs;
+        let n = blobs.len();
+        blobs.sort_by(|a, b| a.name.cmp(&b.name));
+        blobs.dedup_by(|a, b| a.name == b.name);
+        debug_assert_eq!(n, blobs.len());
         Self {
             blobs,
             total_blobs_size,
