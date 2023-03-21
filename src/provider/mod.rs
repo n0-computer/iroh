@@ -486,6 +486,7 @@ impl RpcHandler {
                 let root = root.clone();
                 async move {
                     if !entry.file_type().is_file() {
+                        // Skip symlinks. Directories are handled by WalkDir.
                         return Ok(None);
                     }
                     let path = entry.into_path();
