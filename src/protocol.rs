@@ -53,6 +53,8 @@ pub(crate) enum Res {
     /// Indicates that the given hash referred to a collection of multiple blobs
     /// A stream of boa data that decodes to a `Collection` is sent as the next message,
     /// followed by `Res::Found` responses, send in the order indicated in the `Collection`.
+    ///
+    /// All data following the `FoundCollection` response itself will be brotli compressed.
     FoundCollection {
         /// The size of the raw data we are planning to transfer
         total_blobs_size: u64,
