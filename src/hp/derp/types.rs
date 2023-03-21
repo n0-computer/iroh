@@ -84,7 +84,7 @@ pub(crate) struct ClientInfo {
     pub(crate) is_prober: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, MaxSize)]
 pub(crate) struct ServerInfo {
     pub(crate) version: usize,
     pub(crate) token_bucket_bytes_per_second: usize,

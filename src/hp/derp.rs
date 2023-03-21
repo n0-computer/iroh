@@ -45,6 +45,8 @@ const FRAME_HEADER_LEN: usize = 1 + 4; // FrameType byte + 4 byte length
 const KEY_LEN: usize = 32;
 const MAX_INFO_LEN: usize = 1024 * 1024;
 const KEEP_ALIVE: Duration = Duration::from_secs(60);
+// TODO: what should this be?
+const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit

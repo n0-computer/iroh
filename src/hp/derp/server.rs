@@ -1,19 +1,27 @@
 //! based on tailscale/derp/derp_server.go
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
-use tokio::io::{AsyncRead, AsyncWrite};
+use anyhow::{ensure, Result};
+use bytes::BytesMut;
+use postcard::experimental::max_size::MaxSize;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::hp::key::node::{PublicKey, SecretKey};
+use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 use super::{
     clients::Clients,
     types::{ClientInfo, Conn, PacketForwarder, PeerConnState, ServerMessage},
+};
+use super::{read_frame, FRAME_SERVER_INFO};
+use super::{
+    types::ServerInfo, write_frame, FRAME_CLIENT_INFO, FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION,
+    SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
 
@@ -38,21 +46,46 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 /// A DERP server.
-pub struct Server<'a> {
+///
+/// TODO: how small does this have to be before this is considered cheap to clone?
+/// It would make alot of the APIs easier if we could just clone this.
+pub struct Server<'a, C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
     /// Optionally specifies how long to wait before failing when writing
-    /// to a cliet
+    /// to a client
     write_timeout: Option<Duration>,
+    /// secret_key of the client
     secret_key: SecretKey,
     // TODO: this is a string in the go impl, I made it a standard length array
     // of bytes in this impl for ease of serializing. (Postcard cannot estimate
     // the size of the serialized struct if this field is a `String`). This should
     // be discussed and worked out.
-    mesh_key: [u8; 32],
+    // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
+    mesh_key: Option<[u8; 32]>,
     /// the encoded x509 cert to send after `LetsEncrypt` cert+intermediate
     meta_cert: &'a [u8],
-
-    /// Counters:
-    // TODO: this is the go impl, need to add this in
+    /// Channel on which to communicate to the `ServerActor`
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    /// When true, only accept client connections to the DERP server if the `client_key` is a
+    /// known  peer in the network, as specified by a running "tailscaled's client's
+    /// LocalAPI"
+    verify_clients: bool,
+    /// When true, the server has been shutdown.
+    closed: Arc<AtomicBool>,
+    /// (number of bytes allowed per second, number of bytes allowed at once)
+    /// If "bytes per second" is 0, it is as if there is no rate limit
+    rate_limit: Option<(usize, usize)>,
+    /// Server loop handler
+    loop_handler: JoinHandle<Result<()>>,
+    /// Done token:
+    cancel: CancellationToken,
+    // TODO: stats collection
+    // Counters:
     // 	packetsSent, bytesSent       expvar.Int
     // packetsRecv, bytesRecv       expvar.Int
     // packetsRecvByKind            metrics.LabelMap
@@ -85,35 +118,45 @@ pub struct Server<'a> {
     // removePktForwardOther        expvar.Int
     // avgQueueDuration             *uint64          // In milliseconds; accessed atomically
     // tcpRtt                       metrics.LabelMap // histogram
-
-    /// When true, only accept client connections to the DERP server if the `client_key` is a
-    /// known  peer in the network, as specified by a running "tailscaled's client's
-    /// LocalAPI"
-    verify_clients: bool,
-
-    closed: AtomicBool,
-    // TODO: how is this used, should it be a `Sender`?
-    // net_conns: HashMap<C, Receiver<()>>,
-    // clients: HashMap<PublicKey, ClientSet>,
-    /// Maps from netip.AddrPort to a client's public key
-    key_of_addr: HashMap<SocketAddr, PublicKey>,
-    // watchers: HashMap<ClientConn, bool>,
 }
 
-impl<'a> Server<'a> {
+impl<'a, C, R, W, P> Server<'a, C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
     /// replace with builder
-    pub fn new(key: SecretKey) -> Self {
-        // TODO:
-        todo!();
+    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>, verify_clients: bool) -> Self {
+        let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
+        let server_actor = ServerActor::new(key.verifying_key(), server_channel_r);
+        let cancel_token = CancellationToken::new();
+        let done = cancel_token.clone();
+        let server_task = tokio::spawn(async move { server_actor.run(done).await });
+        let meta_cert = init_meta_cert();
+        Self {
+            // TODO: add some default
+            write_timeout: None,
+            secret_key: key,
+            mesh_key,
+            meta_cert,
+            server_channel: server_channel_s,
+            verify_clients,
+            closed: Arc::new(AtomicBool::new(false)),
+            rate_limit: None,
+            loop_handler: server_task,
+            cancel: cancel_token,
+        }
     }
 
     /// Reports whether the server is configured with a mesh key.
     pub fn has_mesh_key(&self) -> bool {
-        !self.mesh_key.is_empty()
+        self.mesh_key.is_some()
     }
 
     /// Returns the configured mesh key, may be empty.
-    pub fn mesh_key(&self) -> [u8; 32] {
+    pub fn mesh_key(&self) -> Option<[u8; 32]> {
         self.mesh_key
     }
 
@@ -129,38 +172,20 @@ impl<'a> Server<'a> {
 
     /// Closes the server and waits for the connections to disconnect.
     pub async fn close(self) {
-        // let closed = self.closed.load(Ordering::Relaxed);
-        // if closed {
-        //     return;
-        // }
-        // self.closed.swap(true, Ordering::Relaxed);
-        // let mut closed_channels = Vec::new();
-
-        // for (net_conn, closed) in self.net_conns.into_iter() {
-        //     match net_conn.close() {
-        //         Ok(_) => closed_channels.push(closed),
-        //         Err(e) => {
-        //             tracing::warn!("error closing connection {e:#?}")
-        //         }
-        //     }
-        // }
-
-        // for c in closed_channels.into_iter() {
-        //     if let Err(e) = c.await {
-        //         tracing::warn!("error while closing connection {e:#?}");
-        //     }
-        // }
+        let is_closed = self.is_closed();
+        if !is_closed {
+            self.cancel.cancel();
+            match self.loop_handler.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!("error shutting down server: {e:?}"),
+                Err(e) => tracing::warn!("error waiting for the server process to close: {e:?}"),
+            }
+            self.closed.swap(true, Ordering::Relaxed);
+        }
     }
 
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
-    }
-
-    /// Reports whether the client with the specified key is connected.
-    /// This is used in tests to verify that nodes are connected
-    // TODO: we may not need this
-    fn is_client_connected_for_test(&self, key: PublicKey) -> bool {
-        todo!();
     }
 
     /// Adds a new connection to the server and serves it.
@@ -169,7 +194,7 @@ impl<'a> Server<'a> {
     /// Accept blocks until the Server is closed or the connection closes on its own.
     ///
     /// Accept closes `conn`.
-    pub fn accept<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    pub fn accept(
         &self,
         // conn: C,
         reader: R,
@@ -179,43 +204,13 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    /// Initializes `Server::meta_cert` with a self-signed x509 cert
-    /// encoding this server's public key and protocol version. "cmd/derp_server
-    /// then sends this after the Let's Encrypt leaf + intermediate certs after
-    /// the ServerHello (encrypted in TLS 1.3, not that is matters much).
-    ///
-    /// Then the client can save a round trime getting that and can start speaking
-    /// DERP right away. (we don't use ALPN because that's sent in the clear and
-    /// we're being paranoid to not look too weird to any middleboxes, given that
-    /// DERP is an ultimate fallback path). But since the post-ServerHello certs
-    /// are encrypted we can have the client also use them as a signal to be able
-    /// to start speaking DERP right away, starting with its identity proof,
-    /// encrypted to the server's public key.
-    ///
-    /// This RTT optimization fails where there's a corp-mandated TLS proxy with
-    /// corp-mandated root certs on employee machines and TLS proxy cleans up
-    /// unnecessary certs. In that case we jsut fall back to the extra RTT.
-    fn init_meta_cert(&self) {
-        todo!();
-    }
-
     // Returns the server metadata cert that can be sent by the TLS server to
     // let the client skip a round trip during start-up.
     pub fn meta_cert(&self) -> &[u8] {
         self.meta_cert.clone()
     }
 
-    /// Notes that client c is no authenticated and ready for packets.
-    ///
-    /// If `SCLient::key` is connected more than once, the earlier connection(s)
-    /// are placed in a non-active state where we read from them (primarily to
-    /// observe EOFs/timeouts) but won't send them frames on the assumption
-    /// that they're dead.
-    // fn register_client(&mut self, client: ClientConn) {
-    //     todo!();
-    // }
-
-    fn accept_0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    fn accept_0(
         &mut self,
         // conn: C,
         reader: R,
@@ -226,56 +221,94 @@ impl<'a> Server<'a> {
         todo!();
     }
 
-    fn record_drop(
-        &self,
-        packet_bytes: &[u8],
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        reason: DropReason,
-    ) {
-        todo!();
-    }
-
     fn verify_client(&self, client_key: PublicKey, info: ClientInfo) -> Result<()> {
-        todo!();
+        if !self.verify_clients {
+            return Ok(());
+        }
+        // status, err = tailscale.Status(context.TODO())
+        // 	if err != nil {
+        // return fmt.Errorf("failed to query local tailscaled status: %w", err)
+        // }
+        // if clientKey == status.Self.PublicKey {
+        // return nil
+        // }
+        // if _, exists := status.Peer[clientKey]; !exists {
+        // return fmt.Errorf("client %v not in set of peers", clientKey)
+        // }
+        // // TODO(bradfitz): add policy for configurable bandwidth rate per client?
+        // return nil
+        Ok(())
     }
 
-    fn send_server_key<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<()> {
-        todo!();
+    async fn send_server_key(&self, mut writer: W) -> Result<()> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC.as_bytes());
+        buf.extend_from_slice(self.public_key().as_bytes());
+        let content = &[buf.as_slice()];
+        write_frame(&mut writer, FRAME_SERVER_KEY, content).await?;
+        writer.flush().await?;
+        Ok(())
     }
 
-    fn send_server_info<W: AsyncWrite + Unpin>(
-        &self,
-        writer: W,
-        client_key: PublicKey,
-    ) -> Result<()> {
-        todo!();
+    async fn send_server_info(&self, mut writer: W, client_key: PublicKey) -> Result<()> {
+        let server_info = if let Some((bytes_per_second, bytes_burst)) = self.rate_limit {
+            ServerInfo {
+                version: PROTOCOL_VERSION,
+                token_bucket_bytes_per_second: bytes_per_second,
+                token_bucket_bytes_burst: bytes_burst,
+            }
+        } else {
+            ServerInfo {
+                version: PROTOCOL_VERSION,
+                token_bucket_bytes_per_second: 0,
+                token_bucket_bytes_burst: 0,
+            }
+        };
+        let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
+        let msg = postcard::to_slice(&server_info, &mut buf)?;
+        let msg = self.secret_key.seal_to(&client_key, msg);
+        let msg = &[msg.as_slice()];
+        write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+        writer.flush().await?;
+        Ok(())
     }
 
     /// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
     /// upon it's initial connection. It should be considered especially untrusted
     /// at this point.
-    fn recv_client_key<R: AsyncRead + Unpin>(&self, reader: R) -> Result<(PublicKey, ClientInfo)> {
-        todo!();
+    async fn recv_client_key(&self, mut reader: R) -> Result<(PublicKey, ClientInfo)> {
+        let mut buf = BytesMut::new();
+        // the client is untrusted at this point, limit the input size even smaller than our usual
+        // maximum frame size
+        let (frame_type, _) = read_frame(&mut reader, 256 * 1024, &mut buf).await?;
+        ensure!(
+            frame_type == FRAME_CLIENT_INFO,
+            "expected FRAME_CLIENT_INFO frame got {frame_type}"
+        );
+        let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
+        let msg = self.secret_key.open_from(&key, &buf[PUBLIC_KEY_LENGTH..])?;
+        let info: ClientInfo = postcard::from_bytes(&msg)?;
+        Ok((key, info))
     }
 
-    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
-        todo!();
+    pub fn add_packet_forwarder_fn(&self) -> impl Fn(PublicKey, P) -> Result<()> {
+        let server_channel = self.server_channel.clone();
+        move |key, fwd| {
+            server_channel.try_send(ServerMessage::AddPacketForwarder((key, fwd)))?;
+            Ok(())
+        }
     }
 
-    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
-        todo!();
+    pub fn remove_packet_forwarder_fn(&self) -> impl Fn(PublicKey) -> Result<()> {
+        let server_channel = self.server_channel.clone();
+        move |key| {
+            server_channel.try_send(ServerMessage::RemovePacketForwarder(key))?;
+            Ok(())
+        }
     }
-
-    pub fn consistency_check() -> Result<()> {
-        todo!();
-    }
-
-    // fn serve_debug_traffic() {
-    //     todo!();
-    // }
 }
 
+// TODO: may not need this yet
 #[derive(Debug)]
 enum DropReason {
     /// Unknown destination PublicKey
@@ -451,6 +484,50 @@ where
         self.clients
             .broadcast_peer_state_change(keys, vec![PeerConnState { peer, present }]);
     }
+}
+
+/// Initializes `the Server` with a self-signed x509 cert
+/// encoding this server's public key and protocol version. "cmd/derp_server
+/// then sends this after the Let's Encrypt leaf + intermediate certs after
+/// the ServerHello (encrypted in TLS 1.3, not that is matters much).
+///
+/// Then the client can save a round trime getting that and can start speaking
+/// DERP right away. (we don't use ALPN because that's sent in the clear and
+/// we're being paranoid to not look too weird to any middleboxes, given that
+/// DERP is an ultimate fallback path). But since the post-ServerHello certs
+/// are encrypted we can have the client also use them as a signal to be able
+/// to start speaking DERP right away, starting with its identity proof,
+/// encrypted to the server's public key.
+///
+/// This RTT optimization fails where there's a corp-mandated TLS proxy with
+/// corp-mandated root certs on employee machines and TLS proxy cleans up
+/// unnecessary certs. In that case we jsut fall back to the extra RTT.
+fn init_meta_cert<'a>() -> &'a [u8] {
+    // TODO: implement certificate creation
+    //
+    // pub, priv, err := ed25519.GenerateKey(crand.Reader)
+    // if err != nil {
+    // 	log.Fatal(err)
+    // }
+    // tmpl := &x509.Certificate{
+    // 	SerialNumber: big.NewInt(ProtocolVersion),
+    // 	Subject: pkix.Name{
+    // 		CommonName: fmt.Sprintf("derpkey%s", s.publicKey.UntypedHexString()),
+    // 	},
+    // 	// Windows requires NotAfter and NotBefore set:
+    // 	NotAfter:  time.Now().Add(30 * 24 * time.Hour),
+    // 	NotBefore: time.Now().Add(-30 * 24 * time.Hour),
+    // 	// Per https://github.com/golang/go/issues/51759#issuecomment-1071147836,
+    // 	// macOS requires BasicConstraints when subject == issuer:
+    // 	BasicConstraintsValid: true,
+    // }
+    // cert, err := x509.CreateCertificate(crand.Reader, tmpl, tmpl, pub, priv)
+    // if err != nil {
+    // 	log.Fatalf("CreateCertificate: %v", err)
+    // }
+    // s.metaCert = cert
+    //
+    b"todo: implement init_meta_cert"
 }
 
 #[cfg(test)]
