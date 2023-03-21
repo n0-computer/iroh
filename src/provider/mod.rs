@@ -480,26 +480,39 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let files = futures::stream::iter(WalkDir::new(&root));
-        let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
-            let root = root.clone();
-            async move {
-                if !entry.file_type().is_file() {
-                    return Ok(None);
+        let data_sources = if root.is_dir() {
+            let files = futures::stream::iter(WalkDir::new(&root));
+            let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
+                let root = root.clone();
+                async move {
+                    if !entry.file_type().is_file() {
+                        return Ok(None);
+                    }
+                    let path = entry.into_path();
+                    let name = path
+                        .strip_prefix(&root)?
+                        .to_str()
+                        .context("invalid unicode string")?
+                        .to_owned();
+                    anyhow::Ok(Some(DataSource::NamedFile { name, path }))
                 }
-                let path = entry.into_path();
-                let name = path
-                    .strip_prefix(&root)?
-                    .to_str()
-                    .context("invalid unicode string")?
-                    .to_owned();
-                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
-            }
-        });
-        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>().await;
-        let data_sources = data_sources
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            });
+            let data_sources: Vec<anyhow::Result<DataSource>> =
+                data_sources.collect::<Vec<_>>().await;
+            data_sources
+                .into_iter()
+                .collect::<anyhow::Result<Vec<_>>>()?
+        } else {
+            // A single file, use the file name as the name of the blob.
+            vec![DataSource::NamedFile {
+                name: root
+                    .file_name()
+                    .context("path must be a file")?
+                    .to_string_lossy()
+                    .to_string(),
+                path: root,
+            }]
+        };
         // create the collection
         // todo: provide feedback for progress
         let (db, entries, hash) = create_collection_inner(data_sources).await?;
