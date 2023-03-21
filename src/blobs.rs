@@ -7,9 +7,6 @@ use crate::util::Hash;
 /// A collection of blobs
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
-    ///
-    /// The name of this collection
-    pub(crate) name: String,
     /// Links to the blobs in this collection
     pub(crate) blobs: Vec<Blob>,
     /// The total size of the raw_data referred to by all links
@@ -27,11 +24,6 @@ impl Collection {
     /// Total size of the raw data referred to by all blobs in this collection
     pub fn total_blobs_size(&self) -> u64 {
         self.total_blobs_size
-    }
-
-    /// The name of this collection
-    pub fn name(&self) -> &str {
-        &self.name
     }
 
     /// The number of blobs in this collection

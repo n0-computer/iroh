@@ -536,11 +536,10 @@ async fn get_interactive(
     };
     let on_collection = |collection: &iroh::blobs::Collection| {
         let pb = &pb;
-        let name = collection.name().to_string();
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
         async move {
-            progress!("{} Downloading {name}...", style("[3/3]").bold().dim());
+            progress!("{} Downloading ...", style("[3/3]").bold().dim());
             progress!(
                 "  {total_entries} file(s) with total transfer size {}",
                 HumanBytes(size)

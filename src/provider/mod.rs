@@ -1037,7 +1037,6 @@ async fn create_collection_inner(
     }
 
     let c = Collection {
-        name: "collection".to_string(),
         blobs,
         total_blobs_size,
     };
@@ -1190,7 +1189,6 @@ mod tests {
             let collection = Collection {
                 blobs: cblobs,
                 total_blobs_size,
-                name: "".to_string(),
             };
             // encode collection and add it
             {
@@ -1283,7 +1281,6 @@ mod tests {
         });
 
         let expect_collection = Collection {
-            name: "collection".to_string(),
             blobs: expect_blobs,
             total_blobs_size: 0,
         };
