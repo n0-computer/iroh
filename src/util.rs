@@ -1,6 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Result};
-use async_compression::tokio::write::BrotliEncoder;
+use async_compression::{tokio::write::BrotliEncoder, Level};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -220,7 +220,10 @@ pub struct CompressedWriter(BrotliEncoder<ShutdownCatcher<quinn::SendStream>>);
 
 impl CompressedWriter {
     pub fn new(stream: quinn::SendStream) -> Self {
-        CompressedWriter(BrotliEncoder::new(ShutdownCatcher(stream)))
+        CompressedWriter(BrotliEncoder::with_quality(
+            ShutdownCatcher(stream),
+            Level::Fastest,
+        ))
     }
 
     /// Finish this compressed writer, write the remaining compressed data,
@@ -256,6 +259,13 @@ impl AsyncWrite for CompressedWriter {
     }
 }
 
+/// Helper to prevent shutdown calls from shutting down the underlying stream.
+///
+/// We want to reuse the underlying stream, but the only way to get the entire
+/// compression state out of the encoder in the async_compression crate is to
+/// call shutdown.
+///
+/// See issue https://github.com/Nemo157/async-compression/issues/141
 struct ShutdownCatcher<W>(W);
 
 impl<W> ShutdownCatcher<W> {
