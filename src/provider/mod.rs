@@ -683,8 +683,8 @@ async fn transfer_collection(
     let _ = events.send(Event::TransferCollectionStarted {
         connection_id,
         request_id,
-        num_blobs: c.blobs.len() as u64,
-        total_blobs_size: c.total_blobs_size,
+        num_blobs: c.blobs().len() as u64,
+        total_blobs_size: c.total_blobs_size(),
     });
 
     // TODO: we should check if the blobs referenced in this container
@@ -693,15 +693,15 @@ async fn transfer_collection(
         &mut writer,
         buffer,
         Res::FoundCollection {
-            total_blobs_size: c.total_blobs_size,
+            total_blobs_size: c.total_blobs_size(),
         },
     )
     .await?;
 
     let mut data = BytesMut::from(&encoded[..]);
     writer.write_buf(&mut data).await?;
-    for (i, blob) in c.blobs.iter().enumerate() {
-        debug!("writing blob {}/{}", i, c.blobs.len());
+    for (i, blob) in c.blobs().iter().enumerate() {
+        debug!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
         let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
         writer = writer1;
@@ -1036,11 +1036,7 @@ async fn create_collection_inner(
         blobs.push(Blob { name, hash });
     }
 
-    let c = Collection {
-        name: "collection".to_string(),
-        blobs,
-        total_blobs_size,
-    };
+    let c = Collection::new(blobs, total_blobs_size);
 
     let data = postcard::to_stdvec(&c).context("blob encoding")?;
     let (outboard, hash) = abao::encode::outboard(&data);
@@ -1187,11 +1183,7 @@ mod tests {
                     }),
                 );
             }
-            let collection = Collection {
-                blobs: cblobs,
-                total_blobs_size,
-                name: "".to_string(),
-            };
+            let collection = Collection::new(cblobs, total_blobs_size);
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
@@ -1282,11 +1274,7 @@ mod tests {
             hash,
         });
 
-        let expect_collection = Collection {
-            name: "collection".to_string(),
-            blobs: expect_blobs,
-            total_blobs_size: 0,
-        };
+        let expect_collection = Collection::new(expect_blobs, 0);
 
         let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
 
