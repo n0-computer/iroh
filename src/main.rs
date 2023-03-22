@@ -268,9 +268,13 @@ async fn main_impl() -> Result<()> {
             let Ticket {
                 hash,
                 peer,
-                addr,
+                addrs,
                 token,
             } = ticket;
+            let addr = addrs
+                .get(0)
+                .copied()
+                .context("missing SocketAddr in ticket")?;
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer),

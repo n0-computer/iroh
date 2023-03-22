@@ -20,7 +20,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
 data-encoding = { version = "2.3.3", optional = true }
-default-net = "0.13.0"
+default-net = "0.13.1"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = "0.99.17"
 dirs-next = "2.0.0"

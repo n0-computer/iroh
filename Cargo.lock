@@ -455,9 +455,9 @@ dependencies = [
 
 [[package]]
 name = "default-net"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b054f7aaa24c2defb4217e0c89cb0b4e91a2ee058986c3150c122f2bde9e043"
+checksum = "12cdeb2fba22cc965edfe42933910a84d8202417302f734ac98d34a7ee5ead51"
 dependencies = [
  "libc",
  "memalloc",

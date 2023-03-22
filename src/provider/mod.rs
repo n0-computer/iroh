@@ -10,7 +10,7 @@
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -39,6 +39,7 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
+use crate::net::LocalAddresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
@@ -409,10 +410,30 @@ impl Provider {
     /// See [`Ticket`] for more details of how it can be used.
     pub fn ticket(&self, hash: Hash) -> Ticket {
         // TODO: Verify that the hash exists in the db?
+        let listen_ip = self.inner.listen_addr.ip();
+        let listen_port = self.inner.listen_addr.port();
+        let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
+            true => {
+                // Find all the local addresses for this address family.
+                let addrs = LocalAddresses::new();
+                addrs
+                    .regular
+                    .iter()
+                    .filter(|addr| match addr {
+                        IpAddr::V4(_) if listen_ip.is_ipv4() => true,
+                        IpAddr::V6(_) if listen_ip.is_ipv6() => true,
+                        _ => false,
+                    })
+                    .copied()
+                    .map(|addr| SocketAddr::from((addr, listen_port)))
+                    .collect()
+            }
+            false => vec![self.inner.listen_addr],
+        };
         Ticket {
             hash,
             peer: self.peer_id(),
-            addr: self.inner.listen_addr,
+            addrs,
             token: self.inner.auth_token,
         }
     }
@@ -1111,8 +1132,8 @@ pub struct Ticket {
     pub hash: Hash,
     /// The peer ID identifying the provider.
     pub peer: PeerId,
-    /// The socket address the provider is listening on.
-    pub addr: SocketAddr,
+    /// The socket addresses the provider is listening on.
+    pub addrs: Vec<SocketAddr>,
     /// The authentication token with permission to retrieve the hash.
     pub token: AuthToken,
 }
@@ -1172,6 +1193,8 @@ pub fn make_server_config(
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use std::net::Ipv4Addr;
+    use std::path::Path;
     use std::str::FromStr;
     use testdir::testdir;
 
@@ -1259,7 +1282,7 @@ mod tests {
         let ticket = Ticket {
             hash,
             peer,
-            addr,
+            addrs: vec![addr],
             token,
         };
         let base64 = ticket.to_string();
@@ -1320,5 +1343,19 @@ mod tests {
         assert_eq!(expect_collection, collection);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ticket_multiple_addrs() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = Provider::builder(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .spawn()
+            .unwrap();
+        let _drop_guard = provider.cancel_token().drop_guard();
+        let ticket = provider.ticket(hash);
+        println!("addrs: {:?}", ticket.addrs);
+        assert!(!ticket.addrs.is_empty());
     }
 }
