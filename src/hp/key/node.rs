@@ -1,12 +1,13 @@
 use std::{fmt::Debug, hash::Hash};
 
+use super::{disco, disco::NONCE_LEN};
+use anyhow::{anyhow, ensure, Context, Result};
+use serde::{Deserialize, Serialize};
+
 pub use crypto_box::KEY_SIZE;
 
 pub(crate) const PUBLIC_KEY_LENGTH: usize = KEY_SIZE;
 pub(crate) const SECRET_KEY_LENGTH: usize = KEY_SIZE;
-
-use super::{disco, disco::NONCE_LEN};
-use anyhow::{anyhow, ensure, Context, Result};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
@@ -66,7 +67,7 @@ impl PublicKey {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecretKey(crypto_box::SecretKey);
 
 impl SecretKey {
