@@ -30,7 +30,7 @@ pub enum ProvideProgress {
     /// We are done with `id`, and the hash is `hash`
     Done { id: u64, hash: Hash },
     /// We are done with the whole operation
-    DoneAll { hash: Hash },
+    AllDone { hash: Hash },
     /// We got an error and need to abort
     Abort(RpcError),
 }

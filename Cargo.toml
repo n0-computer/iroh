@@ -14,7 +14,6 @@ rust-version = "1.63"
 [dependencies]
 abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
 anyhow = { version = "1", features = ["backtrace"] }
-async-stream = "0.3.4"
 base64 = "0.21.0"
 blake3 = "1.3.3"
 bytes = "1"

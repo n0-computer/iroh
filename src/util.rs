@@ -13,6 +13,7 @@ use std::{
     str::FromStr,
 };
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -153,6 +154,7 @@ impl From<anyhow::Error> for RpcError {
 }
 
 /// A serializable result type for use in RPC responses.
+#[allow(dead_code)]
 pub type RpcResult<T> = result::Result<T, RpcError>;
 
 /// Todo: gather more information about validation errors. E.g. offset
@@ -277,4 +279,32 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
 pub(crate) enum ProgressReaderUpdate {
     Progress(u64),
     Done,
+}
+
+pub struct Progress<T>(Option<mpsc::Sender<T>>);
+
+impl<T> Clone for Progress<T> {
+    fn clone(&self) -> Self {
+        Progress(self.0.clone())
+    }
+}
+
+impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
+    pub fn new(sender: mpsc::Sender<T>) -> Self {
+        Self(Some(sender))
+    }
+    pub fn none() -> Self {
+        Self(None)
+    }
+    pub fn try_send(&self, msg: T) {
+        if let Some(progress) = &self.0 {
+            progress.try_send(msg).ok();
+        }
+    }
+    pub async fn send(&self, msg: T) -> anyhow::Result<()> {
+        if let Some(progress) = &self.0 {
+            progress.send(msg).await?;
+        }
+        Ok(())
+    }
 }

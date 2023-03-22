@@ -32,7 +32,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
@@ -50,7 +49,7 @@ use crate::rpc_protocol::{
     ValidateResponse, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash, ProgressReader, ProgressReaderUpdate};
+use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -544,7 +543,7 @@ impl RpcHandler {
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = create_collection_inner(data_sources, progress).await?;
+        let (db, _) = create_collection_inner(data_sources, Progress::new(progress)).await?;
         self.inner.db.union_with(db);
 
         Ok(())
@@ -1015,7 +1014,7 @@ fn compute_outboard(
 
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
-    let mut reader = BufReader::new(reader);
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
     // the length we have actually written, should be the same as the length of the file.
     let size2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
@@ -1030,15 +1029,7 @@ fn compute_outboard(
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (tx, rx) = mpsc::channel::<ProvideProgress>(1);
-    // just drain the progress channel
-    tokio::task::spawn(async move {
-        let mut stream = ReceiverStream::new(rx);
-        while let Some(progress) = stream.next().await {
-            tracing::debug!("{:?}", progress);
-        }
-    });
-    let (db, hash) = create_collection_inner(data_sources, tx).await?;
+    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
 }
 
@@ -1046,7 +1037,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     mut data_sources: Vec<DataSource>,
-    progress: mpsc::Sender<ProvideProgress>,
+    progress: Progress<ProvideProgress>,
 ) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
@@ -1088,9 +1079,7 @@ async fn create_collection_inner(
                 let rpath = path.clone();
                 let (hash, outboard) = tokio::task::spawn_blocking(move || {
                     compute_outboard(path, size, move |offset| {
-                        outboard_progress
-                            .try_send(ProvideProgress::Progress { id, offset })
-                            .ok();
+                        outboard_progress.try_send(ProvideProgress::Progress { id, offset })
                     })
                 })
                 .await??;
@@ -1150,7 +1139,7 @@ async fn create_collection_inner(
             data: Bytes::from(data.to_vec()),
         },
     );
-    progress.send(ProvideProgress::DoneAll { hash }).await?;
+    progress.send(ProvideProgress::AllDone { hash }).await?;
 
     Ok((db, hash))
 }
