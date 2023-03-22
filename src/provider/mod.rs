@@ -46,12 +46,11 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest,
+    ValidateResponse, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash};
+use crate::util::{self, canonicalize_path, Hash, ProgressReader, ProgressReaderUpdate};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -982,9 +981,8 @@ impl From<&std::path::Path> for DataSource {
 /// returned.
 fn compute_outboard(
     path: PathBuf,
-    id: u64,
     size: u64,
-    progress: mpsc::Sender<ProvideProgress>,
+    progress: impl Fn(u64) + Send + Sync + 'static,
 ) -> anyhow::Result<(Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
@@ -1008,7 +1006,16 @@ fn compute_outboard(
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
     let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
-    let mut reader = BufReader::new(file);
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(file, |p| {
+        if let ProgressReaderUpdate::Progress(offset) = p {
+            progress(offset);
+        }
+    });
+
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::new(reader);
     // the length we have actually written, should be the same as the length of the file.
     let size2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
@@ -1080,7 +1087,11 @@ async fn create_collection_inner(
             async move {
                 let rpath = path.clone();
                 let (hash, outboard) = tokio::task::spawn_blocking(move || {
-                    compute_outboard(path, id, size, outboard_progress)
+                    compute_outboard(path, size, move |offset| {
+                        outboard_progress
+                            .try_send(ProvideProgress::Progress { id, offset })
+                            .ok();
+                    })
                 })
                 .await??;
                 // done events must be sent
