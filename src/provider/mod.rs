@@ -41,14 +41,15 @@ use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
 use crate::net::LocalAddresses;
+use crate::progress;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService,
-    ShutdownRequest, ValidateRequest, ValidateResponse, VersionRequest, VersionResponse,
-    WatchRequest, WatchResponse,
+    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash};
@@ -497,16 +498,21 @@ impl RpcHandler {
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-            let (tx, rx) = mpsc::channel(1);
-            let tx2 = tx.clone();
-            tokio::task::spawn(async move {
+        let (tx, rx) = mpsc::channel(1);
+        let tx2 = tx.clone();
+        tokio::task::spawn(async move {
             if let Err(e) = self.provide0(msg, tx).await {
                 tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
-            }});
-            tokio_stream::wrappers::ReceiverStream::new(rx)
+            }
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn provide0(self, msg: ProvideRequest, progress: tokio::sync::mpsc::Sender<ProvideProgress>) -> anyhow::Result<()> {
+    async fn provide0(
+        self,
+        msg: ProvideRequest,
+        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+    ) -> anyhow::Result<()> {
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
@@ -545,15 +551,19 @@ impl RpcHandler {
 
         for (id, entry) in entries.into_iter().enumerate() {
             let id = id as u64;
-            progress.send(ProvideProgress::Found {
-                name: entry.name,
-                id,
-                size: entry.size,
-            }).await?;
-            progress.send(ProvideProgress::Done {
-                id,
-                hash: entry.hash,
-            }).await?;
+            progress
+                .send(ProvideProgress::Found {
+                    name: entry.name,
+                    id,
+                    size: entry.size,
+                })
+                .await?;
+            progress
+                .send(ProvideProgress::Done {
+                    id,
+                    hash: entry.hash,
+                })
+                .await?;
         }
         progress.send(ProvideProgress::DoneAll { hash }).await?;
 
@@ -992,9 +1002,11 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// path and name are returned with the result to provide context
 fn compute_outboard(
+    id: u64,
     path: PathBuf,
-    name: Option<String>,
-) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
+    size: u64,
+    progress: mpsc::Sender<ProvideProgress>,
+) -> anyhow::Result<(Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
         "can only transfer blob data: {}",
@@ -1027,7 +1039,7 @@ fn compute_outboard(
     let hash = encoder.finalize()?;
     tracing::debug!("done. hash for {} is {hash}", path.display());
 
-    Ok((path, name, hash.into(), outboard))
+    Ok((hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
@@ -1059,15 +1071,45 @@ async fn create_collection_inner(
 
     data_sources.sort();
 
+    let outboard_progress = progress.clone();
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = stream::iter(data_sources)
         .enumerate()
-        .map(|(id, data)| {
-            let (path, name) = match data {
-                DataSource::File(path) => (path, None),
-                DataSource::NamedFile { path, name } => (path, Some(name)),
-            };
-            tokio::task::spawn_blocking(move || compute_outboard(path, name))
+        .then(|(id, data)| {
+            let find_progress = progress.clone();
+            async move {
+                let id = id as u64;
+                let (path, name) = match data {
+                    DataSource::File(path) => (path, None),
+                    DataSource::NamedFile { path, name } => (path, Some(name)),
+                };
+                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
+                let size = path.metadata().unwrap().len();
+                find_progress
+                    .send(ProvideProgress::Found {
+                        name: pname,
+                        id,
+                        size,
+                    })
+                    .await
+                    .unwrap();
+                (id, path, name, size)
+            }
+        })
+        .map(move |(id, path, name, size)| {
+            let outboard_progress = outboard_progress.clone();
+            let done_progress = outboard_progress.clone();
+            async move {
+                let p2 = path.clone();
+                let (hash, outboard) = tokio::task::spawn_blocking(move || {
+                    compute_outboard(id, p2, size, outboard_progress)
+                })
+                .await??;
+                done_progress
+                    .send(ProvideProgress::Done { id, hash })
+                    .await?;
+                anyhow::Ok((path, name, hash, outboard))
+            }
         })
         // allow at most num_cpus tasks at a time, otherwise we might get too many open files
         // todo: this assumes that this is 100% cpu bound, which is likely not true.
@@ -1079,7 +1121,7 @@ async fn create_collection_inner(
         .collect::<Vec<_>>()
         .await
         .into_iter()
-        .collect::<Result<Result<Vec<_>, _>, _>>()??;
+        .collect::<Result<Vec<_>, _>>()?;
 
     outboards.sort();
 
