@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{protocol::AuthToken, util::RpcResult, Hash, PeerId};
+use crate::{protocol::AuthToken, util::RpcError, Hash, PeerId};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -20,6 +20,21 @@ pub struct ProvideResponse {
     pub entries: Vec<ProvideResponseEntry>,
 }
 
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProvideProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found { name: String, id: u64, size: u64 },
+    /// We got progress ingesting item `id`
+    Progress { id: u64, offset: u64 },
+    /// We are done with `id`, and the hash is `hash`
+    Done { id: u64, hash: Hash },
+    /// We are done with the whole operation
+    DoneAll { hash: Hash },
+    /// We got an error and need to abort
+    Abort(RpcError),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideResponseEntry {
     pub name: String,
@@ -27,8 +42,12 @@ pub struct ProvideResponseEntry {
     pub size: u64,
 }
 
-impl RpcMsg<ProviderService> for ProvideRequest {
-    type Response = RpcResult<ProvideResponse>;
+impl Msg<ProviderService> for ProvideRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ProvideRequest {
+    type Response = ProvideProgress;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,7 +161,7 @@ pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     List(ListResponse),
-    Provide(RpcResult<ProvideResponse>),
+    Provide(ProvideProgress),
     Id(IdResponse),
     Validate(ValidateResponse),
     Shutdown(()),

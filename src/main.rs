@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -5,7 +6,7 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
@@ -13,8 +14,8 @@ use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProvideResponseEntry, ProviderRequest, ProviderResponse,
+    ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -201,6 +202,53 @@ async fn make_rpc_client(
     Ok(client)
 }
 
+async fn aggregate_add_response(
+    stream: impl Stream<
+            Item = std::result::Result<
+                ProvideProgress,
+                impl std::error::Error + Send + Sync + 'static,
+            >,
+        > + Unpin,
+) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)> {
+    let mut stream = stream;
+    let mut collection_hash = None;
+    let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+    while let Some(item) = stream.next().await {
+        match item? {
+            ProvideProgress::DoneAll { hash } => {
+                collection_hash = Some(hash);
+                break;
+            }
+            ProvideProgress::Progress { .. } => {
+                // todo!
+            }
+            ProvideProgress::Found { name, id, size } => {
+                collections.insert(id, (name, size, None));
+            }
+            ProvideProgress::Done { hash, id } => match collections.get_mut(&id) {
+                Some((_, _, ref mut h)) => {
+                    *h = Some(hash);
+                }
+                None => {
+                    anyhow::bail!("Got Done for unknown collection id {}", id);
+                }
+            },
+            ProvideProgress::Abort(e) => {
+                anyhow::bail!("Error while adding data: {}", e);
+            }
+        }
+    }
+    let hash = collection_hash.context("Missing hash for collection")?;
+    let entries = collections
+        .into_iter()
+        .map(|(_, (name, size, hash))| {
+            let hash = hash.context(format!("Missing hash for {}", name))?;
+            Ok(ProvideResponseEntry { name, size, hash })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((hash, entries))
+}
+
 fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, .. } in entries {
@@ -339,9 +387,8 @@ async fn main_impl() -> Result<()> {
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let ProvideResponse { hash, entries } =
-                    controller.rpc(ProvideRequest { path }).await??;
-
+                let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                let (hash, entries) = aggregate_add_response(stream).await?;
                 print_add_response(hash, entries);
                 ticket.hash = hash;
                 println!("All-in-one ticket: {ticket}");
@@ -424,8 +471,10 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let ProvideResponse { hash, entries } =
-                client.rpc(ProvideRequest { path: absolute }).await??;
+            let stream = client
+                .server_streaming(ProvideRequest { path: absolute })
+                .await?;
+            let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
             Ok(())
         }

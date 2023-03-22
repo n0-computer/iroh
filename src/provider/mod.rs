@@ -44,10 +44,10 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
+    ProvideResponse, ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService,
+    ShutdownRequest, ValidateRequest, ValidateResponse, VersionRequest, VersionResponse,
+    WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash};
@@ -495,7 +495,35 @@ impl RpcHandler {
             })
     }
 
-    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+    fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
+        futures::stream::once(async move {
+            let res = self.provide0(msg).await;
+            match res {
+                Ok(res) => {
+                    let ProvideResponse { hash, entries } = res;
+                    let mut res = Vec::new();
+                    for (id, entry) in entries.into_iter().enumerate() {
+                        let id = id as u64;
+                        res.push(ProvideProgress::Found {
+                            name: entry.name,
+                            id,
+                            size: entry.size,
+                        });
+                        res.push(ProvideProgress::Done {
+                            id,
+                            hash: entry.hash,
+                        })
+                    }
+                    res.push(ProvideProgress::DoneAll { hash });
+                    res
+                }
+                Err(err) => vec![ProvideProgress::Abort(err.into())],
+            }
+        })
+        .flat_map(futures::stream::iter)
+    }
+
+    async fn provide0(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
@@ -580,7 +608,10 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
         use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
-            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Provide(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::provide)
+                    .await
+            }
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
