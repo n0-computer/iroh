@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -290,6 +290,10 @@ impl Database {
             .into_iter()
             .collect::<Vec<_>>();
         data.sort_by_key(|(k, e)| (e.is_blob(), e.data().map(|x| x.path.clone()), *k));
+        tx.send(ValidateProgress::Starting {
+            total: data.len() as u64,
+        })
+        .await?;
         futures::stream::iter(data)
             .enumerate()
             .map(|(id, (hash, boc))| {
@@ -343,7 +347,7 @@ impl Database {
                     anyhow::Ok(())
                 }
             })
-            .buffer_unordered(num_cpus::get() as usize)
+            .buffer_unordered(num_cpus::get())
             .map(|item| {
                 // unwrapping is fine here, because it will only happen if the task panicked
                 // basically we are just moving the panic on this task.

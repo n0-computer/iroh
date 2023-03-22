@@ -46,8 +46,7 @@ use crate::protocol::{
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
     ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};

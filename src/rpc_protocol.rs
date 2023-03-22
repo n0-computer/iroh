@@ -40,17 +40,11 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ValidateRequest;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ValidateResponse {
-    pub hash: Hash,
-    pub path: Option<PathBuf>,
-    pub size: u64,
-    pub error: Option<String>,
-}
-
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ValidateProgress {
+    /// started validating
+    Starting { total: u64 },
     /// We started validating an entry
     Entry {
         id: u64,
