@@ -246,8 +246,6 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     let mut buf = BytesMut::zeroed(ClientInfo::POSTCARD_MAX_SIZE);
     let msg = postcard::to_slice(client_info, &mut buf)?;
     let sealed_msg = secret_key.seal_to(server_key, msg);
-    println!("client sending msg {sealed_msg:?}");
-    println!("msg len {}", sealed_msg.len());
     write_frame(
         &mut writer,
         FRAME_CLIENT_INFO,
@@ -280,10 +278,7 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
         "expected FRAME_CLIENT_INFO frame got {frame_type}"
     );
     let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-    println!("got client key {key:?}");
     let msg = &buf[PUBLIC_KEY_LENGTH..];
-    println!("msg {msg:?}");
-    println!("msg len {}", msg.len());
     let msg = secret_key.open_from(&key, msg)?;
     let info: ClientInfo = postcard::from_bytes(&msg)?;
     Ok((key, info))

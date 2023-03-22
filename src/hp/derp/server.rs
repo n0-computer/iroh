@@ -61,10 +61,6 @@ where
     meta_cert: Vec<u8>,
     /// Channel on which to communicate to the `ServerActor`
     server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
-    /// When true, only accept client connections to the DERP server if the `client_key` is a
-    /// known  peer in the network, as specified by a running "tailscaled's client's
-    /// LocalAPI"
-    verify_clients: bool,
     /// When true, the server has been shutdown.
     closed: bool,
     /// The information we send to the [`client::Client`] about the [`Server`]'s protocol version
@@ -118,7 +114,7 @@ where
     P: PacketForwarder,
 {
     /// TODO: replace with builder
-    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>, verify_clients: bool) -> Self {
+    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.public_key(), server_channel_r);
         let cancel_token = CancellationToken::new();
@@ -132,7 +128,6 @@ where
             mesh_key,
             meta_cert,
             server_channel: server_channel_s,
-            verify_clients,
             closed: false,
             // TODO: come up with good default
             server_info: ServerInfo::no_rate_limit(),
@@ -287,8 +282,6 @@ where
         let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
             .await
             .context("unable to receive client information")?;
-        self.verify_client(&client_key, &client_info)
-            .context("unable to verify client {client_key}")?;
         self.send_server_info(&mut writer, &client_key)
             .await
             .context("unable to sent server info to client {client_key}")?;
@@ -323,22 +316,6 @@ where
         )
         .await?;
         writer.flush().await?;
-        Ok(())
-    }
-
-    fn verify_client(&self, client_key: &PublicKey, info: &ClientInfo) -> Result<()> {
-        // status, err = tailscale.Status(context.TODO())
-        // 	if err != nil {
-        // return fmt.Errorf("failed to query local tailscaled status: %w", err)
-        // }
-        // if clientKey == status.Self.PublicKey {
-        // return nil
-        // }
-        // if _, exists := status.Peer[clientKey]; !exists {
-        // return fmt.Errorf("client %v not in set of peers", clientKey)
-        // }
-        // // TODO(bradfitz): add policy for configurable bandwidth rate per client?
-        // return nil
         Ok(())
     }
 
@@ -581,24 +558,6 @@ async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -
     Ok(())
 }
 
-// TODO: we may not need this, or maybe need our own specific version of this. This is wher we
-// would ensure that this client is "allowed" to use our derp server. Currently does nothing.
-fn verify_client(_client_key: PublicKey, _info: ClientInfo) -> Result<()> {
-    // status, err = tailscale.Status(context.TODO())
-    // 	if err != nil {
-    // return fmt.Errorf("failed to query local tailscaled status: %w", err)
-    // }
-    // if clientKey == status.Self.PublicKey {
-    // return nil
-    // }
-    // if _, exists := status.Peer[clientKey]; !exists {
-    // return fmt.Errorf("client %v not in set of peers", clientKey)
-    // }
-    // // TODO(bradfitz): add policy for configurable bandwidth rate per client?
-    // return nil
-    Ok(())
-}
-
 async fn send_server_info<W: AsyncWrite + Unpin>(
     rate_limit: Option<(usize, usize)>,
     mut writer: W,
@@ -641,6 +600,8 @@ fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::char::MAX;
+
     use super::*;
 
     use crate::hp::{
@@ -667,6 +628,13 @@ mod tests {
 
     struct MockPacketForwarder {
         packets: mpsc::Sender<(PublicKey, PublicKey, bytes::Bytes)>,
+    }
+
+    impl MockPacketForwarder {
+        fn new() -> (mpsc::Receiver<(PublicKey, PublicKey, bytes::Bytes)>, Self) {
+            let (send, recv) = mpsc::channel(10);
+            (recv, Self { packets: send })
+        }
     }
 
     impl PacketForwarder for MockPacketForwarder {
@@ -894,6 +862,151 @@ mod tests {
             }
             _ => anyhow::bail!("unexpected server message"),
         }
+        Ok(())
+    }
+
+    struct TestClient {
+        reader: tokio::io::DuplexStream,
+        writer: tokio::io::DuplexStream,
+        secret_key: SecretKey,
+    }
+
+    impl TestClient {
+        fn new(secret_key: SecretKey) -> (tokio::io::DuplexStream, tokio::io::DuplexStream, Self) {
+            let (client_reader, server_writer) = tokio::io::duplex(10);
+            let (server_reader, client_writer) = tokio::io::duplex(10);
+            (
+                server_reader,
+                server_writer,
+                Self {
+                    reader: client_reader,
+                    writer: client_writer,
+                    secret_key,
+                },
+            )
+        }
+
+        async fn accept(&mut self) -> Result<()> {
+            let got_server_key = crate::hp::derp::client::recv_server_key(&mut self.reader).await?;
+            let client_info = ClientInfo {
+                version: PROTOCOL_VERSION,
+                mesh_key: None,
+                can_ack_pings: true,
+                is_prober: true,
+            };
+            crate::hp::derp::send_client_key(
+                &mut self.writer,
+                &self.secret_key,
+                &got_server_key,
+                &client_info,
+            )
+            .await?;
+            let mut buf = BytesMut::new();
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
+            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            let msg = self.secret_key.open_from(&got_server_key, &buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            Ok(())
+        }
+
+        async fn send_packet(&mut self, dst: PublicKey, packet: &[u8]) -> Result<()> {
+            crate::hp::derp::client::send_packet(&mut self.writer, &None, dst, packet).await
+        }
+
+        async fn recv_packet<'a>(
+            &mut self,
+            buf: &'a mut BytesMut,
+        ) -> Result<(PublicKey, &'a [u8])> {
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, buf).await?;
+            if frame_type != FRAME_RECV_PACKET {
+                anyhow::bail!("unexpected frame type {frame_type}, expected FRAME_RECV_PACKET")
+            }
+            crate::hp::derp::client::parse_recv_frame(buf)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_server_basic() -> Result<()> {
+        // create client_conn_b & add it
+        // create packet_forwarder for c & add it
+        // send message from a to b
+        // send message from a to c
+        // close server
+
+        // create the server!
+        let server_key = SecretKey::generate();
+        let mesh_key = Some([1u8; 32]);
+        let server: Server<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
+            Server::new(server_key, mesh_key.clone());
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public_key();
+        let (reader_a, writer_a, mut client_a) = TestClient::new(key_a);
+        let handler = server.client_conn_handler();
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MockConn {}, reader_a, writer_a).await });
+        client_a.accept().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public_key();
+        let (reader_b, writer_b, mut client_b) = TestClient::new(key_b);
+        let handler = server.client_conn_handler();
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MockConn {}, reader_b, writer_b).await });
+        client_b.accept().await?;
+        handler_task.await??;
+
+        // create a packet forwarder for client c and add it to the server
+        let key_c = PublicKey::from([1u8; 32]);
+        let (mut fwd_recv, packet_fwd) = MockPacketForwarder::new();
+        let handler = server.packet_forwarder_handler();
+        handler.add_packet_forwarder(key_c.clone(), packet_fwd)?;
+
+        // send message from a to b!
+        let msg = b"hello client b!!";
+        client_a.send_packet(public_key_b.clone(), msg).await?;
+        let mut buf = BytesMut::new();
+        let (got_key, got_msg) = client_b.recv_packet(&mut buf).await?;
+        assert_eq!(public_key_a, got_key);
+        assert_eq!(&msg[..], got_msg);
+
+        // send message from b to a!
+        let msg = b"nice to meet you client a!!";
+        client_b.send_packet(public_key_a.clone(), msg).await?;
+        let mut buf = BytesMut::new();
+        let (got_key, got_msg) = client_a.recv_packet(&mut buf).await?;
+        assert_eq!(public_key_b, got_key);
+        assert_eq!(&msg[..], got_msg);
+
+        // send message from a to c
+        let msg = b"can you pass this to client d?";
+        client_a.send_packet(key_c.clone(), msg).await?;
+        let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
+        assert_eq!(public_key_a, got_src);
+        assert_eq!(key_c, got_dst);
+        assert_eq!(&msg[..], &got_packet);
+
+        // remove the packet forwarder for c
+        handler.remove_packet_forwarder(key_c.clone())?;
+        // try to send c a message
+        let msg = b"can you pass this to client d?";
+        client_a.send_packet(key_c, msg).await?;
+        // packet forwarder has been removed
+        assert!(fwd_recv.recv().await.is_none());
+
+        // close the server and clients
+        server.close().await;
+
+        // client connections have been shutdown
+        assert!(client_a
+            .send_packet(public_key_b, b"try to send")
+            .await
+            .is_err());
         Ok(())
     }
 }

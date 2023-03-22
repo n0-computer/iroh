@@ -3237,13 +3237,13 @@ mod tests {
     }
 
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
-        // TODO: pass a mesh_key? should `verify_clients` be true
+        // TODO: pass a mesh_key?
         let d: derp::Server<
             MockConn,
             tokio::io::DuplexStream,
             tokio::io::DuplexStream,
             MockPacketForwarder,
-        > = derp::Server::new(key::node::SecretKey::generate(), None, false);
+        > = derp::Server::new(key::node::SecretKey::generate(), None);
 
         // TODO: configure DERP server when actually implemented
         // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
