@@ -15,8 +15,7 @@ use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponseEntry, ProviderRequest, ProviderResponse,
-    ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -248,6 +247,12 @@ impl ProgressBarState {
     }
 }
 
+#[derive(Debug)]
+struct ProvideResponseEntry {
+    pub name: String,
+    pub size: u64,
+}
+
 async fn aggregate_add_response(
     stream: impl Stream<
             Item = std::result::Result<
@@ -309,8 +314,8 @@ async fn aggregate_add_response(
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let hash = hash.context(format!("Missing hash for {}", name))?;
-            Ok(ProvideResponseEntry { name, size, hash })
+            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            Ok(ProvideResponseEntry { name, size })
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((hash, entries))

@@ -14,12 +14,6 @@ pub struct ProvideRequest {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProvideResponse {
-    pub hash: Hash,
-    pub entries: Vec<ProvideResponseEntry>,
-}
-
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ProvideProgress {
@@ -33,13 +27,6 @@ pub enum ProvideProgress {
     AllDone { hash: Hash },
     /// We got an error and need to abort
     Abort(RpcError),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProvideResponseEntry {
-    pub name: String,
-    pub hash: Hash,
-    pub size: u64,
 }
 
 impl Msg<ProviderService> for ProvideRequest {
