@@ -8,6 +8,7 @@ use std::process::{Child, Command, Stdio};
 use anyhow::{Context, Result};
 use rand::{RngCore, SeedableRng};
 use testdir::testdir;
+use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
 
@@ -34,6 +35,23 @@ fn cli_provide_folder() -> Result<()> {
     let bar_path = dir.join("bar");
     make_rand_file(1000, &foo_path)?;
     make_rand_file(10000, &bar_path)?;
+    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+    test_provide_get_loop(&dir, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_tree() -> Result<()> {
+    let dir = testdir!();
+    let foo_path = dir.join("foo");
+    let bar_path = dir.join("bar");
+    let file1 = foo_path.join("file1");
+    let file2 = bar_path.join("file2");
+    let file3 = bar_path.join("file3");
+    std::fs::create_dir(&foo_path)?;
+    std::fs::create_dir(&bar_path)?;
+    make_rand_file(1000, &file1)?;
+    make_rand_file(10000, &file2)?;
+    make_rand_file(5000, &file3)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
@@ -188,8 +206,10 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     let path = src.join(path);
     let num_blobs = if path.is_dir() {
-        let entries = std::fs::read_dir(&path)?;
-        entries.count()
+        WalkDir::new(&path)
+            .into_iter()
+            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
+            .count()
     } else {
         1
     };
@@ -247,10 +267,20 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
     let expect_path = expect_path.as_ref();
     let got_dir_path = got_dir_path.as_ref();
     if expect_path.is_dir() {
-        let paths = std::fs::read_dir(expect_path)?;
+        let paths = WalkDir::new(expect_path).into_iter().filter(|x| {
+            x.as_ref()
+                .ok()
+                .map(|x| x.file_type().is_file())
+                .unwrap_or(false)
+        });
         for entry in paths {
             let entry = entry?;
-            compare_files(entry.path(), got_dir_path)?;
+            let file_path = entry.path();
+            let rel = file_path.strip_prefix(expect_path)?;
+            let expected_file_path = got_dir_path.join(rel);
+            let got = std::fs::read(file_path)?;
+            let expect = std::fs::read(expected_file_path)?;
+            assert_eq!(expect, got);
         }
     } else {
         let file_name = expect_path.file_name().unwrap();

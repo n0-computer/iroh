@@ -48,6 +48,7 @@ tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"

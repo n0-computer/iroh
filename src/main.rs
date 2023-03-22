@@ -24,7 +24,7 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::iroh_data_root;
+use crate::main_util::{iroh_data_root, pathbuf_from_name};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -557,11 +557,11 @@ async fn get_interactive(
         let pb = &pb;
         async move {
             let name = if name.is_empty() {
-                hash.to_string()
+                PathBuf::from(hash.to_string())
             } else {
-                name
+                pathbuf_from_name(&name)
             };
-            pb.set_message(format!("Receiving '{name}'..."));
+            pb.set_message(format!("Receiving '{}'...", name.display()));
 
             // Wrap the reader to show progress.
             let mut wrapped_reader = pb.wrap_async_read(&mut reader);
@@ -590,6 +590,11 @@ async fn get_interactive(
 
                 // Rename temp file, to target name
                 let filepath2 = filepath.clone();
+                if let Some(parent) = filepath2.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .context("Unable to create directory {parent}")?;
+                }
                 tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                     .await?
                     .context("Failed to write output file")?;
