@@ -1064,7 +1064,7 @@ async fn create_collection_inner(
         blobs.push(Blob { name, hash });
     }
 
-    let c = Collection::new(blobs, total_blobs_size);
+    let c = Collection::new(blobs, total_blobs_size)?;
 
     let data = postcard::to_stdvec(&c).context("blob encoding")?;
     let (outboard, hash) = abao::encode::outboard(&data);
@@ -1211,7 +1211,7 @@ mod tests {
                     }),
                 );
             }
-            let collection = Collection::new(cblobs, total_blobs_size);
+            let collection = Collection::new(cblobs, total_blobs_size).unwrap();
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
@@ -1302,7 +1302,7 @@ mod tests {
             hash,
         });
 
-        let expect_collection = Collection::new(expect_blobs, 0);
+        let expect_collection = Collection::new(expect_blobs, 0).unwrap();
 
         let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
 

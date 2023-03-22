@@ -14,16 +14,16 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub(crate) fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> Self {
+    pub(crate) fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
         let mut blobs = blobs;
         let n = blobs.len();
         blobs.sort_by(|a, b| a.name.cmp(&b.name));
         blobs.dedup_by(|a, b| a.name == b.name);
-        debug_assert_eq!(n, blobs.len());
-        Self {
+        anyhow::ensure!(n == blobs.len(), "duplicate blob names");
+        Ok(Self {
             blobs,
             total_blobs_size,
-        }
+        })
     }
 
     /// Deserialize a collection from a byte slice
