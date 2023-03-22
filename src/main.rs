@@ -557,7 +557,7 @@ async fn get_interactive(
         let pb = &pb;
         async move {
             let name = if name.is_empty() {
-                PathBuf::new().join(hash.to_string())
+                PathBuf::from(hash.to_string())
             } else {
                 pathbuf_from_name(&name)
             };

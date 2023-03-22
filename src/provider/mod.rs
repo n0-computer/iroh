@@ -1014,6 +1014,8 @@ async fn create_collection_inner(
             tokio::task::spawn_blocking(move || compute_outboard(path, name))
         })
         // allow at most num_cpus tasks at a time, otherwise we might get too many open files
+        // todo: this assumes that this is 100% cpu bound, which is likely not true.
+        // we might get better performance by using a larger number here.
         .buffer_unordered(num_cpus::get());
     // wait for completion and collect results
     // weird massaging of the output to get rid of the results
