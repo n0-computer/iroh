@@ -41,13 +41,12 @@ use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
 use crate::net::LocalAddresses;
-use crate::progress;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
     ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
     WatchResponse,
 };
@@ -546,26 +545,8 @@ impl RpcHandler {
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources, progress.clone()).await?;
+        let (db, _) = create_collection_inner(data_sources, progress).await?;
         self.inner.db.union_with(db);
-
-        for (id, entry) in entries.into_iter().enumerate() {
-            let id = id as u64;
-            progress
-                .send(ProvideProgress::Found {
-                    name: entry.name,
-                    id,
-                    size: entry.size,
-                })
-                .await?;
-            progress
-                .send(ProvideProgress::Done {
-                    id,
-                    hash: entry.hash,
-                })
-                .await?;
-        }
-        progress.send(ProvideProgress::DoneAll { hash }).await?;
 
         Ok(())
     }
@@ -999,11 +980,9 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-///
-/// path and name are returned with the result to provide context
 fn compute_outboard(
-    id: u64,
     path: PathBuf,
+    id: u64,
     size: u64,
     progress: mpsc::Sender<ProvideProgress>,
 ) -> anyhow::Result<(Hash, Vec<u8>)> {
@@ -1014,7 +993,6 @@ fn compute_outboard(
     );
     tracing::debug!("computing outboard for {}", path.display());
     let file = std::fs::File::open(&path)?;
-    let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
     //
     // outboard is ~1/16 of data size, so this will fail for really large files
@@ -1022,7 +1000,7 @@ fn compute_outboard(
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(abao::encode::outboard_size(len))
+    let outboard_size = usize::try_from(abao::encode::outboard_size(size))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
@@ -1032,9 +1010,9 @@ fn compute_outboard(
 
     let mut reader = BufReader::new(file);
     // the length we have actually written, should be the same as the length of the file.
-    let len2 = std::io::copy(&mut reader, &mut encoder)?;
+    let size2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
-    ensure!(len == len2, "file changed during encoding");
+    ensure!(size == size2, "file changed during encoding");
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
     tracing::debug!("done. hash for {} is {hash}", path.display());
@@ -1046,11 +1024,14 @@ fn compute_outboard(
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (tx, rx) = mpsc::channel::<ProvideProgress>(1);
+    // just drain the progress channel
     tokio::task::spawn(async move {
         let mut stream = ReceiverStream::new(rx);
-        while let Some(_) = stream.next().await {}
+        while let Some(progress) = stream.next().await {
+            tracing::debug!("{:?}", progress);
+        }
     });
-    let (db, _, hash) = create_collection_inner(data_sources, tx).await?;
+    let (db, hash) = create_collection_inner(data_sources, tx).await?;
     Ok((Database::from(db), hash))
 }
 
@@ -1059,11 +1040,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 async fn create_collection_inner(
     mut data_sources: Vec<DataSource>,
     progress: mpsc::Sender<ProvideProgress>,
-) -> Result<(
-    HashMap<Hash, BlobOrCollection>,
-    Vec<ProvideResponseEntry>,
-    Hash,
-)> {
+) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -1085,6 +1062,7 @@ async fn create_collection_inner(
                 };
                 let pname = name.clone().unwrap_or_else(|| path.display().to_string());
                 let size = path.metadata().unwrap().len();
+                // found events must be sent
                 find_progress
                     .send(ProvideProgress::Found {
                         name: pname,
@@ -1100,15 +1078,16 @@ async fn create_collection_inner(
             let outboard_progress = outboard_progress.clone();
             let done_progress = outboard_progress.clone();
             async move {
-                let p2 = path.clone();
+                let rpath = path.clone();
                 let (hash, outboard) = tokio::task::spawn_blocking(move || {
-                    compute_outboard(id, p2, size, outboard_progress)
+                    compute_outboard(path, id, size, outboard_progress)
                 })
                 .await??;
+                // done events must be sent
                 done_progress
                     .send(ProvideProgress::Done { id, hash })
                     .await?;
-                anyhow::Ok((path, name, hash, outboard))
+                anyhow::Ok((rpath, name, hash, outboard))
             }
         })
         // allow at most num_cpus tasks at a time, otherwise we might get too many open files
@@ -1124,22 +1103,6 @@ async fn create_collection_inner(
         .collect::<Result<Vec<_>, _>>()?;
 
     outboards.sort();
-
-    // compute information about the collection
-    let entries = outboards
-        .iter()
-        .map(|(path, name, hash, outboard)| {
-            let name = name
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| path.display().to_string());
-            ProvideResponseEntry {
-                name,
-                hash: *hash,
-                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
-            }
-        })
-        .collect();
 
     // insert outboards into the database and build collection
     for (path, name, hash, outboard) in outboards {
@@ -1176,8 +1139,9 @@ async fn create_collection_inner(
             data: Bytes::from(data.to_vec()),
         },
     );
+    progress.send(ProvideProgress::DoneAll { hash }).await?;
 
-    Ok((db, entries, hash))
+    Ok((db, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
