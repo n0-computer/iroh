@@ -30,8 +30,9 @@ use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
@@ -45,7 +46,7 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProvideResponse, ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService,
+    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService,
     ShutdownRequest, ValidateRequest, ValidateResponse, VersionRequest, VersionResponse,
     WatchRequest, WatchResponse,
 };
@@ -496,34 +497,16 @@ impl RpcHandler {
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-        futures::stream::once(async move {
-            let res = self.provide0(msg).await;
-            match res {
-                Ok(res) => {
-                    let ProvideResponse { hash, entries } = res;
-                    let mut res = Vec::new();
-                    for (id, entry) in entries.into_iter().enumerate() {
-                        let id = id as u64;
-                        res.push(ProvideProgress::Found {
-                            name: entry.name,
-                            id,
-                            size: entry.size,
-                        });
-                        res.push(ProvideProgress::Done {
-                            id,
-                            hash: entry.hash,
-                        })
-                    }
-                    res.push(ProvideProgress::DoneAll { hash });
-                    res
-                }
-                Err(err) => vec![ProvideProgress::Abort(err.into())],
-            }
-        })
-        .flat_map(futures::stream::iter)
+            let (tx, rx) = mpsc::channel(1);
+            let tx2 = tx.clone();
+            tokio::task::spawn(async move {
+            if let Err(e) = self.provide0(msg, tx).await {
+                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
+            }});
+            tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn provide0(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+    async fn provide0(self, msg: ProvideRequest, progress: tokio::sync::mpsc::Sender<ProvideProgress>) -> anyhow::Result<()> {
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
@@ -557,10 +540,24 @@ impl RpcHandler {
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources).await?;
+        let (db, entries, hash) = create_collection_inner(data_sources, progress.clone()).await?;
         self.inner.db.union_with(db);
 
-        Ok(ProvideResponse { hash, entries })
+        for (id, entry) in entries.into_iter().enumerate() {
+            let id = id as u64;
+            progress.send(ProvideProgress::Found {
+                name: entry.name,
+                id,
+                size: entry.size,
+            }).await?;
+            progress.send(ProvideProgress::Done {
+                id,
+                hash: entry.hash,
+            }).await?;
+        }
+        progress.send(ProvideProgress::DoneAll { hash }).await?;
+
+        Ok(())
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
@@ -1036,7 +1033,12 @@ fn compute_outboard(
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, _, hash) = create_collection_inner(data_sources).await?;
+    let (tx, rx) = mpsc::channel::<ProvideProgress>(1);
+    tokio::task::spawn(async move {
+        let mut stream = ReceiverStream::new(rx);
+        while let Some(_) = stream.next().await {}
+    });
+    let (db, _, hash) = create_collection_inner(data_sources, tx).await?;
     Ok((Database::from(db), hash))
 }
 
@@ -1044,6 +1046,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     mut data_sources: Vec<DataSource>,
+    progress: mpsc::Sender<ProvideProgress>,
 ) -> Result<(
     HashMap<Hash, BlobOrCollection>,
     Vec<ProvideResponseEntry>,
@@ -1058,7 +1061,8 @@ async fn create_collection_inner(
 
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = stream::iter(data_sources)
-        .map(|data| {
+        .enumerate()
+        .map(|(id, data)| {
             let (path, name) = match data {
                 DataSource::File(path) => (path, None),
                 DataSource::NamedFile { path, name } => (path, Some(name)),
