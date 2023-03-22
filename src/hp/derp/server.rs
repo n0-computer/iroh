@@ -1,10 +1,9 @@
 //! based on tailscale/derp/derp_server.go
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use anyhow::{ensure, Result};
+use anyhow::{Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -12,43 +11,34 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::hp::key::node::{PublicKey, SecretKey};
 
+use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
     types::{ClientInfo, Conn, PacketForwarder, PeerConnState, ServerMessage},
 };
-use super::{read_frame, FRAME_SERVER_INFO};
 use super::{
-    types::ServerInfo, write_frame, FRAME_CLIENT_INFO, FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION,
-    SERVER_CHANNEL_SIZE,
+    recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
+    FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
+
+static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
+fn new_conn_num() -> usize {
+    CONN_NUM.fetch_add(1, Ordering::Relaxed)
+}
 
 /// The number of packets buffered for sending per client
 const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-// TODO: handle duplicate connections, we currently just replace the most recent connection with
-// any previous connection
-// /// A temporary (2021-08-30) mechanism to change the policy
-// /// of how duplicate connections for the same key are handled.
-// #[derive(Debug)]
-// enum DupPolicy {
-//     /// A DupPolicy where the last connection to send traffic for a peer
-//     /// if the active one.
-//     LastWriterIsActive,
-//     /// A DupPolicy that detects if peers are trying to send traffic interleaved
-//     /// with each other and then disables all of them
-//     DisabledFighters,
-// }
-
-#[derive(Debug)]
 /// A DERP server.
 ///
 /// TODO: how small does this have to be before this is considered cheap to clone?
 /// It would make alot of the APIs easier if we could just clone this.
+#[derive(Debug)]
 pub struct Server<'a, C, R, W, P>
 where
     C: Conn,
@@ -76,13 +66,13 @@ where
     /// LocalAPI"
     verify_clients: bool,
     /// When true, the server has been shutdown.
-    closed: Arc<AtomicBool>,
-    /// (number of bytes allowed per second, number of bytes allowed at once)
-    /// If "bytes per second" is 0, it is as if there is no rate limit
-    rate_limit: Option<(usize, usize)>,
+    closed: bool,
+    /// The information we send to the [`client::Client`] about the [`Server`]'s protocol version
+    /// and required rate limiting (if any)
+    server_info: ServerInfo,
     /// Server loop handler
     loop_handler: JoinHandle<Result<()>>,
-    /// Done token:
+    /// Done token, forces a hard shutdown. To gracefully shutdown, use `Server::close`
     cancel: CancellationToken,
     // TODO: stats collection
     // Counters:
@@ -127,7 +117,7 @@ where
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
-    /// replace with builder
+    /// TODO: replace with builder
     pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>, verify_clients: bool) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.verifying_key(), server_channel_r);
@@ -143,8 +133,9 @@ where
             meta_cert,
             server_channel: server_channel_s,
             verify_clients,
-            closed: Arc::new(AtomicBool::new(false)),
-            rate_limit: None,
+            closed: false,
+            // TODO: come up with good default
+            server_info: ServerInfo::no_rate_limit(),
             loop_handler: server_task,
             cancel: cancel_token,
         }
@@ -171,37 +162,43 @@ where
     }
 
     /// Closes the server and waits for the connections to disconnect.
-    pub async fn close(self) {
-        let is_closed = self.is_closed();
-        if !is_closed {
-            self.cancel.cancel();
+    pub async fn close(mut self) {
+        if !self.closed {
+            if let Err(_) = self.server_channel.send(ServerMessage::Shutdown).await {
+                tracing::warn!("could not shutdown the server gracefully, doing a forced shutdown");
+                self.cancel.cancel();
+            }
             match self.loop_handler.await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::warn!("error shutting down server: {e:?}"),
                 Err(e) => tracing::warn!("error waiting for the server process to close: {e:?}"),
             }
-            self.closed.swap(true, Ordering::Relaxed);
+            self.closed = true;
         }
     }
 
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Relaxed)
+        self.closed
     }
 
-    /// Adds a new connection to the server and serves it.
-    ///
-    /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
-    /// Accept blocks until the Server is closed or the connection closes on its own.
-    ///
-    /// Accept closes `conn`.
-    pub fn accept(
-        &self,
-        // conn: C,
-        reader: R,
-        writer: W,
-        remote_addr: String,
-    ) -> Result<()> {
-        todo!();
+    /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
+    /// [`Server`].
+    pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<C, R, W, P> {
+        PacketForwarderHandler {
+            server_channel: self.server_channel.clone(),
+        }
+    }
+
+    /// Create a [`ClientConnHandler`], which can verify connections and add them to the
+    /// [`Server`].
+    pub fn client_conn_handler(&self) -> ClientConnHandler<C, R, W, P> {
+        ClientConnHandler {
+            mesh_key: self.mesh_key.clone(),
+            server_channel: self.server_channel.clone(),
+            secret_key: self.secret_key.clone(),
+            write_timeout: self.write_timeout.clone(),
+            server_info: self.server_info.clone(),
+        }
     }
 
     // Returns the server metadata cert that can be sent by the TLS server to
@@ -209,22 +206,127 @@ where
     pub fn meta_cert(&self) -> &[u8] {
         self.meta_cert.clone()
     }
+}
 
-    fn accept_0(
-        &mut self,
-        // conn: C,
-        reader: R,
-        writer: W,
-        remote_addr: String,
-        conn_num: i64,
-    ) -> Result<()> {
-        todo!();
+/// Call `PacketForwarderHandler::add_packet_forwarder` to associate a given [`PublicKey` ] to
+/// a [`PacketForwarder`] in the [`Server`].
+/// Call `PacketForwarderHandler::remove_packet_forwarder` to remove any associated [`PublicKey` ] with a [`PacketForwarder`].
+///
+/// Created by the [`Server`] by calling [`Server::packet_forwarder_handler`].
+///
+/// Can be cheaply cloned.
+#[derive(Debug, Clone)]
+pub struct PacketForwarderHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+}
+
+impl<C, R, W, P> PacketForwarderHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    pub fn add_packet_forwarder(&self, client_key: PublicKey, fwd: P) -> Result<()> {
+        self.server_channel
+            .try_send(ServerMessage::AddPacketForwarder((client_key, fwd)))?;
+        Ok(())
     }
 
-    fn verify_client(&self, client_key: PublicKey, info: ClientInfo) -> Result<()> {
-        if !self.verify_clients {
-            return Ok(());
-        }
+    pub fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
+        self.server_channel
+            .try_send(ServerMessage::RemovePacketForwarder(client_key))?;
+        Ok(())
+    }
+}
+
+/// Handle incoming connections to the Server.
+///
+/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
+///
+/// Can be cheaply cloned.
+#[derive(Debug, Clone)]
+pub struct ClientConnHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    mesh_key: Option<[u8; 32]>,
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    secret_key: SecretKey,
+    write_timeout: Option<Duration>,
+    server_info: ServerInfo,
+}
+
+impl<C, R, W, P> ClientConnHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    /// Adds a new connection to the server and serves it.
+    ///
+    /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
+    /// some read or write error to the connection,  if the server is meant to verify clients,
+    /// and is unable to verify this one, or if there is some issue communicating with the server.
+    ///
+    /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
+    pub async fn accept(&self, conn: C, mut reader: R, mut writer: W) -> Result<()> {
+        self.send_server_key(&mut writer)
+            .await
+            .context("unable to send server key to client")?;
+        let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
+            .await
+            .context("unable to receive client information")?;
+        self.verify_client(&client_key, &client_info)
+            .context("unable to verify client {client_key}")?;
+        self.send_server_info(&mut writer, &client_key)
+            .await
+            .context("unable to sent server info to client {client_key}")?;
+        let client_conn_builder = ClientConnBuilder {
+            key: client_key,
+            conn_num: new_conn_num(),
+            conn,
+            reader,
+            writer,
+            can_mesh: can_mesh(self.mesh_key, client_info.mesh_key),
+            write_timeout: self.write_timeout.clone(),
+            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            server_channel: self.server_channel.clone(),
+        };
+        self.server_channel
+            .send(ServerMessage::CreateClient(client_conn_builder))
+            .await
+            .context("server channel closed, the server is probably shutdown")?;
+        Ok(())
+    }
+
+    async fn send_server_key(&self, mut writer: &mut W) -> Result<()> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC.as_bytes());
+        buf.extend_from_slice(self.secret_key.verifying_key().as_bytes());
+        let content = &[buf.as_slice()];
+        write_frame_timeout(
+            &mut writer,
+            FRAME_SERVER_KEY,
+            content,
+            Some(Duration::from_secs(10)),
+        )
+        .await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    fn verify_client(&self, client_key: &PublicKey, info: &ClientInfo) -> Result<()> {
         // status, err = tailscale.Status(context.TODO())
         // 	if err != nil {
         // return fmt.Errorf("failed to query local tailscaled status: %w", err)
@@ -240,91 +342,28 @@ where
         Ok(())
     }
 
-    async fn send_server_key(&self, mut writer: W) -> Result<()> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(MAGIC.as_bytes());
-        buf.extend_from_slice(self.public_key().as_bytes());
-        let content = &[buf.as_slice()];
-        write_frame(&mut writer, FRAME_SERVER_KEY, content).await?;
-        writer.flush().await?;
-        Ok(())
-    }
-
-    async fn send_server_info(&self, mut writer: W, client_key: PublicKey) -> Result<()> {
-        let server_info = if let Some((bytes_per_second, bytes_burst)) = self.rate_limit {
-            ServerInfo {
-                version: PROTOCOL_VERSION,
-                token_bucket_bytes_per_second: bytes_per_second,
-                token_bucket_bytes_burst: bytes_burst,
-            }
-        } else {
-            ServerInfo {
-                version: PROTOCOL_VERSION,
-                token_bucket_bytes_per_second: 0,
-                token_bucket_bytes_burst: 0,
-            }
-        };
+    async fn send_server_info(&self, mut writer: &mut W, client_key: &PublicKey) -> Result<()> {
         let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
-        let msg = postcard::to_slice(&server_info, &mut buf)?;
-        let msg = self.secret_key.seal_to(&client_key, msg);
+        let msg = postcard::to_slice(&self.server_info, &mut buf)?;
+        let msg = self.secret_key.seal_to(client_key, msg);
         let msg = &[msg.as_slice()];
         write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
         writer.flush().await?;
         Ok(())
     }
 
-    /// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
-    /// upon it's initial connection. It should be considered especially untrusted
-    /// at this point.
-    async fn recv_client_key(&self, mut reader: R) -> Result<(PublicKey, ClientInfo)> {
-        let mut buf = BytesMut::new();
-        // the client is untrusted at this point, limit the input size even smaller than our usual
-        // maximum frame size
-        let (frame_type, _) = read_frame(&mut reader, 256 * 1024, &mut buf).await?;
-        ensure!(
-            frame_type == FRAME_CLIENT_INFO,
-            "expected FRAME_CLIENT_INFO frame got {frame_type}"
-        );
-        let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
-        let msg = self.secret_key.open_from(&key, &buf[PUBLIC_KEY_LENGTH..])?;
-        let info: ClientInfo = postcard::from_bytes(&msg)?;
-        Ok((key, info))
-    }
-
-    pub fn add_packet_forwarder_fn(&self) -> impl Fn(PublicKey, P) -> Result<()> {
-        let server_channel = self.server_channel.clone();
-        move |key, fwd| {
-            server_channel.try_send(ServerMessage::AddPacketForwarder((key, fwd)))?;
-            Ok(())
+    /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
+    fn can_mesh(&self, client_mesh_key: Option<[u8; 32]>) -> bool {
+        if self.mesh_key.is_none() {
+            false
+        } else if client_mesh_key.is_none() {
+            false
+        } else {
+            let server_mesh_key = self.mesh_key.unwrap();
+            let client_mesh_key = client_mesh_key.unwrap();
+            server_mesh_key == client_mesh_key
         }
     }
-
-    pub fn remove_packet_forwarder_fn(&self) -> impl Fn(PublicKey) -> Result<()> {
-        let server_channel = self.server_channel.clone();
-        move |key| {
-            server_channel.try_send(ServerMessage::RemovePacketForwarder(key))?;
-            Ok(())
-        }
-    }
-}
-
-// TODO: may not need this yet
-#[derive(Debug)]
-enum DropReason {
-    /// Unknown destination PublicKey
-    UnknownDest,
-    /// Unkonwn destination PublicKey on a derp-forwarded packet
-    UnknownDestOnFwd,
-    /// Destination disconnected before we could send
-    Gone,
-    /// Destination queue is full, dropped packet at queue head
-    QueueHead,
-    /// Destination queue is full, dropped packet at queue tail
-    QueueTail,
-    /// OS write failed
-    WriteError,
-    /// The PublicKey is connected 2+ times (active/active, fighting)
-    DupClient,
 }
 
 pub(crate) struct ServerActor<C, R, W, P>
@@ -473,6 +512,12 @@ where
                                self.client_mesh.remove(&key);
                            }
                        },
+                       ServerMessage::Shutdown => {
+                        tracing::info!("server gracefully shutting down...");
+                        // close all client connections and client read/write loops
+                        self.clients.shutdown().await;
+                        return Ok(());
+                       }
                    }
                 }
             }
@@ -530,14 +575,88 @@ fn init_meta_cert<'a>() -> &'a [u8] {
     b"todo: implement init_meta_cert"
 }
 
+async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -> Result<()> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(MAGIC.as_bytes());
+    buf.extend_from_slice(key.as_bytes());
+    let content = &[buf.as_slice()];
+    write_frame_timeout(
+        &mut writer,
+        FRAME_SERVER_KEY,
+        content,
+        Some(Duration::from_secs(10)),
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+// TODO: we may not need this, or maybe need our own specific version of this. This is wher we
+// would ensure that this client is "allowed" to use our derp server. Currently does nothing.
+fn verify_client(_client_key: PublicKey, _info: ClientInfo) -> Result<()> {
+    // status, err = tailscale.Status(context.TODO())
+    // 	if err != nil {
+    // return fmt.Errorf("failed to query local tailscaled status: %w", err)
+    // }
+    // if clientKey == status.Self.PublicKey {
+    // return nil
+    // }
+    // if _, exists := status.Peer[clientKey]; !exists {
+    // return fmt.Errorf("client %v not in set of peers", clientKey)
+    // }
+    // // TODO(bradfitz): add policy for configurable bandwidth rate per client?
+    // return nil
+    Ok(())
+}
+
+async fn send_server_info<W: AsyncWrite + Unpin>(
+    rate_limit: Option<(usize, usize)>,
+    mut writer: W,
+    secret_key: SecretKey,
+    client_key: PublicKey,
+) -> Result<()> {
+    let server_info = if let Some((bytes_per_second, bytes_burst)) = rate_limit {
+        ServerInfo {
+            version: PROTOCOL_VERSION,
+            token_bucket_bytes_per_second: bytes_per_second,
+            token_bucket_bytes_burst: bytes_burst,
+        }
+    } else {
+        ServerInfo {
+            version: PROTOCOL_VERSION,
+            token_bucket_bytes_per_second: 0,
+            token_bucket_bytes_burst: 0,
+        }
+    };
+    let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
+    let msg = postcard::to_slice(&server_info, &mut buf)?;
+    let msg = secret_key.seal_to(&client_key, msg);
+    let msg = &[msg.as_slice()];
+    write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
+    if a.is_none() {
+        false
+    } else if b.is_none() {
+        false
+    } else {
+        let mesh_a = a.unwrap();
+        let mesh_b = b.unwrap();
+        mesh_a == mesh_b
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::hp::{
         derp::{
-            client_conn::ClientBuilder, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET,
-            MAX_FRAME_SIZE,
+            client_conn::ClientConnBuilder, send_client_key, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
+            FRAME_RECV_PACKET, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
     };
@@ -573,14 +692,14 @@ mod tests {
             ServerMessage<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
         >,
     ) -> (
-        ClientBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+        ClientConnBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
         DuplexStream,
         DuplexStream,
     ) {
         let (test_reader, writer) = tokio::io::duplex(1024);
         let (reader, test_writer) = tokio::io::duplex(1024);
         (
-            ClientBuilder {
+            ClientConnBuilder {
                 key,
                 conn_num,
                 conn: MockConn {},
@@ -732,6 +851,63 @@ mod tests {
 
         done.cancel();
         server_task.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_client_conn_handler() -> Result<()> {
+        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+        let handler =
+            ClientConnHandler::<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> {
+                mesh_key: Some([1u8; 32]),
+                secret_key: SecretKey::generate(),
+                write_timeout: None,
+                server_info: ServerInfo::no_rate_limit(),
+                server_channel: server_channel_s,
+            };
+        let conn = MockConn {};
+        let (mut client_reader, server_writer) = tokio::io::duplex(10);
+        let (server_reader, mut client_writer) = tokio::io::duplex(10);
+        let expect_server_key = handler.secret_key.verifying_key();
+        let client_key = SecretKey::generate();
+        let pub_client_key = client_key.verifying_key();
+        let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
+            println!("receiving server key");
+            let got_server_key =
+                crate::hp::derp::client::recv_server_key(&mut client_reader).await?;
+            assert_eq!(expect_server_key, got_server_key);
+            println!("sending client key");
+            let client_info = ClientInfo {
+                version: PROTOCOL_VERSION,
+                mesh_key: Some([1u8; 32]),
+                can_ack_pings: true,
+                is_prober: true,
+            };
+            crate::hp::derp::send_client_key(
+                &mut client_writer,
+                &client_key,
+                &got_server_key,
+                &client_info,
+            )
+            .await?;
+            let mut buf = BytesMut::new();
+            println!("reading server info");
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
+            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            println!("verifying server info");
+            let msg = client_key.open_from(&got_server_key, &buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            Ok(())
+        });
+        handler.accept(conn, server_reader, server_writer).await?;
+        client_task.await??;
+        match server_channel_r.recv().await.unwrap() {
+            ServerMessage::CreateClient(builder) => {
+                assert_eq!(pub_client_key, builder.key);
+            }
+            _ => anyhow::bail!("unexpected server message"),
+        }
         Ok(())
     }
 }

@@ -107,7 +107,7 @@ pub(crate) struct ClientChannels {
 
 #[derive(Debug)]
 // TODO: Not really the way we usually think of a builder, clean this up
-pub struct ClientBuilder<C, R, W, P>
+pub struct ClientConnBuilder<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -125,7 +125,7 @@ where
     pub(crate) server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
 }
 
-impl<C, R, W, P> ClientBuilder<C, R, W, P>
+impl<C, R, W, P> ClientConnBuilder<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,

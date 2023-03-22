@@ -7,6 +7,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use super::client_conn::ClientConnBuilder;
+use super::PROTOCOL_VERSION;
 use crate::hp::key::node::PublicKey;
 
 pub trait Conn: Sync + Send + 'static {
@@ -67,7 +69,7 @@ pub(crate) struct PeerConnState {
     pub(crate) present: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, MaxSize)]
+#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
 pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].
@@ -84,18 +86,32 @@ pub(crate) struct ClientInfo {
     pub(crate) is_prober: bool,
 }
 
-#[derive(Serialize, Deserialize, MaxSize)]
+/// The information we send to the [`super::client::Client`] about the [`super::server::Server`]'s
+/// protocol version & rate limiting
+///
+/// If either `token_bucket_bytes_per_second` or `token_bucket_bytes_burst` is 0, there is no rate
+/// limit.
+#[derive(Debug, Clone, Serialize, Deserialize, MaxSize)]
 pub(crate) struct ServerInfo {
     pub(crate) version: usize,
     pub(crate) token_bucket_bytes_per_second: usize,
     pub(crate) token_bucket_bytes_burst: usize,
 }
 
+impl ServerInfo {
+    /// Specifies the server requires no rate limit
+    pub fn no_rate_limit() -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            token_bucket_bytes_burst: 0,
+            token_bucket_bytes_per_second: 0,
+        }
+    }
+}
+
 pub trait PacketForwarder: Send + Sync + 'static {
     fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: Bytes);
 }
-
-use super::client_conn::ClientBuilder;
 
 pub(crate) enum ServerMessage<C, R, W, P>
 where
@@ -108,10 +124,11 @@ where
     ClosePeer(PublicKey),
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
-    CreateClient(ClientBuilder<C, R, W, P>),
+    CreateClient(ClientConnBuilder<C, R, W, P>),
     RemoveClient(PublicKey),
     AddPacketForwarder((PublicKey, P)),
     RemovePacketForwarder(PublicKey),
+    Shutdown,
 }
 
 impl<C, R, W, P> std::fmt::Debug for ServerMessage<C, R, W, P>
@@ -145,6 +162,9 @@ where
             ),
             ServerMessage::RemovePacketForwarder(key) => {
                 write!(f, "ServerMessage::RemovePacketForwarder({key:?})")
+            }
+            ServerMessage::Shutdown => {
+                write!(f, "ServerMessage::Shutdown")
             }
         }
     }

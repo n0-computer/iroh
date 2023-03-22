@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use super::{
-    client_conn::{ClientBuilder, ClientConnManager},
+    client_conn::{ClientConnBuilder, ClientConnManager},
     types::{Conn, Packet, PacketForwarder, PeerConnState},
 };
 
@@ -197,7 +197,7 @@ where
         }
     }
 
-    pub fn register<R, W, P>(&mut self, client: ClientBuilder<C, R, W, P>)
+    pub fn register<R, W, P>(&mut self, client: ClientConnBuilder<C, R, W, P>)
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
         W: AsyncWrite + Unpin + Send + Sync + 'static,
@@ -321,7 +321,7 @@ mod tests {
         key: PublicKey,
         conn_num: usize,
     ) -> (
-        ClientBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+        ClientConnBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
         DuplexStream,
         DuplexStream,
     ) {
@@ -329,7 +329,7 @@ mod tests {
         let (reader, test_writer) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
-            ClientBuilder {
+            ClientConnBuilder {
                 key,
                 conn_num,
                 conn: MockConn {},

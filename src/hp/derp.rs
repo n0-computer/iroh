@@ -25,7 +25,11 @@ use std::time::Duration;
 
 use anyhow::{ensure, Result};
 use bytes::BytesMut;
+use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
 /// (This only includes the data bytes visible to magicsock, not
@@ -171,6 +175,21 @@ async fn read_frame(
     Ok((frame_type, frame_len))
 }
 
+async fn read_frame_timeout(
+    mut reader: impl AsyncRead + Unpin,
+    max_size: usize,
+    mut buf: &mut BytesMut,
+    timeout: Option<Duration>,
+) -> Result<(FrameType, usize)> {
+    if let Some(duration) = timeout {
+        let (frame_type, frame_len) =
+            tokio::time::timeout(duration, read_frame(&mut reader, max_size, &mut buf)).await??;
+        Ok((frame_type, frame_len))
+    } else {
+        read_frame(&mut reader, max_size, &mut buf).await
+    }
+}
+
 async fn write_frame_header(
     mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
@@ -218,6 +237,58 @@ async fn write_frame_timeout(
     }
 }
 
+pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    secret_key: &SecretKey,
+    server_key: &PublicKey,
+    client_info: &ClientInfo,
+) -> Result<()> {
+    let mut buf = BytesMut::zeroed(ClientInfo::POSTCARD_MAX_SIZE);
+    let msg = postcard::to_slice(client_info, &mut buf)?;
+    let sealed_msg = secret_key.seal_to(server_key, msg);
+    println!("client sending msg {sealed_msg:?}");
+    println!("msg len {}", sealed_msg.len());
+    write_frame(
+        &mut writer,
+        FRAME_CLIENT_INFO,
+        &[secret_key.verifying_key().as_bytes(), &sealed_msg],
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
+/// upon it's initial connection. It should be considered especially untrusted
+/// at this point.
+async fn recv_client_key<R: AsyncRead + Unpin>(
+    secret_key: SecretKey,
+    mut reader: R,
+) -> Result<(PublicKey, ClientInfo)> {
+    let mut buf = BytesMut::new();
+    // the client is untrusted at this point, limit the input size even smaller than our usual
+    // maximum frame size, and give a timeout
+    let (frame_type, _) = read_frame_timeout(
+        &mut reader,
+        256 * 1024,
+        &mut buf,
+        Some(Duration::from_secs(10)),
+    )
+    .await?;
+    ensure!(
+        frame_type == FRAME_CLIENT_INFO,
+        "expected FRAME_CLIENT_INFO frame got {frame_type}"
+    );
+    let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
+    println!("got client key {key:?}");
+    let msg = &buf[PUBLIC_KEY_LENGTH..];
+    println!("msg {msg:?}");
+    println!("msg len {}", msg.len());
+    let msg = secret_key.open_from(&key, msg)?;
+    let info: ClientInfo = postcard::from_bytes(&msg)?;
+    Ok((key, info))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,13 +304,38 @@ mod tests {
 
         let expect_buf = b"hello world!";
         write_frame(&mut writer, FRAME_HEALTH, &[expect_buf]).await?;
-        writer.flush().await;
+        writer.flush().await?;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();
         let (frame_type, frame_len) = read_frame(&mut reader, 1024, &mut got_buf).await?;
         assert_eq!(FRAME_HEALTH, frame_type);
         assert_eq!(expect_buf.len(), frame_len);
         assert_eq!(expect_buf.as_slice(), &got_buf);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_client_key() -> Result<()> {
+        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        let server_key = SecretKey::generate();
+        let client_key = SecretKey::generate();
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+            mesh_key: Some([1u8; 32]),
+            can_ack_pings: true,
+            is_prober: true,
+        };
+        println!("client_key pub {:?}", client_key.verifying_key());
+        send_client_key(
+            &mut writer,
+            &client_key,
+            &server_key.verifying_key(),
+            &client_info,
+        )
+        .await?;
+        let (client_pub_key, got_client_info) = recv_client_key(server_key, &mut reader).await?;
+        assert_eq!(client_key.verifying_key(), client_pub_key);
+        assert_eq!(client_info, got_client_info);
         Ok(())
     }
 }
