@@ -39,7 +39,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// TODO: how small does this have to be before this is considered cheap to clone?
 /// It would make alot of the APIs easier if we could just clone this.
 #[derive(Debug)]
-pub struct Server<'a, C, R, W, P>
+pub struct Server<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -57,8 +57,8 @@ where
     // be discussed and worked out.
     // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
     mesh_key: Option<[u8; 32]>,
-    /// the encoded x509 cert to send after `LetsEncrypt` cert+intermediate
-    meta_cert: &'a [u8],
+    /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
+    meta_cert: Vec<u8>,
     /// Channel on which to communicate to the `ServerActor`
     server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
     /// When true, only accept client connections to the DERP server if the `client_key` is a
@@ -110,7 +110,7 @@ where
     // tcpRtt                       metrics.LabelMap // histogram
 }
 
-impl<'a, C, R, W, P> Server<'a, C, R, W, P>
+impl<C, R, W, P> Server<C, R, W, P>
 where
     C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -124,7 +124,7 @@ where
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = tokio::spawn(async move { server_actor.run(done).await });
-        let meta_cert = init_meta_cert();
+        let meta_cert = init_meta_cert(&key.verifying_key());
         Self {
             // TODO: add some default
             write_timeout: None,
@@ -201,10 +201,10 @@ where
         }
     }
 
-    // Returns the server metadata cert that can be sent by the TLS server to
-    // let the client skip a round trip during start-up.
+    /// Returns the server metadata cert that can be sent by the TLS server to
+    /// let the client skip a round trip during start-up.
     pub fn meta_cert(&self) -> &[u8] {
-        self.meta_cert.clone()
+        &self.meta_cert
     }
 }
 
@@ -547,32 +547,22 @@ where
 /// This RTT optimization fails where there's a corp-mandated TLS proxy with
 /// corp-mandated root certs on employee machines and TLS proxy cleans up
 /// unnecessary certs. In that case we jsut fall back to the extra RTT.
-fn init_meta_cert<'a>() -> &'a [u8] {
-    // TODO: implement certificate creation
-    //
-    // pub, priv, err := ed25519.GenerateKey(crand.Reader)
-    // if err != nil {
-    // 	log.Fatal(err)
-    // }
-    // tmpl := &x509.Certificate{
-    // 	SerialNumber: big.NewInt(ProtocolVersion),
-    // 	Subject: pkix.Name{
-    // 		CommonName: fmt.Sprintf("derpkey%s", s.publicKey.UntypedHexString()),
-    // 	},
-    // 	// Windows requires NotAfter and NotBefore set:
-    // 	NotAfter:  time.Now().Add(30 * 24 * time.Hour),
-    // 	NotBefore: time.Now().Add(-30 * 24 * time.Hour),
-    // 	// Per https://github.com/golang/go/issues/51759#issuecomment-1071147836,
-    // 	// macOS requires BasicConstraints when subject == issuer:
-    // 	BasicConstraintsValid: true,
-    // }
-    // cert, err := x509.CreateCertificate(crand.Reader, tmpl, tmpl, pub, priv)
-    // if err != nil {
-    // 	log.Fatalf("CreateCertificate: %v", err)
-    // }
-    // s.metaCert = cert
-    //
-    b"todo: implement init_meta_cert"
+fn init_meta_cert<'a>(server_key: &PublicKey) -> Vec<u8> {
+    let mut params =
+        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(&server_key.as_bytes()))]);
+    params.serial_number = Some(PROTOCOL_VERSION as u64);
+    // Windows requires not_after and not_before set:
+    params.not_after = time::OffsetDateTime::now_utc()
+        .checked_add(30 * time::Duration::DAY)
+        .unwrap();
+    params.not_before = time::OffsetDateTime::now_utc()
+        .checked_sub(30 * time::Duration::DAY)
+        .unwrap();
+
+    rcgen::Certificate::from_params(params)
+        .expect("fixed inputs")
+        .serialize_der()
+        .expect("fixed allocations")
 }
 
 async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -> Result<()> {
