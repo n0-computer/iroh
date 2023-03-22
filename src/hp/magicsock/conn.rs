@@ -405,7 +405,7 @@ impl Conn {
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
-            public_key: private_key.verifying_key().into(),
+            public_key: private_key.public_key().into(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
             pconn4,
@@ -3308,7 +3308,7 @@ mod tests {
             };
             let key = opts.private_key.clone();
             let conn = Conn::new(
-                format!("magic-{}", hex::encode(&key.verifying_key().as_ref()[..8])),
+                format!("magic-{}", hex::encode(&key.public_key().as_ref()[..8])),
                 opts,
             )
             .await?;
@@ -3358,7 +3358,7 @@ mod tests {
         }
 
         fn public(&self) -> key::node::PublicKey {
-            self.key.verifying_key().into()
+            self.key.public_key().into()
         }
     }
 
@@ -3386,7 +3386,7 @@ mod tests {
                     id: (i + 1) as u64,
                     stable_id: String::new(),
                     name: Some(format!("node{}", i + 1)),
-                    key: peer.key.verifying_key().into(),
+                    key: peer.key.public_key().into(),
                     disco_key: peer.conn.disco_public_key().await,
                     allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),

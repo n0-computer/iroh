@@ -120,11 +120,11 @@ where
     /// TODO: replace with builder
     pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>, verify_clients: bool) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
-        let server_actor = ServerActor::new(key.verifying_key(), server_channel_r);
+        let server_actor = ServerActor::new(key.public_key(), server_channel_r);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = tokio::spawn(async move { server_actor.run(done).await });
-        let meta_cert = init_meta_cert(&key.verifying_key());
+        let meta_cert = init_meta_cert(&key.public_key());
         Self {
             // TODO: add some default
             write_timeout: None,
@@ -158,7 +158,7 @@ where
 
     /// Returns the server's public key.
     pub fn public_key(&self) -> PublicKey {
-        self.secret_key.verifying_key()
+        self.secret_key.public_key()
     }
 
     /// Closes the server and waits for the connections to disconnect.
@@ -313,7 +313,7 @@ where
     async fn send_server_key(&self, mut writer: &mut W) -> Result<()> {
         let mut buf = Vec::new();
         buf.extend_from_slice(MAGIC.as_bytes());
-        buf.extend_from_slice(self.secret_key.verifying_key().as_bytes());
+        buf.extend_from_slice(self.secret_key.public_key().as_bytes());
         let content = &[buf.as_slice()];
         write_frame_timeout(
             &mut writer,
@@ -858,15 +858,13 @@ mod tests {
         let conn = MockConn {};
         let (mut client_reader, server_writer) = tokio::io::duplex(10);
         let (server_reader, mut client_writer) = tokio::io::duplex(10);
-        let expect_server_key = handler.secret_key.verifying_key();
+        let expect_server_key = handler.secret_key.public_key();
         let client_key = SecretKey::generate();
-        let pub_client_key = client_key.verifying_key();
+        let pub_client_key = client_key.public_key();
         let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
-            println!("receiving server key");
             let got_server_key =
                 crate::hp::derp::client::recv_server_key(&mut client_reader).await?;
             assert_eq!(expect_server_key, got_server_key);
-            println!("sending client key");
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
                 mesh_key: Some([1u8; 32]),
@@ -881,11 +879,9 @@ mod tests {
             )
             .await?;
             let mut buf = BytesMut::new();
-            println!("reading server info");
             let (frame_type, _) =
                 crate::hp::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
             assert_eq!(FRAME_SERVER_INFO, frame_type);
-            println!("verifying server info");
             let msg = client_key.open_from(&got_server_key, &buf)?;
             let _info: ServerInfo = postcard::from_bytes(&msg)?;
             Ok(())

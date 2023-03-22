@@ -251,7 +251,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     write_frame(
         &mut writer,
         FRAME_CLIENT_INFO,
-        &[secret_key.verifying_key().as_bytes(), &sealed_msg],
+        &[secret_key.public_key().as_bytes(), &sealed_msg],
     )
     .await?;
     writer.flush().await?;
@@ -325,16 +325,16 @@ mod tests {
             can_ack_pings: true,
             is_prober: true,
         };
-        println!("client_key pub {:?}", client_key.verifying_key());
+        println!("client_key pub {:?}", client_key.public_key());
         send_client_key(
             &mut writer,
             &client_key,
-            &server_key.verifying_key(),
+            &server_key.public_key(),
             &client_info,
         )
         .await?;
         let (client_pub_key, got_client_info) = recv_client_key(server_key, &mut reader).await?;
-        assert_eq!(client_key.verifying_key(), client_pub_key);
+        assert_eq!(client_key.public_key(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())
     }
