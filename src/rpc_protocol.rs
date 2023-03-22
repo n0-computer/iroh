@@ -48,12 +48,32 @@ pub struct ValidateResponse {
     pub error: Option<String>,
 }
 
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ValidateProgress {
+    /// We started validating an entry
+    Entry {
+        id: u64,
+        hash: Hash,
+        path: Option<PathBuf>,
+        size: u64,
+    },
+    /// We got progress ingesting item `id`
+    Progress { id: u64, offset: u64 },
+    /// We are done with `id`
+    Done { id: u64, error: Option<String> },
+    /// We are done with the whole operation
+    AllDone,
+    /// We got an error and need to abort
+    Abort(RpcError),
+}
+
 impl Msg<ProviderService> for ValidateRequest {
     type Pattern = ServerStreaming;
 }
 
 impl ServerStreamingMsg<ProviderService> for ValidateRequest {
-    type Response = ValidateResponse;
+    type Response = ValidateProgress;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,7 +170,7 @@ pub enum ProviderResponse {
     List(ListResponse),
     Provide(ProvideProgress),
     Id(IdResponse),
-    Validate(ValidateResponse),
+    Validate(ValidateProgress),
     Shutdown(()),
 }
 

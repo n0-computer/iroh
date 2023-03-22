@@ -509,19 +509,20 @@ async fn main_impl() -> Result<()> {
             let fail_char = style(Emoji("✗", "Error")).red();
             while let Some(item) = response.next().await {
                 let item = item?;
-                println!(
-                    "{} {} {} {}{}",
-                    item.path
-                        .map(|x| x.display().to_string())
-                        .unwrap_or("Collection".to_owned()),
-                    Blake3Cid(item.hash),
-                    HumanBytes(item.size),
-                    item.error
-                        .as_ref()
-                        .map(|x| format!("{x} "))
-                        .unwrap_or("".to_owned()),
-                    item.error.map(|_| &fail_char).unwrap_or(&ok_char),
-                );
+                println!("{:?}", item);
+                // println!(
+                //     "{} {} {} {}{}",
+                //     item.path
+                //         .map(|x| x.display().to_string())
+                //         .unwrap_or("Collection".to_owned()),
+                //     Blake3Cid(item.hash),
+                //     HumanBytes(item.size),
+                //     item.error
+                //         .as_ref()
+                //         .map(|x| format!("{x} "))
+                //         .unwrap_or("".to_owned()),
+                //     item.error.map(|_| &fail_char).unwrap_or(&ok_char),
+                // );
             }
             Ok(())
         }

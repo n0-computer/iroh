@@ -45,8 +45,9 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::{
     IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest,
-    ValidateResponse, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
+    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
@@ -482,16 +483,15 @@ impl RpcHandler {
     fn validate(
         self,
         _msg: ValidateRequest,
-    ) -> impl Stream<Item = ValidateResponse> + Send + 'static {
-        self.inner
-            .db
-            .validate(num_cpus::get())
-            .map(|(hash, size, path, error)| ValidateResponse {
-                hash,
-                size,
-                path,
-                error: error.map(|e| e.to_string()),
-            })
+    ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
+        let (tx, rx) = mpsc::channel(1);
+        let tx2 = tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = self.inner.db.validate(tx).await {
+                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            }
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {

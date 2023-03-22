@@ -7,7 +7,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
-    io::{self, Read, Seek},
+    io::{self, BufReader, Read, Seek},
     path::{Component, Path},
     result,
     str::FromStr,
@@ -181,10 +181,17 @@ pub(crate) fn validate_bao(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
+    progress: impl Fn(u64),
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard_reader = io::Cursor::new(outboard);
-    let mut decoder = abao::decode::Decoder::new_outboard(data_reader, outboard_reader, &hash);
+    let progress_reader = ProgressReader::new(data_reader, |p| {
+        if let ProgressReaderUpdate::Progress(x) = p {
+            progress(x)
+        }
+    });
+    let buffered_reader = BufReader::with_capacity(1024 * 1024, progress_reader);
+    let mut decoder = abao::decode::Decoder::new_outboard(buffered_reader, outboard_reader, &hash);
     // todo: expose chunk group size in abao, so people can allocate good sized buffers
     let mut buffer = vec![0u8; 1024 * 16 + 4096];
     loop {
