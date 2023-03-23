@@ -587,15 +587,10 @@ async fn send_server_info<W: AsyncWrite + Unpin>(
 }
 
 fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
-    if a.is_none() {
-        false
-    } else if b.is_none() {
-        false
-    } else {
-        let mesh_a = a.unwrap();
-        let mesh_b = b.unwrap();
-        mesh_a == mesh_b
+    if let (Some(a), Some(b)) = (a, b) {
+        return a == b;
     }
+    false
 }
 
 #[cfg(test)]
