@@ -193,7 +193,8 @@ jobs:
       matrix:
         target:
           - i686-unknown-linux-gnu
-          - arm-linux-androideabi
+          - armv7-linux-androideabi
+          - aarch64-linux-android
 
     steps:
     - name: Checkout
