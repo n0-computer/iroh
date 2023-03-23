@@ -10,7 +10,7 @@
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -46,7 +46,8 @@ use crate::protocol::{
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
@@ -411,26 +412,7 @@ impl Provider {
     /// See [`Ticket`] for more details of how it can be used.
     pub fn ticket(&self, hash: Hash) -> Ticket {
         // TODO: Verify that the hash exists in the db?
-        let listen_ip = self.inner.listen_addr.ip();
-        let listen_port = self.inner.listen_addr.port();
-        let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
-            true => {
-                // Find all the local addresses for this address family.
-                let addrs = LocalAddresses::new();
-                addrs
-                    .regular
-                    .iter()
-                    .filter(|addr| match addr {
-                        IpAddr::V4(_) if listen_ip.is_ipv4() => true,
-                        IpAddr::V6(_) if listen_ip.is_ipv6() => true,
-                        _ => false,
-                    })
-                    .copied()
-                    .map(|addr| SocketAddr::from((addr, listen_port)))
-                    .collect()
-            }
-            false => vec![self.inner.listen_addr],
-        };
+        let addrs = find_local_addresses(self.inner.listen_addr);
         Ticket {
             hash,
             peer: self.peer_id(),

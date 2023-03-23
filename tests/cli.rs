@@ -144,6 +144,10 @@ fn cli_provide_addresses() -> Result<()> {
         Some("127.0.0.1:4333"),
         Some(RPC_PORT),
     )?;
+
+    // wait for the provider to start
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
     let mut cmd = Command::new(iroh_bin());
     cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
 

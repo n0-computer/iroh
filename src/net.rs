@@ -149,6 +149,7 @@ const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
 /// Given a listen/bind address, finds all the local addresses for that address family.
 pub fn find_local_addresses(listen_addr: SocketAddr) -> Vec<SocketAddr> {
     let listen_ip = listen_addr.ip();
+    let listen_port = listen_addr.port();
     let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
         true => {
             // Find all the local addresses for this address family.
@@ -162,7 +163,7 @@ pub fn find_local_addresses(listen_addr: SocketAddr) -> Vec<SocketAddr> {
                     _ => false,
                 })
                 .copied()
-                .map(|addr| SocketAddr::from((addr, listen_addr.port())))
+                .map(|addr| SocketAddr::from((addr, listen_port)))
                 .collect()
         }
         false => vec![listen_addr],
