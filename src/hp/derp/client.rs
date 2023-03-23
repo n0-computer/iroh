@@ -78,25 +78,19 @@ where
     }
 
     async fn send_client_key(&mut self) -> Result<()> {
-        let mut buf = BytesMut::zeroed(ClientInfo::POSTCARD_MAX_SIZE);
-        let msg = postcard::to_slice(
-            &ClientInfo {
-                version: PROTOCOL_VERSION,
-                mesh_key: self.mesh_key,
-                can_ack_pings: self.can_ack_pings,
-                is_prober: self.is_prober,
-            },
-            &mut buf,
-        )?;
-        let sealed_msg = self.secret_key.seal_to(&self.server_key, msg);
-        write_frame(
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+            mesh_key: self.mesh_key,
+            can_ack_pings: self.can_ack_pings,
+            is_prober: self.is_prober,
+        };
+        super::send_client_key(
             &mut self.writer,
-            FRAME_CLIENT_INFO,
-            &[self.secret_key.verifying_key().as_bytes(), &sealed_msg],
+            &self.secret_key,
+            &self.server_key,
+            &client_info,
         )
-        .await?;
-        self.writer.flush().await?;
-        Ok(())
+        .await
     }
 
     /// Returns a reference to the server's public key.
@@ -375,6 +369,8 @@ where
         self
     }
 
+    // TODO: after implementing the [`Server`], I'm 95% sure this was only used for test on the go
+    // impl, or at least, we have no use of it in our current set up.
     pub fn server_public_key(mut self, key: PublicKey) -> Self {
         self.server_public_key = Some(key);
         self
@@ -391,8 +387,8 @@ where
         R: AsyncRead + Unpin,
         C: Conn,
     {
-        // NEXT: BUILD CLIENT
-
+        // TODO: see `Client::server_public_key` todo, but assigning a server_public_key should
+        // probably be removed
         let server_key = if let Some(key) = self.server_public_key {
             key
         } else {
@@ -418,7 +414,7 @@ where
     }
 }
 
-async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
+pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Result<PublicKey> {
     // expecting MAGIC followed by 32 bytes that contain the server key
     let magic_len = MAGIC.len();
     let expected_frame_len = magic_len + 32;

@@ -1,58 +1,77 @@
 //! based on tailscale/derp/derp_server.go
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use anyhow::Result;
-use tokio::io::{AsyncRead, AsyncWrite};
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use postcard::experimental::max_size::MaxSize;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
+use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
-    types::{ClientInfo, Conn, PacketForwarder, PeerConnState, ServerMessage},
+    types::{Conn, PacketForwarder, PeerConnState, ServerMessage},
+};
+use super::{
+    recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
+    FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
+
+static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
+fn new_conn_num() -> usize {
+    CONN_NUM.fetch_add(1, Ordering::Relaxed)
+}
 
 /// The number of packets buffered for sending per client
 const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-// TODO: handle duplicate connections, we currently just replace the most recent connection with
-// any previous connection
-// /// A temporary (2021-08-30) mechanism to change the policy
-// /// of how duplicate connections for the same key are handled.
-// #[derive(Debug)]
-// enum DupPolicy {
-//     /// A DupPolicy where the last connection to send traffic for a peer
-//     /// if the active one.
-//     LastWriterIsActive,
-//     /// A DupPolicy that detects if peers are trying to send traffic interleaved
-//     /// with each other and then disables all of them
-//     DisabledFighters,
-// }
-
-#[derive(Debug)]
 /// A DERP server.
-pub struct Server<'a> {
+///
+/// TODO: how small does this have to be before this is considered cheap to clone?
+/// It would make alot of the APIs easier if we could just clone this.
+#[derive(Debug)]
+pub struct Server<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
     /// Optionally specifies how long to wait before failing when writing
-    /// to a cliet
+    /// to a client
     write_timeout: Option<Duration>,
+    /// secret_key of the client
     secret_key: SecretKey,
     // TODO: this is a string in the go impl, I made it a standard length array
     // of bytes in this impl for ease of serializing. (Postcard cannot estimate
     // the size of the serialized struct if this field is a `String`). This should
     // be discussed and worked out.
-    mesh_key: [u8; 32],
-    /// the encoded x509 cert to send after `LetsEncrypt` cert+intermediate
-    meta_cert: &'a [u8],
-
-    /// Counters:
-    // TODO: this is the go impl, need to add this in
+    // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
+    mesh_key: Option<[u8; 32]>,
+    /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
+    meta_cert: Vec<u8>,
+    /// Channel on which to communicate to the `ServerActor`
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    /// When true, the server has been shutdown.
+    closed: bool,
+    /// The information we send to the [`client::Client`] about the [`Server`]'s protocol version
+    /// and required rate limiting (if any)
+    server_info: ServerInfo,
+    /// Server loop handler
+    loop_handler: JoinHandle<Result<()>>,
+    /// Done token, forces a hard shutdown. To gracefully shutdown, use `Server::close`
+    cancel: CancellationToken,
+    // TODO: stats collection
+    // Counters:
     // 	packetsSent, bytesSent       expvar.Int
     // packetsRecv, bytesRecv       expvar.Int
     // packetsRecvByKind            metrics.LabelMap
@@ -85,35 +104,45 @@ pub struct Server<'a> {
     // removePktForwardOther        expvar.Int
     // avgQueueDuration             *uint64          // In milliseconds; accessed atomically
     // tcpRtt                       metrics.LabelMap // histogram
-
-    /// When true, only accept client connections to the DERP server if the `client_key` is a
-    /// known  peer in the network, as specified by a running "tailscaled's client's
-    /// LocalAPI"
-    verify_clients: bool,
-
-    closed: AtomicBool,
-    // TODO: how is this used, should it be a `Sender`?
-    // net_conns: HashMap<C, Receiver<()>>,
-    // clients: HashMap<PublicKey, ClientSet>,
-    /// Maps from netip.AddrPort to a client's public key
-    key_of_addr: HashMap<SocketAddr, PublicKey>,
-    // watchers: HashMap<ClientConn, bool>,
 }
 
-impl<'a> Server<'a> {
-    /// replace with builder
-    pub fn new(key: SecretKey) -> Self {
-        // TODO:
-        todo!();
+impl<C, R, W, P> Server<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    /// TODO: replace with builder
+    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>) -> Self {
+        let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
+        let server_actor = ServerActor::new(key.public_key(), server_channel_r);
+        let cancel_token = CancellationToken::new();
+        let done = cancel_token.clone();
+        let server_task = tokio::spawn(async move { server_actor.run(done).await });
+        let meta_cert = init_meta_cert(&key.public_key());
+        Self {
+            // TODO: add some default
+            write_timeout: None,
+            secret_key: key,
+            mesh_key,
+            meta_cert,
+            server_channel: server_channel_s,
+            closed: false,
+            // TODO: come up with good default
+            server_info: ServerInfo::no_rate_limit(),
+            loop_handler: server_task,
+            cancel: cancel_token,
+        }
     }
 
     /// Reports whether the server is configured with a mesh key.
     pub fn has_mesh_key(&self) -> bool {
-        !self.mesh_key.is_empty()
+        self.mesh_key.is_some()
     }
 
     /// Returns the configured mesh key, may be empty.
-    pub fn mesh_key(&self) -> [u8; 32] {
+    pub fn mesh_key(&self) -> Option<[u8; 32]> {
         self.mesh_key
     }
 
@@ -124,174 +153,194 @@ impl<'a> Server<'a> {
 
     /// Returns the server's public key.
     pub fn public_key(&self) -> PublicKey {
-        self.secret_key.verifying_key()
+        self.secret_key.public_key()
     }
 
     /// Closes the server and waits for the connections to disconnect.
-    pub async fn close(self) {
-        // let closed = self.closed.load(Ordering::Relaxed);
-        // if closed {
-        //     return;
-        // }
-        // self.closed.swap(true, Ordering::Relaxed);
-        // let mut closed_channels = Vec::new();
-
-        // for (net_conn, closed) in self.net_conns.into_iter() {
-        //     match net_conn.close() {
-        //         Ok(_) => closed_channels.push(closed),
-        //         Err(e) => {
-        //             tracing::warn!("error closing connection {e:#?}")
-        //         }
-        //     }
-        // }
-
-        // for c in closed_channels.into_iter() {
-        //     if let Err(e) = c.await {
-        //         tracing::warn!("error while closing connection {e:#?}");
-        //     }
-        // }
+    pub async fn close(mut self) {
+        if !self.closed {
+            if let Err(_) = self.server_channel.send(ServerMessage::Shutdown).await {
+                tracing::warn!("could not shutdown the server gracefully, doing a forced shutdown");
+                self.cancel.cancel();
+            }
+            match self.loop_handler.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!("error shutting down server: {e:?}"),
+                Err(e) => tracing::warn!("error waiting for the server process to close: {e:?}"),
+            }
+            self.closed = true;
+        }
     }
 
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Relaxed)
+        self.closed
     }
 
-    /// Reports whether the client with the specified key is connected.
-    /// This is used in tests to verify that nodes are connected
-    // TODO: we may not need this
-    fn is_client_connected_for_test(&self, key: PublicKey) -> bool {
-        todo!();
+    /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
+    /// [`Server`].
+    pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<C, R, W, P> {
+        PacketForwarderHandler {
+            server_channel: self.server_channel.clone(),
+        }
     }
 
-    /// Adds a new connection to the server and serves it.
-    ///
-    /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
-    /// Accept blocks until the Server is closed or the connection closes on its own.
-    ///
-    /// Accept closes `conn`.
-    pub fn accept<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-        &self,
-        // conn: C,
-        reader: R,
-        writer: W,
-        remote_addr: String,
-    ) -> Result<()> {
-        todo!();
+    /// Create a [`ClientConnHandler`], which can verify connections and add them to the
+    /// [`Server`].
+    pub fn client_conn_handler(&self) -> ClientConnHandler<C, R, W, P> {
+        ClientConnHandler {
+            mesh_key: self.mesh_key.clone(),
+            server_channel: self.server_channel.clone(),
+            secret_key: self.secret_key.clone(),
+            write_timeout: self.write_timeout.clone(),
+            server_info: self.server_info.clone(),
+        }
     }
 
-    /// Initializes `Server::meta_cert` with a self-signed x509 cert
-    /// encoding this server's public key and protocol version. "cmd/derp_server
-    /// then sends this after the Let's Encrypt leaf + intermediate certs after
-    /// the ServerHello (encrypted in TLS 1.3, not that is matters much).
-    ///
-    /// Then the client can save a round trime getting that and can start speaking
-    /// DERP right away. (we don't use ALPN because that's sent in the clear and
-    /// we're being paranoid to not look too weird to any middleboxes, given that
-    /// DERP is an ultimate fallback path). But since the post-ServerHello certs
-    /// are encrypted we can have the client also use them as a signal to be able
-    /// to start speaking DERP right away, starting with its identity proof,
-    /// encrypted to the server's public key.
-    ///
-    /// This RTT optimization fails where there's a corp-mandated TLS proxy with
-    /// corp-mandated root certs on employee machines and TLS proxy cleans up
-    /// unnecessary certs. In that case we jsut fall back to the extra RTT.
-    fn init_meta_cert(&self) {
-        todo!();
-    }
-
-    // Returns the server metadata cert that can be sent by the TLS server to
-    // let the client skip a round trip during start-up.
+    /// Returns the server metadata cert that can be sent by the TLS server to
+    /// let the client skip a round trip during start-up.
     pub fn meta_cert(&self) -> &[u8] {
-        self.meta_cert.clone()
+        &self.meta_cert
     }
-
-    /// Notes that client c is no authenticated and ready for packets.
-    ///
-    /// If `SCLient::key` is connected more than once, the earlier connection(s)
-    /// are placed in a non-active state where we read from them (primarily to
-    /// observe EOFs/timeouts) but won't send them frames on the assumption
-    /// that they're dead.
-    // fn register_client(&mut self, client: ClientConn) {
-    //     todo!();
-    // }
-
-    fn accept_0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
-        &mut self,
-        // conn: C,
-        reader: R,
-        writer: W,
-        remote_addr: String,
-        conn_num: i64,
-    ) -> Result<()> {
-        todo!();
-    }
-
-    fn record_drop(
-        &self,
-        packet_bytes: &[u8],
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        reason: DropReason,
-    ) {
-        todo!();
-    }
-
-    fn verify_client(&self, client_key: PublicKey, info: ClientInfo) -> Result<()> {
-        todo!();
-    }
-
-    fn send_server_key<W: AsyncWrite + Unpin>(&self, writer: W) -> Result<()> {
-        todo!();
-    }
-
-    fn send_server_info<W: AsyncWrite + Unpin>(
-        &self,
-        writer: W,
-        client_key: PublicKey,
-    ) -> Result<()> {
-        todo!();
-    }
-
-    /// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
-    /// upon it's initial connection. It should be considered especially untrusted
-    /// at this point.
-    fn recv_client_key<R: AsyncRead + Unpin>(&self, reader: R) -> Result<(PublicKey, ClientInfo)> {
-        todo!();
-    }
-
-    pub fn add_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
-        todo!();
-    }
-
-    pub fn remove_packet_forwarder(&self, dst: PublicKey, fwd: impl PacketForwarder) {
-        todo!();
-    }
-
-    pub fn consistency_check() -> Result<()> {
-        todo!();
-    }
-
-    // fn serve_debug_traffic() {
-    //     todo!();
-    // }
 }
 
-#[derive(Debug)]
-enum DropReason {
-    /// Unknown destination PublicKey
-    UnknownDest,
-    /// Unkonwn destination PublicKey on a derp-forwarded packet
-    UnknownDestOnFwd,
-    /// Destination disconnected before we could send
-    Gone,
-    /// Destination queue is full, dropped packet at queue head
-    QueueHead,
-    /// Destination queue is full, dropped packet at queue tail
-    QueueTail,
-    /// OS write failed
-    WriteError,
-    /// The PublicKey is connected 2+ times (active/active, fighting)
-    DupClient,
+/// Call `PacketForwarderHandler::add_packet_forwarder` to associate a given [`PublicKey` ] to
+/// a [`PacketForwarder`] in the [`Server`].
+/// Call `PacketForwarderHandler::remove_packet_forwarder` to remove any associated [`PublicKey` ] with a [`PacketForwarder`].
+///
+/// Created by the [`Server`] by calling [`Server::packet_forwarder_handler`].
+///
+/// Can be cheaply cloned.
+#[derive(Debug, Clone)]
+pub struct PacketForwarderHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+}
+
+impl<C, R, W, P> PacketForwarderHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    pub fn add_packet_forwarder(&self, client_key: PublicKey, fwd: P) -> Result<()> {
+        self.server_channel
+            .try_send(ServerMessage::AddPacketForwarder((client_key, fwd)))?;
+        Ok(())
+    }
+
+    pub fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
+        self.server_channel
+            .try_send(ServerMessage::RemovePacketForwarder(client_key))?;
+        Ok(())
+    }
+}
+
+/// Handle incoming connections to the Server.
+///
+/// Created by the [`Server`] by calling [`Server::client_conn_handler`].
+///
+/// Can be cheaply cloned.
+#[derive(Debug, Clone)]
+pub struct ClientConnHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    mesh_key: Option<[u8; 32]>,
+    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    secret_key: SecretKey,
+    write_timeout: Option<Duration>,
+    server_info: ServerInfo,
+}
+
+impl<C, R, W, P> ClientConnHandler<C, R, W, P>
+where
+    C: Conn,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    /// Adds a new connection to the server and serves it.
+    ///
+    /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
+    /// some read or write error to the connection,  if the server is meant to verify clients,
+    /// and is unable to verify this one, or if there is some issue communicating with the server.
+    ///
+    /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
+    pub async fn accept(&self, conn: C, mut reader: R, mut writer: W) -> Result<()> {
+        self.send_server_key(&mut writer)
+            .await
+            .context("unable to send server key to client")?;
+        let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
+            .await
+            .context("unable to receive client information")?;
+        self.send_server_info(&mut writer, &client_key)
+            .await
+            .context("unable to sent server info to client {client_key}")?;
+        let client_conn_builder = ClientConnBuilder {
+            key: client_key,
+            conn_num: new_conn_num(),
+            conn,
+            reader,
+            writer,
+            can_mesh: can_mesh(self.mesh_key, client_info.mesh_key),
+            write_timeout: self.write_timeout.clone(),
+            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            server_channel: self.server_channel.clone(),
+        };
+        self.server_channel
+            .send(ServerMessage::CreateClient(client_conn_builder))
+            .await
+            .context("server channel closed, the server is probably shutdown")?;
+        Ok(())
+    }
+
+    async fn send_server_key(&self, mut writer: &mut W) -> Result<()> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC.as_bytes());
+        buf.extend_from_slice(self.secret_key.public_key().as_bytes());
+        let content = &[buf.as_slice()];
+        write_frame_timeout(
+            &mut writer,
+            FRAME_SERVER_KEY,
+            content,
+            Some(Duration::from_secs(10)),
+        )
+        .await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    async fn send_server_info(&self, mut writer: &mut W, client_key: &PublicKey) -> Result<()> {
+        let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
+        let msg = postcard::to_slice(&self.server_info, &mut buf)?;
+        let msg = self.secret_key.seal_to(client_key, msg);
+        let msg = &[msg.as_slice()];
+        write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
+    fn can_mesh(&self, client_mesh_key: Option<[u8; 32]>) -> bool {
+        if self.mesh_key.is_none() {
+            false
+        } else if client_mesh_key.is_none() {
+            false
+        } else {
+            let server_mesh_key = self.mesh_key.unwrap();
+            let client_mesh_key = client_mesh_key.unwrap();
+            server_mesh_key == client_mesh_key
+        }
+    }
 }
 
 pub(crate) struct ServerActor<C, R, W, P>
@@ -440,6 +489,12 @@ where
                                self.client_mesh.remove(&key);
                            }
                        },
+                       ServerMessage::Shutdown => {
+                        tracing::info!("server gracefully shutting down...");
+                        // close all client connections and client read/write loops
+                        self.clients.shutdown().await;
+                        return Ok(());
+                       }
                    }
                 }
             }
@@ -453,14 +508,99 @@ where
     }
 }
 
+/// Initializes `the Server` with a self-signed x509 cert
+/// encoding this server's public key and protocol version. "cmd/derp_server
+/// then sends this after the Let's Encrypt leaf + intermediate certs after
+/// the ServerHello (encrypted in TLS 1.3, not that is matters much).
+///
+/// Then the client can save a round trime getting that and can start speaking
+/// DERP right away. (we don't use ALPN because that's sent in the clear and
+/// we're being paranoid to not look too weird to any middleboxes, given that
+/// DERP is an ultimate fallback path). But since the post-ServerHello certs
+/// are encrypted we can have the client also use them as a signal to be able
+/// to start speaking DERP right away, starting with its identity proof,
+/// encrypted to the server's public key.
+///
+/// This RTT optimization fails where there's a corp-mandated TLS proxy with
+/// corp-mandated root certs on employee machines and TLS proxy cleans up
+/// unnecessary certs. In that case we jsut fall back to the extra RTT.
+fn init_meta_cert<'a>(server_key: &PublicKey) -> Vec<u8> {
+    let mut params =
+        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(&server_key.as_bytes()))]);
+    params.serial_number = Some(PROTOCOL_VERSION as u64);
+    // Windows requires not_after and not_before set:
+    params.not_after = time::OffsetDateTime::now_utc()
+        .checked_add(30 * time::Duration::DAY)
+        .unwrap();
+    params.not_before = time::OffsetDateTime::now_utc()
+        .checked_sub(30 * time::Duration::DAY)
+        .unwrap();
+
+    rcgen::Certificate::from_params(params)
+        .expect("fixed inputs")
+        .serialize_der()
+        .expect("fixed allocations")
+}
+
+async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -> Result<()> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(MAGIC.as_bytes());
+    buf.extend_from_slice(key.as_bytes());
+    let content = &[buf.as_slice()];
+    write_frame_timeout(
+        &mut writer,
+        FRAME_SERVER_KEY,
+        content,
+        Some(Duration::from_secs(10)),
+    )
+    .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn send_server_info<W: AsyncWrite + Unpin>(
+    rate_limit: Option<(usize, usize)>,
+    mut writer: W,
+    secret_key: SecretKey,
+    client_key: PublicKey,
+) -> Result<()> {
+    let server_info = if let Some((bytes_per_second, bytes_burst)) = rate_limit {
+        ServerInfo {
+            version: PROTOCOL_VERSION,
+            token_bucket_bytes_per_second: bytes_per_second,
+            token_bucket_bytes_burst: bytes_burst,
+        }
+    } else {
+        ServerInfo {
+            version: PROTOCOL_VERSION,
+            token_bucket_bytes_per_second: 0,
+            token_bucket_bytes_burst: 0,
+        }
+    };
+    let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
+    let msg = postcard::to_slice(&server_info, &mut buf)?;
+    let msg = secret_key.seal_to(&client_key, msg);
+    let msg = &[msg.as_slice()];
+    write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
+    if let (Some(a), Some(b)) = (a, b) {
+        return a == b;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::hp::{
         derp::{
-            client_conn::ClientBuilder, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET,
-            MAX_FRAME_SIZE,
+            client_conn::ClientConnBuilder, types::ClientInfo, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
+            FRAME_RECV_PACKET, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
     };
@@ -483,6 +623,13 @@ mod tests {
         packets: mpsc::Sender<(PublicKey, PublicKey, bytes::Bytes)>,
     }
 
+    impl MockPacketForwarder {
+        fn new() -> (mpsc::Receiver<(PublicKey, PublicKey, bytes::Bytes)>, Self) {
+            let (send, recv) = mpsc::channel(10);
+            (recv, Self { packets: send })
+        }
+    }
+
     impl PacketForwarder for MockPacketForwarder {
         fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
             let _ = self.packets.try_send((srckey, dstkey, packet));
@@ -496,14 +643,14 @@ mod tests {
             ServerMessage<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
         >,
     ) -> (
-        ClientBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+        ClientConnBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
         DuplexStream,
         DuplexStream,
     ) {
         let (test_reader, writer) = tokio::io::duplex(1024);
         let (reader, test_writer) = tokio::io::duplex(1024);
         (
-            ClientBuilder {
+            ClientConnBuilder {
                 key,
                 conn_num,
                 conn: MockConn {},
@@ -522,22 +669,26 @@ mod tests {
     #[tokio::test]
     async fn test_server_actor() -> Result<()> {
         let server_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
         let server_actor: ServerActor<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
             ServerActor::new(server_key, server_channel_r);
         let done = CancellationToken::new();
         let server_done = done.clone();
+
         // run server actor
         let server_task = tokio::spawn(async move { server_actor.run(server_done).await });
 
         let key_a = PublicKey::from([3u8; PUBLIC_KEY_LENGTH]);
         let (client_a, mut a_reader, _a_writer) =
             test_client_builder(key_a.clone(), 1, server_channel.clone());
+
         // create client a
         server_channel
             .send(ServerMessage::CreateClient(client_a))
             .await?;
+
         // add a to watcher list
         server_channel
             .send(ServerMessage::AddWatcher(key_a.clone()))
@@ -559,7 +710,7 @@ mod tests {
             .send(ServerMessage::CreateClient(client_b))
             .await?;
 
-        // expect mesh update message on client a
+        // expect mesh update message on client a about client b joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_PRESENT);
@@ -573,7 +724,7 @@ mod tests {
             .send(ServerMessage::CreateClient(client_c))
             .await?;
 
-        // expect mesh update message on client_a
+        // expect mesh update message on client_a about client_c joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_PRESENT);
@@ -612,7 +763,8 @@ mod tests {
         // write message from b to a
         let msg = b"hello world!";
         crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), msg).await?;
-        // get message on a reader
+
+        // get message on a's reader
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
@@ -626,23 +778,27 @@ mod tests {
         disco_msg.extend_from_slice(msg);
         crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &disco_msg)
             .await?;
-        // get message on d reader
+
+        // get message on d's reader
         let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
         assert_eq!(got_src, key_b);
         assert_eq!(got_dst, key_d);
         assert_eq!(disco_msg, got_packet.to_vec());
+
         // remove b
         server_channel
             .send(ServerMessage::RemoveClient(key_b.clone()))
             .await?;
 
-        // get peer gone message on a
+        // get peer gone message on a about b leaving the network
+        // (we get this message because b has sent us a packet before)
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
-        // get mesh update on a & c
+        // get mesh update on a & c about b leaving the network
+        // (we get this message on a & c because they are "watchers")
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
@@ -653,8 +809,216 @@ mod tests {
         assert_eq!(frame_type, FRAME_PEER_GONE);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
-        done.cancel();
+        // close gracefully
+        server_channel.send(ServerMessage::Shutdown).await?;
         server_task.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_client_conn_handler() -> Result<()> {
+        // create client connection handler
+        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+        let handler =
+            ClientConnHandler::<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> {
+                mesh_key: Some([1u8; 32]),
+                secret_key: SecretKey::generate(),
+                write_timeout: None,
+                server_info: ServerInfo::no_rate_limit(),
+                server_channel: server_channel_s,
+            };
+
+        // create the parts needed for a client
+        let conn = MockConn {};
+        let (mut client_reader, server_writer) = tokio::io::duplex(10);
+        let (server_reader, mut client_writer) = tokio::io::duplex(10);
+        let client_key = SecretKey::generate();
+
+        // start a task as if a client is doing the "accept" handshake
+        let pub_client_key = client_key.public_key();
+        let expect_server_key = handler.secret_key.public_key();
+        let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
+            // get the server key
+            let got_server_key =
+                crate::hp::derp::client::recv_server_key(&mut client_reader).await?;
+            assert_eq!(expect_server_key, got_server_key);
+
+            // send the client info
+            let client_info = ClientInfo {
+                version: PROTOCOL_VERSION,
+                mesh_key: Some([1u8; 32]),
+                can_ack_pings: true,
+                is_prober: true,
+            };
+            crate::hp::derp::send_client_key(
+                &mut client_writer,
+                &client_key,
+                &got_server_key,
+                &client_info,
+            )
+            .await?;
+
+            // get the server info
+            let mut buf = BytesMut::new();
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
+            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            let msg = client_key.open_from(&got_server_key, &buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            Ok(())
+        });
+
+        // attempt to add the connection to the server
+        handler.accept(conn, server_reader, server_writer).await?;
+        client_task.await??;
+
+        // ensure we inform the server to create the client from the connection!
+        match server_channel_r.recv().await.unwrap() {
+            ServerMessage::CreateClient(builder) => {
+                assert_eq!(pub_client_key, builder.key);
+            }
+            _ => anyhow::bail!("unexpected server message"),
+        }
+        Ok(())
+    }
+
+    struct TestClient {
+        reader: tokio::io::DuplexStream,
+        writer: tokio::io::DuplexStream,
+        secret_key: SecretKey,
+    }
+
+    /// Can do the "accept" handshake with the server, can read and write packets
+    impl TestClient {
+        fn new(secret_key: SecretKey) -> (tokio::io::DuplexStream, tokio::io::DuplexStream, Self) {
+            let (client_reader, server_writer) = tokio::io::duplex(10);
+            let (server_reader, client_writer) = tokio::io::duplex(10);
+            (
+                server_reader,
+                server_writer,
+                Self {
+                    reader: client_reader,
+                    writer: client_writer,
+                    secret_key,
+                },
+            )
+        }
+
+        async fn accept(&mut self) -> Result<()> {
+            let got_server_key = crate::hp::derp::client::recv_server_key(&mut self.reader).await?;
+            let client_info = ClientInfo {
+                version: PROTOCOL_VERSION,
+                mesh_key: None,
+                can_ack_pings: true,
+                is_prober: true,
+            };
+            crate::hp::derp::send_client_key(
+                &mut self.writer,
+                &self.secret_key,
+                &got_server_key,
+                &client_info,
+            )
+            .await?;
+            let mut buf = BytesMut::new();
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
+            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            let msg = self.secret_key.open_from(&got_server_key, &buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&msg)?;
+            Ok(())
+        }
+
+        async fn send_packet(&mut self, dst: PublicKey, packet: &[u8]) -> Result<()> {
+            crate::hp::derp::client::send_packet(&mut self.writer, &None, dst, packet).await
+        }
+
+        async fn recv_packet<'a>(
+            &mut self,
+            buf: &'a mut BytesMut,
+        ) -> Result<(PublicKey, &'a [u8])> {
+            let (frame_type, _) =
+                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, buf).await?;
+            if frame_type != FRAME_RECV_PACKET {
+                anyhow::bail!("unexpected frame type {frame_type}, expected FRAME_RECV_PACKET")
+            }
+            crate::hp::derp::client::parse_recv_frame(buf)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_server_basic() -> Result<()> {
+        // create the server!
+        let server_key = SecretKey::generate();
+        let mesh_key = Some([1u8; 32]);
+        let server: Server<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
+            Server::new(server_key, mesh_key.clone());
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public_key();
+        let (reader_a, writer_a, mut client_a) = TestClient::new(key_a);
+        let handler = server.client_conn_handler();
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MockConn {}, reader_a, writer_a).await });
+        client_a.accept().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public_key();
+        let (reader_b, writer_b, mut client_b) = TestClient::new(key_b);
+        let handler = server.client_conn_handler();
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MockConn {}, reader_b, writer_b).await });
+        client_b.accept().await?;
+        handler_task.await??;
+
+        // create a packet forwarder for client c and add it to the server
+        let key_c = PublicKey::from([1u8; 32]);
+        let (mut fwd_recv, packet_fwd) = MockPacketForwarder::new();
+        let handler = server.packet_forwarder_handler();
+        handler.add_packet_forwarder(key_c.clone(), packet_fwd)?;
+
+        // send message from a to b!
+        let msg = b"hello client b!!";
+        client_a.send_packet(public_key_b.clone(), msg).await?;
+        let mut buf = BytesMut::new();
+        let (got_key, got_msg) = client_b.recv_packet(&mut buf).await?;
+        assert_eq!(public_key_a, got_key);
+        assert_eq!(&msg[..], got_msg);
+
+        // send message from b to a!
+        let msg = b"nice to meet you client a!!";
+        client_b.send_packet(public_key_a.clone(), msg).await?;
+        let mut buf = BytesMut::new();
+        let (got_key, got_msg) = client_a.recv_packet(&mut buf).await?;
+        assert_eq!(public_key_b, got_key);
+        assert_eq!(&msg[..], got_msg);
+
+        // send message from a to c
+        let msg = b"can you pass this to client d?";
+        client_a.send_packet(key_c.clone(), msg).await?;
+        let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
+        assert_eq!(public_key_a, got_src);
+        assert_eq!(key_c, got_dst);
+        assert_eq!(&msg[..], &got_packet);
+
+        // remove the packet forwarder for c
+        handler.remove_packet_forwarder(key_c.clone())?;
+        // try to send c a message
+        let msg = b"can you pass this to client d?";
+        client_a.send_packet(key_c, msg).await?;
+        // packet forwarder has been removed
+        assert!(fwd_recv.recv().await.is_none());
+
+        // close the server and clients
+        server.close().await;
+
+        // client connections have been shutdown
+        assert!(client_a
+            .send_packet(public_key_b, b"try to send")
+            .await
+            .is_err());
         Ok(())
     }
 }

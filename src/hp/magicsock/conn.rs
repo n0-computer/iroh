@@ -405,7 +405,7 @@ impl Conn {
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
-            public_key: private_key.verifying_key().into(),
+            public_key: private_key.public_key().into(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
             pconn4,
@@ -3215,8 +3215,35 @@ mod tests {
         stun_ip: IpAddr,
     }
 
+    struct MockConn;
+    impl derp::types::Conn for MockConn {
+        fn close(&self) -> Result<()> {
+            Ok(())
+        }
+        fn local_addr(&self) -> SocketAddr {
+            "127.0.0.1:3333".parse().unwrap()
+        }
+    }
+
+    struct MockPacketForwarder;
+    impl derp::types::PacketForwarder for MockPacketForwarder {
+        fn forward_packet(
+            &mut self,
+            srckey: key::node::PublicKey,
+            dstkey: key::node::PublicKey,
+            packet: bytes::Bytes,
+        ) {
+        }
+    }
+
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
-        let d = derp::Server::new(key::node::SecretKey::generate());
+        // TODO: pass a mesh_key?
+        let d: derp::Server<
+            MockConn,
+            tokio::io::DuplexStream,
+            tokio::io::DuplexStream,
+            MockPacketForwarder,
+        > = derp::Server::new(key::node::SecretKey::generate(), None);
 
         // TODO: configure DERP server when actually implemented
         // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
@@ -3254,7 +3281,7 @@ mod tests {
             // httpsrv.CloseClientConnections()
             // httpsrv.Close()
             // d.Close()
-
+            tokio::spawn(async move { d.close().await });
             stun_cleanup.send(()).unwrap();
         };
 
@@ -3281,7 +3308,7 @@ mod tests {
             };
             let key = opts.private_key.clone();
             let conn = Conn::new(
-                format!("magic-{}", hex::encode(&key.verifying_key().as_ref()[..8])),
+                format!("magic-{}", hex::encode(&key.public_key().as_ref()[..8])),
                 opts,
             )
             .await?;
@@ -3331,7 +3358,7 @@ mod tests {
         }
 
         fn public(&self) -> key::node::PublicKey {
-            self.key.verifying_key().into()
+            self.key.public_key().into()
         }
     }
 
@@ -3359,7 +3386,7 @@ mod tests {
                     id: (i + 1) as u64,
                     stable_id: String::new(),
                     name: Some(format!("node{}", i + 1)),
-                    key: peer.key.verifying_key().into(),
+                    key: peer.key.public_key().into(),
                     disco_key: peer.conn.disco_public_key().await,
                     allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
