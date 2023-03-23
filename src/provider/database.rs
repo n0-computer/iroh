@@ -1,11 +1,12 @@
 use super::{BlobOrCollection, Data};
 use crate::{
+    rpc_protocol::ValidateProgress,
     util::{validate_bao, BaoValidationError},
     Hash,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -13,6 +14,7 @@ use std::{
     result,
     sync::{Arc, RwLock},
 };
+use tokio::sync::mpsc;
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
@@ -278,10 +280,7 @@ impl Database {
     /// Validate the entire database, including collections.
     ///
     /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
-    pub(crate) fn validate(
-        &self,
-        parallelism: usize,
-    ) -> impl Stream<Item = (Hash, u64, Option<PathBuf>, Option<BaoValidationError>)> {
+    pub(crate) async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
         // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
         let mut data = self
             .0
@@ -291,41 +290,73 @@ impl Database {
             .into_iter()
             .collect::<Vec<_>>();
         data.sort_by_key(|(k, e)| (e.is_blob(), e.data().map(|x| x.path.clone()), *k));
+        tx.send(ValidateProgress::Starting {
+            total: data.len() as u64,
+        })
+        .await?;
         futures::stream::iter(data)
-            .map(|(hash, boc)| {
-                tokio::task::spawn_blocking(move || {
-                    let path = if let BlobOrCollection::Blob(Data { path, .. }) = &boc {
-                        Some(path.clone())
-                    } else {
-                        None
-                    };
-                    let size = boc.size();
-                    let res = match boc {
-                        BlobOrCollection::Blob(Data { outboard, path, .. }) => {
-                            match std::fs::File::open(&path) {
-                                Ok(data) => {
-                                    tracing::info!("validating {}", path.display());
-                                    let res = validate_bao(hash, data, outboard);
-                                    tracing::info!("done validating {}", path.display());
-                                    res
+            .enumerate()
+            .map(|(id, (hash, boc))| {
+                let id = id as u64;
+                let path = if let BlobOrCollection::Blob(Data { path, .. }) = &boc {
+                    Some(path.clone())
+                } else {
+                    None
+                };
+                let size = boc.size();
+                let entry_tx = tx.clone();
+                let done_tx = tx.clone();
+                async move {
+                    entry_tx
+                        .send(ValidateProgress::Entry {
+                            id,
+                            hash,
+                            path: path.clone(),
+                            size,
+                        })
+                        .await?;
+                    let error = tokio::task::spawn_blocking(move || {
+                        let progress_tx = entry_tx.clone();
+                        let progress = |offset| {
+                            progress_tx
+                                .try_send(ValidateProgress::Progress { id, offset })
+                                .ok();
+                        };
+                        let res = match boc {
+                            BlobOrCollection::Blob(Data { outboard, path, .. }) => {
+                                match std::fs::File::open(&path) {
+                                    Ok(data) => {
+                                        tracing::info!("validating {}", path.display());
+                                        let res = validate_bao(hash, data, outboard, progress);
+                                        tracing::info!("done validating {}", path.display());
+                                        res
+                                    }
+                                    Err(cause) => Err(BaoValidationError::from(cause)),
                                 }
-                                Err(cause) => Err(BaoValidationError::from(cause)),
                             }
-                        }
-                        BlobOrCollection::Collection { outboard, data } => {
-                            let data = std::io::Cursor::new(data);
-                            validate_bao(hash, data, outboard)
-                        }
-                    };
-                    (hash, size, path, res.err())
-                })
+                            BlobOrCollection::Collection { outboard, data } => {
+                                let data = std::io::Cursor::new(data);
+                                validate_bao(hash, data, outboard, progress)
+                            }
+                        };
+                        res.err()
+                    })
+                    .await?;
+                    let error = error.map(|x| x.to_string());
+                    done_tx.send(ValidateProgress::Done { id, error }).await?;
+                    anyhow::Ok(())
+                }
             })
-            .buffer_unordered(parallelism)
+            .buffer_unordered(num_cpus::get())
             .map(|item| {
                 // unwrapping is fine here, because it will only happen if the task panicked
                 // basically we are just moving the panic on this task.
-                item.expect("task panicked")
+                item.expect("task panicked");
+                Ok(())
             })
+            .forward(futures::sink::drain())
+            .await?;
+        Ok(())
     }
 
     /// take a snapshot of the database
