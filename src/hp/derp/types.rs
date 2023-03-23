@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::{num::NonZeroU32, time::Instant};
 
 use anyhow::{bail, ensure, Result};
@@ -10,11 +9,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use super::client_conn::ClientConnBuilder;
 use super::PROTOCOL_VERSION;
 use crate::hp::key::node::PublicKey;
-
-pub trait Conn: Sync + Send + 'static {
-    fn close(&self) -> Result<()>;
-    fn local_addr(&self) -> SocketAddr;
-}
 
 pub(crate) struct RateLimiter {
     inner: governor::RateLimiter<
@@ -113,9 +107,8 @@ pub trait PacketForwarder: Send + Sync + 'static {
     fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: Bytes);
 }
 
-pub(crate) enum ServerMessage<C, R, W, P>
+pub(crate) enum ServerMessage<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -124,16 +117,15 @@ where
     ClosePeer(PublicKey),
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
-    CreateClient(ClientConnBuilder<C, R, W, P>),
+    CreateClient(ClientConnBuilder<R, W, P>),
     RemoveClient(PublicKey),
     AddPacketForwarder((PublicKey, P)),
     RemovePacketForwarder(PublicKey),
     Shutdown,
 }
 
-impl<C, R, W, P> std::fmt::Debug for ServerMessage<C, R, W, P>
+impl<R, W, P> std::fmt::Debug for ServerMessage<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,

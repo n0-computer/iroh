@@ -5,34 +5,33 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
-use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use super::{
     read_frame,
-    types::{ClientInfo, Conn, RateLimiter, ServerInfo},
-    write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET,
-    FRAME_HEALTH, FRAME_KEEP_ALIVE, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
-    FRAME_PING, FRAME_PONG, FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET,
-    FRAME_SERVER_INFO, FRAME_SERVER_KEY, FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN,
-    MAX_PACKET_SIZE, NONCE_LEN, NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
+    types::{ClientInfo, RateLimiter, ServerInfo},
+    write_frame, FrameType, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_KEEP_ALIVE,
+    FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
+    FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_SERVER_KEY,
+    FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN, MAX_PACKET_SIZE, NONCE_LEN,
+    NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
 };
 
 use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 /// A DERP Client.
-pub struct Client<W, R, C>
+pub struct Client<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
     R: AsyncRead + Unpin,
-    C: Conn,
 {
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
     /// The public/private keypair
     secret_key: SecretKey,
-    conn: C,
     reader: R,
+    // our local addrs
+    local_addr: SocketAddr,
     /// TODO: This is a string in the go impl, using bytes here to make it easier for postcard
     /// to serialize. 32 is a random number I chose. Need to figure out what the `mesh_key`
     /// is in practice.
@@ -50,11 +49,10 @@ where
     is_dead: AtomicBool,
 }
 
-impl<W, R, C> Client<W, R, C>
+impl<W, R> Client<W, R>
 where
     W: AsyncWrite + Unpin + Send,
     R: AsyncRead + Unpin,
-    C: Conn,
 {
     async fn recv_server_key(&mut self) -> Result<PublicKey> {
         recv_server_key(&mut self.reader).await
@@ -129,7 +127,7 @@ where
     }
 
     async fn write_timeout_fired(&self) -> Result<()> {
-        self.conn.close()
+        todo!("shutdown");
     }
 
     pub async fn send_ping(&mut self, data: &[u8; 8]) -> Result<()> {
@@ -182,7 +180,7 @@ where
                 bail!("Client is dead");
             }
         }
-        Ok(self.conn.local_addr())
+        Ok(self.local_addr)
     }
 
     /// Reads a messages from a DERP server.
@@ -324,34 +322,32 @@ where
     }
 }
 
-pub struct ClientBuilder<W, R, C>
+pub struct ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    C: Conn,
 {
     secret_key: SecretKey,
-    conn: C,
     reader: R,
     writer: W,
+    local_addr: SocketAddr,
     mesh_key: Option<[u8; 32]>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     can_ack_pings: bool,
 }
 
-impl<W, R, C> ClientBuilder<W, R, C>
+impl<W, R> ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    C: Conn,
 {
-    pub fn new(secret_key: SecretKey, conn: C, reader: R, writer: W) -> Self {
+    pub fn new(secret_key: SecretKey, local_addr: SocketAddr, reader: R, writer: W) -> Self {
         Self {
             secret_key,
-            conn,
             reader,
             writer,
+            local_addr,
             mesh_key: None,
             is_prober: false,
             server_public_key: None,
@@ -381,11 +377,10 @@ where
         self
     }
 
-    pub async fn build(mut self) -> Result<Client<W, R, C>>
+    pub async fn build(mut self) -> Result<Client<W, R>>
     where
         W: AsyncWrite + Send + Unpin + 'static,
         R: AsyncRead + Unpin,
-        C: Conn,
     {
         // TODO: see `Client::server_public_key` todo, but assigning a server_public_key should
         // probably be removed
@@ -399,8 +394,8 @@ where
         let mut client = Client {
             server_key,
             secret_key: self.secret_key,
-            conn: self.conn,
             reader: self.reader,
+            local_addr: self.local_addr,
             mesh_key: self.mesh_key,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,

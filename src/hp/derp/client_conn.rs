@@ -17,7 +17,7 @@ use crate::hp::{
 
 use super::{
     read_frame,
-    types::{Conn, Packet, PacketForwarder, PeerConnState, ServerMessage},
+    types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
     write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_SEND_PACKET, FRAME_WATCH_CONNS, KEEP_ALIVE, MAX_FRAME_SIZE,
@@ -29,10 +29,7 @@ use super::{
 /// A handle?
 /// should have senders here, & be clonable, i think?
 /// should be able to be held by server
-pub(crate) struct ClientConnManager<C>
-where
-    C: Conn,
-{
+pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each Accept
     pub(crate) conn_num: usize,
 
@@ -41,7 +38,6 @@ where
     // can update in different threads, this may become a series of channels on which to
     // send updates
     // stats: Stats,
-    conn: C,
     pub(crate) key: PublicKey,
     /// Sent when connection closes
     // TODO: maybe should be a receiver
@@ -107,38 +103,34 @@ pub(crate) struct ClientChannels {
 
 #[derive(Debug)]
 // TODO: Not really the way we usually think of a builder, clean this up
-pub struct ClientConnBuilder<C, R, W, P>
+pub struct ClientConnBuilder<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) conn: C,
     pub(crate) reader: R,
     pub(crate) writer: W,
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
-    pub(crate) server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    pub(crate) server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
 }
 
-impl<C, R, W, P> ClientConnBuilder<C, R, W, P>
+impl<R, W, P> ClientConnBuilder<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
     /// Creates a client from a connection, which starts a read and write loop to handle
     /// io to the client
-    pub(crate) fn build(self) -> ClientConnManager<C> {
+    pub(crate) fn build(self) -> ClientConnManager {
         ClientConnManager::new(
             self.key,
             self.conn_num,
-            self.conn,
             self.reader,
             self.writer,
             self.can_mesh,
@@ -149,24 +141,20 @@ where
     }
 }
 
-impl<C> ClientConnManager<C>
-where
-    C: Conn,
-{
+impl ClientConnManager {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
     pub fn new<R, W, P>(
         key: PublicKey,
         conn_num: usize,
-        conn: C,
         reader: R,
         writer: W,
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
-        server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
-    ) -> ClientConnManager<C>
+        server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
+    ) -> ClientConnManager
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
         W: AsyncWrite + Unpin + Send + Sync + 'static,
@@ -252,7 +240,6 @@ where
         // return client conn to server
         ClientConnManager {
             conn_num,
-            conn,
             key,
             connected_at: Instant::now(),
             writer_handle,
@@ -286,20 +273,6 @@ where
                 self.conn_num
             );
         }
-        if let Err(e) = self.conn.close() {
-            tracing::warn!(
-                "error closing connection to client {:?} {}: {e:?}",
-                self.key,
-                self.conn_num
-            );
-        }
-    }
-
-    /// Close the underlying connection to the client
-    // TODO: tbh I'm not sure why we have this & why we don't just remove the client,
-    // but it's part of the protocol
-    pub fn close_conn(&self) -> Result<()> {
-        self.conn.close()
     }
 }
 
@@ -531,9 +504,8 @@ where
 ///     - tell the server to add the current client as a watcher TODO: what is a watcher?
 ///     - tell the server to close a given peer
 ///     - tell the server to forward a packet from another peer.
-struct ClientConnReader<C, R, W, P>
+struct ClientConnReader<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -549,7 +521,7 @@ where
 
     /// Channels used to communicate with the server about actions
     /// it needs to take on behalf of the client
-    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
@@ -562,9 +534,8 @@ where
     preferred: Arc<AtomicBool>,
 }
 
-impl<C, R, W, P> ClientConnReader<C, R, W, P>
+impl<R, W, P> ClientConnReader<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync,
     W: AsyncWrite + Unpin + Send + Sync,
     P: PacketForwarder,
@@ -788,16 +759,6 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::DuplexStream;
 
-    struct MockConn {}
-    impl Conn for MockConn {
-        fn close(&self) -> Result<()> {
-            Ok(())
-        }
-        fn local_addr(&self) -> std::net::SocketAddr {
-            "127.0.0.1:3333".parse().unwrap()
-        }
-    }
-
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
         fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: Bytes) {
@@ -813,19 +774,15 @@ mod tests {
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
-        let conn_reader: ClientConnReader<
-            MockConn,
-            DuplexStream,
-            DuplexStream,
-            MockPacketForwarder,
-        > = ClientConnReader {
-            key: key.clone(),
-            can_mesh: true,
-            reader,
-            send_pong: send_pong_s,
-            server_channel: server_channel_s,
-            preferred: Arc::clone(&preferred),
-        };
+        let conn_reader: ClientConnReader<DuplexStream, DuplexStream, MockPacketForwarder> =
+            ClientConnReader {
+                key: key.clone(),
+                can_mesh: true,
+                reader,
+                send_pong: send_pong_s,
+                server_channel: server_channel_s,
+                preferred: Arc::clone(&preferred),
+            };
 
         let done = CancellationToken::new();
         let reader_done = done.clone();

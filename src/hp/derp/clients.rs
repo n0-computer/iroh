@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use super::{
     client_conn::{ClientConnBuilder, ClientConnManager},
-    types::{Conn, Packet, PacketForwarder, PeerConnState},
+    types::{Packet, PacketForwarder, PeerConnState},
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -32,12 +32,9 @@ const RETRIES: usize = 3;
 // connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
 // connections doesn't receive data frames."
 #[derive(Debug)]
-struct Client<C>
-where
-    C: Conn,
-{
+struct Client {
     // The set of all connections associated with the PublicKey
-    // conns: HashMap<usize, ClientConnManager<C>>,
+    // conns: HashMap<usize, ClientConnManager>,
     // The most recent edition to the set, or the last connection we have received data from. Can
     // be `None` if that particular connection has disconnected & we have no other previous
     // connections
@@ -46,16 +43,13 @@ where
     // TODO: I do not see this used in the go impl, except for setting and un-setting.
     preferred: Option<usize>,
     /// the connection
-    conn: ClientConnManager<C>,
+    conn: ClientConnManager,
     /// list of peers we have sent messages to
     sent_to: HashSet<PublicKey>,
 }
 
-impl<C> Client<C>
-where
-    C: Conn,
-{
-    pub fn new(conn: ClientConnManager<C>) -> Self {
+impl Client {
+    pub fn new(conn: ClientConnManager) -> Self {
         Self {
             preferred: None,
             conn,
@@ -77,17 +71,6 @@ where
 
     pub async fn shutdown_await(self) {
         self.conn.shutdown().await;
-    }
-
-    pub fn close_conn(&self) {
-        if let Err(e) = self.conn.close_conn() {
-            tracing::warn!(
-                "error closing connection for {:?} {}: {}",
-                self.conn.key,
-                self.conn.conn_num,
-                e
-            );
-        }
     }
 
     pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
@@ -134,24 +117,15 @@ enum SendError {
 }
 
 #[derive(Debug)]
-pub(crate) struct Clients<C>
-where
-    C: Conn,
-{
-    inner: HashMap<PublicKey, Client<C>>,
+pub(crate) struct Clients {
+    inner: HashMap<PublicKey, Client>,
 }
 
-impl<C> Drop for Clients<C>
-where
-    C: Conn,
-{
+impl Drop for Clients {
     fn drop(&mut self) {}
 }
 
-impl<C> Clients<C>
-where
-    C: Conn,
-{
+impl Clients {
     pub fn new() -> Self {
         Self {
             inner: HashMap::default(),
@@ -167,8 +141,8 @@ where
     }
 
     pub fn close_conn(&mut self, key: &PublicKey) {
-        if let Some(client) = self.inner.get(key) {
-            client.close_conn();
+        if let Some(client) = self.inner.remove(key) {
+            client.shutdown();
         }
     }
 
@@ -197,7 +171,7 @@ where
         }
     }
 
-    pub fn register<R, W, P>(&mut self, client: ClientConnBuilder<C, R, W, P>)
+    pub fn register<R, W, P>(&mut self, client: ClientConnBuilder<R, W, P>)
     where
         R: AsyncRead + Unpin + Send + Sync + 'static,
         W: AsyncWrite + Unpin + Send + Sync + 'static,
@@ -300,16 +274,6 @@ mod tests {
     use ed25519_dalek::PUBLIC_KEY_LENGTH;
     use tokio::io::DuplexStream;
 
-    struct MockConn {}
-    impl Conn for MockConn {
-        fn close(&self) -> Result<()> {
-            Ok(())
-        }
-        fn local_addr(&self) -> SocketAddr {
-            "127.0.0.1:3000".parse().unwrap()
-        }
-    }
-
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
         fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: Bytes) {
@@ -321,7 +285,7 @@ mod tests {
         key: PublicKey,
         conn_num: usize,
     ) -> (
-        ClientConnBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+        ClientConnBuilder<DuplexStream, DuplexStream, MockPacketForwarder>,
         DuplexStream,
         DuplexStream,
     ) {
@@ -332,7 +296,6 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                conn: MockConn {},
                 reader,
                 writer,
                 can_mesh: true,

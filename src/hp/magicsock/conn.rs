@@ -3215,16 +3215,6 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    struct MockConn;
-    impl derp::types::Conn for MockConn {
-        fn close(&self) -> Result<()> {
-            Ok(())
-        }
-        fn local_addr(&self) -> SocketAddr {
-            "127.0.0.1:3333".parse().unwrap()
-        }
-    }
-
     struct MockPacketForwarder;
     impl derp::types::PacketForwarder for MockPacketForwarder {
         fn forward_packet(
@@ -3238,12 +3228,8 @@ mod tests {
 
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
         // TODO: pass a mesh_key?
-        let d: derp::Server<
-            MockConn,
-            tokio::io::DuplexStream,
-            tokio::io::DuplexStream,
-            MockPacketForwarder,
-        > = derp::Server::new(key::node::SecretKey::generate(), None);
+        let d: derp::Server<tokio::io::DuplexStream, tokio::io::DuplexStream, MockPacketForwarder> =
+            derp::Server::new(key::node::SecretKey::generate(), None);
 
         // TODO: configure DERP server when actually implemented
         // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
