@@ -1050,32 +1050,26 @@ async fn create_collection_inner(
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = stream::iter(data_sources)
         .enumerate()
-        .then(|(id, data)| {
-            let find_progress = progress.clone();
+        .map(|(id, data)| {
+            let id = id as u64;
+            let (path, name) = match data {
+                DataSource::File(path) => (path, None),
+                DataSource::NamedFile { path, name } => (path, Some(name)),
+            };
+            let size = path.metadata().unwrap().len();
+            let find_progress = outboard_progress.clone();
+            let outboard_progress = outboard_progress.clone();
+            let done_progress = outboard_progress.clone();
             async move {
-                let id = id as u64;
-                let (path, name) = match data {
-                    DataSource::File(path) => (path, None),
-                    DataSource::NamedFile { path, name } => (path, Some(name)),
-                };
-                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
-                let size = path.metadata().unwrap().len();
                 // found events must be sent
+                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
                 find_progress
                     .send(ProvideProgress::Found {
                         name: pname,
                         id,
                         size,
                     })
-                    .await
-                    .unwrap();
-                (id, path, name, size)
-            }
-        })
-        .map(move |(id, path, name, size)| {
-            let outboard_progress = outboard_progress.clone();
-            let done_progress = outboard_progress.clone();
-            async move {
+                    .await?;
                 let rpath = path.clone();
                 let (hash, outboard) = tokio::task::spawn_blocking(move || {
                     compute_outboard(path, size, move |offset| {
