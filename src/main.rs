@@ -341,17 +341,8 @@ impl ValidateProgressState {
                 pb.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
                 pb.finish_with_message(msg);
             }
-            //     let mp = self.mp.clone();
-            //     let pb = pb.clone();
-            //     tokio::spawn(async move {
-            //         tokio::time::sleep(Duration::from_millis(500)).await;
-            //         mp.remove(&pb);
-            //     });
-            // }
         }
     }
-
-    fn all_done(self) {}
 }
 
 #[derive(Debug)]
@@ -360,14 +351,13 @@ struct ProvideResponseEntry {
     pub size: u64,
 }
 
-async fn aggregate_add_response(
-    stream: impl Stream<
-            Item = std::result::Result<
-                ProvideProgress,
-                impl std::error::Error + Send + Sync + 'static,
-            >,
-        > + Unpin,
-) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)> {
+async fn aggregate_add_response<S, E>(
+    stream: S,
+) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)>
+where
+    S: Stream<Item = std::result::Result<ProvideProgress, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
     let mut stream = stream;
     let mut collection_hash = None;
     let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
@@ -638,7 +628,6 @@ async fn main_impl() -> Result<()> {
                         break;
                     }
                     ValidateProgress::AllDone => {
-                        state.all_done();
                         break;
                     }
                 }
