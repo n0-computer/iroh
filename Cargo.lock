@@ -1500,6 +1500,7 @@ dependencies = [
  "governor",
  "hex",
  "hostname",
+ "hyper",
  "indicatif",
  "libc",
  "multibase",
