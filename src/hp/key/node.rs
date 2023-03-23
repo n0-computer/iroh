@@ -156,7 +156,6 @@ impl From<SecretKey> for crate::tls::Keypair {
     }
 }
 
-// TODO: test round trip secret key
 #[cfg(test)]
 mod tests {
     use super::*;

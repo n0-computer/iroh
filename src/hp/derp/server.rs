@@ -16,7 +16,7 @@ use crate::hp::key::node::{PublicKey, SecretKey};
 use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
-    types::{ClientInfo, Conn, PacketForwarder, PeerConnState, ServerMessage},
+    types::{Conn, PacketForwarder, PeerConnState, ServerMessage},
 };
 use super::{
     recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
@@ -600,13 +600,11 @@ fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::char::MAX;
-
     use super::*;
 
     use crate::hp::{
         derp::{
-            client_conn::ClientConnBuilder, send_client_key, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
+            client_conn::ClientConnBuilder, types::ClientInfo, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
             FRAME_RECV_PACKET, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
@@ -676,22 +674,26 @@ mod tests {
     #[tokio::test]
     async fn test_server_actor() -> Result<()> {
         let server_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
         let server_actor: ServerActor<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
             ServerActor::new(server_key, server_channel_r);
         let done = CancellationToken::new();
         let server_done = done.clone();
+
         // run server actor
         let server_task = tokio::spawn(async move { server_actor.run(server_done).await });
 
         let key_a = PublicKey::from([3u8; PUBLIC_KEY_LENGTH]);
         let (client_a, mut a_reader, _a_writer) =
             test_client_builder(key_a.clone(), 1, server_channel.clone());
+
         // create client a
         server_channel
             .send(ServerMessage::CreateClient(client_a))
             .await?;
+
         // add a to watcher list
         server_channel
             .send(ServerMessage::AddWatcher(key_a.clone()))
@@ -713,7 +715,7 @@ mod tests {
             .send(ServerMessage::CreateClient(client_b))
             .await?;
 
-        // expect mesh update message on client a
+        // expect mesh update message on client a about client b joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_PRESENT);
@@ -727,7 +729,7 @@ mod tests {
             .send(ServerMessage::CreateClient(client_c))
             .await?;
 
-        // expect mesh update message on client_a
+        // expect mesh update message on client_a about client_c joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_PRESENT);
@@ -766,7 +768,8 @@ mod tests {
         // write message from b to a
         let msg = b"hello world!";
         crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), msg).await?;
-        // get message on a reader
+
+        // get message on a's reader
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
@@ -780,23 +783,27 @@ mod tests {
         disco_msg.extend_from_slice(msg);
         crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &disco_msg)
             .await?;
-        // get message on d reader
+
+        // get message on d's reader
         let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
         assert_eq!(got_src, key_b);
         assert_eq!(got_dst, key_d);
         assert_eq!(disco_msg, got_packet.to_vec());
+
         // remove b
         server_channel
             .send(ServerMessage::RemoveClient(key_b.clone()))
             .await?;
 
-        // get peer gone message on a
+        // get peer gone message on a about b leaving the network
+        // (we get this message because b has sent us a packet before)
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
-        // get mesh update on a & c
+        // get mesh update on a & c about b leaving the network
+        // (we get this message on a & c because they are "watchers")
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FRAME_PEER_GONE);
@@ -807,13 +814,15 @@ mod tests {
         assert_eq!(frame_type, FRAME_PEER_GONE);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
-        done.cancel();
+        // close gracefully
+        server_channel.send(ServerMessage::Shutdown).await?;
         server_task.await??;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_client_conn_handler() -> Result<()> {
+        // create client connection handler
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
         let handler =
             ClientConnHandler::<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> {
@@ -823,16 +832,23 @@ mod tests {
                 server_info: ServerInfo::no_rate_limit(),
                 server_channel: server_channel_s,
             };
+
+        // create the parts needed for a client
         let conn = MockConn {};
         let (mut client_reader, server_writer) = tokio::io::duplex(10);
         let (server_reader, mut client_writer) = tokio::io::duplex(10);
-        let expect_server_key = handler.secret_key.public_key();
         let client_key = SecretKey::generate();
+
+        // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public_key();
+        let expect_server_key = handler.secret_key.public_key();
         let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
+            // get the server key
             let got_server_key =
                 crate::hp::derp::client::recv_server_key(&mut client_reader).await?;
             assert_eq!(expect_server_key, got_server_key);
+
+            // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
                 mesh_key: Some([1u8; 32]),
@@ -846,6 +862,8 @@ mod tests {
                 &client_info,
             )
             .await?;
+
+            // get the server info
             let mut buf = BytesMut::new();
             let (frame_type, _) =
                 crate::hp::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
@@ -854,8 +872,12 @@ mod tests {
             let _info: ServerInfo = postcard::from_bytes(&msg)?;
             Ok(())
         });
+
+        // attempt to add the connection to the server
         handler.accept(conn, server_reader, server_writer).await?;
         client_task.await??;
+
+        // ensure we inform the server to create the client from the connection!
         match server_channel_r.recv().await.unwrap() {
             ServerMessage::CreateClient(builder) => {
                 assert_eq!(pub_client_key, builder.key);
@@ -871,6 +893,7 @@ mod tests {
         secret_key: SecretKey,
     }
 
+    /// Can do the "accept" handshake with the server, can read and write packets
     impl TestClient {
         fn new(secret_key: SecretKey) -> (tokio::io::DuplexStream, tokio::io::DuplexStream, Self) {
             let (client_reader, server_writer) = tokio::io::duplex(10);
@@ -929,12 +952,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_basic() -> Result<()> {
-        // create client_conn_b & add it
-        // create packet_forwarder for c & add it
-        // send message from a to b
-        // send message from a to c
-        // close server
-
         // create the server!
         let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);

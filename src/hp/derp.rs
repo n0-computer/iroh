@@ -237,6 +237,10 @@ async fn write_frame_timeout(
     }
 }
 
+/// Writes a `FRAME_CLIENT_INFO`, including the client's [`PublicKey`],
+/// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
+///
+/// Flushes after writing.
 pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     mut writer: W,
     secret_key: &SecretKey,
@@ -257,8 +261,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
 }
 
 /// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
-/// upon it's initial connection. It should be considered especially untrusted
-/// at this point.
+/// upon it's initial connection.
 async fn recv_client_key<R: AsyncRead + Unpin>(
     secret_key: SecretKey,
     mut reader: R,
