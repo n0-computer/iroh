@@ -30,7 +30,7 @@ use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
@@ -44,13 +44,12 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest,
+    ValidateResponse, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash};
+use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -495,7 +494,22 @@ impl RpcHandler {
             })
     }
 
-    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+    fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
+        let (tx, rx) = mpsc::channel(1);
+        let tx2 = tx.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = self.provide0(msg, tx).await {
+                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
+            }
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
+    }
+
+    async fn provide0(
+        self,
+        msg: ProvideRequest,
+        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+    ) -> anyhow::Result<()> {
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
@@ -529,10 +543,10 @@ impl RpcHandler {
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources).await?;
+        let (db, _) = create_collection_inner(data_sources, Progress::new(progress)).await?;
         self.inner.db.union_with(db);
 
-        Ok(ProvideResponse { hash, entries })
+        Ok(())
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
@@ -580,7 +594,10 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
         use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
-            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Provide(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::provide)
+                    .await
+            }
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
@@ -961,12 +978,11 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-///
-/// path and name are returned with the result to provide context
 fn compute_outboard(
     path: PathBuf,
-    name: Option<String>,
-) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
+    size: u64,
+    progress: impl Fn(u64) + Send + Sync + 'static,
+) -> anyhow::Result<(Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
         "can only transfer blob data: {}",
@@ -974,7 +990,6 @@ fn compute_outboard(
     );
     tracing::debug!("computing outboard for {}", path.display());
     let file = std::fs::File::open(&path)?;
-    let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
     //
     // outboard is ~1/16 of data size, so this will fail for really large files
@@ -982,7 +997,7 @@ fn compute_outboard(
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(abao::encode::outboard_size(len))
+    let outboard_size = usize::try_from(abao::encode::outboard_size(size))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
@@ -990,22 +1005,31 @@ fn compute_outboard(
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
     let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
-    let mut reader = BufReader::new(file);
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(file, |p| {
+        if let ProgressReaderUpdate::Progress(offset) = p {
+            progress(offset);
+        }
+    });
+
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
     // the length we have actually written, should be the same as the length of the file.
-    let len2 = std::io::copy(&mut reader, &mut encoder)?;
+    let size2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
-    ensure!(len == len2, "file changed during encoding");
+    ensure!(size == size2, "file changed during encoding");
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
     tracing::debug!("done. hash for {} is {hash}", path.display());
 
-    Ok((path, name, hash.into(), outboard))
+    Ok((hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, _, hash) = create_collection_inner(data_sources).await?;
+    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
 }
 
@@ -1013,11 +1037,8 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     mut data_sources: Vec<DataSource>,
-) -> Result<(
-    HashMap<Hash, BlobOrCollection>,
-    Vec<ProvideResponseEntry>,
-    Hash,
-)> {
+    progress: Progress<ProvideProgress>,
+) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -1025,14 +1046,43 @@ async fn create_collection_inner(
 
     data_sources.sort();
 
+    let outboard_progress = progress.clone();
     // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = stream::iter(data_sources)
-        .map(|data| {
+        .enumerate()
+        .map(|(id, data)| {
+            let id = id as u64;
             let (path, name) = match data {
                 DataSource::File(path) => (path, None),
                 DataSource::NamedFile { path, name } => (path, Some(name)),
             };
-            tokio::task::spawn_blocking(move || compute_outboard(path, name))
+            let size = path.metadata().unwrap().len();
+            let find_progress = outboard_progress.clone();
+            let outboard_progress = outboard_progress.clone();
+            let done_progress = outboard_progress.clone();
+            async move {
+                // found events must be sent
+                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
+                find_progress
+                    .send(ProvideProgress::Found {
+                        name: pname,
+                        id,
+                        size,
+                    })
+                    .await?;
+                let rpath = path.clone();
+                let (hash, outboard) = tokio::task::spawn_blocking(move || {
+                    compute_outboard(path, size, move |offset| {
+                        outboard_progress.try_send(ProvideProgress::Progress { id, offset })
+                    })
+                })
+                .await??;
+                // done events must be sent
+                done_progress
+                    .send(ProvideProgress::Done { id, hash })
+                    .await?;
+                anyhow::Ok((rpath, name, hash, outboard))
+            }
         })
         // allow at most num_cpus tasks at a time, otherwise we might get too many open files
         // todo: this assumes that this is 100% cpu bound, which is likely not true.
@@ -1044,25 +1094,9 @@ async fn create_collection_inner(
         .collect::<Vec<_>>()
         .await
         .into_iter()
-        .collect::<Result<Result<Vec<_>, _>, _>>()??;
+        .collect::<Result<Vec<_>, _>>()?;
 
     outboards.sort();
-
-    // compute information about the collection
-    let entries = outboards
-        .iter()
-        .map(|(path, name, hash, outboard)| {
-            let name = name
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| path.display().to_string());
-            ProvideResponseEntry {
-                name,
-                hash: *hash,
-                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
-            }
-        })
-        .collect();
 
     // insert outboards into the database and build collection
     for (path, name, hash, outboard) in outboards {
@@ -1099,8 +1133,9 @@ async fn create_collection_inner(
             data: Bytes::from(data.to_vec()),
         },
     );
+    progress.send(ProvideProgress::AllDone { hash }).await?;
 
-    Ok((db, entries, hash))
+    Ok((db, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(

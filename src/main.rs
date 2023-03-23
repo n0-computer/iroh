@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -5,16 +6,16 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
+    ProgressStyle,
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -201,6 +202,125 @@ async fn make_rpc_client(
     Ok(client)
 }
 
+struct ProgressBarState {
+    mp: MultiProgress,
+    pbs: HashMap<u64, ProgressBar>,
+}
+
+impl ProgressBarState {
+    fn new() -> Self {
+        Self {
+            mp: MultiProgress::new(),
+            pbs: HashMap::new(),
+        }
+    }
+
+    fn found(&mut self, name: String, id: u64, size: u64) {
+        let pb = self.mp.add(ProgressBar::new(size));
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+        pb.set_message(name);
+        pb.set_position(0);
+        self.pbs.insert(id, pb);
+    }
+
+    fn progress(&mut self, id: u64, progress: u64) {
+        if let Some(pb) = self.pbs.get_mut(&id) {
+            pb.set_position(progress);
+        }
+    }
+
+    fn done(&mut self, id: u64, _hash: Hash) {
+        if let Some(pb) = self.pbs.remove(&id) {
+            pb.finish_and_clear();
+            self.mp.remove(&pb);
+        }
+    }
+
+    fn all_done(self) {
+        self.mp.clear().ok();
+    }
+
+    fn error(self) {
+        self.mp.clear().ok();
+    }
+}
+
+#[derive(Debug)]
+struct ProvideResponseEntry {
+    pub name: String,
+    pub size: u64,
+}
+
+async fn aggregate_add_response(
+    stream: impl Stream<
+            Item = std::result::Result<
+                ProvideProgress,
+                impl std::error::Error + Send + Sync + 'static,
+            >,
+        > + Unpin,
+) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)> {
+    let mut stream = stream;
+    let mut collection_hash = None;
+    let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+    let mut mp = Some(ProgressBarState::new());
+    while let Some(item) = stream.next().await {
+        match item? {
+            ProvideProgress::Found { name, id, size } => {
+                tracing::info!("Found({},{},{})", id, name, size);
+                if let Some(mp) = mp.as_mut() {
+                    mp.found(name.clone(), id, size);
+                }
+                collections.insert(id, (name, size, None));
+            }
+            ProvideProgress::Progress { id, offset } => {
+                tracing::info!("Progress({}, {})", id, offset);
+                if let Some(mp) = mp.as_mut() {
+                    mp.progress(id, offset);
+                }
+            }
+            ProvideProgress::Done { hash, id } => {
+                tracing::info!("Done({},{:?})", id, hash);
+                if let Some(mp) = mp.as_mut() {
+                    mp.done(id, hash);
+                }
+                match collections.get_mut(&id) {
+                    Some((_, _, ref mut h)) => {
+                        *h = Some(hash);
+                    }
+                    None => {
+                        anyhow::bail!("Got Done for unknown collection id {}", id);
+                    }
+                }
+            }
+            ProvideProgress::AllDone { hash } => {
+                tracing::info!("AllDone({:?})", hash);
+                if let Some(mp) = mp.take() {
+                    mp.all_done();
+                }
+                collection_hash = Some(hash);
+                break;
+            }
+            ProvideProgress::Abort(e) => {
+                if let Some(mp) = mp.take() {
+                    mp.error();
+                }
+                anyhow::bail!("Error while adding data: {}", e);
+            }
+        }
+    }
+    let hash = collection_hash.context("Missing hash for collection")?;
+    let entries = collections
+        .into_iter()
+        .map(|(_, (name, size, hash))| {
+            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            Ok(ProvideResponseEntry { name, size })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((hash, entries))
+}
+
 fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
     for ProvideResponseEntry { name, size, .. } in entries {
@@ -339,9 +459,8 @@ async fn main_impl() -> Result<()> {
                     (path_buf, Some(path))
                 };
                 // tell the provider to add the data
-                let ProvideResponse { hash, entries } =
-                    controller.rpc(ProvideRequest { path }).await??;
-
+                let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                let (hash, entries) = aggregate_add_response(stream).await?;
                 print_add_response(hash, entries);
                 ticket.hash = hash;
                 println!("All-in-one ticket: {ticket}");
@@ -424,8 +543,10 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let ProvideResponse { hash, entries } =
-                client.rpc(ProvideRequest { path: absolute }).await??;
+            let stream = client
+                .server_streaming(ProvideRequest { path: absolute })
+                .await?;
+            let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
             Ok(())
         }
