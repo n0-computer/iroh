@@ -37,7 +37,7 @@ jobs:
 
     - name: Build iroh
       run: |
-        cargo build --release
+        cargo build --profile optimized-release
 
     - name: Fetch and build chuck
       run: |
