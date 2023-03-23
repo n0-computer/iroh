@@ -193,7 +193,8 @@ jobs:
       matrix:
         target:
           - i686-unknown-linux-gnu
-          - arm-linux-androideabi
+          - armv7-linux-androideabi
+          - aarch64-linux-android
 
     steps:
     - name: Checkout
@@ -204,7 +205,8 @@ jobs:
     - name: Install nightly
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: nightly
+        # See https://github.com/cross-rs/cross/issues/1222
+        toolchain: 1.67
         override: true
 
     - name: Install cross
