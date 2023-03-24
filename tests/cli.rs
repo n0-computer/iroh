@@ -167,6 +167,24 @@ fn cli_provide_addresses() -> Result<()> {
     assert!(get_output.status.success());
     assert!(stdout != "Listening addresses: [0.0.0.0:4333]\n");
     assert!(stdout.contains("Listening addresses: ["));
+
+    //parse the output to get the addresses
+    let addresses = stdout
+        .split('[')
+        .nth(1)
+        .unwrap()
+        .split(']')
+        .nth(0)
+        .unwrap()
+        .split(',')
+        .map(|x| x.trim().to_string())
+        .collect::<Vec<_>>();
+
+    for address in addresses {
+        let addr: std::net::SocketAddr = address.parse()?;
+        assert!(addr.port() == 4333);
+    }
+
     Ok(())
 }
 
