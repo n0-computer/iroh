@@ -40,13 +40,7 @@ pub struct SecretKey(crypto_box::SecretKey);
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
-    }
-}
-
-impl AsRef<[u8]> for SecretKey {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
+        write!(f, "SecretKey({})", hex::encode(self.0.to_bytes()))
     }
 }
 
@@ -73,8 +67,8 @@ impl SecretKey {
         SharedSecret(boxx)
     }
 
-    pub fn as_bytes(&self) -> &[u8; SECRET_RAW_LEN] {
-        self.0.as_bytes()
+    pub fn to_bytes(&self) -> [u8; SECRET_RAW_LEN] {
+        self.0.to_bytes()
     }
 }
 
@@ -141,11 +135,11 @@ mod tests {
         let alice = SecretKey::generate();
         let bob = SecretKey::generate();
 
-        let alice_ser = *alice.as_bytes();
-        let bob_ser = *bob.as_bytes();
+        let alice_ser = alice.to_bytes();
+        let bob_ser = bob.to_bytes();
 
-        assert_eq!(SecretKey::from(alice_ser).as_ref(), alice.as_ref());
-        assert_eq!(SecretKey::from(bob_ser).as_ref(), bob.as_ref());
+        assert_eq!(SecretKey::from(alice_ser).to_bytes(), alice.to_bytes());
+        assert_eq!(SecretKey::from(bob_ser).to_bytes(), bob.to_bytes());
 
         let alice_pub = alice.public();
         let bob_pub = bob.public();
