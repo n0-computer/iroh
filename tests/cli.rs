@@ -182,7 +182,7 @@ fn cli_provide_addresses() -> Result<()> {
 
     for address in addresses {
         let addr: std::net::SocketAddr = address.parse()?;
-        assert!(addr.port() == 4333);
+        assert_eq!(addr.port(), 4333);
     }
 
     Ok(())
