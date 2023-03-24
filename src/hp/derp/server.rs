@@ -242,7 +242,7 @@ where
 /// Created by the [`Server`] by calling [`Server::client_conn_handler`].
 ///
 /// Can be cheaply cloned.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientConnHandler<R, W, P>
 where
     R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -332,6 +332,16 @@ where
             let server_mesh_key = self.mesh_key.unwrap();
             let client_mesh_key = client_mesh_key.unwrap();
             server_mesh_key == client_mesh_key
+        }
+    }
+
+    pub fn clone(&self) -> Self {
+        Self {
+            mesh_key: self.mesh_key.clone(),
+            server_channel: self.server_channel.clone(),
+            secret_key: self.secret_key.clone(),
+            write_timeout: self.write_timeout.clone(),
+            server_info: self.server_info.clone(),
         }
     }
 }
