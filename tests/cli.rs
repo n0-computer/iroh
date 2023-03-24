@@ -174,7 +174,7 @@ fn cli_provide_addresses() -> Result<()> {
         .nth(1)
         .unwrap()
         .split(']')
-        .nth(0)
+        .next()
         .unwrap()
         .split(',')
         .map(|x| x.trim().to_string())
