@@ -53,7 +53,7 @@ jobs:
 
     - name: Copy binaries to right location
       run: |
-        cp target/release/iroh chuck/netsim/bins/iroh
+        cp target/optimized-release/iroh chuck/netsim/bins/iroh
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
     
     - name: Detect comment commands
@@ -70,13 +70,6 @@ jobs:
           echo "EOFMARKER" >> ${GITHUB_OUTPUT}
         fi
         echo "'$NETSIM_CONFIG'"
-
-    - name: Run tests
-      run: |
-        cd chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
-        sudo python3 main.py sims/standard
 
     - name: Run tests
       run: |
