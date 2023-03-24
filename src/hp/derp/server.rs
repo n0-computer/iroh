@@ -20,7 +20,7 @@ use super::{
 };
 use super::{
     recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
-    FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    FRAME_SERVER_KEY, MAGIC, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
 
@@ -28,9 +28,6 @@ static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
 fn new_conn_num() -> usize {
     CONN_NUM.fetch_add(1, Ordering::Relaxed)
 }
-
-/// The number of packets buffered for sending per client
-const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 

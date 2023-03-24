@@ -51,6 +51,8 @@ const MAX_INFO_LEN: usize = 1024 * 1024;
 const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
 const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
+/// The number of packets buffered for sending per client
+const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit

@@ -20,16 +20,17 @@ pub(crate) struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub(crate) fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Self> {
-        ensure!(bytes_per_second != 0);
-        ensure!(bytes_burst != 0);
+    pub(crate) fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Option<Self>> {
+        if (bytes_per_second == 0 || bytes_burst == 0) {
+            return Ok(None);
+        }
         let bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)?).unwrap();
         let bytes_burst = NonZeroU32::new(u32::try_from(bytes_burst)?).unwrap();
-        Ok(Self {
+        Ok(Some(Self {
             inner: governor::RateLimiter::direct(
                 governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
             ),
-        })
+        }))
     }
 
     pub(crate) fn check_n(&self, n: usize) -> Result<()> {
