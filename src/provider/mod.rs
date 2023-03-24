@@ -20,6 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
+use bao_tree::bao_tree::iter::{encode_ranges_validated, encode_validated};
 use bao_tree::bao_tree::outboard::PreOrderMemOutboard;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -899,15 +900,17 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             // 'static lifetime.
             writer = tokio::task::spawn_blocking(move || {
                 let file_reader = std::fs::File::open(&path)?;
-                let outboard_reader = std::io::Cursor::new(outboard);
                 let mut wrapper = SyncIoBridge::new(&mut writer);
-                let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
-                    file_reader,
-                    outboard_reader,
-                    0,
-                    size,
-                );
-                let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
+                let outboard = PreOrderMemOutboard::new(name.into(), 4, outboard.to_vec());
+                encode_validated(file_reader, outboard, &mut wrapper)?;
+                // let outboard_reader = std::io::Cursor::new(outboard);
+                // let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
+                //     file_reader,
+                //     outboard_reader,
+                //     0,
+                //     size,
+                // );
+                // let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
                 std::io::Result::Ok(writer)
             })
             .await??;
