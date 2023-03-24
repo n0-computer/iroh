@@ -455,9 +455,9 @@ dependencies = [
 
 [[package]]
 name = "default-net"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12ef8dcc6bbb815229a98925749b7ae398a11399371d01f8141aaf8847b1c4c9"
+checksum = "a4898b43aed56499fad6b294d15b3e76a51df68079bf492e5daae38ca084e003"
 dependencies = [
  "dlopen2",
  "libc",
