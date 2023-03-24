@@ -171,6 +171,13 @@ enum Commands {
         /// Ticket containing everything to retrieve a hash from provider.
         ticket: Ticket,
     },
+    /// List Provide Addresses
+    #[clap(about = "List addresses")]
+    Addresses {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
 }
 
 // Note about writing to STDOUT vs STDERR
@@ -657,6 +664,12 @@ async fn main_impl() -> Result<()> {
                 .await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
+            Ok(())
+        }
+        Commands::Addresses { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(AddrsRequest).await?;
+            println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
     }

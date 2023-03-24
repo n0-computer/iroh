@@ -10,7 +10,7 @@
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -39,14 +39,15 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
-use crate::net::LocalAddresses;
+use crate::net::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
@@ -58,6 +59,8 @@ pub use database::Snapshot;
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Default bind address for the provider.
+pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -110,7 +113,7 @@ impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
     pub fn with_db(db: Database) -> Self {
         Self {
-            bind_addr: "127.0.0.1:4433".parse().unwrap(),
+            bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
@@ -409,32 +412,18 @@ impl Provider {
     /// See [`Ticket`] for more details of how it can be used.
     pub fn ticket(&self, hash: Hash) -> Ticket {
         // TODO: Verify that the hash exists in the db?
-        let listen_ip = self.inner.listen_addr.ip();
-        let listen_port = self.inner.listen_addr.port();
-        let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
-            true => {
-                // Find all the local addresses for this address family.
-                let addrs = LocalAddresses::new();
-                addrs
-                    .regular
-                    .iter()
-                    .filter(|addr| match addr {
-                        IpAddr::V4(_) if listen_ip.is_ipv4() => true,
-                        IpAddr::V6(_) if listen_ip.is_ipv6() => true,
-                        _ => false,
-                    })
-                    .copied()
-                    .map(|addr| SocketAddr::from((addr, listen_port)))
-                    .collect()
-            }
-            false => vec![self.inner.listen_addr],
-        };
+        let addrs = find_local_addresses(self.inner.listen_addr);
         Ticket {
             hash,
             peer: self.peer_id(),
             addrs,
             token: self.inner.auth_token,
         }
+    }
+
+    /// Returns all available addresses on the local machine.
+    pub fn available_addresses(&self) -> Vec<SocketAddr> {
+        find_local_addresses(self.inner.listen_addr)
     }
 
     /// Aborts the provider.
@@ -560,6 +549,11 @@ impl RpcHandler {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
+    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
+        AddrsResponse {
+            addrs: find_local_addresses(self.inner.listen_addr),
+        }
+    }
     async fn shutdown(self, request: ShutdownRequest) {
         if request.force {
             tracing::info!("hard shutdown requested");
@@ -600,6 +594,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
             Validate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::validate)
