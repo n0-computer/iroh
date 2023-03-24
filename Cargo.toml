@@ -30,11 +30,11 @@ derive_more = "0.99.17"
 dirs-next = "2.0.0"
 ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
 flume = "0.10.14"
-hyper = { version = "0.14.25", features = ["server", "client", "http1"] }
 futures = "0.3.25"
 governor = "0.5.1"
 hex = "0.4.3"
 hostname = "0.3.1"
+hyper = { version = "0.14.25", features = ["server", "client", "http1"] }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 libc = "0.2.139"
 multibase = { version = "0.9.1", optional = true }
@@ -88,13 +88,18 @@ nix = "0.26.2"
 http-body = "0.4.5"
 
 [features]
-default = ["cli"]
+default = ["cli", "derper"]
 cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
+derper = []
 test = []
 
 [[bin]]
 name = "iroh"
 required-features = ["cli"]
+
+[[bin]]
+name = "derper"
+required-features = ["cli", "derper"]
 
 [build-dependencies]
 build-data = "0.1.3"

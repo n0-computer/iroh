@@ -5,19 +5,23 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use iroh::hp::key;
+use hyper::{
+    service::{make_service_fn, service_fn},
+    Body, Method, Request, Response, StatusCode,
+};
+use iroh::hp::{key, stun};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-fn default_addr() -> SocketAddr {
-    "0.0.0.0:443".parse().unwrap()
-}
+type HyperError = Box<dyn std::error::Error + Send + Sync>;
+type HyperResult<T> = std::result::Result<T, HyperError>;
 
 /// A simple DERP server.
 #[derive(Parser, Debug, Clone)]
@@ -27,7 +31,7 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Server HTTPS listen address.
-    #[clap(long, short, default_value = "default_addr")]
+    #[clap(long, short, default_value = "0.0.0.0:443")]
     addr: SocketAddr,
     /// The port on which to serve HTTP. The listener is bound to the same IP (if any) as specified in the -a flag.
     #[clap(long, default_value_t = 80)]
@@ -45,15 +49,15 @@ struct Cli {
     #[clap(long)]
     // Default: tsweb.DefaultCertDir("derper-certs"), "")
     cert_dir: Option<PathBuf>,
-    /// LetsEncrypt host name, if addr's port is :443. Defaults to "derp.iroh.computer".
-    #[clap(long)]
-    hostname: Option<String>,
+    /// LetsEncrypt host name, if addr's port is :443.
+    #[clap(long, default_value = "derp.iroh.computer")]
+    hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
-    #[clap(long, default_value_t = true)]
+    #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
     run_stun: bool,
     /// Whether to run a DERP server. The only reason to set this false is if you're decommissioning a
     /// server but want to keep its bootstrap DNS functionality still running.
-    #[clap(long, default_value_t = true)]
+    #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
     run_derp: bool,
     /// If non-empty, path to file containing the mesh pre-shared key file. It should contain some hex string; whitespace is trimmed.
     #[clap(long)]
@@ -103,43 +107,48 @@ impl Default for Config {
 }
 
 impl Config {
-    fn load(opts: &Cli) -> Result<Self> {
+    async fn load(opts: &Cli) -> Result<Self> {
         if opts.dev {
             return Ok(Config::default());
         }
         let config_path = &opts.config_path;
 
         if config_path.exists() {
-            Self::read_from_file(&config_path)
+            Self::read_from_file(&config_path).await
         } else {
             let config = Config::default();
-            config.write_to_file(&config_path)?;
+            config.write_to_file(&config_path).await?;
 
             Ok(config)
         }
     }
 
-    fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
+    async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
         if !path.as_ref().is_file() {
             bail!("config-path must be a valid toml file");
         }
-        let config_ser = std::fs::read_to_string(path).context("unable to read config")?;
+        let config_ser = tokio::fs::read_to_string(path)
+            .await
+            .context("unable to read config")?;
         let config = toml::from_str(&config_ser).context("unable to decode config")?;
 
         Ok(config)
     }
 
     /// Write the content of this configuration to the provided path.
-    fn write_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
+    async fn write_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let p = path
             .as_ref()
             .parent()
             .ok_or_else(|| anyhow!("invalid config file path, no parent"))?;
         // TODO: correct permissions (0777 for dir, 0600 for file)
-        std::fs::create_dir_all(p)
+        tokio::fs::create_dir_all(p)
+            .await
             .with_context(|| format!("unable to create config-path dir: {}", p.display()))?;
         let config_ser = toml::to_string(self).context("unable to serialize configuration")?;
-        std::fs::write(path, config_ser).context("unable to write config file")?;
+        tokio::fs::write(path, config_ser)
+            .await
+            .context("unable to write config file")?;
 
         Ok(())
     }
@@ -164,12 +173,14 @@ async fn main() -> Result<()> {
     }
 
     let listen_host = cli.addr.ip();
-    let cfg = Config::load(&cli)?;
     let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
 
-    // 	mux := http.NewServeMux()
+    let derper_service = make_service_fn(move |_| async {
+        Ok::<_, HyperError>(service_fn(move |req| response_handler(req)))
+    });
 
-    if cli.run_derp {
+    let derp_handler = if cli.run_derp {
+        let cfg = Config::load(&cli).await?;
         // 	s := derp.NewServer(cfg.PrivateKey, log.Printf)
         // 	s.SetVerifyClient(*verifyClients)
 
@@ -188,22 +199,12 @@ async fn main() -> Result<()> {
         // 		derpHandler := derphttp.Handler(s)
         // 		derpHandler = addWebSocketSupport(s, derpHandler)
         // 		mux.Handle("/derp", derpHandler)
+        todo!()
     } else {
-        // 		mux.Handle("/derp", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // 			http.Error(w, "derp server disabled", http.StatusNotFound)
-        // 		}))
-    }
+        derp_disabled_handler
+    };
 
-    // Root
-    // mux.Handle("/", root_handler)
-
-    // Robots
-    // mux.Handle("/robots.txt", robots_handler)
-
-    // Captive Portal checker
-    // mux.Handle("/generate_204", gen_204_handler)
-
-    if cli.run_derp {
+    if cli.run_stun {
         tasks.spawn(async move { serve_stun(listen_host, cli.stun_port).await });
     }
 
@@ -284,8 +285,12 @@ async fn main() -> Result<()> {
         // 		err = rateLimitedListenAndServeTLS(httpsrv)
     } else {
         info!("derper: serving on {}", cli.addr);
-        // 		err = httpsrv.ListenAndServe()
+        let server = hyper::Server::bind(&cli.addr).serve(derper_service);
+        server.await?;
     }
+
+    // Shutdown all tasks
+    tasks.abort_all();
 
     Ok(())
 }
@@ -293,122 +298,135 @@ async fn main() -> Result<()> {
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
 
-async fn root_handler() {
-    // http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    // 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    // 		w.WriteHeader(200)
-    // 		io.WriteString(w, `<html><body>
-    // <h1>DERP</h1>
-    // <p>
-    //   This is a
-    //   <a href="https://tailscale.com/">Tailscale</a>
-    //   <a href="https://pkg.go.dev/tailscale.com/derp">DERP</a>
-    //   server.
-    // </p>
-    // `)
-    // 		if !*runDERP {
-    // 			io.WriteString(w, `<p>Status: <b>disabled</b></p>`)
-    // 		}
-    // 		if tsweb.AllowDebugAccess(r) {
-    // 			io.WriteString(w, "<p>Debug info at <a href='/debug/'>/debug/</a>.</p>\n")
-    // 		}
-    // 	}))
+const NOTFOUND: &[u8] = b"Not Found";
+const DERP_DISABLED: &[u8] = b"derp server disabled";
+const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
+const INDEX: &[u8] = br#"<html><body>
+<h1>DERP</h1>
+<p>
+  This is a
+  <a href="https://iroh.computer/">Iroh</a> DERP
+  server.
+</p>
+"#;
+
+async fn response_handler(req: Request<Body>) -> HyperResult<Response<Body>> {
+    match (req.method(), req.uri().path()) {
+        (&Method::GET, "/") | (&Method::GET, "/index.html") => root_handler().await,
+        // Robots
+        (&Method::GET, "/robots.txt") => robots_handler().await,
+        // Captive Portal checker
+        (&Method::GET, "/generate_204") => serve_no_content_handler(req).await,
+        _ => {
+            // Return 404 not found response.
+            Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(NOTFOUND.into())
+                .unwrap())
+        }
+    }
 }
 
-async fn robots_handler() {
-    // http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    // 		io.WriteString(w, "User-agent: *\nDisallow: /\n")
-    // 	}))
+async fn derp_disabled_handler() -> HyperResult<Response<Body>> {
+    Ok(Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(DERP_DISABLED.into())
+        .unwrap())
 }
 
-async fn gen_204_handler() {
-    // http.HandlerFunc(serveNoContent))
-    // 	debug := tsweb.Debugger(mux)
-    // 	debug.KV("TLS hostname", *hostname)
-    // 	debug.KV("Mesh key", s.HasMeshKey())
-    // 	debug.Handle("check", "Consistency check", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    // 		err := s.ConsistencyCheck()
-    // 		if err != nil {
-    // 			http.Error(w, err.Error(), 500)
-    // 		} else {
-    // 			io.WriteString(w, "derp.Server ConsistencyCheck okay")
-    // 		}
-    // 	}))
+async fn root_handler() -> HyperResult<Response<Body>> {
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(INDEX.into())
+        .unwrap();
+
+    Ok(response)
+}
+
+async fn robots_handler() -> HyperResult<Response<Body>> {
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .body(ROBOTS_TXT.into())
+        .unwrap())
 }
 
 /// For captive portal detection.
-fn serve_no_content() {
-    // func serveNoContent(w http.ResponseWriter, r *http.Request) {
-    // if challenge := r.Header.Get(noContentChallengeHeader); challenge != "" {
-    // 	badChar := strings.IndexFunc(challenge, func(r rune) bool {
-    // 		return !isChallengeChar(r)
-    // 	}) != -1
-    // 	if len(challenge) <= 64 && !badChar {
-    // 		w.Header().Set(noContentResponseHeader, "response "+challenge)
-    // 	}
-    // }
-    // w.WriteHeader(http.StatusNoContent)
+async fn serve_no_content_handler(r: Request<Body>) -> HyperResult<Response<Body>> {
+    let mut response = Response::builder();
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
+        if !challenge.is_empty()
+            && challenge.len() < 64
+            && challenge
+                .as_bytes()
+                .iter()
+                .all(|c| is_challenge_char(*c as char))
+        {
+            response = response.header(
+                NO_CONTENT_RESPONSE_HEADER,
+                format!("response {}", challenge.to_str()?),
+            );
+        }
+    }
+
+    Ok(response
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap())
 }
 
-// func isChallengeChar(c rune) bool {
-// 	// Semi-randomly chosen as a limited set of valid characters
-// 	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') ||
-// 		('0' <= c && c <= '9') ||
-// 		c == '.' || c == '-' || c == '_'
-// }
+fn is_challenge_char(c: char) -> bool {
+    // Semi-randomly chosen as a limited set of valid characters
+    ('a' <= c && c <= 'z')
+        || ('A' <= c && c <= 'Z')
+        || ('0' <= c && c <= '9')
+        || c == '.'
+        || c == '-'
+        || c == '_'
+}
 
 async fn serve_stun(host: IpAddr, port: u16) {
-    // 	pc, err := net.ListenPacket("udp", net.JoinHostPort(host, fmt.Sprint(port)))
-    // 	if err != nil {
-    // 		log.Fatalf("failed to open STUN listener: %v", err)
-    // 	}
-    // 	log.Printf("running STUN server on %v", pc.LocalAddr())
-    // 	serverSTUNListener(context.Background(), pc.(*net.UDPConn))
+    match tokio::net::UdpSocket::bind((host, port)).await {
+        Ok(pc) => {
+            info!("running STUN server on {:?}", pc.local_addr());
+            server_stun_listener(pc).await;
+        }
+        Err(err) => {
+            error!("failed to open STUN listener: {:#?}", err);
+        }
+    }
 }
 
-// func serverSTUNListener(ctx context.Context, pc *net.UDPConn) {
-// 	var buf [64 << 10]byte
-// 	var (
-// 		n   int
-// 		ua  *net.UDPAddr
-// 		err error
-// 	)
-// 	for {
-// 		n, ua, err = pc.ReadFromUDP(buf[:])
-// 		if err != nil {
-// 			if ctx.Err() != nil {
-// 				return
-// 			}
-// 			log.Printf("STUN ReadFrom: %v", err)
-// 			time.Sleep(time.Second)
-// 			stunReadError.Add(1)
-// 			continue
-// 		}
-// 		pkt := buf[:n]
-// 		if !stun.Is(pkt) {
-// 			stunNotSTUN.Add(1)
-// 			continue
-// 		}
-// 		txid, err := stun.ParseBindingRequest(pkt)
-// 		if err != nil {
-// 			stunNotSTUN.Add(1)
-// 			continue
-// 		}
-// 		if ua.IP.To4() != nil {
-// 			stunIPv4.Add(1)
-// 		} else {
-// 			stunIPv6.Add(1)
-// 		}
-// 		addr, _ := netip.AddrFromSlice(ua.IP)
-// 		res := stun.Response(txid, netip.AddrPortFrom(addr, uint16(ua.Port)))
-// 		_, err = pc.WriteTo(res, ua)
-// 		if err != nil {
-// 			stunWriteError.Add(1)
-// 		} else {
-// 			stunSuccess.Add(1)
-// 		}
-// 	}
-// }
+async fn server_stun_listener(pc: tokio::net::UdpSocket) {
+    let mut buffer = vec![0u8; 64 << 10];
+    loop {
+        match pc.recv_from(&mut buffer).await {
+            Ok((n, ua)) => {
+                let pkt = &buffer[..n];
+                if !stun::is(pkt) {
+                    continue;
+                }
+                match stun::parse_binding_request(pkt) {
+                    Ok(txid) => {
+                        let res = stun::response(txid, ua);
+                        if let Err(err) = pc.send_to(&res, ua).await {
+                            warn!("STUN: failed to write response to {}: {:?}", ua, err);
+                        }
+                    }
+                    Err(err) => {
+                        warn!("STUN: invalid binding request from {}: {:?}", ua, err);
+                        continue;
+                    }
+                }
+            }
+            Err(err) => {
+                warn!("STUN recv: {:?}", err);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        }
+    }
+}
 
 // var validProdHostname = regexp.MustCompile(`^derp([^.]*)\.tailscale\.com\.?$`)
 
@@ -491,3 +509,32 @@ async fn serve_stun(host: IpAddr, port: u16) {
 // 	l.numAccepts.Add(1)
 // 	return cn, nil
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_serve_no_content_handler() {
+        let challenge = "123az__.";
+        let req = Request::builder()
+            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+            .body(Body::empty())
+            .unwrap();
+
+        let res = serve_no_content_handler(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+        let header = res
+            .headers()
+            .get(NO_CONTENT_RESPONSE_HEADER)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(header, format!("response {challenge}"));
+        assert!(hyper::body::to_bytes(res.into_body())
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
