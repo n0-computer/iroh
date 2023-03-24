@@ -1,5 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
+use bao_tree::{BaoTree, ChunkNum};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -7,13 +8,15 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
-    io::{self, BufReader, Read, Seek},
+    io::{self, BufReader, Read, Seek, Write},
     path::{Component, Path},
     result,
     str::FromStr,
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
+
+use crate::progress;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -177,7 +180,41 @@ impl From<io::Error> for BaoValidationError {
 }
 
 /// Validate that the data matches the outboard.
-pub(crate) fn validate_bao(
+pub(crate) fn validate_bao<F: Fn(u64)>(
+    hash: Hash,
+    data_reader: impl Read + Seek,
+    outboard: Bytes,
+    progress: F,
+) -> result::Result<(), BaoValidationError> {
+    let hash = blake3::Hash::from(hash);
+    let outboard =
+        bao_tree::bao_tree::outboard::PreOrderMemOutboard::new(hash, 4, outboard.to_vec()).flip();
+    // little util that discards data but prints progress every 1MB
+    struct DevNull<F>(u64, F);
+
+    impl<F: Fn(u64)> Write for DevNull<F> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let prev = self.0;
+            let curr = prev + buf.len() as u64;
+            if prev % 1000000 != curr % 1000000 {
+                (self.1)(curr);
+            }
+            self.0 = curr;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // do not wrap the data_reader in a BufReader, that is slow wnen seeking
+    bao_tree::bao_tree::iter::encode_validated(data_reader, outboard, DevNull(0, progress))?;
+    Ok(())
+}
+
+/// Validate that the data matches the outboard.
+pub(crate) fn validate_bao_2(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
@@ -186,7 +223,7 @@ pub(crate) fn validate_bao(
     let hash = blake3::Hash::from(hash);
     let outboard_reader = io::Cursor::new(outboard);
     let progress_reader = ProgressReader::new(data_reader, |p| {
-        if let ProgressReaderUpdate::Progress(x) = p {
+        if let ProgressUpdate::Progress(x) = p {
             progress(x)
         }
     });
@@ -252,13 +289,13 @@ mod tests {
     }
 }
 
-pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+pub(crate) struct ProgressReader<R, F: Fn(ProgressUpdate)> {
     inner: R,
     offset: u64,
     cb: F,
 }
 
-impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+impl<R: Read, F: Fn(ProgressUpdate)> ProgressReader<R, F> {
     pub fn new(inner: R, cb: F) -> Self {
         Self {
             inner,
@@ -268,22 +305,22 @@ impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
     }
 }
 
-impl<R: Read, F: Fn(ProgressReaderUpdate)> Read for ProgressReader<R, F> {
+impl<R: Read, F: Fn(ProgressUpdate)> Read for ProgressReader<R, F> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let read = self.inner.read(buf)?;
         self.offset += read as u64;
-        (self.cb)(ProgressReaderUpdate::Progress(self.offset));
+        (self.cb)(ProgressUpdate::Progress(self.offset));
         Ok(read)
     }
 }
 
-impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
+impl<R, F: Fn(ProgressUpdate)> Drop for ProgressReader<R, F> {
     fn drop(&mut self) {
-        (self.cb)(ProgressReaderUpdate::Done);
+        (self.cb)(ProgressUpdate::Done);
     }
 }
 
-pub(crate) enum ProgressReaderUpdate {
+pub(crate) enum ProgressUpdate {
     Progress(u64),
     Done,
 }

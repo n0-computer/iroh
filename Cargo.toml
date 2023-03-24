@@ -53,6 +53,8 @@ walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"
+bao-tree = { path = "../bao-tree" }
+range-collections = "0.4.0"
 
 [dev-dependencies]
 proptest = "1.0.0"

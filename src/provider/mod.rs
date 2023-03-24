@@ -9,7 +9,7 @@
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::fmt::{self, Display};
 use std::future::Future;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Cursor, Read};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -20,6 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
+use bao_tree::bao_tree::outboard::PreOrderMemOutboard;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -49,7 +50,7 @@ use crate::rpc_protocol::{
     ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
+use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressUpdate};
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -705,6 +706,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
+    hash: Hash,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
@@ -720,17 +722,20 @@ async fn transfer_collection(
     request_id: u64,
 ) -> Result<SentStatus> {
     // We only respond to requests for collections, not individual blobs
-    let mut extractor = SliceExtractor::new_outboard(
-        std::io::Cursor::new(&data[..]),
-        std::io::Cursor::new(&outboard[..]),
-        0,
-        data.len() as u64,
-    );
     let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
         .try_into()
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
-    extractor.read_to_end(&mut encoded)?;
+    let outboard = PreOrderMemOutboard::new(hash.into(), 4, outboard.to_vec());
+    bao_tree::bao_tree::iter::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
+
+    // let mut extractor = SliceExtractor::new_outboard(
+    //     std::io::Cursor::new(&data[..]),
+    //     std::io::Cursor::new(&outboard[..]),
+    //     0,
+    //     data.len() as u64,
+    // );
+    // extractor.read_to_end(&mut encoded)?;
 
     let c: Collection = postcard::from_bytes(data)?;
 
@@ -839,6 +844,7 @@ async fn handle_stream(
 
     // 5. Transfer data!
     match transfer_collection(
+        hash,
         &db,
         writer,
         &mut out_buffer,
@@ -1006,7 +1012,7 @@ fn compute_outboard(
 
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader::new(file, |p| {
-        if let ProgressReaderUpdate::Progress(offset) = p {
+        if let ProgressUpdate::Progress(offset) = p {
             progress(offset);
         }
     });
