@@ -87,7 +87,7 @@ enum Commands {
     Provide {
         path: Option<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, defaults to 127.0.01:4433.
+        /// Optional listening address, defaults to 127.0.0.1:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
         /// Auth token, defaults to random generated.
