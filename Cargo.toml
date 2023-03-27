@@ -21,7 +21,7 @@ blake3 = "1.3.3"
 bytes = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
-crypto_box = "0.8.2"
+crypto_box = { version = "0.9.0-pre", git = "https://github.com/RustCrypto/nacl-compat", features = ["serde"] }
 curve25519-dalek = "=4.0.0-rc.1"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.13.0"
@@ -30,11 +30,11 @@ derive_more = "0.99.17"
 dirs-next = "2.0.0"
 ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
 flume = "0.10.14"
-hyper = { version = "0.14.25", features = ["server", "client", "http1"] }
 futures = "0.3.25"
 governor = "0.5.1"
 hex = "0.4.3"
 hostname = "0.3.1"
+hyper = { version = "0.14.25", features = ["server", "client", "http1"] }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 libc = "0.2.139"
 multibase = { version = "0.9.1", optional = true }
@@ -64,6 +64,7 @@ thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
+toml = "0.7.3"
 tracing = "0.1"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -87,13 +88,18 @@ nix = "0.26.2"
 http-body = "0.4.5"
 
 [features]
-default = ["cli"]
+default = ["cli", "derper"]
 cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
+derper = []
 test = []
 
 [[bin]]
 name = "iroh"
 required-features = ["cli"]
+
+[[bin]]
+name = "derper"
+required-features = ["cli", "derper"]
 
 [build-dependencies]
 build-data = "0.1.3"
