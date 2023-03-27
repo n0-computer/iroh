@@ -13,13 +13,18 @@ use crate::blobs::Collection;
 use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
+use crate::provider::Ticket;
+use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
+use default_net::Interface;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -65,8 +70,8 @@ pub fn make_client_endpoint(
     Ok(endpoint)
 }
 
-/// Setup a QUIC connection to the provided address.
-async fn setup(opts: Options) -> Result<quinn::Connection> {
+/// Establishes a QUIC connection to the provided peer.
+async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let bind_addr = match opts.addr.is_ipv6() {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
@@ -129,11 +134,200 @@ impl AsyncRead for DataStream {
     }
 }
 
+/// Gets a collection and all its blobs using a [`Ticket`].
+pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
+    ticket: Ticket,
+    keylog: bool,
+    max_concurrent: u8,
+    on_connected: A,
+    on_collection: B,
+    on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnOnce(&Collection) -> FutB,
+    FutB: Future<Output = Result<()>>,
+    C: FnMut(Hash, DataStream, String) -> FutC,
+    FutC: Future<Output = Result<DataStream>>,
+{
+    let start = Instant::now();
+    let connection = dial_ticket(&ticket, keylog, max_concurrent.into()).await?;
+    run_connection(
+        connection,
+        ticket.hash,
+        ticket.token,
+        start,
+        on_connected,
+        on_collection,
+        on_blob,
+    )
+    .await
+}
+
+async fn dial_ticket(
+    ticket: &Ticket,
+    keylog: bool,
+    max_concurrent: usize,
+) -> Result<quinn::Connection> {
+    // Sort the interfaces to make sure local ones are at the front of the list.
+    let interfaces = default_net::get_interfaces();
+    let mut addrs: Vec<SocketAddr> = ticket
+        .addrs
+        .iter()
+        .filter(|addr| is_same_subnet(addr, &interfaces))
+        .copied()
+        .collect();
+    let other_addrs: Vec<SocketAddr> = ticket
+        .addrs
+        .iter()
+        .filter(|addr| !addrs.contains(addr))
+        .copied()
+        .collect();
+    addrs.extend(other_addrs);
+    let cancel_token = CancellationToken::new();
+    let (results_tx, mut results_rx) = mpsc::unbounded_channel();
+    tokio::spawn(dial_all_task(
+        addrs,
+        ticket.peer,
+        keylog,
+        results_tx,
+        max_concurrent,
+        cancel_token.clone(),
+    ));
+    loop {
+        match results_rx.recv().await {
+            Some(Ok(conn)) => {
+                cancel_token.cancel();
+                return Ok(conn);
+            }
+            Some(Err(_)) => (),
+            None => bail!("Failed to establish connection to peer"),
+        }
+    }
+}
+
+fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
+    for interface in interfaces {
+        match addr {
+            SocketAddr::V4(peer_addr) => {
+                for net in interface.ipv4.iter() {
+                    if same_subnet_v4(net.addr, *peer_addr.ip(), net.prefix_len) {
+                        return true;
+                    }
+                }
+            }
+            SocketAddr::V6(peer_addr) => {
+                for net in interface.ipv6.iter() {
+                    if same_subnet_v6(net.addr, *peer_addr.ip(), net.prefix_len) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Task which will dial all addresses concurrently.
+///
+/// Results are sent back to `results_tx`.  Dialing can be interrupted by cancelling the
+/// `cancel_token`.
+async fn dial_all_task(
+    addrs: Vec<SocketAddr>,
+    peer_id: PeerId,
+    keylog: bool,
+    results_tx: mpsc::UnboundedSender<Result<quinn::Connection>>,
+    max_concurrent: usize,
+    cancel_token: CancellationToken,
+) {
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+    let mut addrs = addrs.iter();
+    loop {
+        tokio::select!(
+            biased;
+            _ = cancel_token.cancelled() => break,
+            permit = semaphore.clone().acquire_owned() => {
+                match permit {
+                    Ok(permit) => {
+                        match addrs.next() {
+                            Some(addr) => {
+                                let opts = Options {
+                                    addr: *addr,
+                                    peer_id: Some(peer_id),
+                                    keylog,
+                                };
+                                tokio::spawn(
+                                    dial_task(opts, results_tx.clone(),
+                                              permit, cancel_token.clone())
+                                );
+                            }
+                            None => break,
+                        }
+                    }
+                    Err(_) => unreachable!(),
+                }
+            }
+        )
+    }
+}
+
+/// Task to dial a single address.
+///
+/// The dialing can be cancelled, the result is sent to `results_tx`.
+async fn dial_task(
+    opts: Options,
+    results_tx: mpsc::UnboundedSender<Result<quinn::Connection>>,
+    permit: OwnedSemaphorePermit,
+    cancel_token: CancellationToken,
+) {
+    tokio::select!(
+        biased;
+        _ = cancel_token.cancelled() => (),
+        res = dial_peer(opts) => {
+            results_tx.send(res).ok();
+        }
+    );
+    drop(permit);
+}
+
 /// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: Hash,
     auth_token: AuthToken,
     opts: Options,
+    on_connected: A,
+    on_collection: B,
+    on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnOnce(&Collection) -> FutB,
+    FutB: Future<Output = Result<()>>,
+    C: FnMut(Hash, DataStream, String) -> FutC,
+    FutC: Future<Output = Result<DataStream>>,
+{
+    let now = Instant::now();
+    let connection = dial_peer(opts).await?;
+    run_connection(
+        connection,
+        hash,
+        auth_token,
+        now,
+        on_connected,
+        on_collection,
+        on_blob,
+    )
+    .await
+}
+
+/// Gets a collection and all its blobs from a provider on the established connection.
+pub async fn run_connection<A, B, C, FutA, FutB, FutC>(
+    connection: quinn::Connection,
+    hash: Hash,
+    auth_token: AuthToken,
+    start_time: Instant,
     on_connected: A,
     on_collection: B,
     mut on_blob: C,
@@ -146,9 +340,6 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
-    let now = Instant::now();
-    let connection = setup(opts).await?;
-
     let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
@@ -242,7 +433,7 @@ where
                 }
                 drop(reader);
 
-                let elapsed = now.elapsed();
+                let elapsed = start_time.elapsed();
 
                 let stats = Stats { data_len, elapsed };
 
