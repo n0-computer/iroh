@@ -253,6 +253,23 @@ where
     server_info: ServerInfo,
 }
 
+impl<R, W, P> Clone for ClientConnHandler<R, W, P>
+where
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    P: PacketForwarder,
+{
+    fn clone(&self) -> Self {
+        Self {
+            mesh_key: self.mesh_key.clone(),
+            server_channel: self.server_channel.clone(),
+            secret_key: self.secret_key.clone(),
+            write_timeout: self.write_timeout.clone(),
+            server_info: self.server_info.clone(),
+        }
+    }
+}
+
 impl<R, W, P> ClientConnHandler<R, W, P>
 where
     R: AsyncRead + Unpin + Send + Sync + 'static,
@@ -329,16 +346,6 @@ where
             let server_mesh_key = self.mesh_key.unwrap();
             let client_mesh_key = client_mesh_key.unwrap();
             server_mesh_key == client_mesh_key
-        }
-    }
-
-    pub fn clone(&self) -> Self {
-        Self {
-            mesh_key: self.mesh_key.clone(),
-            server_channel: self.server_channel.clone(),
-            secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout.clone(),
-            server_info: self.server_info.clone(),
         }
     }
 }

@@ -5,18 +5,25 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    pin::Pin,
+    task::{Context, Poll},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Method, Request, Response, StatusCode,
-};
-use iroh::hp::{key, stun};
+use futures::Future;
+use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
+use iroh::hp::{derp, key, stun};
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
+use tokio::{
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener,
+    },
+    sync::mpsc,
+    task::JoinSet,
+};
 use tracing::{error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -175,119 +182,38 @@ async fn main() -> Result<()> {
     let listen_host = cli.addr.ip();
     let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
 
-    let derper_service = make_service_fn(move |_| async {
-        Ok::<_, HyperError>(service_fn(move |req| response_handler(req)))
-    });
-
-    let derp_handler = if cli.run_derp {
+    let derp_server = if cli.run_derp {
         let cfg = Config::load(&cli).await?;
-        // 	s := derp.NewServer(cfg.PrivateKey, log.Printf)
-        // 	s.SetVerifyClient(*verifyClients)
 
-        if let Some(file) = cli.mesh_psk_file {
+        let mesh_key = if let Some(file) = cli.mesh_psk_file {
             let raw = tokio::fs::read_to_string(file)
                 .await
                 .context("reading mesh-pks file")?;
             let mut mesh_key = [0u8; 32];
             hex::decode_to_slice(raw.trim(), &mut mesh_key).context("invalid mesh-pks content")?;
             info!("DERP mesh key configured");
-            // 	if err := startMesh(s); err != nil {
-            // 		log.Fatalf("startMesh: %v", err)
-            // 	}
-        }
-
-        // 		derpHandler := derphttp.Handler(s)
-        // 		derpHandler = addWebSocketSupport(s, derpHandler)
-        // 		mux.Handle("/derp", derpHandler)
-        todo!()
+            Some(mesh_key)
+        } else {
+            None
+        };
+        let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder> =
+            derp::Server::new(cfg.private_key, mesh_key);
+        Some(derp_server)
     } else {
-        derp_disabled_handler
+        None
     };
 
     if cli.run_stun {
         tasks.spawn(async move { serve_stun(listen_host, cli.stun_port).await });
     }
 
-    if serve_tls {
-        info!("derper: serving on {} with TLS", cli.addr);
-        // 		var certManager certProvider
-        // 		certManager, err = certProviderByCertMode(*certMode, *certDir, *hostname)
-        // 		if err != nil {
-        // 			log.Fatalf("derper: can not start cert provider: %v", err)
-        // 		}
-        // 		httpsrv.TLSConfig = certManager.TLSConfig()
-        // 		getCert := httpsrv.TLSConfig.GetCertificate
-        // 		httpsrv.TLSConfig.GetCertificate = func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-        // 			cert, err := getCert(hi)
-        // 			if err != nil {
-        // 				return nil, err
-        // 			}
-        // 			cert.Certificate = append(cert.Certificate, s.MetaCert())
-        // 			return cert, nil
-        // 		}
-        // 		// Disable TLS 1.0 and 1.1, which are obsolete and have security issues.
-        // 		httpsrv.TLSConfig.MinVersion = tls.VersionTLS12
-        // 		httpsrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // 			if r.TLS != nil {
-        // 				label := "unknown"
-        // 				switch r.TLS.Version {
-        // 				case tls.VersionTLS10:
-        // 					label = "1.0"
-        // 				case tls.VersionTLS11:
-        // 					label = "1.1"
-        // 				case tls.VersionTLS12:
-        // 					label = "1.2"
-        // 				case tls.VersionTLS13:
-        // 					label = "1.3"
-        // 				}
-        // 				tlsRequestVersion.Add(label, 1)
-        // 				tlsActiveVersion.Add(label, 1)
-        // 				defer tlsActiveVersion.Add(label, -1)
-        // }
-        // 			// Set HTTP headers to appease automated security scanners.
-        // 			//
-        // 			// Security automation gets cranky when HTTPS sites don't
-        // 			// set HSTS, and when they don't specify a content
-        // 			// security policy for XSS mitigation.
-        // 			//
-        // 			// DERP's HTTP interface is only ever used for debug
-        // 			// access (for which trivial safe policies work just
-        // 			// fine), and by DERP clients which don't obey any of
-        // 			// these browser-centric headers anyway.
-        // 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-        // 			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
-        // 			mux.ServeHTTP(w, r)
-        // 		})
+    let client_conn_handler = derp_server.map(|s| s.client_conn_handler());
+    let server = Derper {
+        client_conn_handler,
+        serve_tls,
+    };
 
-        // 			go func() {
-        // 				port80mux := http.NewServeMux()
-        // 				port80mux.HandleFunc("/generate_204", serveNoContent)
-        // 				port80mux.Handle("/", certManager.HTTPHandler(tsweb.Port80Handler{Main: mux}))
-        // 				port80srv := &http.Server{
-        // 					Addr:        net.JoinHostPort(listenHost, fmt.Sprintf("%d", *httpPort)),
-        // 					Handler:     port80mux,
-        // 					ErrorLog:    quietLogger,
-        // 					ReadTimeout: 30 * time.Second,
-        // 					// Crank up WriteTimeout a bit more than usually
-        // 					// necessary just so we can do long CPU profiles
-        // 					// and not hit net/http/pprof's "profile
-        // 					// duration exceeds server's WriteTimeout".
-        // 					WriteTimeout: 5 * time.Minute,
-        // 				}
-        // 				err := port80srv.ListenAndServe()
-        // 				if err != nil {
-        // 					if err != http.ErrServerClosed {
-        // 						log.Fatal(err)
-        // 					}
-        // 				}
-        // 			}()
-        // 		}
-        // 		err = rateLimitedListenAndServeTLS(httpsrv)
-    } else {
-        info!("derper: serving on {}", cli.addr);
-        let server = hyper::Server::bind(&cli.addr).serve(derper_service);
-        server.await?;
-    }
+    server.run(cli.addr).await?;
 
     // Shutdown all tasks
     tasks.abort_all();
@@ -310,19 +236,153 @@ const INDEX: &[u8] = br#"<html><body>
 </p>
 "#;
 
-async fn response_handler(req: Request<Body>) -> HyperResult<Response<Body>> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, "/") | (&Method::GET, "/index.html") => root_handler().await,
-        // Robots
-        (&Method::GET, "/robots.txt") => robots_handler().await,
-        // Captive Portal checker
-        (&Method::GET, "/generate_204") => serve_no_content_handler(req).await,
-        _ => {
-            // Return 404 not found response.
-            Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(NOTFOUND.into())
-                .unwrap())
+#[derive(Clone)]
+struct Derper {
+    /// If this is a derper server, the derp handler.
+    client_conn_handler:
+        Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder>>,
+    /// Should this be served using TLS.
+    serve_tls: bool,
+}
+
+impl Derper {
+    async fn run(self, addr: SocketAddr) -> Result<()> {
+        let listener = TcpListener::bind(&addr)
+            .await
+            .context("failed to bind tcp")?;
+        // We need the assigned address for the client to send it messages.
+        let addr = listener.local_addr()?;
+
+        if self.serve_tls {
+            info!("derper: serving on {} with TLS", addr);
+            // 		var certManager certProvider
+            // 		certManager, err = certProviderByCertMode(*certMode, *certDir, *hostname)
+            // 		if err != nil {
+            // 			log.Fatalf("derper: can not start cert provider: %v", err)
+            // 		}
+            // 		httpsrv.TLSConfig = certManager.TLSConfig()
+            // 		getCert := httpsrv.TLSConfig.GetCertificate
+            // 		httpsrv.TLSConfig.GetCertificate = func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+            // 			cert, err := getCert(hi)
+            // 			if err != nil {
+            // 				return nil, err
+            // 			}
+            // 			cert.Certificate = append(cert.Certificate, s.MetaCert())
+            // 			return cert, nil
+            // 		}
+            // 		// Disable TLS 1.0 and 1.1, which are obsolete and have security issues.
+            // 		httpsrv.TLSConfig.MinVersion = tls.VersionTLS12
+            // 		httpsrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // 			if r.TLS != nil {
+            // 				label := "unknown"
+            // 				switch r.TLS.Version {
+            // 				case tls.VersionTLS10:
+            // 					label = "1.0"
+            // 				case tls.VersionTLS11:
+            // 					label = "1.1"
+            // 				case tls.VersionTLS12:
+            // 					label = "1.2"
+            // 				case tls.VersionTLS13:
+            // 					label = "1.3"
+            // 				}
+            // 				tlsRequestVersion.Add(label, 1)
+            // 				tlsActiveVersion.Add(label, 1)
+            // 				defer tlsActiveVersion.Add(label, -1)
+            // }
+            // 			// Set HTTP headers to appease automated security scanners.
+            // 			//
+            // 			// Security automation gets cranky when HTTPS sites don't
+            // 			// set HSTS, and when they don't specify a content
+            // 			// security policy for XSS mitigation.
+            // 			//
+            // 			// DERP's HTTP interface is only ever used for debug
+            // 			// access (for which trivial safe policies work just
+            // 			// fine), and by DERP clients which don't obey any of
+            // 			// these browser-centric headers anyway.
+            // 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+            // 			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
+            // 			mux.ServeHTTP(w, r)
+            // 		})
+
+            // 			go func() {
+            // 				port80mux := http.NewServeMux()
+            // 				port80mux.HandleFunc("/generate_204", serveNoContent)
+            // 				port80mux.Handle("/", certManager.HTTPHandler(tsweb.Port80Handler{Main: mux}))
+            // 				port80srv := &http.Server{
+            // 					Addr:        net.JoinHostPort(listenHost, fmt.Sprintf("%d", *httpPort)),
+            // 					Handler:     port80mux,
+            // 					ErrorLog:    quietLogger,
+            // 					ReadTimeout: 30 * time.Second,
+            // 					// Crank up WriteTimeout a bit more than usually
+            // 					// necessary just so we can do long CPU profiles
+            // 					// and not hit net/http/pprof's "profile
+            // 					// duration exceeds server's WriteTimeout".
+            // 					WriteTimeout: 5 * time.Minute,
+            // 				}
+            // 				err := port80srv.ListenAndServe()
+            // 				if err != nil {
+            // 					if err != http.ErrServerClosed {
+            // 						log.Fatal(err)
+            // 					}
+            // 				}
+            // 			}()
+            // 		}
+            // 		err = rateLimitedListenAndServeTLS(httpsrv)
+        } else {
+            info!("derper: serving on {}", addr);
+        }
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let handler = self.clone();
+                    tokio::task::spawn(async move {
+                        if let Err(err) = Http::new().serve_connection(stream, handler).await {
+                            eprintln!("Failed to serve connection: {:?}", err);
+                        }
+                    });
+                }
+                Err(err) => {
+                    error!("failed to accept connection: {:#?}", err);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl hyper::service::Service<Request<Body>> for Derper {
+    type Response = Response<Body>;
+    type Error = HyperError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        match (req.method(), req.uri().path()) {
+            (&Method::GET, "/") | (&Method::GET, "/index.html") => Box::pin(root_handler()),
+            (&Method::GET, "/derp") => match self.client_conn_handler.clone() {
+                Some(mut handler) => {
+                    Box::pin(async move { handler.call(req).await.map_err(Into::into) })
+                }
+                None => Box::pin(derp_disabled_handler()),
+            },
+            // Robots
+            (&Method::GET, "/robots.txt") => Box::pin(robots_handler()),
+            // Captive Portal checker
+            (&Method::GET, "/generate_204") => Box::pin(serve_no_content_handler(req)),
+            _ => {
+                // Return 404 not found response.
+                Box::pin(async move {
+                    Ok(Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(NOTFOUND.into())
+                        .unwrap())
+                })
+            }
         }
     }
 }
@@ -425,6 +485,32 @@ async fn server_stun_listener(pc: tokio::net::UdpSocket) {
                 continue;
             }
         }
+    }
+}
+
+// TODO: replace with derp::http::Client
+struct MockPacketForwarder {
+    packets: mpsc::Sender<(key::node::PublicKey, key::node::PublicKey, bytes::Bytes)>,
+}
+
+impl MockPacketForwarder {
+    fn new() -> (
+        mpsc::Receiver<(key::node::PublicKey, key::node::PublicKey, bytes::Bytes)>,
+        Self,
+    ) {
+        let (send, recv) = mpsc::channel(10);
+        (recv, Self { packets: send })
+    }
+}
+
+impl derp::PacketForwarder for MockPacketForwarder {
+    fn forward_packet(
+        &mut self,
+        srckey: key::node::PublicKey,
+        dstkey: key::node::PublicKey,
+        packet: bytes::Bytes,
+    ) {
+        let _ = self.packets.try_send((srckey, dstkey, packet));
     }
 }
 
