@@ -54,9 +54,14 @@ where
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         // TODO: soooo much cloning. See if there is an alternative
         let closure_conn_handler = self.clone();
+        let mut builder = Response::builder();
+        for (key, value) in self.default_headers.iter() {
+            builder = builder.header(key, value);
+        }
+
         async move {
             {
-                let mut res = Response::new(Body::empty());
+                let mut res = builder.body(Body::empty()).unwrap();
 
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
                 if !req.headers().contains_key(UPGRADE) {
@@ -180,7 +185,7 @@ mod tests {
             DerpServer::new(server_key, None);
 
         // create handler that sends new connections to the client
-        let derp_client_handler = derp_server.client_conn_handler();
+        let derp_client_handler = derp_server.client_conn_handler(Default::default());
 
         let listener = TcpListener::bind(&addr).await?;
         // We need the assigned address for the client to send it messages.

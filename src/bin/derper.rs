@@ -6,6 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -13,8 +14,11 @@ use std::{
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::Future;
-use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
+use http::response::Builder as ResponseBuilder;
+use hyper::{server::conn::Http, Body, HeaderMap, Method, Request, Response, StatusCode};
 use iroh::hp::{derp, key, stun};
+use rustls_acme::caches::DirCache;
+use rustls_acme::AcmeConfig;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{
@@ -24,7 +28,8 @@ use tokio::{
     sync::mpsc,
     task::JoinSet,
 };
-use tracing::{error, info, warn};
+use tokio_rustls::TlsAcceptor;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -92,13 +97,34 @@ enum CertMode {
     LetsEncrypt,
 }
 
-// stunReadError  = stunDisposition.Get("read_error")
-// stunNotSTUN    = stunDisposition.Get("not_stun")
-// stunWriteError = stunDisposition.Get("write_error")
-// stunSuccess    = stunDisposition.Get("success")
+impl CertMode {
+    fn gen_server_config(
+        &self,
+        domains: Vec<String>,
+        contact: String,
+        is_production: bool,
+        dir: PathBuf,
+    ) -> rustls::ServerConfig {
+        match self {
+            CertMode::LetsEncrypt => {
+                let state = AcmeConfig::new(domains)
+                    .contact([format!("mailto:{contact}")])
+                    .cache_option(Some(DirCache::new(dir)))
+                    .directory_lets_encrypt(is_production)
+                    .state();
 
-// stunIPv4 = stunAddrFamily.Get("ipv4")
-// stunIPv6 = stunAddrFamily.Get("ipv6")
+                rustls::ServerConfig::builder()
+                    .with_safe_defaults()
+                    .with_no_client_auth()
+                    .with_cert_resolver(state.resolver())
+            }
+            CertMode::Manual => {
+                // TODO: load certificates manuall
+                todo!()
+            }
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -207,10 +233,36 @@ async fn main() -> Result<()> {
         tasks.spawn(async move { serve_stun(listen_host, cli.stun_port).await });
     }
 
-    let client_conn_handler = derp_server.map(|s| s.client_conn_handler());
+    let client_conn_handler = derp_server.map(|s| {
+        let headers = if serve_tls {
+            HeaderMap::from_iter(
+                TLS_HEADERS
+                    .iter()
+                    .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
+            )
+        } else {
+            Default::default()
+        };
+        s.client_conn_handler(headers)
+    });
+    let tls_config = if serve_tls {
+        let domains = vec![cli.hostname.clone()];
+        let contact = "d@iroh.computer".to_string(); // TODO: configurable.
+        let is_production = false; // TODO: configurable
+        let config = cli.cert_mode.gen_server_config(
+            domains,
+            contact,
+            is_production,
+            cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
+        );
+        Some(Arc::new(config))
+    } else {
+        None
+    };
+
     let server = Derper {
         client_conn_handler,
-        serve_tls,
+        tls_config,
     };
 
     server.run(cli.addr).await?;
@@ -236,13 +288,18 @@ const INDEX: &[u8] = br#"<html><body>
 </p>
 "#;
 
+const TLS_HEADERS: [(&str, &str); 2] = [
+    ("Strict-Transport-Security", "max-age=63072000; includeSubDomains"),
+    ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
+];
+
 #[derive(Clone)]
 struct Derper {
     /// If this is a derper server, the derp handler.
     client_conn_handler:
         Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder>>,
-    /// Should this be served using TLS.
-    serve_tls: bool,
+    /// TLS config if used.
+    tls_config: Option<Arc<rustls::ServerConfig>>,
 }
 
 impl Derper {
@@ -253,92 +310,45 @@ impl Derper {
         // We need the assigned address for the client to send it messages.
         let addr = listener.local_addr()?;
 
-        if self.serve_tls {
+        let tls_acceptor = if let Some(ref tls_config) = self.tls_config {
             info!("derper: serving on {} with TLS", addr);
-            // 		var certManager certProvider
-            // 		certManager, err = certProviderByCertMode(*certMode, *certDir, *hostname)
-            // 		if err != nil {
-            // 			log.Fatalf("derper: can not start cert provider: %v", err)
-            // 		}
-            // 		httpsrv.TLSConfig = certManager.TLSConfig()
-            // 		getCert := httpsrv.TLSConfig.GetCertificate
-            // 		httpsrv.TLSConfig.GetCertificate = func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-            // 			cert, err := getCert(hi)
-            // 			if err != nil {
-            // 				return nil, err
-            // 			}
-            // 			cert.Certificate = append(cert.Certificate, s.MetaCert())
-            // 			return cert, nil
-            // 		}
-            // 		// Disable TLS 1.0 and 1.1, which are obsolete and have security issues.
-            // 		httpsrv.TLSConfig.MinVersion = tls.VersionTLS12
-            // 		httpsrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // 			if r.TLS != nil {
-            // 				label := "unknown"
-            // 				switch r.TLS.Version {
-            // 				case tls.VersionTLS10:
-            // 					label = "1.0"
-            // 				case tls.VersionTLS11:
-            // 					label = "1.1"
-            // 				case tls.VersionTLS12:
-            // 					label = "1.2"
-            // 				case tls.VersionTLS13:
-            // 					label = "1.3"
-            // 				}
-            // 				tlsRequestVersion.Add(label, 1)
-            // 				tlsActiveVersion.Add(label, 1)
-            // 				defer tlsActiveVersion.Add(label, -1)
-            // }
-            // 			// Set HTTP headers to appease automated security scanners.
-            // 			//
-            // 			// Security automation gets cranky when HTTPS sites don't
-            // 			// set HSTS, and when they don't specify a content
-            // 			// security policy for XSS mitigation.
-            // 			//
-            // 			// DERP's HTTP interface is only ever used for debug
-            // 			// access (for which trivial safe policies work just
-            // 			// fine), and by DERP clients which don't obey any of
-            // 			// these browser-centric headers anyway.
-            // 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-            // 			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
-            // 			mux.ServeHTTP(w, r)
-            // 		})
 
-            // 			go func() {
-            // 				port80mux := http.NewServeMux()
-            // 				port80mux.HandleFunc("/generate_204", serveNoContent)
-            // 				port80mux.Handle("/", certManager.HTTPHandler(tsweb.Port80Handler{Main: mux}))
-            // 				port80srv := &http.Server{
-            // 					Addr:        net.JoinHostPort(listenHost, fmt.Sprintf("%d", *httpPort)),
-            // 					Handler:     port80mux,
-            // 					ErrorLog:    quietLogger,
-            // 					ReadTimeout: 30 * time.Second,
-            // 					// Crank up WriteTimeout a bit more than usually
-            // 					// necessary just so we can do long CPU profiles
-            // 					// and not hit net/http/pprof's "profile
-            // 					// duration exceeds server's WriteTimeout".
-            // 					WriteTimeout: 5 * time.Minute,
-            // 				}
-            // 				err := port80srv.ListenAndServe()
-            // 				if err != nil {
-            // 					if err != http.ErrServerClosed {
-            // 						log.Fatal(err)
-            // 					}
-            // 				}
-            // 			}()
-            // 		}
-            // 		err = rateLimitedListenAndServeTLS(httpsrv)
+            let acceptor = TlsAcceptor::from(tls_config.clone());
+
+            Some(acceptor)
         } else {
             info!("derper: serving on {}", addr);
-        }
+            None
+        };
 
         loop {
             match listener.accept().await {
-                Ok((stream, _)) => {
+                Ok((stream, peer_addr)) => {
+                    debug!("Connection opened from {}", peer_addr);
+                    let tls_acceptor = tls_acceptor.clone();
                     let handler = self.clone();
+
                     tokio::task::spawn(async move {
-                        if let Err(err) = Http::new().serve_connection(stream, handler).await {
-                            eprintln!("Failed to serve connection: {:?}", err);
+                        match tls_acceptor {
+                            Some(tls_acceptor) => match tls_acceptor.accept(stream).await {
+                                Ok(stream) => {
+                                    if let Err(err) =
+                                        Http::new().serve_connection(stream, handler).await
+                                    {
+                                        error!("Failed to serve connection: {:?}", err);
+                                    }
+                                }
+                                Err(err) => {
+                                    error!("Failed to accept TLS connection: {:?}", err);
+                                }
+                            },
+                            None => {
+                                if let Err(err) =
+                                    Http::new().serve_connection(stream, handler).await
+                                {
+                                    error!("Failed to serve connection: {:?}", err);
+                                }
+                            }
                         }
                     });
                 }
@@ -347,8 +357,24 @@ impl Derper {
                 }
             }
         }
-
         Ok(())
+    }
+
+    fn default_response(&self) -> ResponseBuilder {
+        let mut response = Response::builder();
+        if self.tls_config.is_some() {
+            // Set HTTP headers to appease automated security scanners.
+            //
+            // Security automation gets cranky when HTTPS sites don't
+            // set HSTS, and when they don't specify a content security policy for XSS mitigation.
+            //
+            // DERP's HTTP interface is only ever used for debug access (for which trivial safe policies work just
+            // fine), and by DERP clients which don't obey any of these browser-centric headers anyway.
+            for (key, value) in &TLS_HEADERS {
+                response = response.header(*key, *value);
+            }
+        }
+        response
     }
 }
 
@@ -363,21 +389,26 @@ impl hyper::service::Service<Request<Body>> for Derper {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         match (req.method(), req.uri().path()) {
-            (&Method::GET, "/") | (&Method::GET, "/index.html") => Box::pin(root_handler()),
+            (&Method::GET, "/") | (&Method::GET, "/index.html") => {
+                Box::pin(root_handler(self.default_response()))
+            }
             (&Method::GET, "/derp") => match self.client_conn_handler.clone() {
                 Some(mut handler) => {
                     Box::pin(async move { handler.call(req).await.map_err(Into::into) })
                 }
-                None => Box::pin(derp_disabled_handler()),
+                None => Box::pin(derp_disabled_handler(self.default_response())),
             },
             // Robots
-            (&Method::GET, "/robots.txt") => Box::pin(robots_handler()),
+            (&Method::GET, "/robots.txt") => Box::pin(robots_handler(self.default_response())),
             // Captive Portal checker
-            (&Method::GET, "/generate_204") => Box::pin(serve_no_content_handler(req)),
+            (&Method::GET, "/generate_204") => {
+                Box::pin(serve_no_content_handler(req, self.default_response()))
+            }
             _ => {
                 // Return 404 not found response.
+                let response = self.default_response();
                 Box::pin(async move {
-                    Ok(Response::builder()
+                    Ok(response
                         .status(StatusCode::NOT_FOUND)
                         .body(NOTFOUND.into())
                         .unwrap())
@@ -387,15 +418,15 @@ impl hyper::service::Service<Request<Body>> for Derper {
     }
 }
 
-async fn derp_disabled_handler() -> HyperResult<Response<Body>> {
-    Ok(Response::builder()
+async fn derp_disabled_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+    Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
         .unwrap())
 }
 
-async fn root_handler() -> HyperResult<Response<Body>> {
-    let response = Response::builder()
+async fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+    let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(INDEX.into())
@@ -404,16 +435,18 @@ async fn root_handler() -> HyperResult<Response<Body>> {
     Ok(response)
 }
 
-async fn robots_handler() -> HyperResult<Response<Body>> {
-    Ok(Response::builder()
+async fn robots_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+    Ok(response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())
         .unwrap())
 }
 
 /// For captive portal detection.
-async fn serve_no_content_handler(r: Request<Body>) -> HyperResult<Response<Body>> {
-    let mut response = Response::builder();
+async fn serve_no_content_handler(
+    r: Request<Body>,
+    mut response: ResponseBuilder,
+) -> HyperResult<Response<Body>> {
     if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
         if !challenge.is_empty()
             && challenge.len() < 64
@@ -608,7 +641,9 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let res = serve_no_content_handler(req).await.unwrap();
+        let res = serve_no_content_handler(req, Response::builder())
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
         let header = res

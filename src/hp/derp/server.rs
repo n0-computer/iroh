@@ -1,10 +1,12 @@
 //! based on tailscale/derp/derp_server.go
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::BytesMut;
+use hyper::HeaderMap;
 use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -181,13 +183,14 @@ where
 
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
     /// [`Server`].
-    pub fn client_conn_handler(&self) -> ClientConnHandler<R, W, P> {
+    pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler<R, W, P> {
         ClientConnHandler {
             mesh_key: self.mesh_key.clone(),
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout.clone(),
             server_info: self.server_info.clone(),
+            default_headers: Arc::new(default_headers),
         }
     }
 
@@ -251,6 +254,7 @@ where
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
     server_info: ServerInfo,
+    pub(super) default_headers: Arc<HeaderMap>,
 }
 
 impl<R, W, P> Clone for ClientConnHandler<R, W, P>
@@ -266,6 +270,7 @@ where
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout.clone(),
             server_info: self.server_info.clone(),
+            default_headers: Arc::clone(&self.default_headers),
         }
     }
 }
@@ -819,6 +824,7 @@ mod tests {
             write_timeout: None,
             server_info: ServerInfo::no_rate_limit(),
             server_channel: server_channel_s,
+            default_headers: Default::default(),
         };
 
         // create the parts needed for a client
@@ -949,7 +955,7 @@ mod tests {
         let key_a = SecretKey::generate();
         let public_key_a = key_a.public_key();
         let (reader_a, writer_a, mut client_a) = TestClient::new(key_a);
-        let handler = server.client_conn_handler();
+        let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
         client_a.accept().await?;
         handler_task.await??;
@@ -958,7 +964,7 @@ mod tests {
         let key_b = SecretKey::generate();
         let public_key_b = key_b.public_key();
         let (reader_b, writer_b, mut client_b) = TestClient::new(key_b);
-        let handler = server.client_conn_handler();
+        let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
         client_b.accept().await?;
         handler_task.await??;
