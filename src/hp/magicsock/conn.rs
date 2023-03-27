@@ -834,7 +834,7 @@ impl Conn {
             let b = *i == state.my_derp;
             let c = ad.c.clone();
             tokio::task::spawn(async move {
-                c.note_preferred(b);
+                c.note_preferred(b).await;
             });
         }
         self.go_derp_connect(derp_num);
@@ -1123,44 +1123,46 @@ impl Conn {
 
         // Note that derp::http.new_region_client does not dial the server
         // (it doesn't block) so it is safe to do under the state lock.
-        let this = self.clone();
-        let dc = derp::http::Client::new_region(state.private_key.clone(), move || {
-            let this = this.clone();
-            Box::pin(async move {
-                // Warning: it is not legal to acquire
-                // magicsock.Conn.mu from this callback.
-                // It's run from derp::http::Client.connect (via Send, etc)
-                // and the lock ordering rules are that magicsock.Conn.mu
-                // must be acquired before derp::http.Client.mu
-
-                if this.is_closing() {
-                    // We're closing anyway; return to stop dialing.
-                    return None;
-                }
-
-                // Need to load the derp map without aquiring the lock
-
-                let derp_map = &*this.derp_map.read().await;
-                match derp_map {
-                    None => None,
-                    Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
-                }
+        let this_0 = self.clone();
+        let this_1 = self.clone();
+        let dc = derp::http::ClientBuilder::new()
+            .address_family_selector(move || {
+                let this = this_0.clone();
+                Box::pin(async move {
+                    // TODO: use atomic read?
+                    if let Some(r) = &*this.last_net_check_report.read().await {
+                        return r.ipv6;
+                    }
+                    false
+                })
             })
-        });
+            .can_ack_pings(true)
+            .is_preferred(state.my_derp == region_id)
+            .new_region(state.private_key.clone(), move || {
+                let this = this_1.clone();
+                Box::pin(async move {
+                    // Warning: it is not legal to acquire
+                    // magicsock.Conn.mu from this callback.
+                    // It's run from derp::http::Client.connect (via Send, etc)
+                    // and the lock ordering rules are that magicsock.Conn.mu
+                    // must be acquired before derp::http.Client.mu
 
-        dc.set_can_ack_pings(true);
-        dc.note_preferred(state.my_derp == region_id);
+                    if this.is_closing() {
+                        // We're closing anyway; return to stop dialing.
+                        return None;
+                    }
+
+                    // Need to load the derp map without aquiring the lock
+
+                    let derp_map = &*this.derp_map.read().await;
+                    match derp_map {
+                        None => None,
+                        Some(derp_map) => derp_map.regions.get(&region_id).cloned(),
+                    }
+                })
+            });
+
         let this = self.clone();
-        dc.set_address_family_selector(move || {
-            let this = this.clone();
-            Box::pin(async move {
-                // TODO: use atomic read?
-                if let Some(r) = &*this.last_net_check_report.read().await {
-                    return r.ipv6;
-                }
-                false
-            })
-        });
 
         // TODO: DNS Cache
         // dc.DNSCache = dnscache.Get();
@@ -1403,15 +1405,23 @@ impl Conn {
                     }
                 }
                 wr = ch.recv_async() => match wr {
-                    Ok(wr) => match dc.send(wr.pub_key, wr.content).await {
-                        Ok(_) => {
-                            // TODO:
-                            // metricSendDERP.Add(1)
+                    Ok(wr) => match wr.pub_key {
+                        None => {
+                            // TODO: should this error?
+                            return;
                         }
-                        Err(err) => {
-                            info!("derp.send({:?}): {:?}", wr.addr, err);
-                            // TODO:
-                            // metricSendDERPError.Add(1)
+                        Some(pub_key) => {
+                            match dc.send(pub_key, wr.content).await {
+                                Ok(_) => {
+                                    // TODO:
+                                    // metricSendDERP.Add(1)
+                                }
+                                Err(err) => {
+                                    info!("derp.send({:?}): {:?}", wr.addr, err);
+                                    // TODO:
+                                    // metricSendDERPError.Add(1)
+                                }
+                            }
                         }
                     }
                     Err(_) => {
@@ -2222,7 +2232,7 @@ impl Conn {
         let mut tasks: Vec<(usize, &'static str)> = Vec::new();
         {
             for (region_id, ad) in &state.active_derp {
-                let la = match ad.c.local_addr() {
+                let la = match ad.c.local_addr().await {
                     None => {
                         tasks.push((*region_id, "rebind-no-localaddr"));
                         continue;
