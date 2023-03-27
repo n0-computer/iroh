@@ -1,12 +1,13 @@
 use std::{fmt::Debug, hash::Hash};
 
+use super::{disco, disco::NONCE_LEN};
+use anyhow::{anyhow, ensure, Context, Result};
+use serde::{Deserialize, Serialize};
+
 pub use crypto_box::KEY_SIZE;
 
 pub(crate) const PUBLIC_KEY_LENGTH: usize = KEY_SIZE;
 pub(crate) const SECRET_KEY_LENGTH: usize = KEY_SIZE;
-
-use super::{disco, disco::NONCE_LEN};
-use anyhow::{anyhow, ensure, Context, Result};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
@@ -66,7 +67,7 @@ impl PublicKey {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecretKey(crypto_box::SecretKey);
 
 impl SecretKey {
@@ -79,7 +80,7 @@ impl SecretKey {
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.as_bytes().clone()
+        self.0.to_bytes()
     }
 
     fn shared_secret(&self, other: &PublicKey) -> crypto_box::ChaChaBox {
@@ -122,13 +123,13 @@ impl SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
+        write!(f, "SecretKey({})", hex::encode(self.0.to_bytes()))
     }
 }
 
 impl Hash for SecretKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.as_bytes().hash(state)
+        self.0.to_bytes().hash(state)
     }
 }
 
@@ -146,7 +147,7 @@ impl From<[u8; SECRET_KEY_LENGTH]> for SecretKey {
 
 impl From<SecretKey> for disco::SecretKey {
     fn from(value: SecretKey) -> Self {
-        disco::SecretKey::from(*value.0.as_bytes())
+        disco::SecretKey::from(value.0.to_bytes())
     }
 }
 
