@@ -13,22 +13,22 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use futures::Future;
+use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, HeaderMap, Method, Request, Response, StatusCode};
 use iroh::hp::{derp, key, stun};
-use rustls_acme::caches::DirCache;
 use rustls_acme::AcmeConfig;
+use rustls_acme::{caches::DirCache, AcmeAcceptor};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener,
+        TcpListener, TcpStream,
     },
     sync::mpsc,
     task::JoinSet,
 };
-use tokio_rustls::TlsAcceptor;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -104,19 +104,31 @@ impl CertMode {
         contact: String,
         is_production: bool,
         dir: PathBuf,
-    ) -> rustls::ServerConfig {
+    ) -> (rustls::ServerConfig, AcmeAcceptor) {
         match self {
             CertMode::LetsEncrypt => {
-                let state = AcmeConfig::new(domains)
+                let mut state = AcmeConfig::new(domains)
                     .contact([format!("mailto:{contact}")])
                     .cache_option(Some(DirCache::new(dir)))
                     .directory_lets_encrypt(is_production)
                     .state();
 
-                rustls::ServerConfig::builder()
+                let config = rustls::ServerConfig::builder()
                     .with_safe_defaults()
                     .with_no_client_auth()
-                    .with_cert_resolver(state.resolver())
+                    .with_cert_resolver(state.resolver());
+                let acceptor = state.acceptor();
+
+                tokio::spawn(async move {
+                    loop {
+                        match state.next().await.unwrap() {
+                            Ok(ok) => debug!("acme event: {:?}", ok),
+                            Err(err) => error!("error: {:?}", err),
+                        }
+                    }
+                });
+
+                (config, acceptor)
             }
             CertMode::Manual => {
                 // TODO: load certificates manuall
@@ -249,13 +261,13 @@ async fn main() -> Result<()> {
         let domains = vec![cli.hostname.clone()];
         let contact = "d@iroh.computer".to_string(); // TODO: configurable.
         let is_production = false; // TODO: configurable
-        let config = cli.cert_mode.gen_server_config(
+        let (config, acceptor) = cli.cert_mode.gen_server_config(
             domains,
             contact,
             is_production,
             cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
         );
-        Some(Arc::new(config))
+        Some((Arc::new(config), acceptor))
     } else {
         None
     };
@@ -299,7 +311,7 @@ struct Derper {
     client_conn_handler:
         Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder>>,
     /// TLS config if used.
-    tls_config: Option<Arc<rustls::ServerConfig>>,
+    tls_config: Option<(Arc<rustls::ServerConfig>, AcmeAcceptor)>,
 }
 
 impl Derper {
@@ -310,12 +322,10 @@ impl Derper {
         // We need the assigned address for the client to send it messages.
         let addr = listener.local_addr()?;
 
-        let tls_acceptor = if let Some(ref tls_config) = self.tls_config {
+        let tls_acceptor = if let Some((ref tls_config, ref acceptor)) = self.tls_config {
             info!("derper: serving on {} with TLS", addr);
 
-            let acceptor = TlsAcceptor::from(tls_config.clone());
-
-            Some(acceptor)
+            Some((acceptor.clone(), tls_config.clone()))
         } else {
             info!("derper: serving on {}", addr);
             None
@@ -330,18 +340,13 @@ impl Derper {
 
                     tokio::task::spawn(async move {
                         match tls_acceptor {
-                            Some(tls_acceptor) => match tls_acceptor.accept(stream).await {
-                                Ok(stream) => {
-                                    if let Err(err) =
-                                        Http::new().serve_connection(stream, handler).await
-                                    {
-                                        error!("Failed to serve connection: {:?}", err);
-                                    }
+                            Some((tls_acceptor, rustls_config)) => {
+                                if let Err(err) =
+                                    handler.tls_serve(stream, tls_acceptor, rustls_config).await
+                                {
+                                    error!("Failed to serve connection: {:?}", err);
                                 }
-                                Err(err) => {
-                                    error!("Failed to accept TLS connection: {:?}", err);
-                                }
-                            },
+                            }
                             None => {
                                 if let Err(err) =
                                     Http::new().serve_connection(stream, handler).await
@@ -375,6 +380,24 @@ impl Derper {
             }
         }
         response
+    }
+
+    async fn tls_serve(
+        self,
+        stream: TcpStream,
+        acceptor: AcmeAcceptor,
+        rustls_config: Arc<rustls::ServerConfig>,
+    ) -> Result<()> {
+        match acceptor.accept(stream.compat()).await? {
+            None => {
+                info!("received TLS-ALPN-01 validation request");
+            }
+            Some(start_handshake) => {
+                let tls_stream = start_handshake.into_stream(rustls_config).await?.compat();
+                Http::new().serve_connection(tls_stream, self).await?;
+            }
+        }
+        Ok(())
     }
 }
 

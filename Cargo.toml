@@ -56,6 +56,7 @@ rustls = { version = "0.20.8", default-features = false, features = ["dangerous_
 rustls-acme = { version = "0.5.2", optional = true, features = ["tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
+serdect = "0.2.0"
 socket2 = "0.4.7"
 ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
@@ -67,7 +68,7 @@ time = "0.3.20"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.23.4", optional = true }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
-toml = "0.7.3"
+toml = { version = "0.7.3", optional = true }
 tracing = "0.1"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -93,7 +94,7 @@ http-body = "0.4.5"
 [features]
 default = ["cli", "derper"]
 cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
-derper = ["tokio-rustls", "rustls-acme"]
+derper = ["tokio-rustls", "rustls-acme", "toml"]
 test = []
 
 [[bin]]
