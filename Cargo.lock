@@ -2021,6 +2021,7 @@ dependencies = [
  "rustls-acme",
  "serde",
  "serde-error",
+ "serdect",
  "socket2",
  "ssh-key",
  "stun-rs",
