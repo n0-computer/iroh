@@ -92,12 +92,11 @@ mod tests {
     use anyhow::Result;
     use std::net::SocketAddr;
 
-    use tokio::sync::oneshot;
-
     use hyper::header::UPGRADE;
     use hyper::service::{make_service_fn, service_fn};
     use hyper::upgrade::Upgraded;
     use hyper::{Body, Client, Request, Server, StatusCode};
+    use tokio::sync::oneshot;
 
     use crate::hp::derp::server::Server as DerpServer;
     use crate::hp::key::node::{PublicKey, SecretKey};
@@ -161,7 +160,7 @@ mod tests {
     async fn test_connection_handler() -> Result<()> {
         // inspired by https://github.com/hyperium/hyper/blob/v0.14.25/examples/upgrades.rs
 
-        let addr = ([127, 0, 0, 1], 0).into();
+        let addr = "127.0.0.1:0".parse().unwrap();
 
         // create derp_server
         let server_key = SecretKey::generate();
@@ -171,15 +170,10 @@ mod tests {
         // create handler that sends new connections to the client
         let derp_client_handler = derp_server.client_conn_handler();
 
-        // Would love to wrap this in a `make_derp_server_service` function that returns
-        // a `hyper::service::make::MakeServiceFn`, but that's a private struct so I don't think we
-        // can
-        let make_service = make_service_fn(move |_| {
+        let server = Server::bind(&addr).serve(make_service_fn(move |_| {
             let derp_client_handler = derp_client_handler.clone();
             async { Ok::<_, hyper::Error>(service_fn(derp_upgrade_fn(derp_client_handler))) }
-        });
-
-        let server = Server::bind(&addr).serve(make_service);
+        }));
 
         // We need the assigned address for the client to send it messages.
         let addr = server.local_addr();
@@ -193,21 +187,16 @@ mod tests {
 
         // Spawn server on the default executor,
         // which is usually a thread-pool from tokio default runtime.
-        tokio::task::spawn(async move {
-            if let Err(e) = server.await {
-                eprintln!("server error: {}", e);
-            }
-        });
+        let server_task = tokio::task::spawn(async move { server.await });
 
         // Client requests a HTTP connection upgrade.
         let request = client_upgrade_request(addr.clone());
-        if let Err(e) = request.await {
-            eprintln!("client error: {}", e);
-        }
+        request.await?;
 
         // Complete the oneshot so that the server stops
         // listening and the process can close down.
-        let _ = tx.send(());
+        assert!(tx.send(()).is_ok());
+        server_task.await??;
         Ok(())
     }
 }
