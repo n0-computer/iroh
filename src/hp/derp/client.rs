@@ -1,6 +1,5 @@
 //! based on tailscale/derp/derp_client.go
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
@@ -124,11 +123,6 @@ impl Client {
     }
 
     async fn local_addr(&self) -> Result<SocketAddr> {
-        {
-            if self.is_dead.load(Ordering::Relaxed) {
-                bail!("Client is dead");
-            }
-        }
         Ok(self.local_addr)
     }
 }
@@ -216,6 +210,10 @@ struct ClientReader<R: AsyncRead + Unpin> {
 }
 
 impl<R: AsyncRead + Unpin> ClientReader<R> {
+    async fn run(mut self) -> Result<()> {
+        todo!()
+    }
+
     /// Reads a messages from a DERP server.
     ///
     /// The returned message may alias memory owned by the [`Client`]; if
@@ -331,7 +329,7 @@ where
 impl<W, R> ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
-    R: AsyncRead + Unpin,
+    R: AsyncRead + Send + Unpin + 'static,
 {
     pub fn new(secret_key: SecretKey, local_addr: SocketAddr, reader: R, writer: W) -> Self {
         Self {
@@ -416,7 +414,7 @@ where
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self) -> Result<Client<R>>
+    pub async fn build(mut self) -> Result<Client>
     where
         R: AsyncRead + Unpin,
     {
@@ -435,17 +433,27 @@ where
             Ok(())
         });
 
+        let (reader_sender, reader_recv) = mpsc::channel(12); // TODO: what size?
+        let reader_task = tokio::spawn(async move {
+            let client_reader = ClientReader {
+                reader: self.reader,
+                sender: reader_sender,
+            };
+
+            client_reader.run().await?;
+            Ok(())
+        });
+
         Ok(Client {
             server_key,
             secret_key: self.secret_key,
-            reader: self.reader,
             local_addr: self.local_addr,
             mesh_key: self.mesh_key,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
             writer_channel: writer_sender,
             writer_task,
-            is_dead: AtomicBool::new(false),
+            reader_task,
         })
     }
 }
