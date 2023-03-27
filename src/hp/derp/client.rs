@@ -4,95 +4,50 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use bytes::BytesMut;
-use postcard::experimental::max_size::MaxSize;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
+use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
-    types::{ClientInfo, Conn, RateLimiter, ServerInfo},
-    write_frame, FrameType, FRAME_CLIENT_INFO, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET,
-    FRAME_HEALTH, FRAME_KEEP_ALIVE, FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
-    FRAME_PING, FRAME_PONG, FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET,
-    FRAME_SERVER_INFO, FRAME_SERVER_KEY, FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN,
-    MAX_PACKET_SIZE, NONCE_LEN, NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
+    types::{ClientInfo, RateLimiter, ServerInfo},
+    write_frame, FrameType, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_KEEP_ALIVE,
+    FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
+    FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_SERVER_KEY,
+    FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN, MAX_PACKET_SIZE, NONCE_LEN,
+    NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
 };
 
 use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 /// A DERP Client.
-pub struct Client<W, R, C>
-where
-    W: AsyncWrite + Send + Unpin + 'static, // TODO: static?
-    R: AsyncRead + Unpin,
-    C: Conn,
-{
+pub struct Client {
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
     /// The public/private keypair
     secret_key: SecretKey,
-    conn: C,
-    reader: R,
-    /// TODO: This is a string in the go impl, using bytes here to make it easier for postcard
-    /// to serialize. 32 is a random number I chose. Need to figure out what the `mesh_key`
-    /// is in practice.
+    reader_task: JoinHandle<Result<()>>,
+    /// The
+    // our local addrs
+    local_addr: SocketAddr,
+    /// TODO: This is a string in the go impl, need to make these back into Strings
     mesh_key: Option<[u8; 32]>,
     can_ack_pings: bool,
     is_prober: bool,
 
-    // protected by a mutex in the go impl
-    writer: W,
-    // TODO: maybe write a trait to make working with the rate limiter less gross cause it's currently disgusting
-    rate_limiter: Option<RateLimiter>,
-    /// Once the Client has received an error while receiving (`recv`), it's considered dead & should
-    /// respond to all future attempts to `recv` with an error
-    /// TODO: name?
-    is_dead: AtomicBool,
+    /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
+    /// if there is ever an error writing to the server.
+    writer_channel: mpsc::Sender<ClientWriterMessage>,
+    /// JoinHandle for the [`ClientWriter`] task
+    writer_task: JoinHandle<Result<()>>,
 }
 
-impl<W, R, C> Client<W, R, C>
-where
-    W: AsyncWrite + Unpin + Send,
-    R: AsyncRead + Unpin,
-    C: Conn,
-{
-    async fn recv_server_key(&mut self) -> Result<PublicKey> {
-        recv_server_key(&mut self.reader).await
-    }
+/// A channel on which we recieve messages from the server
+type ReceivedMessages = mpsc::Receiver<ReceivedMessage>;
 
-    async fn parse_server_info(&self, buf: &mut [u8]) -> Result<ServerInfo> {
-        let max_len = NONCE_LEN + MAX_INFO_LEN;
-        let frame_len = buf.len();
-        ensure!(frame_len > NONCE_LEN, "short ServerInfo frame");
-        ensure!(frame_len < max_len, "long ServerInfo frame");
-
-        let msg = self
-            .secret_key
-            .open_from(&self.server_key, buf)
-            .context(format!(
-                "failed to open crypto_box from server key {:?}",
-                self.server_key.as_bytes()
-            ))?;
-        let info: ServerInfo = postcard::from_bytes(&msg)?;
-        Ok(info)
-    }
-
-    async fn send_client_key(&mut self) -> Result<()> {
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-            mesh_key: self.mesh_key,
-            can_ack_pings: self.can_ack_pings,
-            is_prober: self.is_prober,
-        };
-        super::send_client_key(
-            &mut self.writer,
-            &self.secret_key,
-            &self.server_key,
-            &client_info,
-        )
-        .await
-    }
-
+impl Client {
     /// Returns a reference to the server's public key.
     pub fn server_public_key(&self) -> PublicKey {
         self.server_key.clone()
@@ -103,8 +58,11 @@ where
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     // TODO: the rate limiter is only on this method, is it because it's the only method that
     // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-    pub async fn send(&mut self, dstkey: PublicKey, packet: &[u8]) -> Result<()> {
-        send_packet(&mut self.writer, &self.rate_limiter, dstkey, packet).await
+    pub async fn send(&mut self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
+        self.writer_channel
+            .send(ClientWriterMessage::Packet((dstkey, packet)))
+            .await?;
+        Ok(())
     }
 
     /// Used by mesh peers to forward packets.
@@ -115,65 +73,54 @@ where
         &mut self,
         srckey: PublicKey,
         dstkey: PublicKey,
-        packet: &[u8],
+        packet: Bytes,
     ) -> Result<()> {
-        tokio::select! {
-            biased;
-            res = forward_packet(&mut self.writer, srckey, dstkey, packet) => {
-                res
-            }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                self.write_timeout_fired().await
-            }
-        }
+        self.writer_channel
+            .send(ClientWriterMessage::FwdPacket((srckey, dstkey, packet)))
+            .await?;
+        Ok(())
     }
 
-    async fn write_timeout_fired(&self) -> Result<()> {
-        self.conn.close()
+    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
+        self.writer_channel
+            .send(ClientWriterMessage::Ping(data))
+            .await?;
+        Ok(())
     }
 
-    pub async fn send_ping(&mut self, data: &[u8; 8]) -> Result<()> {
-        send_ping(&mut self.writer, data).await
-    }
-
-    pub async fn send_pong(&mut self, data: &[u8; 8]) -> Result<()> {
-        send_pong(&mut self.writer, data).await
+    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
+        self.writer_channel
+            .send(ClientWriterMessage::Pong(data))
+            .await?;
+        Ok(())
     }
 
     /// Sends a packet that tells the server whether this
     /// client is the user's preferred server. This is only
     /// used in the server for stats.
     pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        send_note_preferred(&mut self.writer, preferred).await
+        self.writer_channel
+            .send(ClientWriterMessage::NotePreferred(preferred))
+            .await?;
+        Ok(())
     }
 
     /// Sends a request to subscribe to the peer's connection list.
     /// It's a fatal error if the client wasn't created using [`MeshKey`].
     pub async fn watch_connection_changes(&mut self) -> Result<()> {
-        watch_connection_changes(&mut self.writer).await
+        self.writer_channel
+            .send(ClientWriterMessage::WatchConnectionChanges)
+            .await?;
+        Ok(())
     }
 
     /// Asks the server to close the target's TCP connection.
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
     pub async fn close_peer(&mut self, target: PublicKey) -> Result<()> {
-        close_peer(&mut self.writer, target).await
-    }
-
-    async fn set_send_rate_limiter(&mut self, sm: ReceivedMessage) {
-        if let ReceivedMessage::ServerInfo {
-            token_bucket_bytes_per_second,
-            token_bucket_bytes_burst,
-        } = sm
-        {
-            if token_bucket_bytes_per_second == 0 || token_bucket_bytes_burst == 0 {
-                self.rate_limiter = None;
-            } else {
-                self.rate_limiter = Some(
-                    RateLimiter::new(token_bucket_bytes_per_second, token_bucket_bytes_burst)
-                        .unwrap(),
-                );
-            }
-        }
+        self.writer_channel
+            .send(ClientWriterMessage::ClosePeer(target))
+            .await?;
+        Ok(())
     }
 
     async fn local_addr(&self) -> Result<SocketAddr> {
@@ -182,9 +129,93 @@ where
                 bail!("Client is dead");
             }
         }
-        Ok(self.conn.local_addr())
+        Ok(self.local_addr)
     }
+}
 
+/// The kinds of messages we can send to the Server
+#[derive(Debug)]
+enum ClientWriterMessage {
+    /// Send a packet (addressed to the [`PublicKey`]) to the server
+    Packet((PublicKey, Bytes)),
+    /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
+    /// Should only be used for mesh clients.
+    FwdPacket((PublicKey, PublicKey, Bytes)),
+    /// Send a pong to the server
+    Pong([u8; 8]),
+    /// Send a ping to the server
+    Ping([u8; 8]),
+    /// Tell the server whether or not this client is the user's preferred client
+    NotePreferred(bool),
+    /// Subscribe to the server's connection list.
+    /// Should only be used for mesh clients.
+    WatchConnectionChanges,
+    /// Asks the server to close the target's connection.
+    /// Should only be used for mesh clients.
+    ClosePeer(PublicKey),
+    /// Shutdown the writer
+    Shutdown,
+}
+
+/// Call [`ClientWriter::run`] to listen for messages to send to the client.
+/// Should be used by the [`Client`]
+///
+/// Shutsdown when you send a `ClientWriterMessage::Shutdown`, or if there is an error writing to
+/// the server.
+struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
+    recv_msgs: mpsc::Receiver<ClientWriterMessage>,
+    writer: W,
+    rate_limiter: Option<RateLimiter>,
+}
+
+impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
+    async fn run(mut self) -> Result<()> {
+        loop {
+            match self.recv_msgs.recv().await {
+                None => {
+                    bail!("channel unexpectedly closed");
+                }
+                Some(ClientWriterMessage::Packet((key, bytes))) => {
+                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                }
+                Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        forward_packet(&mut self.writer, srckey, dstkey, &bytes),
+                    )
+                    .await??;
+                }
+                Some(ClientWriterMessage::Pong(msg)) => {
+                    send_pong(&mut self.writer, &msg).await?;
+                }
+                Some(ClientWriterMessage::Ping(msg)) => {
+                    send_ping(&mut self.writer, &msg).await?;
+                }
+                Some(ClientWriterMessage::NotePreferred(preferred)) => {
+                    send_note_preferred(&mut self.writer, preferred).await?;
+                }
+                Some(ClientWriterMessage::WatchConnectionChanges) => {
+                    watch_connection_changes(&mut self.writer).await?;
+                }
+                Some(ClientWriterMessage::ClosePeer(target)) => {
+                    close_peer(&mut self.writer, target).await?;
+                }
+                Some(ClientWriterMessage::Shutdown) => {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+/// Call [`ClientReader::run`] to send the messages we receive from the server to an associated `ReceivedMessages` channel.
+/// Shuts down if cancelled, or if there is an error reading a message from the server.
+struct ClientReader<R: AsyncRead + Unpin> {
+    reader: R,
+    sender: mpsc::Sender<ReceivedMessages>,
+}
+
+impl<R: AsyncRead + Unpin> ClientReader<R> {
     /// Reads a messages from a DERP server.
     ///
     /// The returned message may alias memory owned by the [`Client`]; if
@@ -192,34 +223,6 @@ where
     ///
     /// Once [`recv`] returns an error, the [`Client`] is dead forever.
     pub async fn recv(&mut self) -> Result<ReceivedMessage> {
-        self.recv_check_error(Duration::from_secs(120)).await
-    }
-
-    async fn recv_check_error(&mut self, timeout_duration: Duration) -> Result<ReceivedMessage> {
-        if self.is_dead.load(Ordering::Relaxed) {
-            bail!("Client is dead");
-        }
-        match self.recv_timeout(timeout_duration).await {
-            Ok(m) => Ok(m),
-            Err(e) => {
-                self.is_dead.swap(true, Ordering::Relaxed);
-                bail!(e);
-            }
-        }
-    }
-
-    async fn recv_timeout(&mut self, timeout_duration: Duration) -> Result<ReceivedMessage> {
-        tokio::select! {
-            biased;
-            res = self.recv_0() => {
-                res
-            } _ = tokio::time::sleep(timeout_duration) => {
-                bail!("recv call exceeded timeout");
-            }
-        }
-    }
-
-    async fn recv_0(&mut self) -> Result<ReceivedMessage> {
         // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
@@ -227,21 +230,6 @@ where
                 read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut frame_payload).await?;
 
             match frame_type {
-                FRAME_SERVER_INFO => {
-                    // Server sends this at start-up. Currently unused.
-                    // Just has a JSON messages saying "version: 2",
-                    // but the protocol seems extensible enough as-is without
-                    // needing to wait an RTT to discover the version at startup
-                    // We'd prefer to give the connection to the client (magicsock)
-                    // to start writing as soon as possible.
-                    let server_info = self.parse_server_info(&mut frame_payload).await?;
-                    let received = ReceivedMessage::ServerInfo {
-                        token_bucket_bytes_per_second: server_info.token_bucket_bytes_per_second,
-                        token_bucket_bytes_burst: server_info.token_bucket_bytes_burst,
-                    };
-                    self.set_send_rate_limiter(received.clone()).await;
-                    return Ok(received);
-                }
                 FRAME_KEEP_ALIVE => {
                     // A one-way keep-alive message that doesn't require an ack.
                     // This predated FRAME_PING/FRAME_PONG.
@@ -324,38 +312,38 @@ where
     }
 }
 
-pub struct ClientBuilder<W, R, C>
+pub struct ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    C: Conn,
 {
     secret_key: SecretKey,
-    conn: C,
     reader: R,
     writer: W,
+    local_addr: SocketAddr,
     mesh_key: Option<[u8; 32]>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     can_ack_pings: bool,
+    writer_queue_depth: usize,
 }
 
-impl<W, R, C> ClientBuilder<W, R, C>
+impl<W, R> ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
     R: AsyncRead + Unpin,
-    C: Conn,
 {
-    pub fn new(secret_key: SecretKey, conn: C, reader: R, writer: W) -> Self {
+    pub fn new(secret_key: SecretKey, local_addr: SocketAddr, reader: R, writer: W) -> Self {
         Self {
             secret_key,
-            conn,
             reader,
             writer,
+            local_addr,
             mesh_key: None,
             is_prober: false,
             server_public_key: None,
             can_ack_pings: false,
+            writer_queue_depth: PER_CLIENT_SEND_QUEUE_DEPTH,
         }
     }
 
@@ -381,36 +369,84 @@ where
         self
     }
 
-    pub async fn build(mut self) -> Result<Client<W, R, C>>
-    where
-        W: AsyncWrite + Send + Unpin + 'static,
-        R: AsyncRead + Unpin,
-        C: Conn,
-    {
-        // TODO: see `Client::server_public_key` todo, but assigning a server_public_key should
-        // probably be removed
-        let server_key = if let Some(key) = self.server_public_key {
-            key
-        } else {
-            recv_server_key(&mut self.reader)
-                .await
-                .context("failed to receive server key")?
-        };
-        let mut client = Client {
-            server_key,
-            secret_key: self.secret_key,
-            conn: self.conn,
-            reader: self.reader,
+    /// Default is [`derp::PER_CLIENT_SEND_QUEUE_DEPTH`]
+    ///
+    /// Will error if the queue depth is set to zero
+    pub fn writer_queue_depth(mut self, depth: usize) -> Result<Self> {
+        if depth == 0 {
+            bail!("cannot set queue to 0, no unbounded channels allowed");
+        }
+        self.writer_queue_depth = depth;
+        Ok(self)
+    }
+
+    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
+        let server_key = recv_server_key(&mut self.reader)
+            .await
+            .context("failed to receive server key")?;
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
             mesh_key: self.mesh_key,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
-            writer: self.writer,
-            rate_limiter: None,
-            is_dead: AtomicBool::new(false),
         };
+        crate::hp::derp::send_client_key(
+            &mut self.writer,
+            &self.secret_key,
+            &server_key,
+            &client_info,
+        )
+        .await?;
+        let mut buf = BytesMut::new();
+        let (frame_type, _) =
+            crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
+        assert_eq!(FRAME_SERVER_INFO, frame_type);
+        let msg = self.secret_key.open_from(&server_key, &buf)?;
+        let info: ServerInfo = postcard::from_bytes(&msg)?;
+        if info.version != PROTOCOL_VERSION {
+            bail!(
+                "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
+                info.version
+            );
+        }
+        let rate_limiter = RateLimiter::new(
+            info.token_bucket_bytes_per_second,
+            info.token_bucket_bytes_burst,
+        )?;
+        Ok((server_key, rate_limiter))
+    }
 
-        client.send_client_key().await?;
-        Ok(client)
+    pub async fn build(mut self) -> Result<Client<R>>
+    where
+        R: AsyncRead + Unpin,
+    {
+        // exchange information with the server
+        let (server_key, rate_limiter) = self.server_handshake().await?;
+
+        // create task to handle writing to the server
+        let (writer_sender, writer_recv) = mpsc::channel(self.writer_queue_depth);
+        let writer_task = tokio::spawn(async move {
+            let client_writer = ClientWriter {
+                rate_limiter,
+                writer: self.writer,
+                recv_msgs: writer_recv,
+            };
+            client_writer.run().await?;
+            Ok(())
+        });
+
+        Ok(Client {
+            server_key,
+            secret_key: self.secret_key,
+            reader: self.reader,
+            local_addr: self.local_addr,
+            mesh_key: self.mesh_key,
+            can_ack_pings: self.can_ack_pings,
+            is_prober: self.is_prober,
+            writer_channel: writer_sender,
+            writer_task,
+            is_dead: AtomicBool::new(false),
+        })
     }
 }
 

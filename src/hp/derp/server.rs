@@ -16,11 +16,11 @@ use crate::hp::key::node::{PublicKey, SecretKey};
 use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
-    types::{Conn, PacketForwarder, PeerConnState, ServerMessage},
+    types::{PacketForwarder, PeerConnState, ServerMessage},
 };
 use super::{
     recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
-    FRAME_SERVER_KEY, MAGIC, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    FRAME_SERVER_KEY, MAGIC, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
 
@@ -29,9 +29,6 @@ fn new_conn_num() -> usize {
     CONN_NUM.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The number of packets buffered for sending per client
-const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
-
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A DERP server.
@@ -39,9 +36,8 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// TODO: how small does this have to be before this is considered cheap to clone?
 /// It would make alot of the APIs easier if we could just clone this.
 #[derive(Debug)]
-pub struct Server<C, R, W, P>
+pub struct Server<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -60,7 +56,7 @@ where
     /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
     meta_cert: Vec<u8>,
     /// Channel on which to communicate to the `ServerActor`
-    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
     /// When true, the server has been shutdown.
     closed: bool,
     /// The information we send to the [`client::Client`] about the [`Server`]'s protocol version
@@ -106,9 +102,8 @@ where
     // tcpRtt                       metrics.LabelMap // histogram
 }
 
-impl<C, R, W, P> Server<C, R, W, P>
+impl<R, W, P> Server<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -178,7 +173,7 @@ where
 
     /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
     /// [`Server`].
-    pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<C, R, W, P> {
+    pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<R, W, P> {
         PacketForwarderHandler {
             server_channel: self.server_channel.clone(),
         }
@@ -186,7 +181,7 @@ where
 
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
     /// [`Server`].
-    pub fn client_conn_handler(&self) -> ClientConnHandler<C, R, W, P> {
+    pub fn client_conn_handler(&self) -> ClientConnHandler<R, W, P> {
         ClientConnHandler {
             mesh_key: self.mesh_key.clone(),
             server_channel: self.server_channel.clone(),
@@ -211,19 +206,17 @@ where
 ///
 /// Can be cheaply cloned.
 #[derive(Debug, Clone)]
-pub struct PacketForwarderHandler<C, R, W, P>
+pub struct PacketForwarderHandler<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
-    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
 }
 
-impl<C, R, W, P> PacketForwarderHandler<C, R, W, P>
+impl<R, W, P> PacketForwarderHandler<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -246,24 +239,22 @@ where
 /// Created by the [`Server`] by calling [`Server::client_conn_handler`].
 ///
 /// Can be cheaply cloned.
-#[derive(Debug, Clone)]
-pub struct ClientConnHandler<C, R, W, P>
+#[derive(Debug)]
+pub struct ClientConnHandler<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
     mesh_key: Option<[u8; 32]>,
-    server_channel: mpsc::Sender<ServerMessage<C, R, W, P>>,
+    server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
     server_info: ServerInfo,
 }
 
-impl<C, R, W, P> ClientConnHandler<C, R, W, P>
+impl<R, W, P> ClientConnHandler<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
@@ -275,7 +266,7 @@ where
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
-    pub async fn accept(&self, conn: C, mut reader: R, mut writer: W) -> Result<()> {
+    pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
         self.send_server_key(&mut writer)
             .await
             .context("unable to send server key to client")?;
@@ -288,7 +279,6 @@ where
         let client_conn_builder = ClientConnBuilder {
             key: client_key,
             conn_num: new_conn_num(),
-            conn,
             reader,
             writer,
             can_mesh: can_mesh(self.mesh_key, client_info.mesh_key),
@@ -341,19 +331,28 @@ where
             server_mesh_key == client_mesh_key
         }
     }
+
+    pub fn clone(&self) -> Self {
+        Self {
+            mesh_key: self.mesh_key.clone(),
+            server_channel: self.server_channel.clone(),
+            secret_key: self.secret_key.clone(),
+            write_timeout: self.write_timeout.clone(),
+            server_info: self.server_info.clone(),
+        }
+    }
 }
 
-pub(crate) struct ServerActor<C, R, W, P>
+pub(crate) struct ServerActor<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
     key: PublicKey,
-    receiver: mpsc::Receiver<ServerMessage<C, R, W, P>>,
+    receiver: mpsc::Receiver<ServerMessage<R, W, P>>,
     /// All clients connected to this server
-    clients: Clients<C>,
+    clients: Clients,
     /// Representation of the mesh network. Keys that are associated with `None` are strictly local
     /// clients.
     client_mesh: HashMap<PublicKey, Option<P>>,
@@ -361,14 +360,13 @@ where
     watchers: HashSet<PublicKey>,
 }
 
-impl<C, R, W, P> ServerActor<C, R, W, P>
+impl<R, W, P> ServerActor<R, W, P>
 where
-    C: Conn,
     R: AsyncRead + Unpin + Send + Sync + 'static,
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
-    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<C, R, W, P>>) -> Self {
+    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<R, W, P>>) -> Self {
         Self {
             key,
             receiver,
@@ -609,16 +607,6 @@ mod tests {
     use bytes::BytesMut;
     use tokio::io::DuplexStream;
 
-    struct MockConn {}
-    impl Conn for MockConn {
-        fn close(&self) -> Result<()> {
-            Ok(())
-        }
-        fn local_addr(&self) -> std::net::SocketAddr {
-            "127.0.0.1:3333".parse().unwrap()
-        }
-    }
-
     struct MockPacketForwarder {
         packets: mpsc::Sender<(PublicKey, PublicKey, bytes::Bytes)>,
     }
@@ -640,10 +628,10 @@ mod tests {
         key: PublicKey,
         conn_num: usize,
         server_channel: mpsc::Sender<
-            ServerMessage<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+            ServerMessage<DuplexStream, DuplexStream, MockPacketForwarder>,
         >,
     ) -> (
-        ClientConnBuilder<MockConn, DuplexStream, DuplexStream, MockPacketForwarder>,
+        ClientConnBuilder<DuplexStream, DuplexStream, MockPacketForwarder>,
         DuplexStream,
         DuplexStream,
     ) {
@@ -653,7 +641,6 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                conn: MockConn {},
                 reader,
                 writer,
                 can_mesh: true,
@@ -672,7 +659,7 @@ mod tests {
 
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
-        let server_actor: ServerActor<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
+        let server_actor: ServerActor<DuplexStream, DuplexStream, MockPacketForwarder> =
             ServerActor::new(server_key, server_channel_r);
         let done = CancellationToken::new();
         let server_done = done.clone();
@@ -819,17 +806,15 @@ mod tests {
     async fn test_client_conn_handler() -> Result<()> {
         // create client connection handler
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let handler =
-            ClientConnHandler::<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> {
-                mesh_key: Some([1u8; 32]),
-                secret_key: SecretKey::generate(),
-                write_timeout: None,
-                server_info: ServerInfo::no_rate_limit(),
-                server_channel: server_channel_s,
-            };
+        let handler = ClientConnHandler::<DuplexStream, DuplexStream, MockPacketForwarder> {
+            mesh_key: Some([1u8; 32]),
+            secret_key: SecretKey::generate(),
+            write_timeout: None,
+            server_info: ServerInfo::no_rate_limit(),
+            server_channel: server_channel_s,
+        };
 
         // create the parts needed for a client
-        let conn = MockConn {};
         let (mut client_reader, server_writer) = tokio::io::duplex(10);
         let (server_reader, mut client_writer) = tokio::io::duplex(10);
         let client_key = SecretKey::generate();
@@ -869,7 +854,7 @@ mod tests {
         });
 
         // attempt to add the connection to the server
-        handler.accept(conn, server_reader, server_writer).await?;
+        handler.accept(server_reader, server_writer).await?;
         client_task.await??;
 
         // ensure we inform the server to create the client from the connection!
@@ -950,7 +935,7 @@ mod tests {
         // create the server!
         let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
-        let server: Server<MockConn, DuplexStream, DuplexStream, MockPacketForwarder> =
+        let server: Server<DuplexStream, DuplexStream, MockPacketForwarder> =
             Server::new(server_key, mesh_key.clone());
 
         // create client a and connect it to the server
@@ -958,8 +943,7 @@ mod tests {
         let public_key_a = key_a.public_key();
         let (reader_a, writer_a, mut client_a) = TestClient::new(key_a);
         let handler = server.client_conn_handler();
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MockConn {}, reader_a, writer_a).await });
+        let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
         client_a.accept().await?;
         handler_task.await??;
 
@@ -968,8 +952,7 @@ mod tests {
         let public_key_b = key_b.public_key();
         let (reader_b, writer_b, mut client_b) = TestClient::new(key_b);
         let handler = server.client_conn_handler();
-        let handler_task =
-            tokio::spawn(async move { handler.accept(MockConn {}, reader_b, writer_b).await });
+        let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
         client_b.accept().await?;
         handler_task.await??;
 
