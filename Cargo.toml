@@ -30,6 +30,7 @@ derive_more = "0.99.17"
 dirs-next = "2.0.0"
 ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
 flume = "0.10.14"
+hyper = { version = "0.14.25", features = ["server", "client", "http1"] }
 futures = "0.3.25"
 governor = "0.5.1"
 hex = "0.4.3"
@@ -83,6 +84,7 @@ rand = "0.8"
 testdir = "0.7.2"
 regex = { version = "1.7.1", features = ["std"] }
 nix = "0.26.2"
+http-body = "0.4.5"
 
 [features]
 default = ["cli"]
