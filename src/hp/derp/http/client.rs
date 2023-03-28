@@ -1,4 +1,5 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -6,7 +7,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use futures::future::BoxFuture;
+use rand::Rng;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
@@ -16,6 +19,7 @@ use crate::hp::key;
 use crate::hp::derp::{client::Client as DerpClient, DerpRegion, ReceivedMessage};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ClientError {
@@ -62,6 +66,7 @@ struct InnerClient {
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     conn_gen: AtomicUsize,
+    ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
 }
 
 /// Build a Client
@@ -132,6 +137,7 @@ impl ClientBuilder {
                 is_closed: AtomicBool::new(false),
                 address_family_selector: self.address_family_selector,
                 conn_gen: AtomicUsize::new(0),
+                ping_tracker: Mutex::new(HashMap::default()),
             }),
         }
     }
@@ -532,13 +538,22 @@ impl Client {
     }
 
     /// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<(), ClientError> {
         let (client, _) = self.connect().await?;
-        // TODO: NOT DONE, need to keep track of pings send and pongs we are waiting to receive
-        // TODO: generate random data to send
-        if let Err(_) = client.send_ping(*b"pingpong").await {
+        let ping = rand::thread_rng().gen::<[u8; 8]>();
+        let (send, recv) = oneshot::channel();
+        self.register_ping(ping, send).await;
+        if let Err(_) = client.send_ping(ping).await {
             self.close_for_reconnect().await;
+            let _ = self.unregister_ping(ping).await;
             return Err(ClientError::Send);
+        }
+        if tokio::time::timeout(PING_TIMEOUT, recv).await.is_err() {
+            self.unregister_ping(ping).await;
+            // TODO: ClientERror::PingTimeout ??
+            return Err(ClientError::Todo);
         }
         Ok(())
     }
@@ -559,6 +574,21 @@ impl Client {
         Ok(())
     }
 
+    /// Note that we have sent a ping, and store the [`oneshot::Sender`] we
+    /// must notify when the pong returns
+    async fn register_ping(&self, data: [u8; 8], chan: oneshot::Sender<()>) {
+        let mut ping_tracker = self.inner.ping_tracker.lock().await;
+        ping_tracker.insert(data, chan);
+    }
+
+    /// Remove the associated [`oneshot::Sender`] for `data` & return it.
+    ///
+    /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
+    async fn unregister_ping(&self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
+        let mut ping_tracker = self.inner.ping_tracker.lock().await;
+        ping_tracker.remove(&data)
+    }
+
     /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
     pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
@@ -566,7 +596,14 @@ impl Client {
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
-                    // TODO: NOT DONE if pong is received handle it
+                    if let ReceivedMessage::Pong(ping) = msg {
+                        if let Some(chan) = self.unregister_ping(ping).await {
+                            if let Err(_) = chan.send(()) {
+                                tracing::warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                            }
+                            continue;
+                        }
+                    }
                     return Ok((msg, conn_gen));
                 }
                 Err(_) => {

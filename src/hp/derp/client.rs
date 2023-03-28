@@ -23,6 +23,8 @@ use super::{
 
 use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
+const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
+
 impl<R: AsyncRead + Unpin> PartialEq for Client<R> {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
@@ -176,9 +178,22 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// Once [`recv`] returns an error, the [`Client`] is dead forever.
     pub async fn recv(&self) -> Result<ReceivedMessage> {
         if self.is_closed().await {
-            bail!(ClientError::Closed);
+            bail!("client is closed");
         }
+        match tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.recv_0()).await {
+            Err(e) => {
+                self.close().await;
+                Err(e.into())
+            }
+            Ok(Err(e)) => {
+                self.close().await;
+                Err(e)
+            }
+            Ok(Ok(msg)) => Ok(msg),
+        }
+    }
 
+    async fn recv_0(&self) -> Result<ReceivedMessage> {
         // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
@@ -381,18 +396,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
     }
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ClientError {
-    #[error("todo")]
-    Todo,
-    #[error("closed")]
-    Closed,
-    // Read error?
-    // BadKey error?
-}
-
-/// builder returns a client & and a client reader, runs a client writer loop
-
+/// The Builder returns a [`Client`] starts a [`ClientWriter] run task.
 pub struct ClientBuilder<W, R>
 where
     W: AsyncWrite + Send + Unpin + 'static,
