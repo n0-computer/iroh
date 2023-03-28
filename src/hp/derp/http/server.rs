@@ -120,6 +120,7 @@ mod tests {
 
     /// Handle client-side I/O after HTTP upgraded.
     async fn derp_client(mut upgraded: Upgraded) -> Result<()> {
+        println!("in derp_client handshake");
         let secret_key = SecretKey::generate();
         let got_server_key = crate::hp::derp::client::recv_server_key(&mut upgraded).await?;
         let client_info = crate::hp::derp::types::ClientInfo {
@@ -142,13 +143,22 @@ mod tests {
 
     /// Our client HTTP handler to initiate HTTP upgrades.
     async fn client_upgrade_request(addr: SocketAddr) -> Result<()> {
+        let tcp_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        let (mut request_sender, connection) =
+            hyper::client::conn::handshake(tcp_stream).await.unwrap();
+
+        let task = tokio::spawn(async move {
+            let _ = connection.without_shutdown().await;
+        });
+
         let req = Request::builder()
-            .uri(format!("http://{}/", addr))
-            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
             .body(Body::empty())
             .unwrap();
 
-        let res = Client::new().request(req).await?;
+        let res = request_sender.send_request(req).await.unwrap();
+
         if res.status() != StatusCode::SWITCHING_PROTOCOLS {
             panic!("Our server didn't upgrade: {}", res.status());
         }

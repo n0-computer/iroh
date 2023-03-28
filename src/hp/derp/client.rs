@@ -432,13 +432,13 @@ where
         }
     }
 
-    pub fn mesh_key(mut self, mesh_key: [u8; 32]) -> Self {
-        self.mesh_key = Some(mesh_key);
+    pub fn mesh_key(mut self, mesh_key: Option<[u8; 32]>) -> Self {
+        self.mesh_key = mesh_key;
         self
     }
 
-    pub fn is_prober(mut self) -> Self {
-        self.is_prober = true;
+    pub fn is_prober(mut self, is_prober: bool) -> Self {
+        self.is_prober = is_prober;
         self
     }
 
@@ -449,8 +449,8 @@ where
         self
     }
 
-    pub fn can_ack_pings(mut self) -> Self {
-        self.can_ack_pings = true;
+    pub fn can_ack_pings(mut self, can_ack_pings: bool) -> Self {
+        self.can_ack_pings = can_ack_pings;
         self
     }
 
