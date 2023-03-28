@@ -609,8 +609,9 @@ mod tests {
 
     use crate::hp::{
         derp::{
-            client_conn::ClientConnBuilder, types::ClientInfo, FRAME_PEER_GONE, FRAME_PEER_PRESENT,
-            FRAME_RECV_PACKET, MAX_FRAME_SIZE,
+            client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
+            ReceivedMessage, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET,
+            MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
     };
@@ -880,6 +881,26 @@ mod tests {
         Ok(())
     }
 
+    fn make_test_client(
+        secret_key: SecretKey,
+    ) -> (
+        tokio::io::DuplexStream,
+        tokio::io::DuplexStream,
+        ClientBuilder<tokio::io::DuplexStream, tokio::io::DuplexStream>,
+    ) {
+        let (client_reader, server_writer) = tokio::io::duplex(10);
+        let (server_reader, client_writer) = tokio::io::duplex(10);
+        (
+            server_reader,
+            server_writer,
+            ClientBuilder::new(
+                secret_key,
+                "127.0.0.1:0".parse().unwrap(),
+                client_reader,
+                client_writer,
+            ),
+        )
+    }
     struct TestClient {
         reader: tokio::io::DuplexStream,
         writer: tokio::io::DuplexStream,
@@ -954,19 +975,19 @@ mod tests {
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
         let public_key_a = key_a.public_key();
-        let (reader_a, writer_a, mut client_a) = TestClient::new(key_a);
+        let (reader_a, writer_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
-        client_a.accept().await?;
+        let client_a = client_a_builder.build().await?;
         handler_task.await??;
 
         // create client b and connect it to the server
         let key_b = SecretKey::generate();
         let public_key_b = key_b.public_key();
-        let (reader_b, writer_b, mut client_b) = TestClient::new(key_b);
+        let (reader_b, writer_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
-        client_b.accept().await?;
+        let client_b = client_b_builder.build().await?;
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server
@@ -977,23 +998,33 @@ mod tests {
 
         // send message from a to b!
         let msg = b"hello client b!!";
-        client_a.send_packet(public_key_b.clone(), msg).await?;
-        let mut buf = BytesMut::new();
-        let (got_key, got_msg) = client_b.recv_packet(&mut buf).await?;
-        assert_eq!(public_key_a, got_key);
-        assert_eq!(&msg[..], got_msg);
+        client_a.send(public_key_b.clone(), msg.to_vec()).await?;
+        match client_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
 
         // send message from b to a!
         let msg = b"nice to meet you client a!!";
-        client_b.send_packet(public_key_a.clone(), msg).await?;
-        let mut buf = BytesMut::new();
-        let (got_key, got_msg) = client_a.recv_packet(&mut buf).await?;
-        assert_eq!(public_key_b, got_key);
-        assert_eq!(&msg[..], got_msg);
+        client_b.send(public_key_a.clone(), msg.to_vec()).await?;
+        match client_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
 
         // send message from a to c
         let msg = b"can you pass this to client d?";
-        client_a.send_packet(key_c.clone(), msg).await?;
+        client_a.send(key_c.clone(), msg.to_vec()).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
@@ -1003,7 +1034,7 @@ mod tests {
         handler.remove_packet_forwarder(key_c.clone())?;
         // try to send c a message
         let msg = b"can you pass this to client d?";
-        client_a.send_packet(key_c, msg).await?;
+        client_a.send(key_c, msg.to_vec()).await?;
         // packet forwarder has been removed
         assert!(fwd_recv.recv().await.is_none());
 
@@ -1011,10 +1042,8 @@ mod tests {
         server.close().await;
 
         // client connections have been shutdown
-        assert!(client_a
-            .send_packet(public_key_b, b"try to send")
-            .await
-            .is_err());
+        client_a.send(public_key_b, b"try to send".to_vec()).await?;
+        assert!(client_b.recv().await.is_err());
         Ok(())
     }
 }
