@@ -379,9 +379,20 @@ impl Provider {
         Builder::with_db(db)
     }
 
-    /// Returns the address on which the server is listening for connections.
-    pub fn listen_addr(&self) -> SocketAddr {
+    /// The address on which the provider socket is bound.
+    ///
+    /// Note that this could be an unspecified address, if you need an address on which you
+    /// can contact the provider consider using [`Provider::listening_addresses`].  However
+    /// the port will always be the concrete port.
+    pub fn local_address(&self) -> SocketAddr {
         self.inner.listen_addr
+    }
+
+    /// Returns all addresses on which the provider is reachable.
+    ///
+    /// This will never be empty.
+    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(self.inner.listen_addr)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -410,20 +421,15 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = find_local_addresses(self.inner.listen_addr);
-        Ticket {
+        let addrs = self.listen_addresses()?;
+        Ok(Ticket {
             hash,
             peer: self.peer_id(),
             addrs,
             token: self.inner.auth_token,
-        }
-    }
-
-    /// Returns all available addresses on the local machine.
-    pub fn available_addresses(&self) -> Vec<SocketAddr> {
-        find_local_addresses(self.inner.listen_addr)
+        })
     }
 
     /// Aborts the provider.
@@ -551,7 +557,7 @@ impl RpcHandler {
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.listen_addr),
+            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -1383,7 +1389,7 @@ mod tests {
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash);
+        let ticket = provider.ticket(hash).unwrap();
         println!("addrs: {:?}", ticket.addrs);
         assert!(!ticket.addrs.is_empty());
     }
