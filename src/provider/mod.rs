@@ -7,13 +7,11 @@
 //! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
-use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -28,7 +26,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
@@ -50,11 +47,15 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
+use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
+
 mod database;
+mod ticket;
+
 pub use database::Database;
 #[cfg(cli)]
 pub use database::Snapshot;
+pub use ticket::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -1146,89 +1147,6 @@ async fn write_response<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// A token containing everything to get a file from the provider.
-///
-/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base64.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Ticket {
-    /// The hash to retrieve.
-    hash: Hash,
-    /// The peer ID identifying the provider.
-    peer: PeerId,
-    /// The socket addresses the provider is listening on.
-    ///
-    /// This will never be empty.
-    addrs: Vec<SocketAddr>,
-    /// The authentication token with permission to retrieve the hash.
-    token: AuthToken,
-}
-
-impl Ticket {
-    fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>, token: AuthToken) -> Result<Self> {
-        ensure!(!addrs.is_empty(), "addrs list can not be empty");
-        Ok(Self {
-            hash,
-            peer,
-            addrs,
-            token,
-        })
-    }
-
-    /// Deserializes from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf: Ticket = postcard::from_bytes(bytes)?;
-        ensure!(!slf.addrs.is_empty(), "Invalid address list in ticket");
-        Ok(slf)
-    }
-
-    /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-
-    /// The hash of the item this ticket can retrieve.
-    pub fn hash(&self) -> Hash {
-        self.hash
-    }
-
-    /// The [`PeerId`] of the provider for this ticket.
-    pub fn peer(&self) -> PeerId {
-        self.peer
-    }
-
-    /// The addresses on which the provider can be reached.
-    ///
-    /// This is guaranteed to be non-empty.
-    pub fn addrs(&self) -> &[SocketAddr] {
-        &self.addrs
-    }
-
-    /// The authentication token for this ticket.
-    pub fn token(&self) -> AuthToken {
-        self.token
-    }
-}
-
-/// Serializes to base64.
-impl Display for Ticket {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        write!(f, "{}", util::encode(encoded))
-    }
-}
-
-/// Deserializes from base64.
-impl FromStr for Ticket {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
-    }
-}
-
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
 pub fn make_server_config(
     keypair: &Keypair,
@@ -1329,27 +1247,6 @@ mod tests {
             let db2 = db2.to_inner();
             prop_assert_eq!(db, db2);
         }
-    }
-
-    #[test]
-    fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = abao::encode::encode(b"hi there");
-        let hash = Hash::from(hash);
-        let peer = PeerId::from(Keypair::generate().public());
-        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = AuthToken::generate();
-        let ticket = Ticket {
-            hash,
-            peer,
-            addrs: vec![addr],
-            token,
-        };
-        let base64 = ticket.to_string();
-        println!("Ticket: {base64}");
-        println!("{} bytes", base64.len());
-
-        let ticket2: Ticket = base64.parse().unwrap();
-        assert_eq!(ticket2, ticket);
     }
 
     #[tokio::test]
