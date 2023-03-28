@@ -87,7 +87,7 @@ enum Commands {
     Provide {
         path: Option<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, defaults to 127.0.01:4433.
+        /// Optional listening address, defaults to 127.0.0.1:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
         /// Auth token, defaults to random generated.
@@ -170,6 +170,13 @@ enum Commands {
         out: Option<PathBuf>,
         /// Ticket containing everything to retrieve a hash from provider.
         ticket: Ticket,
+    },
+    /// List Provide Addresses
+    #[clap(about = "List addresses")]
+    Addresses {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
     },
 }
 
@@ -657,6 +664,12 @@ async fn main_impl() -> Result<()> {
                 .await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
+            Ok(())
+        }
+        Commands::Addresses { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(AddrsRequest).await?;
+            println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
     }

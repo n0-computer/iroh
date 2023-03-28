@@ -85,7 +85,7 @@ async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
 }
 
 /// Stats about the transfer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stats {
     /// The number of bytes transferred
     pub data_len: u64,
