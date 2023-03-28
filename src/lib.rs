@@ -507,7 +507,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(10),
             get::run_ticket(
-                ticket,
+                &ticket,
                 true,
                 16,
                 || {

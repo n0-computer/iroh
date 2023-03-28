@@ -134,7 +134,7 @@ impl AsyncRead for DataStream {
 
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
-    ticket: Ticket,
+    ticket: &Ticket,
     keylog: bool,
     max_concurrent: u8,
     on_connected: A,
@@ -150,7 +150,7 @@ where
     FutC: Future<Output = Result<DataStream>>,
 {
     let start = Instant::now();
-    let connection = dial_ticket(&ticket, keylog, max_concurrent.into()).await?;
+    let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
     run_connection(
         connection,
         ticket.hash,
