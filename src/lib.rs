@@ -3,13 +3,13 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+pub mod net;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
-pub mod net;
-
+mod subnet;
 mod tls;
 mod util;
 
@@ -19,7 +19,7 @@ pub use util::Hash;
 #[cfg(test)]
 mod tests {
     use std::{
-        net::SocketAddr,
+        net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
         time::Duration,
@@ -489,5 +489,49 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_run_ticket() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = Provider::builder(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .spawn()
+            .unwrap();
+        let _drop_guard = provider.cancel_token().drop_guard();
+        let ticket = provider.ticket(hash);
+        let mut on_connected = false;
+        let mut on_collection = false;
+        let mut on_blob = false;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run_ticket(
+                &ticket,
+                true,
+                16,
+                || {
+                    on_connected = true;
+                    async { Ok(()) }
+                },
+                |_| {
+                    on_collection = true;
+                    async { Ok(()) }
+                },
+                |_hash, mut stream, _name| {
+                    on_blob = true;
+                    async move {
+                        io::copy(&mut stream, &mut io::sink()).await?;
+                        Ok(stream)
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get ticket failed");
+        assert!(on_connected);
+        assert!(on_collection);
+        assert!(on_blob);
     }
 }
