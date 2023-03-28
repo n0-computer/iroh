@@ -16,6 +16,13 @@ mod util;
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::Hash;
 
+use bao_tree::BlockSize;
+
+pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
+    Some(bs) => bs,
+    None => panic!(),
+};
+
 #[cfg(test)]
 mod tests {
     use std::{

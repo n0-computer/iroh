@@ -3,7 +3,6 @@ use std::fmt::Display;
 use std::io;
 use std::str::FromStr;
 
-use abao::decode::AsyncSliceDecoder;
 use anyhow::{bail, ensure, Context, Result};
 use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
@@ -13,7 +12,10 @@ use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::util::{self, Hash};
+use crate::{
+    util::{self, Hash},
+    IROH_BLOCK_SIZE,
+};
 
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -115,10 +117,10 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     reader: R,
     hash: Hash,
 ) -> Result<Vec<u8>> {
-    let mut decoder = bao_tree::bao_tree::r#async::AsyncResponseDecoder::new(
+    let mut decoder = bao_tree::r#async::AsyncResponseDecoder::new(
         hash.into(),
         RangeSet2::from(ChunkNum(0)..),
-        4,
+        IROH_BLOCK_SIZE,
         reader,
     );
     // we don't know the size yet, so we just allocate a reasonable amount

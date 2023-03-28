@@ -1,6 +1,5 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
-use bao_tree::{BaoTree, ChunkNum};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -8,7 +7,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
-    io::{self, BufReader, Read, Seek, Write},
+    io::{self, Read, Seek, Write},
     path::{Component, Path},
     result,
     str::FromStr,
@@ -16,7 +15,7 @@ use std::{
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::progress;
+use crate::IROH_BLOCK_SIZE;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -188,7 +187,8 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard =
-        bao_tree::bao_tree::outboard::PreOrderMemOutboard::new(hash, 4, outboard.to_vec()).flip();
+        bao_tree::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.to_vec())
+            .flip();
     // little util that discards data but prints progress every 1MB
     struct DevNull<F>(u64, F);
 
@@ -209,7 +209,7 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
     }
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
-    bao_tree::bao_tree::iter::encode_validated(data_reader, outboard, DevNull(0, progress))?;
+    bao_tree::iter::encode_validated(data_reader, outboard, DevNull(0, progress))?;
     Ok(())
 }
 

@@ -9,7 +9,7 @@
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::fmt::{self, Display};
 use std::future::Future;
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Cursor};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -19,8 +19,8 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::bao_tree::iter::{encode_ranges_validated, encode_validated};
-use bao_tree::bao_tree::outboard::PreOrderMemOutboard;
+use bao_tree::iter::encode_validated;
+use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -51,6 +51,7 @@ use crate::rpc_protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressUpdate};
+use crate::IROH_BLOCK_SIZE;
 mod database;
 pub use database::Database;
 #[cfg(cli)]
@@ -722,12 +723,12 @@ async fn transfer_collection(
     request_id: u64,
 ) -> Result<SentStatus> {
     // We only respond to requests for collections, not individual blobs
-    let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
+    let encoded_size: usize = bao_tree::encoded_size(data.len() as u64, IROH_BLOCK_SIZE)
         .try_into()
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
-    let outboard = PreOrderMemOutboard::new(hash.into(), 4, outboard.to_vec());
-    bao_tree::bao_tree::iter::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
+    let outboard = PreOrderMemOutboard::new(hash.into(), IROH_BLOCK_SIZE, outboard.to_vec());
+    bao_tree::iter::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
 
     // let mut extractor = SliceExtractor::new_outboard(
     //     std::io::Cursor::new(&data[..]),
@@ -900,16 +901,9 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             writer = tokio::task::spawn_blocking(move || {
                 let file_reader = std::fs::File::open(&path)?;
                 let mut wrapper = SyncIoBridge::new(&mut writer);
-                let outboard = PreOrderMemOutboard::new(name.into(), 4, outboard.to_vec());
+                let outboard =
+                    PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
                 encode_validated(file_reader, outboard, &mut wrapper)?;
-                // let outboard_reader = std::io::Cursor::new(outboard);
-                // let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
-                //     file_reader,
-                //     outboard_reader,
-                //     0,
-                //     size,
-                // );
-                // let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
                 std::io::Result::Ok(writer)
             })
             .await??;
@@ -1004,13 +998,13 @@ fn compute_outboard(
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(abao::encode::outboard_size(size))
+    let outboard_size = usize::try_from(bao_tree::outboard_size(size, IROH_BLOCK_SIZE))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // copy the file into the encoder. Data will be skipped by the encoder in outboard mode.
-    let outboard_cursor = std::io::Cursor::new(&mut outboard);
-    let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
+    // let outboard_cursor = std::io::Cursor::new(&mut outboard);
+    // let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader::new(file, |p| {
@@ -1018,19 +1012,20 @@ fn compute_outboard(
             progress(offset);
         }
     });
-
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
-    // the length we have actually written, should be the same as the length of the file.
-    let size2 = std::io::copy(&mut reader, &mut encoder)?;
-    // this can fail if the file was appended to during encoding.
-    ensure!(size == size2, "file changed during encoding");
-    // this flips the outboard encoding from post-order to pre-order
-    let hash = encoder.finalize()?;
+
+    let hash = bao_tree::BaoTree::outboard_post_order_io(
+        &mut reader,
+        size,
+        IROH_BLOCK_SIZE,
+        &mut outboard,
+    )?;
+    let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
     tracing::debug!("done. hash for {} is {hash}", path.display());
 
-    Ok((hash.into(), outboard))
+    Ok((hash.into(), ob.into_inner()))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
@@ -1131,7 +1126,7 @@ async fn create_collection_inner(
     let c = Collection::new(blobs, total_blobs_size)?;
 
     let data = postcard::to_stdvec(&c).context("blob encoding")?;
-    let (outboard, hash) = abao::encode::outboard(&data);
+    let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
     let hash = Hash::from(hash);
     db.insert(
         hash,
@@ -1261,7 +1256,7 @@ mod tests {
             for blob in blobs {
                 let size = blob.len() as u64;
                 total_blobs_size += size;
-                let (outboard, hash) = abao::encode::outboard(&blob);
+                let (outboard, hash) = bao_tree::outboard(&blob, IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 let path = PathBuf::from_str(&hash.to_string()).unwrap();
@@ -1282,7 +1277,7 @@ mod tests {
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = abao::encode::outboard(&data);
+                let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 map.insert(hash, BlobOrCollection::Collection { outboard, data });
