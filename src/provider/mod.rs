@@ -382,8 +382,8 @@ impl Provider {
     /// The address on which the provider socket is bound.
     ///
     /// Note that this could be an unspecified address, if you need an address on which you
-    /// can contact the provider consider using [`Provider::listening_addresses`].  However
-    /// the port will always be the concrete port.
+    /// can contact the provider consider using [`Provider::listen_addresses`].  However the
+    /// port will always be the concrete port.
     pub fn local_address(&self) -> SocketAddr {
         self.inner.listen_addr
     }
