@@ -1,13 +1,16 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use futures::future::BoxFuture;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
-use crate::hp::derp::{DerpNode, PacketForwarder};
+use crate::hp::derp::{DerpNode, PacketForwarder, UseIpv4, UseIpv6};
 use crate::hp::key;
 
 use crate::hp::derp::{client::Client as DerpClient, DerpRegion, ReceivedMessage};
@@ -450,159 +453,76 @@ impl Client {
     //// TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
     //// overall but have dialRegion start overlapping races?
     async fn dial_node(&self, node: &DerpNode) -> anyhow::Result<TcpStream> {
-        todo!();
+        // TODO: Add support for HTTP proxies.
+
+        let mut dials = JoinSet::new();
+
+        if node.ipv4.is_enabled() {
+            let this = self.clone();
+            let node = node.clone();
+            dials.spawn(async move { this.start_dial(&node, UseIp::Ipv4(node.ipv4)).await });
+        }
+        if node.ipv6.is_enabled() {
+            let this = self.clone();
+            let node = node.clone();
+            dials.spawn(async move { this.start_dial(&node, UseIp::Ipv6(node.ipv6)).await });
+        }
+
+        // Return the first successfull dial, otherwise the first error we saw.
+        let mut first_err = None;
+        while let Some(res) = dials.join_next().await {
+            match res? {
+                Ok(conn) => {
+                    // Cancel rest
+                    dials.abort_all();
+                    return Ok(conn);
+                }
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                    if dials.is_empty() {
+                        return Err(first_err.unwrap());
+                    }
+                }
+            }
+        }
+        bail!("both IPv4 and IPv6 are explicitly disabled for node");
     }
-    //func (c *Client) dialNode(ctx context.Context, n *tailcfg.DERPNode) (net.Conn, error) {
-    //	// First see if we need to use an HTTP proxy.
-    //	proxyReq := &http.Request{
-    //		Method: "GET", // doesn't really matter
-    //		URL: &url.URL{
-    //			Scheme: "https",
-    //			Host:   c.tlsServerName(n),
-    //			Path:   "/", // unused
-    //		},
-    //	}
-    //	if proxyURL, err := tshttpproxy.ProxyFromEnvironment(proxyReq); err == nil && proxyURL != nil {
-    //		return c.dialNodeUsingProxy(ctx, n, proxyURL)
-    //	}
 
-    //	type res struct {
-    //		c   net.Conn
-    //		err error
-    //	}
-    //	resc := make(chan res) // must be unbuffered
-    //	ctx, cancel := context.WithTimeout(ctx, dialNodeTimeout)
-    //	defer cancel()
+    /// Reports whether IPv4 dials should be slightly
+    /// delayed to give IPv6 a better chance of winning dial races.
+    /// Implementations should only return true if IPv6 is expected
+    /// to succeed. (otherwise delaying IPv4 will delay the connection
+    /// overall)
+    async fn prefer_ipv6(&self) -> bool {
+        match self.inner.address_family_selector {
+            Some(ref selector) => selector().await,
+            None => false,
+        }
+    }
 
-    //	ctx = sockstats.WithSockStats(ctx, sockstats.LabelDERPHTTPClient)
+    async fn start_dial(&self, node: &DerpNode, dst_primary: UseIp) -> anyhow::Result<TcpStream> {
+        if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            // Start v4 dial
+        }
+        let host = match dst_primary {
+            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.to_string(),
+            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.to_string(),
+            _ => node.host_name.clone(),
+        };
+        let port = if node.derp_port != 0 {
+            node.derp_port
+        } else {
+            443
+        };
+        let dst = format!("{host}:{port}");
+        let tcp_stream = TcpStream::connect(dst).await?;
+        // TODO: ipv6 vs ipv4 specific connection
 
-    //	nwait := 0
-    //	startDial := func(dstPrimary, proto string) {
-    //		nwait++
-    //		go func() {
-    //			if proto == "tcp4" && c.preferIPv6() {
-    //				t := time.NewTimer(200 * time.Millisecond)
-    //				select {
-    //				case <-ctx.Done():
-    //					// Either user canceled original context,
-    //					// it timed out, or the v6 dial succeeded.
-    //					t.Stop()
-    //					return
-    //				case <-t.C:
-    //					// Start v4 dial
-    //				}
-    //			}
-    //			dst := dstPrimary
-    //			if dst == "" {
-    //				dst = n.HostName
-    //			}
-    //			port := "443"
-    //			if n.DERPPort != 0 {
-    //				port = fmt.Sprint(n.DERPPort)
-    //			}
-    //			c, err := c.dialContext(ctx, proto, net.JoinHostPort(dst, port))
-    //			select {
-    //			case resc <- res{c, err}:
-    //			case <-ctx.Done():
-    //				if c != nil {
-    //					c.Close()
-    //				}
-    //			}
-    //		}()
-    //	}
-    //	if shouldDialProto(n.IPv4, netip.Addr.Is4) {
-    //		startDial(n.IPv4, "tcp4")
-    //	}
-    //	if shouldDialProto(n.IPv6, netip.Addr.Is6) {
-    //		startDial(n.IPv6, "tcp6")
-    //	}
-    //	if nwait == 0 {
-    //		return nil, errors.New("both IPv4 and IPv6 are explicitly disabled for node")
-    //	}
-
-    //	var firstErr error
-    //	for {
-    //		select {
-    //		case res := <-resc:
-    //			nwait--
-    //			if res.err == nil {
-    //				return res.c, nil
-    //			}
-    //			if firstErr == nil {
-    //				firstErr = res.err
-    //			}
-    //			if nwait == 0 {
-    //				return nil, firstErr
-    //			}
-    //		case <-ctx.Done():
-    //			return nil, ctx.Err()
-    //		}
-    //	}
-    //}
-    //
-    // // dialNodeUsingProxy connects to n using a CONNECT to the HTTP(s) proxy in proxyURL.
-    // func (c *Client) dialNodeUsingProxy(ctx context.Context, n *tailcfg.DERPNode, proxyURL *url.URL) (proxyConn net.Conn, err error) {
-    // 	pu := proxyURL
-    // 	if pu.Scheme == "https" {
-    // 		var d tls.Dialer
-    // 		proxyConn, err = d.DialContext(ctx, "tcp", net.JoinHostPort(pu.Hostname(), firstStr(pu.Port(), "443")))
-    // 	} else {
-    // 		var d net.Dialer
-    // 		proxyConn, err = d.DialContext(ctx, "tcp", net.JoinHostPort(pu.Hostname(), firstStr(pu.Port(), "80")))
-    // 	}
-    // 	defer func() {
-    // 		if err != nil && proxyConn != nil {
-    // 			// In a goroutine in case it's a *tls.Conn (that can block on Close)
-    // 			// TODO(bradfitz): track the underlying tcp.Conn and just close that instead.
-    // 			go proxyConn.Close()
-    // 		}
-    // 	}()
-    // 	if err != nil {
-    // 		return nil, err
-    // 	}
-
-    // 	done := make(chan struct{})
-    // 	defer close(done)
-    // 	go func() {
-    // 		select {
-    // 		case <-done:
-    // 			return
-    // 		case <-ctx.Done():
-    // 			proxyConn.Close()
-    // 		}
-    // 	}()
-
-    // 	target := net.JoinHostPort(n.HostName, "443")
-
-    // 	var authHeader string
-    // 	if v, err := tshttpproxy.GetAuthHeader(pu); err != nil {
-    // 		c.logf("derphttp: error getting proxy auth header for %v: %v", proxyURL, err)
-    // 	} else if v != "" {
-    // 		authHeader = fmt.Sprintf("Proxy-Authorization: %s\r\n", v)
-    // 	}
-
-    // 	if _, err := fmt.Fprintf(proxyConn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, pu.Hostname(), authHeader); err != nil {
-    // 		if ctx.Err() != nil {
-    // 			return nil, ctx.Err()
-    // 		}
-    // 		return nil, err
-    // 	}
-
-    // 	br := bufio.NewReader(proxyConn)
-    // 	res, err := http.ReadResponse(br, nil)
-    // 	if err != nil {
-    // 		if ctx.Err() != nil {
-    // 			return nil, ctx.Err()
-    // 		}
-    // 		c.logf("derphttp: CONNECT dial to %s: %v", target, err)
-    // 		return nil, err
-    // 	}
-    // 	c.logf("derphttp: CONNECT dial to %s: %v", target, res.Status)
-    // 	if res.StatusCode != 200 {
-    // 		return nil, fmt.Errorf("invalid response status from HTTP proxy %s on CONNECT to %s: %v", pu, target, res.Status)
-    // 	}
-    // 	return proxyConn, nil
-    // }
+        Ok(tcp_stream)
+    }
 
     /// Send a ping to the server. Return once we get an expected pong.
     pub async fn ping(&self) -> Result<(), ClientError> {
@@ -739,4 +659,11 @@ impl PacketForwarder for Client {
             tracing::warn!("attempted three times to forward packet from {srckey:?} to {dstkey:?}, failed. Dropping packet.");
         });
     }
+}
+
+// TODO: move to net or some reusable place
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum UseIp {
+    Ipv4(UseIpv4),
+    Ipv6(UseIpv6),
 }

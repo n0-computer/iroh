@@ -112,7 +112,7 @@ mod tests {
     use hyper::header::UPGRADE;
     use hyper::server::conn::Http;
     use hyper::upgrade::Upgraded;
-    use hyper::{Body, Client, Request, Server, StatusCode};
+    use hyper::{Body, Client, Request, StatusCode};
     use tokio::sync::oneshot;
 
     use crate::hp::derp::server::Server as DerpServer;
