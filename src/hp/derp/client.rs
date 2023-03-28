@@ -1,11 +1,13 @@
 //! based on tailscale/derp/derp_client.go
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
@@ -15,20 +17,48 @@ use super::{
     write_frame, FrameType, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_SERVER_KEY,
-    FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_INFO_LEN, MAX_PACKET_SIZE, NONCE_LEN,
-    NOT_PREFERRED, PREFERRED, PROTOCOL_VERSION,
+    FRAME_WATCH_CONNS, MAGIC, MAX_FRAME_SIZE, MAX_PACKET_SIZE, NOT_PREFERRED, PREFERRED,
+    PROTOCOL_VERSION,
 };
 
 use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
+impl<R: AsyncRead + Unpin> PartialEq for Client<R> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl<R: AsyncRead + Unpin> Eq for Client<R> {}
+
 /// A DERP Client.
-pub struct Client {
+/// Cheaply clonable.
+/// Call `close` to shutdown the write loop and read functionality.
+#[derive(Debug)]
+pub struct Client<R>
+where
+    R: AsyncRead + Unpin,
+{
+    inner: Arc<InnerClient<R>>,
+}
+
+impl<R: AsyncRead + Unpin> Clone for Client<R> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct InnerClient<R>
+where
+    R: AsyncRead + Unpin,
+{
     /// Server key of the DERP server, not a machine or node key
     server_key: PublicKey,
     /// The public/private keypair
     secret_key: SecretKey,
-    reader_task: JoinHandle<Result<()>>,
-    /// The
     // our local addrs
     local_addr: SocketAddr,
     /// TODO: This is a string in the go impl, need to make these back into Strings
@@ -40,25 +70,27 @@ pub struct Client {
     /// if there is ever an error writing to the server.
     writer_channel: mpsc::Sender<ClientWriterMessage>,
     /// JoinHandle for the [`ClientWriter`] task
-    writer_task: JoinHandle<Result<()>>,
+    writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
+    /// The reader connected to the server
+    reader: Mutex<R>,
 }
 
 /// A channel on which we recieve messages from the server
 type ReceivedMessages = mpsc::Receiver<ReceivedMessage>;
 
-impl Client {
+// TODO: I believe that any of these that error should actually trigger a shut down of the client
+impl<R: AsyncRead + Unpin> Client<R> {
     /// Returns a reference to the server's public key.
     pub fn server_public_key(&self) -> PublicKey {
-        self.server_key.clone()
+        self.inner.server_key.clone()
     }
 
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    // TODO: the rate limiter is only on this method, is it because it's the only method that
-    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-    pub async fn send(&mut self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        self.writer_channel
+    pub async fn send(&self, dstkey: PublicKey, packet: Vec<u8>) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::Packet((dstkey, packet)))
             .await?;
         Ok(())
@@ -69,26 +101,29 @@ impl Client {
     // TODO: this is the only method with a timeout, why? Why does it have a timeout and no rate
     // limiter?
     pub async fn forward_packet(
-        &mut self,
+        &self,
         srckey: PublicKey,
         dstkey: PublicKey,
         packet: Bytes,
     ) -> Result<()> {
-        self.writer_channel
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::FwdPacket((srckey, dstkey, packet)))
             .await?;
         Ok(())
     }
 
-    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        self.writer_channel
+    pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::Ping(data))
             .await?;
         Ok(())
     }
 
-    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        self.writer_channel
+    pub async fn send_pong(&self, data: [u8; 8]) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::Pong(data))
             .await?;
         Ok(())
@@ -97,8 +132,9 @@ impl Client {
     /// Sends a packet that tells the server whether this
     /// client is the user's preferred server. This is only
     /// used in the server for stats.
-    pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        self.writer_channel
+    pub async fn note_preferred(&self, preferred: bool) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::NotePreferred(preferred))
             .await?;
         Ok(())
@@ -106,8 +142,9 @@ impl Client {
 
     /// Sends a request to subscribe to the peer's connection list.
     /// It's a fatal error if the client wasn't created using [`MeshKey`].
-    pub async fn watch_connection_changes(&mut self) -> Result<()> {
-        self.writer_channel
+    pub async fn watch_connection_changes(&self) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::WatchConnectionChanges)
             .await?;
         Ok(())
@@ -115,103 +152,20 @@ impl Client {
 
     /// Asks the server to close the target's TCP connection.
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
-    pub async fn close_peer(&mut self, target: PublicKey) -> Result<()> {
-        self.writer_channel
+    pub async fn close_peer(&self, target: PublicKey) -> Result<()> {
+        self.inner
+            .writer_channel
             .send(ClientWriterMessage::ClosePeer(target))
             .await?;
         Ok(())
     }
 
-    async fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.local_addr)
+    pub async fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.inner.local_addr)
     }
-}
 
-/// The kinds of messages we can send to the Server
-#[derive(Debug)]
-enum ClientWriterMessage {
-    /// Send a packet (addressed to the [`PublicKey`]) to the server
-    Packet((PublicKey, Bytes)),
-    /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
-    /// Should only be used for mesh clients.
-    FwdPacket((PublicKey, PublicKey, Bytes)),
-    /// Send a pong to the server
-    Pong([u8; 8]),
-    /// Send a ping to the server
-    Ping([u8; 8]),
-    /// Tell the server whether or not this client is the user's preferred client
-    NotePreferred(bool),
-    /// Subscribe to the server's connection list.
-    /// Should only be used for mesh clients.
-    WatchConnectionChanges,
-    /// Asks the server to close the target's connection.
-    /// Should only be used for mesh clients.
-    ClosePeer(PublicKey),
-    /// Shutdown the writer
-    Shutdown,
-}
-
-/// Call [`ClientWriter::run`] to listen for messages to send to the client.
-/// Should be used by the [`Client`]
-///
-/// Shutsdown when you send a `ClientWriterMessage::Shutdown`, or if there is an error writing to
-/// the server.
-struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
-    recv_msgs: mpsc::Receiver<ClientWriterMessage>,
-    writer: W,
-    rate_limiter: Option<RateLimiter>,
-}
-
-impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
-    async fn run(mut self) -> Result<()> {
-        loop {
-            match self.recv_msgs.recv().await {
-                None => {
-                    bail!("channel unexpectedly closed");
-                }
-                Some(ClientWriterMessage::Packet((key, bytes))) => {
-                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
-                }
-                Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
-                    tokio::time::timeout(
-                        Duration::from_secs(5),
-                        forward_packet(&mut self.writer, srckey, dstkey, &bytes),
-                    )
-                    .await??;
-                }
-                Some(ClientWriterMessage::Pong(msg)) => {
-                    send_pong(&mut self.writer, &msg).await?;
-                }
-                Some(ClientWriterMessage::Ping(msg)) => {
-                    send_ping(&mut self.writer, &msg).await?;
-                }
-                Some(ClientWriterMessage::NotePreferred(preferred)) => {
-                    send_note_preferred(&mut self.writer, preferred).await?;
-                }
-                Some(ClientWriterMessage::WatchConnectionChanges) => {
-                    watch_connection_changes(&mut self.writer).await?;
-                }
-                Some(ClientWriterMessage::ClosePeer(target)) => {
-                    close_peer(&mut self.writer, target).await?;
-                }
-                Some(ClientWriterMessage::Shutdown) => {
-                    return Ok(());
-                }
-            }
-        }
-    }
-}
-
-/// Call [`ClientReader::run`] to send the messages we receive from the server to an associated `ReceivedMessages` channel.
-/// Shuts down if cancelled, or if there is an error reading a message from the server.
-struct ClientReader<R: AsyncRead + Unpin> {
-    reader: R,
-    sender: mpsc::Sender<ReceivedMessages>,
-}
-
-impl<R: AsyncRead + Unpin> ClientReader<R> {
-    async fn run(mut self) -> Result<()> {
-        todo!()
+    pub async fn is_closed(&self) -> bool {
+        self.inner.writer_task.lock().await.is_none()
     }
 
     /// Reads a messages from a DERP server.
@@ -220,12 +174,23 @@ impl<R: AsyncRead + Unpin> ClientReader<R> {
     /// should only be accessed until the next call to [`Client`].
     ///
     /// Once [`recv`] returns an error, the [`Client`] is dead forever.
-    pub async fn recv(&mut self) -> Result<ReceivedMessage> {
+    pub async fn recv(&self) -> Result<ReceivedMessage> {
+        if self.is_closed().await {
+            bail!(ClientError::Closed);
+        }
+
         // in practice, quic packets (and thus DERP frames) are under 1.5 KiB
         let mut frame_payload = BytesMut::with_capacity(1024 + 512);
         loop {
+            let mut reader = self.inner.reader.lock().await;
             let (frame_type, frame_len) =
-                read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut frame_payload).await?;
+                match read_frame(&mut *reader, MAX_FRAME_SIZE, &mut frame_payload).await {
+                    Ok((t, l)) => (t, l),
+                    Err(e) => {
+                        self.close().await;
+                        bail!(e);
+                    }
+                };
 
             match frame_type {
                 FRAME_KEEP_ALIVE => {
@@ -308,7 +273,125 @@ impl<R: AsyncRead + Unpin> ClientReader<R> {
             }
         }
     }
+
+    /// Close the client
+    ///
+    /// Shuts down the write loop directly and marks the client as closed. The `ClientReader` will
+    /// check if the client is closed before attempting to read from it.
+    pub async fn close(&self) {
+        let mut writer_task = self.inner.writer_task.lock().await;
+        let task = writer_task.take();
+        match task {
+            None => {}
+            Some(task) => {
+                // only error would be that the writer_channel receiver is closed
+                let _ = self
+                    .inner
+                    .writer_channel
+                    .send(ClientWriterMessage::Shutdown)
+                    .await;
+                match task.await {
+                    Ok(Err(e)) => {
+                        tracing::warn!("error closing down the client: {e:?}");
+                    }
+                    Err(e) => {
+                        tracing::warn!("error closing down the client: {e:?}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
+
+/// The kinds of messages we can send to the Server
+#[derive(Debug)]
+enum ClientWriterMessage {
+    /// Send a packet (addressed to the [`PublicKey`]) to the server
+    Packet((PublicKey, Vec<u8>)),
+    /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
+    /// Should only be used for mesh clients.
+    FwdPacket((PublicKey, PublicKey, Bytes)),
+    /// Send a pong to the server
+    Pong([u8; 8]),
+    /// Send a ping to the server
+    Ping([u8; 8]),
+    /// Tell the server whether or not this client is the user's preferred client
+    NotePreferred(bool),
+    /// Subscribe to the server's connection list.
+    /// Should only be used for mesh clients.
+    WatchConnectionChanges,
+    /// Asks the server to close the target's connection.
+    /// Should only be used for mesh clients.
+    ClosePeer(PublicKey),
+    /// Shutdown the writer
+    Shutdown,
+}
+
+/// Call [`ClientWriter::run`] to listen for messages to send to the client.
+/// Should be used by the [`Client`]
+///
+/// Shutsdown when you send a `ClientWriterMessage::Shutdown`, or if there is an error writing to
+/// the server.
+struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
+    recv_msgs: mpsc::Receiver<ClientWriterMessage>,
+    writer: W,
+    rate_limiter: Option<RateLimiter>,
+}
+
+impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
+    async fn run(mut self) -> Result<()> {
+        loop {
+            match self.recv_msgs.recv().await {
+                None => {
+                    bail!("channel unexpectedly closed");
+                }
+                Some(ClientWriterMessage::Packet((key, bytes))) => {
+                    // TODO: the rate limiter is only used on this method, is it because it's the only method that
+                    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
+                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                }
+                Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        forward_packet(&mut self.writer, srckey, dstkey, &bytes),
+                    )
+                    .await??;
+                }
+                Some(ClientWriterMessage::Pong(msg)) => {
+                    send_pong(&mut self.writer, &msg).await?;
+                }
+                Some(ClientWriterMessage::Ping(msg)) => {
+                    send_ping(&mut self.writer, &msg).await?;
+                }
+                Some(ClientWriterMessage::NotePreferred(preferred)) => {
+                    send_note_preferred(&mut self.writer, preferred).await?;
+                }
+                Some(ClientWriterMessage::WatchConnectionChanges) => {
+                    watch_connection_changes(&mut self.writer).await?;
+                }
+                Some(ClientWriterMessage::ClosePeer(target)) => {
+                    close_peer(&mut self.writer, target).await?;
+                }
+                Some(ClientWriterMessage::Shutdown) => {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ClientError {
+    #[error("todo")]
+    Todo,
+    #[error("closed")]
+    Closed,
+    // Read error?
+    // BadKey error?
+}
+
+/// builder returns a client & and a client reader, runs a client writer loop
 
 pub struct ClientBuilder<W, R>
 where
@@ -355,8 +438,8 @@ where
         self
     }
 
-    // TODO: after implementing the [`Server`], I'm 95% sure this was only used for test on the go
-    // impl, or at least, we have no use of it in our current set up.
+    // Set the expected server_public_key. If this is not what is sent by the server, it is an
+    // error.
     pub fn server_public_key(mut self, key: PublicKey) -> Self {
         self.server_public_key = Some(key);
         self
@@ -382,6 +465,11 @@ where
         let server_key = recv_server_key(&mut self.reader)
             .await
             .context("failed to receive server key")?;
+        if let Some(expected_key) = &self.server_public_key {
+            if *expected_key != server_key {
+                bail!("unexpected server key, expected {expected_key:?} got {server_key:?}");
+            }
+        }
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             mesh_key: self.mesh_key,
@@ -414,7 +502,7 @@ where
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self) -> Result<Client>
+    pub async fn build(mut self) -> Result<Client<R>>
     where
         R: AsyncRead + Unpin,
     {
@@ -433,28 +521,21 @@ where
             Ok(())
         });
 
-        let (reader_sender, reader_recv) = mpsc::channel(12); // TODO: what size?
-        let reader_task = tokio::spawn(async move {
-            let client_reader = ClientReader {
-                reader: self.reader,
-                sender: reader_sender,
-            };
+        let client = Client {
+            inner: Arc::new(InnerClient {
+                server_key,
+                secret_key: self.secret_key,
+                local_addr: self.local_addr,
+                mesh_key: self.mesh_key,
+                can_ack_pings: self.can_ack_pings,
+                is_prober: self.is_prober,
+                writer_channel: writer_sender,
+                writer_task: Mutex::new(Some(writer_task)),
+                reader: Mutex::new(self.reader),
+            }),
+        };
 
-            client_reader.run().await?;
-            Ok(())
-        });
-
-        Ok(Client {
-            server_key,
-            secret_key: self.secret_key,
-            local_addr: self.local_addr,
-            mesh_key: self.mesh_key,
-            can_ack_pings: self.can_ack_pings,
-            is_prober: self.is_prober,
-            writer_channel: writer_sender,
-            writer_task,
-            reader_task,
-        })
+        Ok(client)
     }
 }
 
