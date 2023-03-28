@@ -88,10 +88,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    // TODO: the rate limiter is only on this method, is it because it's the only method that
-    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
     pub async fn send(&self, dstkey: PublicKey, packet: Vec<u8>) -> Result<()> {
-        let mut buf = BytesMut::new();
         self.inner
             .writer_channel
             .send(ClientWriterMessage::Packet((dstkey, packet)))
@@ -350,6 +347,8 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                     bail!("channel unexpectedly closed");
                 }
                 Some(ClientWriterMessage::Packet((key, bytes))) => {
+                    // TODO: the rate limiter is only used on this method, is it because it's the only method that
+                    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
                     send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
                 }
                 Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
