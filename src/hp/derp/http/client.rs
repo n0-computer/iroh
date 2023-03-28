@@ -15,6 +15,8 @@ use crate::hp::key;
 
 use crate::hp::derp::{client::Client as DerpClient, DerpRegion, ReceivedMessage};
 
+const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ClientError {
     #[error("todo")]
@@ -446,12 +448,12 @@ impl Client {
         Err(err)
     }
 
-    //// dialNode returns a TCP connection to node n, racing IPv4 and IPv6
-    //// (both as applicable) against each other.
-    //// A node is only given dialNodeTimeout to connect.
-    ////
-    //// TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
-    //// overall but have dialRegion start overlapping races?
+    /// Returns a TCP connection to node n, racing IPv4 and IPv6
+    /// (both as applicable) against each other.
+    /// A node is only given `DIAL_NODE_TIMEOUT` to connect.
+    ///
+    // TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
+    // overall but have dialRegion start overlapping races?
     async fn dial_node(&self, node: &DerpNode) -> anyhow::Result<TcpStream> {
         // TODO: Add support for HTTP proxies.
 
@@ -518,7 +520,12 @@ impl Client {
             443
         };
         let dst = format!("{host}:{port}");
-        let tcp_stream = TcpStream::connect(dst).await?;
+        let tcp_stream =
+            tokio::time::timeout(
+                DIAL_NODE_TIMEOUT,
+                async move { TcpStream::connect(dst).await },
+            )
+            .await??;
         // TODO: ipv6 vs ipv4 specific connection
 
         Ok(tcp_stream)
