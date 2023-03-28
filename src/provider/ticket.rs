@@ -3,7 +3,7 @@
 //! This is in it's own module to enforce the invariant that you can not construct a ticket
 //! with an empty address list.
 
-use std::fmt;
+use std::fmt::{self, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
@@ -86,7 +86,7 @@ impl Ticket {
 }
 
 /// Serializes to base64.
-impl fmt::Display for Ticket {
+impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = self.to_bytes();
         write!(f, "{}", util::encode(encoded))
