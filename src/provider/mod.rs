@@ -1166,7 +1166,7 @@ pub struct Ticket {
 
 impl Ticket {
     fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>, token: AuthToken) -> Result<Self> {
-        ensure!(!addrs.is_empty(), "Invalid address list in ticket");
+        ensure!(!addrs.is_empty(), "Ticket has no address");
         Ok(Self {
             hash,
             peer,
