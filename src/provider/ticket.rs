@@ -1,3 +1,8 @@
+//! The ticket type for the provider.
+//!
+//! This is in it's own module to enforce the invariant that you can not construct a ticket
+//! with an empty address list.
+
 use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
