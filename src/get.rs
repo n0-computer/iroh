@@ -14,11 +14,12 @@ use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
-use abao::decode::AsyncSliceDecoder;
 use anyhow::{anyhow, bail, Context, Result};
+use bao_tree::ChunkNum;
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
+use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tracing::{debug, error};
 
@@ -103,11 +104,17 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncSliceDecoder<quinn::RecvStream>);
+pub struct DataStream(bao_tree::bao_tree::r#async::AsyncResponseDecoder<quinn::RecvStream>);
 
 impl DataStream {
     fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
-        DataStream(AsyncSliceDecoder::new(inner, &hash.into(), 0, u64::MAX))
+        let decoder = bao_tree::bao_tree::r#async::AsyncResponseDecoder::new(
+            hash.into(),
+            RangeSet2::from(ChunkNum(0)..),
+            4,
+            inner,
+        );
+        DataStream(decoder)
     }
 
     async fn read_size(&mut self) -> io::Result<u64> {

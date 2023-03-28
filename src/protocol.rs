@@ -5,9 +5,11 @@ use std::str::FromStr;
 
 use abao::decode::AsyncSliceDecoder;
 use anyhow::{bail, ensure, Context, Result};
+use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -113,7 +115,12 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     reader: R,
     hash: Hash,
 ) -> Result<Vec<u8>> {
-    let mut decoder = AsyncSliceDecoder::new(reader, &hash.into(), 0, u64::MAX);
+    let mut decoder = bao_tree::bao_tree::r#async::AsyncResponseDecoder::new(
+        hash.into(),
+        RangeSet2::from(ChunkNum(0)..),
+        4,
+        reader,
+    );
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;

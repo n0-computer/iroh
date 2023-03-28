@@ -18,7 +18,6 @@ use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
-use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bao_tree::bao_tree::iter::{encode_ranges_validated, encode_validated};
 use bao_tree::bao_tree::outboard::PreOrderMemOutboard;
@@ -1317,7 +1316,7 @@ mod tests {
 
     #[test]
     fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = abao::encode::encode(b"hi there");
+        let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
@@ -1340,7 +1339,7 @@ mod tests {
     async fn test_create_collection() -> Result<()> {
         let dir: PathBuf = testdir!();
         let mut expect_blobs = vec![];
-        let (_, hash) = abao::encode::outboard(vec![]);
+        let hash = blake3::hash(&[]);
         let hash = Hash::from(hash);
 
         // DataSource::File

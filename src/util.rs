@@ -213,37 +213,6 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
     Ok(())
 }
 
-/// Validate that the data matches the outboard.
-pub(crate) fn validate_bao_2(
-    hash: Hash,
-    data_reader: impl Read + Seek,
-    outboard: Bytes,
-    progress: impl Fn(u64),
-) -> result::Result<(), BaoValidationError> {
-    let hash = blake3::Hash::from(hash);
-    let outboard_reader = io::Cursor::new(outboard);
-    let progress_reader = ProgressReader::new(data_reader, |p| {
-        if let ProgressUpdate::Progress(x) = p {
-            progress(x)
-        }
-    });
-    let buffered_reader = BufReader::with_capacity(1024 * 1024, progress_reader);
-    let mut decoder = abao::decode::Decoder::new_outboard(buffered_reader, outboard_reader, &hash);
-    // todo: expose chunk group size in abao, so people can allocate good sized buffers
-    let mut buffer = vec![0u8; 1024 * 16 + 4096];
-    loop {
-        match decoder.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(err) => {
-                // todo: figure out exactly what went wrong
-                return Err(BaoValidationError::IoError(err));
-            }
-        }
-    }
-    Ok(())
-}
-
 /// converts a canonicalized relative path to a string, returning an error if
 /// the path is not valid unicode
 ///
