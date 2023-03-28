@@ -20,11 +20,9 @@ use abao::decode::AsyncSliceDecoder;
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use default_net::Interface;
-use futures::Future;
+use futures::{Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -178,26 +176,23 @@ async fn dial_ticket(
         .partition::<Vec<_>, _>(|addr| is_same_subnet(addr, &interfaces));
     addrs.extend(other_addrs);
 
-    let cancel_token = CancellationToken::new();
-    let (results_tx, mut results_rx) = mpsc::unbounded_channel();
-    tokio::spawn(dial_all_task(
-        addrs,
-        ticket.peer,
-        keylog,
-        results_tx,
-        max_concurrent,
-        cancel_token.clone(),
-    ));
-    loop {
-        match results_rx.recv().await {
-            Some(Ok(conn)) => {
-                cancel_token.cancel();
-                return Ok(conn);
-            }
-            Some(Err(_)) => (),
-            None => bail!("Failed to establish connection to peer"),
+    let mut conn_stream = futures::stream::iter(addrs)
+        .map(|addr| {
+            let opts = Options {
+                addr,
+                peer_id: Some(ticket.peer),
+                keylog,
+            };
+            dial_peer(opts)
+        })
+        .buffer_unordered(max_concurrent);
+    while let Some(res) = conn_stream.next().await {
+        match res {
+            Ok(conn) => return Ok(conn),
+            Err(_) => continue,
         }
     }
+    Err(anyhow!("Failed to establish connection to peer"))
 }
 
 fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
@@ -220,68 +215,6 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
         }
     }
     false
-}
-
-/// Task which will dial all addresses concurrently.
-///
-/// Results are sent back to `results_tx`.  Dialing can be interrupted by cancelling the
-/// `cancel_token`.
-async fn dial_all_task(
-    addrs: Vec<SocketAddr>,
-    peer_id: PeerId,
-    keylog: bool,
-    results_tx: mpsc::UnboundedSender<Result<quinn::Connection>>,
-    max_concurrent: usize,
-    cancel_token: CancellationToken,
-) {
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut addrs = addrs.iter();
-    loop {
-        tokio::select!(
-            biased;
-            _ = cancel_token.cancelled() => break,
-            permit = semaphore.clone().acquire_owned() => {
-                match permit {
-                    Ok(permit) => {
-                        match addrs.next() {
-                            Some(addr) => {
-                                let opts = Options {
-                                    addr: *addr,
-                                    peer_id: Some(peer_id),
-                                    keylog,
-                                };
-                                tokio::spawn(
-                                    dial_task(opts, results_tx.clone(),
-                                              permit, cancel_token.clone())
-                                );
-                            }
-                            None => break,
-                        }
-                    }
-                    Err(_) => unreachable!(),
-                }
-            }
-        )
-    }
-}
-
-/// Task to dial a single address.
-///
-/// The dialing can be cancelled, the result is sent to `results_tx`.
-async fn dial_task(
-    opts: Options,
-    results_tx: mpsc::UnboundedSender<Result<quinn::Connection>>,
-    permit: OwnedSemaphorePermit,
-    cancel_token: CancellationToken,
-) {
-    tokio::select!(
-        biased;
-        _ = cancel_token.cancelled() => (),
-        res = dial_peer(opts) => {
-            results_tx.send(res).ok();
-        }
-    );
-    drop(permit);
 }
 
 /// Get a collection and all its blobs from a provider
