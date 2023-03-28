@@ -19,7 +19,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::iter::encode_validated;
+use bao_tree::io::encode_validated;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -728,7 +728,7 @@ async fn transfer_collection(
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
     let outboard = PreOrderMemOutboard::new(hash.into(), IROH_BLOCK_SIZE, outboard.to_vec());
-    bao_tree::iter::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
+    bao_tree::io::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
 
     // let mut extractor = SliceExtractor::new_outboard(
     //     std::io::Cursor::new(&data[..]),
@@ -1016,7 +1016,7 @@ fn compute_outboard(
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
 
-    let hash = bao_tree::BaoTree::outboard_post_order_io(
+    let hash = bao_tree::io::outboard_post_order(
         &mut reader,
         size,
         IROH_BLOCK_SIZE,

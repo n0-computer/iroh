@@ -209,7 +209,7 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
     }
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
-    bao_tree::iter::encode_validated(data_reader, outboard, DevNull(0, progress))?;
+    bao_tree::io::encode_validated(data_reader, outboard, DevNull(0, progress))?;
     Ok(())
 }
 
