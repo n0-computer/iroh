@@ -172,19 +172,12 @@ async fn dial_ticket(
 ) -> Result<quinn::Connection> {
     // Sort the interfaces to make sure local ones are at the front of the list.
     let interfaces = default_net::get_interfaces();
-    let mut addrs: Vec<SocketAddr> = ticket
+    let (mut addrs, other_addrs) = ticket
         .addrs
         .iter()
-        .filter(|addr| is_same_subnet(addr, &interfaces))
-        .copied()
-        .collect();
-    let other_addrs: Vec<SocketAddr> = ticket
-        .addrs
-        .iter()
-        .filter(|addr| !addrs.contains(addr))
-        .copied()
-        .collect();
+        .partition::<Vec<_>, _>(|addr| is_same_subnet(addr, &interfaces));
     addrs.extend(other_addrs);
+
     let cancel_token = CancellationToken::new();
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     tokio::spawn(dial_all_task(
