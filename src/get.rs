@@ -249,7 +249,7 @@ where
 }
 
 /// Gets a collection and all its blobs from a provider on the established connection.
-pub async fn run_connection<A, B, C, FutA, FutB, FutC>(
+async fn run_connection<A, B, C, FutA, FutB, FutC>(
     connection: quinn::Connection,
     hash: Hash,
     auth_token: AuthToken,
