@@ -489,24 +489,19 @@ async fn main_impl() -> Result<()> {
             }
         }
         Commands::GetTicket { out, ticket } => {
-            let Ticket {
-                hash,
-                peer,
-                addrs,
-                token,
-            } = ticket;
-            let addr = addrs
+            let addr = ticket
+                .addrs()
                 .get(0)
                 .copied()
                 .context("missing SocketAddr in ticket")?;
             let opts = get::Options {
                 addr,
-                peer_id: Some(peer),
+                peer_id: Some(ticket.peer()),
                 keylog: cli.keylog,
             };
             tokio::select! {
                 biased;
-                res = get_interactive(hash, opts, token, out) => {
+                res = get_interactive(ticket.hash(), opts, ticket.token(), out) => {
                     res
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -543,33 +538,35 @@ async fn main_impl() -> Result<()> {
             )
             .await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
             // task that will add data to the provider, either from a file or from stdin
-            let fut = tokio::spawn(async move {
-                let (path, tmp_path) = if let Some(path) = path {
-                    let absolute = path.canonicalize()?;
-                    println!("Adding {} as {}...", path.display(), absolute.display());
-                    (absolute, None)
-                } else {
-                    // Store STDIN content into a temporary file
-                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                    let mut file = tokio::fs::File::from_std(file);
-                    let path_buf = path.to_path_buf();
-                    // Copy from stdin to the file, until EOF
-                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                    println!("Adding from stdin...");
-                    // return the TempPath to keep it alive
-                    (path_buf, Some(path))
-                };
-                // tell the provider to add the data
-                let stream = controller.server_streaming(ProvideRequest { path }).await?;
-                let (hash, entries) = aggregate_add_response(stream).await?;
-                print_add_response(hash, entries);
-                ticket.hash = hash;
-                println!("All-in-one ticket: {ticket}");
-                anyhow::Ok(tmp_path)
-            });
+            let fut = {
+                let provider = provider.clone();
+                tokio::spawn(async move {
+                    let (path, tmp_path) = if let Some(path) = path {
+                        let absolute = path.canonicalize()?;
+                        println!("Adding {} as {}...", path.display(), absolute.display());
+                        (absolute, None)
+                    } else {
+                        // Store STDIN content into a temporary file
+                        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                        let mut file = tokio::fs::File::from_std(file);
+                        let path_buf = path.to_path_buf();
+                        // Copy from stdin to the file, until EOF
+                        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                        println!("Adding from stdin...");
+                        // return the TempPath to keep it alive
+                        (path_buf, Some(path))
+                    };
+                    // tell the provider to add the data
+                    let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                    let (hash, entries) = aggregate_add_response(stream).await?;
+                    print_add_response(hash, entries);
+                    let ticket = provider.ticket(hash)?;
+                    println!("All-in-one ticket: {ticket}");
+                    anyhow::Ok(tmp_path)
+                })
+            };
 
             let provider2 = provider.clone();
             tokio::select! {

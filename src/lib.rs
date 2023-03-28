@@ -500,7 +500,7 @@ mod tests {
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash);
+        let ticket = provider.ticket(hash).unwrap();
         let mut on_connected = false;
         let mut on_collection = false;
         let mut on_blob = false;

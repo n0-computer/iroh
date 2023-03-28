@@ -410,15 +410,10 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = find_local_addresses(self.inner.listen_addr);
-        Ticket {
-            hash,
-            peer: self.peer_id(),
-            addrs,
-            token: self.inner.auth_token,
-        }
+        let addrs = self.available_addresses();
+        Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
     }
 
     /// Returns all available addresses on the local machine.
@@ -1158,25 +1153,60 @@ async fn write_response<W: AsyncWrite + Unpin>(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
-    pub hash: Hash,
+    hash: Hash,
     /// The peer ID identifying the provider.
-    pub peer: PeerId,
+    peer: PeerId,
     /// The socket addresses the provider is listening on.
-    pub addrs: Vec<SocketAddr>,
+    ///
+    /// This will never be empty.
+    addrs: Vec<SocketAddr>,
     /// The authentication token with permission to retrieve the hash.
-    pub token: AuthToken,
+    token: AuthToken,
 }
 
 impl Ticket {
+    fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>, token: AuthToken) -> Result<Self> {
+        ensure!(!addrs.is_empty(), "Invalid address list in ticket");
+        Ok(Self {
+            hash,
+            peer,
+            addrs,
+            token,
+        })
+    }
+
     /// Deserializes from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
+        let slf: Ticket = postcard::from_bytes(bytes)?;
+        ensure!(!slf.addrs.is_empty(), "Invalid address list in ticket");
         Ok(slf)
     }
 
     /// Serializes to bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
+    }
+
+    /// The hash of the item this ticket can retrieve.
+    pub fn hash(&self) -> Hash {
+        self.hash
+    }
+
+    /// The [`PeerId`] of the provider for this ticket.
+    pub fn peer(&self) -> PeerId {
+        self.peer
+    }
+
+    /// The addresses on which the provider can be reached.
+    ///
+    /// This is guaranteed to be non-empty.
+    pub fn addrs(&self) -> &[SocketAddr] {
+        &self.addrs
+    }
+
+    /// The authentication token for this ticket.
+    pub fn token(&self) -> AuthToken {
+        self.token
     }
 }
 
@@ -1383,8 +1413,8 @@ mod tests {
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash);
-        println!("addrs: {:?}", ticket.addrs);
-        assert!(!ticket.addrs.is_empty());
+        let ticket = provider.ticket(hash).unwrap();
+        println!("addrs: {:?}", ticket.addrs());
+        assert!(!ticket.addrs().is_empty());
     }
 }

@@ -153,8 +153,8 @@ where
     let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
     run_connection(
         connection,
-        ticket.hash,
-        ticket.token,
+        ticket.hash(),
+        ticket.token(),
         start,
         on_connected,
         on_collection,
@@ -171,7 +171,7 @@ async fn dial_ticket(
     // Sort the interfaces to make sure local ones are at the front of the list.
     let interfaces = default_net::get_interfaces();
     let (mut addrs, other_addrs) = ticket
-        .addrs
+        .addrs()
         .iter()
         .partition::<Vec<_>, _>(|addr| is_same_subnet(addr, &interfaces));
     addrs.extend(other_addrs);
@@ -180,7 +180,7 @@ async fn dial_ticket(
         .map(|addr| {
             let opts = Options {
                 addr,
-                peer_id: Some(ticket.peer),
+                peer_id: Some(ticket.peer()),
                 keylog,
             };
             dial_peer(opts)
