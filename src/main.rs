@@ -31,6 +31,7 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
+const MAX_CONCURRENT_DIALS: u8 = 16;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -863,7 +864,15 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
     };
     let stats = match get {
         GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket(&ticket, keylog, 16, on_connected, on_collection, on_blob).await?
+            get::run_ticket(
+                &ticket,
+                keylog,
+                MAX_CONCURRENT_DIALS,
+                on_connected,
+                on_collection,
+                on_blob,
+            )
+            .await?
         }
         GetInteractive::Hash { hash, opts, token } => {
             get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
