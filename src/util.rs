@@ -1,9 +1,11 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
+use bao_tree::{error::EncodeError, io::encode_ranges_validated};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
+use range_collections::RangeSet2;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
@@ -166,10 +168,18 @@ pub type RpcResult<T> = result::Result<T, RpcError>;
 pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
     IoError(io::Error),
+    /// The data failed to validate
+    EncodeError(EncodeError),
     // /// The hash of the data does not match the hash of the outboard.
     // HashMismatch,
     // /// The size of the data does not match the size of the outboard.
     // SizeMismatch,
+}
+
+impl From<EncodeError> for BaoValidationError {
+    fn from(e: EncodeError) -> Self {
+        BaoValidationError::EncodeError(e)
+    }
 }
 
 impl From<io::Error> for BaoValidationError {
@@ -209,7 +219,12 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
     }
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
-    bao_tree::io::encode_validated(data_reader, outboard, DevNull(0, progress))?;
+    encode_ranges_validated(
+        data_reader,
+        outboard,
+        &RangeSet2::all(),
+        DevNull(0, progress),
+    )?;
     Ok(())
 }
 

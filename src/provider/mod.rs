@@ -19,7 +19,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::encode_validated;
+use bao_tree::io::encode_ranges_validated;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -29,6 +29,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
@@ -728,15 +729,7 @@ async fn transfer_collection(
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
     let outboard = PreOrderMemOutboard::new(hash.into(), IROH_BLOCK_SIZE, outboard.to_vec());
-    bao_tree::io::encode_validated(Cursor::new(data), outboard, &mut encoded)?;
-
-    // let mut extractor = SliceExtractor::new_outboard(
-    //     std::io::Cursor::new(&data[..]),
-    //     std::io::Cursor::new(&outboard[..]),
-    //     0,
-    //     data.len() as u64,
-    // );
-    // extractor.read_to_end(&mut encoded)?;
+    encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
 
     let c: Collection = postcard::from_bytes(data)?;
 
@@ -903,7 +896,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 let mut wrapper = SyncIoBridge::new(&mut writer);
                 let outboard =
                     PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
-                encode_validated(file_reader, outboard, &mut wrapper)?;
+                encode_ranges_validated(file_reader, outboard, &RangeSet2::all(), &mut wrapper)?;
                 std::io::Result::Ok(writer)
             })
             .await??;
@@ -1016,12 +1009,8 @@ fn compute_outboard(
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
 
-    let hash = bao_tree::io::outboard_post_order(
-        &mut reader,
-        size,
-        IROH_BLOCK_SIZE,
-        &mut outboard,
-    )?;
+    let hash =
+        bao_tree::io::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
     tracing::debug!("done. hash for {} is {hash}", path.display());
 
