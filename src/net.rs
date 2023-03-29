@@ -2,6 +2,8 @@
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
+use anyhow::{ensure, Result};
+
 const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
 
@@ -147,7 +149,7 @@ const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
 }
 
 /// Given a listen/bind address, finds all the local addresses for that address family.
-pub fn find_local_addresses(listen_addr: SocketAddr) -> Vec<SocketAddr> {
+pub(crate) fn find_local_addresses(listen_addr: SocketAddr) -> Result<Vec<SocketAddr>> {
     let listen_ip = listen_addr.ip();
     let listen_port = listen_addr.port();
     let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
@@ -168,7 +170,8 @@ pub fn find_local_addresses(listen_addr: SocketAddr) -> Vec<SocketAddr> {
         }
         false => vec![listen_addr],
     };
-    addrs
+    ensure!(!addrs.is_empty(), "No local addresses found");
+    Ok(addrs)
 }
 
 #[cfg(test)]

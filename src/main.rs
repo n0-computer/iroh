@@ -534,7 +534,7 @@ async fn main_impl() -> Result<()> {
             )
             .await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
+            let mut ticket = provider.ticket(Hash::from([0u8; 32]))?;
 
             // task that will add data to the provider, either from a file or from stdin
             let fut = tokio::spawn(async move {
@@ -694,7 +694,7 @@ async fn provide(
         builder.keypair(keypair).spawn()?
     };
 
-    println!("Listening address: {}", provider.listen_addr());
+    println!("Listening address: {}", provider.local_address());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();
