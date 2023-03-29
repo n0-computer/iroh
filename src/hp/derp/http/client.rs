@@ -16,7 +16,8 @@ use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use crate::hp::derp::{
-    client::ClientBuilder as DerpClientBuilder, DerpNode, PacketForwarder, UseIpv4, UseIpv6,
+    client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
+    UseIpv6,
 };
 use crate::hp::key;
 
@@ -74,7 +75,7 @@ struct InnerClient {
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     conn_gen: AtomicUsize,
     ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     is_prober: bool,
 }
 
@@ -88,7 +89,7 @@ pub struct ClientBuilder {
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     /// Default is None
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     /// Default is false
     is_prober: bool,
 }

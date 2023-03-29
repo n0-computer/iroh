@@ -20,6 +20,7 @@ use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
     types::{PacketForwarder, PeerConnState, ServerMessage},
+    MeshKey,
 };
 use super::{
     recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
@@ -55,7 +56,7 @@ where
     // the size of the serialized struct if this field is a `String`). This should
     // be discussed and worked out.
     // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
     meta_cert: Vec<u8>,
     /// Channel on which to communicate to the `ServerActor`
@@ -112,7 +113,7 @@ where
     P: PacketForwarder,
 {
     /// TODO: replace with builder
-    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>) -> Self {
+    pub fn new(key: SecretKey, mesh_key: Option<MeshKey>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.public_key(), server_channel_r);
         let cancel_token = CancellationToken::new();
@@ -140,7 +141,7 @@ where
     }
 
     /// Returns the configured mesh key, may be empty.
-    pub fn mesh_key(&self) -> Option<[u8; 32]> {
+    pub fn mesh_key(&self) -> Option<MeshKey> {
         self.mesh_key
     }
 
@@ -250,7 +251,7 @@ where
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
@@ -345,7 +346,7 @@ where
     }
 
     /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
-    fn can_mesh(&self, client_mesh_key: Option<[u8; 32]>) -> bool {
+    fn can_mesh(&self, client_mesh_key: Option<MeshKey>) -> bool {
         if self.mesh_key.is_none() {
             false
         } else if client_mesh_key.is_none() {
@@ -599,7 +600,7 @@ async fn send_server_info<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
+fn can_mesh(a: Option<MeshKey>, b: Option<MeshKey>) -> bool {
     if let (Some(a), Some(b)) = (a, b) {
         return a == b;
     }

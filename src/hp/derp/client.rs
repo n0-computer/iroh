@@ -14,7 +14,7 @@ use tracing::debug;
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
-    types::{ClientInfo, RateLimiter, ServerInfo},
+    types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
     write_frame, FrameType, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_HEALTH, FRAME_KEEP_ALIVE,
     FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
     FRAME_RECV_PACKET, FRAME_RESTARTING, FRAME_SEND_PACKET, FRAME_SERVER_INFO, FRAME_SERVER_KEY,
@@ -65,7 +65,7 @@ where
     // our local addrs
     local_addr: SocketAddr,
     /// TODO: This is a string in the go impl, need to make these back into Strings
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     can_ack_pings: bool,
     is_prober: bool,
 
@@ -407,7 +407,7 @@ where
     reader: R,
     writer: W,
     local_addr: SocketAddr,
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     can_ack_pings: bool,
@@ -433,7 +433,7 @@ where
         }
     }
 
-    pub fn mesh_key(mut self, mesh_key: Option<[u8; 32]>) -> Self {
+    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
         self
     }
