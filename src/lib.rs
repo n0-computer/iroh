@@ -161,7 +161,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.listen_addr(),
+                provider.local_address(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -250,7 +250,7 @@ mod tests {
         });
 
         let opts = get::Options {
-            addr: dbg!(provider.listen_addr()),
+            addr: dbg!(provider.local_address()),
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -346,7 +346,7 @@ mod tests {
             .spawn()
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.listen_addr();
+        let provider_addr = provider.local_address();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -419,7 +419,7 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.listen_addr();
+        let provider_addr = provider.local_address();
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -466,7 +466,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.listen_addr();
+        let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),

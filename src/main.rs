@@ -696,7 +696,7 @@ async fn provide(
         builder.keypair(keypair).spawn()?
     };
 
-    println!("Listening address: {}", provider.listen_addr());
+    println!("Listening address: {}", provider.local_address());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();
