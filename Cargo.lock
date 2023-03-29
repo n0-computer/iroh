@@ -2096,6 +2096,7 @@ dependencies = [
  "rtnetlink",
  "rustls",
  "rustls-acme",
+ "rustls-pemfile",
  "serde",
  "serde-error",
  "serdect 0.2.0",
