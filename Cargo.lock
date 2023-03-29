@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "abao",
  "anyhow",
