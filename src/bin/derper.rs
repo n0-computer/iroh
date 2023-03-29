@@ -3,6 +3,7 @@
 //! Based on /tailscale/cmd/derper
 
 use std::{
+    borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
@@ -21,13 +22,15 @@ use rustls_acme::AcmeConfig;
 use rustls_acme::{caches::DirCache, AcmeAcceptor};
 use serde::{Deserialize, Serialize};
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
     task::JoinSet,
 };
-use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+use tokio_rustls::StartHandshake;
+use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -54,13 +57,14 @@ struct Cli {
     #[clap(long, short)]
     config_path: PathBuf,
     /// Mode for getting a cert. possible options: manual, letsencrypt
+    /// When using manual mode, a certificate will be read from <hostname>.crt and a private key from
+    /// <hostname>.key, with the <hostname> being the escaped hostname.
     #[clap(long, value_enum, default_value_t = CertMode::LetsEncrypt)]
     cert_mode: CertMode,
-    /// Directory to store LetsEncrypt certs, if addr's port is :443
+    /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.
     #[clap(long)]
-    // Default: tsweb.DefaultCertDir("derper-certs"), "")
     cert_dir: Option<PathBuf>,
-    /// LetsEncrypt host name, if addr's port is :443.
+    /// Certificate hostname.
     #[clap(long, default_value = "derp.iroh.computer")]
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
@@ -97,25 +101,26 @@ enum CertMode {
 }
 
 impl CertMode {
-    fn gen_server_config(
+    async fn gen_server_config(
         &self,
-        domains: Vec<String>,
+        hostname: String,
         contact: String,
         is_production: bool,
         dir: PathBuf,
-    ) -> (rustls::ServerConfig, AcmeAcceptor) {
+    ) -> Result<(Arc<rustls::ServerConfig>, TlsAcceptor)> {
+        let mut config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth();
+
         match self {
             CertMode::LetsEncrypt => {
-                let mut state = AcmeConfig::new(domains)
+                let mut state = AcmeConfig::new(vec![hostname])
                     .contact([format!("mailto:{contact}")])
                     .cache_option(Some(DirCache::new(dir)))
                     .directory_lets_encrypt(is_production)
                     .state();
 
-                let config = rustls::ServerConfig::builder()
-                    .with_safe_defaults()
-                    .with_no_client_auth()
-                    .with_cert_resolver(state.resolver());
+                let config = config.with_cert_resolver(state.resolver());
                 let acceptor = state.acceptor();
 
                 tokio::spawn(async move {
@@ -127,14 +132,72 @@ impl CertMode {
                     }
                 });
 
-                (config, acceptor)
+                Ok((Arc::new(config), TlsAcceptor::LetsEncrypt(acceptor)))
             }
             CertMode::Manual => {
-                // TODO: load certificates manuall
-                todo!()
+                // load certificates manually
+                let keyname = escape_hostname(&hostname);
+                let cert_path = dir.join(format!("{keyname}.crt"));
+                let key_path = dir.join(format!("{keyname}.key"));
+
+                let (certs, private_key) = tokio::task::spawn_blocking(move || {
+                    let certs = load_certs(cert_path)?;
+                    let key = load_private_key(key_path)?;
+                    anyhow::Ok((certs, key))
+                })
+                .await??;
+
+                let config = config.with_single_cert(certs, private_key)?;
+                let config = Arc::new(config);
+                let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+
+                Ok((config, TlsAcceptor::Manual(acceptor)))
             }
         }
     }
+}
+
+#[derive(Clone)]
+enum TlsAcceptor {
+    LetsEncrypt(AcmeAcceptor),
+    Manual(tokio_rustls::TlsAcceptor),
+}
+
+fn escape_hostname(hostname: &str) -> Cow<'_, str> {
+    let unsafe_hostname_characters = regex::Regex::new(r"[^a-zA-Z0-9-\.]").unwrap();
+    unsafe_hostname_characters.replace_all(&hostname, "")
+}
+
+fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
+    let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
+    let mut reader = std::io::BufReader::new(certfile);
+
+    let certs = rustls_pemfile::certs(&mut reader)?
+        .iter()
+        .map(|v| rustls::Certificate(v.clone()))
+        .collect();
+
+    Ok(certs)
+}
+
+fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
+    let keyfile = std::fs::File::open(filename.as_ref()).expect("cannot open private key file");
+    let mut reader = std::io::BufReader::new(keyfile);
+
+    loop {
+        match rustls_pemfile::read_one(&mut reader).expect("cannot parse private key .pem file") {
+            Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
+            Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
+            Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
+            None => break,
+            _ => {}
+        }
+    }
+
+    bail!(
+        "no keys found in {} (encrypted keys not supported)",
+        filename.as_ref().display()
+    );
 }
 
 #[derive(Serialize, Deserialize)]
@@ -257,16 +320,18 @@ async fn main() -> Result<()> {
         s.client_conn_handler(headers)
     });
     let tls_config = if serve_tls {
-        let domains = vec![cli.hostname.clone()];
         let contact = "d@iroh.computer".to_string(); // TODO: configurable.
         let is_production = false; // TODO: configurable
-        let (config, acceptor) = cli.cert_mode.gen_server_config(
-            domains,
-            contact,
-            is_production,
-            cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
-        );
-        Some((Arc::new(config), acceptor))
+        let (config, acceptor) = cli
+            .cert_mode
+            .gen_server_config(
+                cli.hostname.clone(),
+                contact,
+                is_production,
+                cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
+            )
+            .await?;
+        Some((config, acceptor))
     } else {
         None
     };
@@ -310,7 +375,7 @@ struct Derper {
     client_conn_handler:
         Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient>>,
     /// TLS config if used.
-    tls_config: Option<(Arc<rustls::ServerConfig>, AcmeAcceptor)>,
+    tls_config: Option<(Arc<rustls::ServerConfig>, TlsAcceptor)>,
 }
 
 impl Derper {
@@ -384,15 +449,21 @@ impl Derper {
     async fn tls_serve(
         self,
         stream: TcpStream,
-        acceptor: AcmeAcceptor,
+        acceptor: TlsAcceptor,
         rustls_config: Arc<rustls::ServerConfig>,
     ) -> Result<()> {
-        match acceptor.accept(stream.compat()).await? {
-            None => {
-                info!("received TLS-ALPN-01 validation request");
-            }
-            Some(start_handshake) => {
-                let tls_stream = start_handshake.into_stream(rustls_config).await?.compat();
+        match acceptor {
+            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream.compat()).await? {
+                None => {
+                    info!("received TLS-ALPN-01 validation request");
+                }
+                Some(start_handshake) => {
+                    let tls_stream = start_handshake.into_stream(rustls_config).await?.compat();
+                    Http::new().serve_connection(tls_stream, self).await?;
+                }
+            },
+            TlsAcceptor::Manual(a) => {
+                let tls_stream = a.accept(stream).await?;
                 Http::new().serve_connection(tls_stream, self).await?;
             }
         }
@@ -653,5 +724,13 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn test_escape_hostname() {
+        assert_eq!(
+            escape_hostname("hello.host.name_foo-bar%baz"),
+            "hello.host.name_foo-bar%baz"
+        );
     }
 }
