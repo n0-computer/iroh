@@ -699,14 +699,8 @@ impl Conn {
         }
     }
 
-    /// Makes addr a validated disco address for discoKey.
-    /// Used to provide user/externally discovered addresses.
-    #[cfg(test)]
-    async fn add_valid_disco_path_for_test(
-        &self,
-        node_key: &key::node::PublicKey,
-        addr: &SocketAddr,
-    ) {
+    /// Makes the provided addr validated address for the given key.
+    pub async fn add_valid_path(&self, node_key: &key::node::PublicKey, addr: &SocketAddr) {
         let mut peer_map = self.peer_map.write().await;
         peer_map.set_node_key_for_ip_port(addr, node_key);
         if let Some(ep) = peer_map.endpoint_for_node_key(node_key) {
@@ -3530,6 +3524,9 @@ mod tests {
 
         // Setup connection information for discovery
         {
+            // This is needed because dialing in quic land happens per IP,
+            // but our information is only build upon public keys, so we need to add
+            // one matching path for the machinery to work.
             let m1_addr = SocketAddr::new(
                 "127.0.0.1".parse().unwrap(),
                 m1.quic_ep.local_addr()?.port(),
@@ -3538,12 +3535,8 @@ mod tests {
                 "127.0.0.1".parse().unwrap(),
                 m2.quic_ep.local_addr()?.port(),
             );
-            /*m1.conn
-                .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
-                .await;
-            m2.conn
-                .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
-                .await;*/
+            m1.conn.add_valid_path(&m2.public(), &m2_addr).await;
+            m2.conn.add_valid_path(&m1.public(), &m1_addr).await;
         }
 
         // msg from  m2 -> m1
