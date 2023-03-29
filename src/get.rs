@@ -18,7 +18,7 @@ use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
-use bao_tree::r#async::AsyncResponseDecoder;
+use bao_tree::tokio_io::AsyncResponseDecoder;
 use bytes::BytesMut;
 use default_net::Interface;
 use futures::{Future, StreamExt};

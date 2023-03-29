@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::encode_ranges_validated;
-use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
+use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -31,7 +31,6 @@ use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
-use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
@@ -725,7 +724,7 @@ async fn transfer_collection(
         .try_into()
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
-    let outboard = PreOrderMemOutboard::new(hash.into(), IROH_BLOCK_SIZE, outboard.to_vec());
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
     encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
 
     let c: Collection = postcard::from_bytes(data)?;
@@ -885,18 +884,17 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             write_response(&mut writer, buffer, Res::Found).await?;
-            // need to thread the writer though the spawn_blocking, since
-            // taking a reference does not work. spawn_blocking requires
-            // 'static lifetime.
-            writer = tokio::task::spawn_blocking(move || {
-                let file_reader = std::fs::File::open(&path)?;
-                let mut wrapper = SyncIoBridge::new(&mut writer);
-                let outboard =
-                    PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
-                encode_ranges_validated(file_reader, outboard, &RangeSet2::all(), &mut wrapper)?;
-                std::io::Result::Ok(writer)
-            })
-            .await??;
+
+            let outboard =
+                PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
+            let file_reader = tokio::fs::File::open(&path).await?;
+            bao_tree::tokio_io::encode_ranges_validated(
+                file_reader,
+                outboard,
+                &RangeSet2::all(),
+                &mut writer,
+            )
+            .await?;
 
             Ok((SentStatus::Sent, writer, size))
         }

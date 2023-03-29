@@ -4,6 +4,7 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
+use bao_tree::tokio_io::AsyncResponseDecoder;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -116,12 +117,8 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     reader: R,
     hash: Hash,
 ) -> Result<Vec<u8>> {
-    let mut decoder = bao_tree::r#async::AsyncResponseDecoder::new(
-        hash.into(),
-        RangeSet2::all(),
-        IROH_BLOCK_SIZE,
-        reader,
-    );
+    let mut decoder =
+        AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, reader);
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;
