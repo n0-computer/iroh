@@ -589,7 +589,7 @@ impl Conn {
             let report = self.net_checker.get_report(&dm).await?;
             *self.last_net_check_report.write().await = Some(report.clone());
             let r = &report;
-            self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
+            self.no_v4_send.store(!r.ipv4_can_send, Ordering::Relaxed);
 
             let mut ni = cfg::NetInfo {
                 derp_latency: Default::default(),
