@@ -730,7 +730,7 @@ mod tests {
     fn test_escape_hostname() {
         assert_eq!(
             escape_hostname("hello.host.name_foo-bar%baz"),
-            "hello.host.name_foo-bar%baz"
+            "hello.host.namefoo-barbaz"
         );
     }
 }
