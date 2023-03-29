@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -5,16 +6,16 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use indicatif::{
-    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+    HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
+    ProgressStyle,
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProvideResponse, ProvideResponseEntry, ProviderRequest,
-    ProviderResponse, ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -24,12 +25,13 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::iroh_data_root;
+use crate::main_util::{iroh_data_root, pathbuf_from_name};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
+const MAX_CONCURRENT_DIALS: u8 = 16;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -86,7 +88,7 @@ enum Commands {
     Provide {
         path: Option<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, defaults to 127.0.01:4433.
+        /// Optional listening address, defaults to 127.0.0.1:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
         /// Auth token, defaults to random generated.
@@ -170,6 +172,13 @@ enum Commands {
         /// Ticket containing everything to retrieve a hash from provider.
         ticket: Ticket,
     },
+    /// List Provide Addresses
+    #[clap(about = "List addresses")]
+    Addresses {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
 }
 
 // Note about writing to STDOUT vs STDERR
@@ -199,6 +208,222 @@ async fn make_rpc_client(
         .await
         .context("iroh server is not running")??;
     Ok(client)
+}
+
+struct ProvideProgressState {
+    mp: MultiProgress,
+    pbs: HashMap<u64, ProgressBar>,
+}
+
+impl ProvideProgressState {
+    fn new() -> Self {
+        Self {
+            mp: MultiProgress::new(),
+            pbs: HashMap::new(),
+        }
+    }
+
+    fn found(&mut self, name: String, id: u64, size: u64) {
+        let pb = self.mp.add(ProgressBar::new(size));
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+        pb.set_message(name);
+        pb.set_length(size);
+        pb.set_position(0);
+        pb.enable_steady_tick(Duration::from_millis(500));
+        self.pbs.insert(id, pb);
+    }
+
+    fn progress(&mut self, id: u64, progress: u64) {
+        if let Some(pb) = self.pbs.get_mut(&id) {
+            pb.set_position(progress);
+        }
+    }
+
+    fn done(&mut self, id: u64, _hash: Hash) {
+        if let Some(pb) = self.pbs.remove(&id) {
+            pb.finish_and_clear();
+            self.mp.remove(&pb);
+        }
+    }
+
+    fn all_done(self) {
+        self.mp.clear().ok();
+    }
+
+    fn error(self) {
+        self.mp.clear().ok();
+    }
+}
+
+struct ValidateProgressState {
+    mp: MultiProgress,
+    pbs: HashMap<u64, ProgressBar>,
+    overall: ProgressBar,
+    total: u64,
+    errors: u64,
+    successes: u64,
+}
+
+impl ValidateProgressState {
+    fn new() -> Self {
+        let mp = MultiProgress::new();
+        let overall = mp.add(ProgressBar::new(0));
+        overall.enable_steady_tick(Duration::from_millis(500));
+        Self {
+            mp,
+            pbs: HashMap::new(),
+            overall,
+            total: 0,
+            errors: 0,
+            successes: 0,
+        }
+    }
+
+    fn starting(&mut self, total: u64) {
+        self.total = total;
+        self.errors = 0;
+        self.successes = 0;
+        self.overall.set_position(0);
+        self.overall.set_length(total);
+        self.overall.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{bar:60.cyan/blue}] {msg}")
+                .unwrap()
+                .progress_chars("=>-"),
+        );
+    }
+
+    fn add_entry(&mut self, id: u64, hash: Hash, path: Option<PathBuf>, size: u64) {
+        let pb = self.mp.insert_before(&self.overall, ProgressBar::new(size));
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
+            .progress_chars("=>-"));
+        let msg = if let Some(path) = path {
+            path.display().to_string()
+        } else {
+            format!("outboard {}", Blake3Cid(hash))
+        };
+        pb.set_message(msg);
+        pb.set_position(0);
+        pb.set_length(size);
+        pb.enable_steady_tick(Duration::from_millis(500));
+        self.pbs.insert(id, pb);
+    }
+
+    fn progress(&mut self, id: u64, progress: u64) {
+        if let Some(pb) = self.pbs.get_mut(&id) {
+            pb.set_position(progress);
+        }
+    }
+
+    fn abort(self, error: String) {
+        let error_line = self.mp.add(ProgressBar::new(0));
+        error_line.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
+        error_line.set_message(error);
+    }
+
+    fn done(&mut self, id: u64, error: Option<String>) {
+        if let Some(pb) = self.pbs.remove(&id) {
+            let ok_char = style(Emoji("✔", "OK")).green();
+            let fail_char = style(Emoji("✗", "Error")).red();
+            let ok = error.is_none();
+            let msg = match error {
+                Some(error) => format!("{} {} {}", pb.message(), fail_char, error),
+                None => format!("{} {}", pb.message(), ok_char),
+            };
+            if ok {
+                self.successes += 1;
+            } else {
+                self.errors += 1;
+            }
+            self.overall.set_position(self.errors + self.successes);
+            self.overall.set_message(format!(
+                "Overall {} {}, {} {}",
+                self.errors, fail_char, self.successes, ok_char
+            ));
+            if ok {
+                pb.finish_and_clear();
+            } else {
+                pb.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
+                pb.finish_with_message(msg);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ProvideResponseEntry {
+    pub name: String,
+    pub size: u64,
+}
+
+async fn aggregate_add_response<S, E>(
+    stream: S,
+) -> anyhow::Result<(Hash, Vec<ProvideResponseEntry>)>
+where
+    S: Stream<Item = std::result::Result<ProvideProgress, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let mut stream = stream;
+    let mut collection_hash = None;
+    let mut collections = BTreeMap::<u64, (String, u64, Option<Hash>)>::new();
+    let mut mp = Some(ProvideProgressState::new());
+    while let Some(item) = stream.next().await {
+        match item? {
+            ProvideProgress::Found { name, id, size } => {
+                tracing::info!("Found({},{},{})", id, name, size);
+                if let Some(mp) = mp.as_mut() {
+                    mp.found(name.clone(), id, size);
+                }
+                collections.insert(id, (name, size, None));
+            }
+            ProvideProgress::Progress { id, offset } => {
+                tracing::info!("Progress({}, {})", id, offset);
+                if let Some(mp) = mp.as_mut() {
+                    mp.progress(id, offset);
+                }
+            }
+            ProvideProgress::Done { hash, id } => {
+                tracing::info!("Done({},{:?})", id, hash);
+                if let Some(mp) = mp.as_mut() {
+                    mp.done(id, hash);
+                }
+                match collections.get_mut(&id) {
+                    Some((_, _, ref mut h)) => {
+                        *h = Some(hash);
+                    }
+                    None => {
+                        anyhow::bail!("Got Done for unknown collection id {}", id);
+                    }
+                }
+            }
+            ProvideProgress::AllDone { hash } => {
+                tracing::info!("AllDone({:?})", hash);
+                if let Some(mp) = mp.take() {
+                    mp.all_done();
+                }
+                collection_hash = Some(hash);
+                break;
+            }
+            ProvideProgress::Abort(e) => {
+                if let Some(mp) = mp.take() {
+                    mp.error();
+                }
+                anyhow::bail!("Error while adding data: {}", e);
+            }
+        }
+    }
+    let hash = collection_hash.context("Missing hash for collection")?;
+    let entries = collections
+        .into_iter()
+        .map(|(_, (name, size, hash))| {
+            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            Ok(ProvideResponseEntry { name, size })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((hash, entries))
 }
 
 fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
@@ -253,11 +478,14 @@ async fn main_impl() -> Result<()> {
             }
             let token = AuthToken::from_str(&auth_token)
                 .context("Wrong format for authentication token")?;
+            let get = GetInteractive::Hash {
+                hash: *hash.as_hash(),
+                opts,
+                token,
+            };
             tokio::select! {
                 biased;
-                res = get_interactive(*hash.as_hash(), opts, token, out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -265,22 +493,13 @@ async fn main_impl() -> Result<()> {
             }
         }
         Commands::GetTicket { out, ticket } => {
-            let Ticket {
-                hash,
-                peer,
-                addr,
-                token,
-            } = ticket;
-            let opts = get::Options {
-                addr,
-                peer_id: Some(peer),
+            let get = GetInteractive::Ticket {
+                ticket,
                 keylog: cli.keylog,
             };
             tokio::select! {
                 biased;
-                res = get_interactive(hash, opts, token, out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -315,34 +534,35 @@ async fn main_impl() -> Result<()> {
             )
             .await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
             // task that will add data to the provider, either from a file or from stdin
-            let fut = tokio::spawn(async move {
-                let (path, tmp_path) = if let Some(path) = path {
-                    let absolute = path.canonicalize()?;
-                    println!("Adding {} as {}...", path.display(), absolute.display());
-                    (absolute, None)
-                } else {
-                    // Store STDIN content into a temporary file
-                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                    let mut file = tokio::fs::File::from_std(file);
-                    let path_buf = path.to_path_buf();
-                    // Copy from stdin to the file, until EOF
-                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                    println!("Adding from stdin...");
-                    // return the TempPath to keep it alive
-                    (path_buf, Some(path))
-                };
-                // tell the provider to add the data
-                let ProvideResponse { hash, entries } =
-                    controller.rpc(ProvideRequest { path }).await??;
-
-                print_add_response(hash, entries);
-                ticket.hash = hash;
-                println!("All-in-one ticket: {ticket}");
-                anyhow::Ok(tmp_path)
-            });
+            let fut = {
+                let provider = provider.clone();
+                tokio::spawn(async move {
+                    let (path, tmp_path) = if let Some(path) = path {
+                        let absolute = path.canonicalize()?;
+                        println!("Adding {} as {}...", path.display(), absolute.display());
+                        (absolute, None)
+                    } else {
+                        // Store STDIN content into a temporary file
+                        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                        let mut file = tokio::fs::File::from_std(file);
+                        let path_buf = path.to_path_buf();
+                        // Copy from stdin to the file, until EOF
+                        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                        println!("Adding from stdin...");
+                        // return the TempPath to keep it alive
+                        (path_buf, Some(path))
+                    };
+                    // tell the provider to add the data
+                    let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                    let (hash, entries) = aggregate_add_response(stream).await?;
+                    print_add_response(hash, entries);
+                    let ticket = provider.ticket(hash)?;
+                    println!("All-in-one ticket: {ticket}");
+                    anyhow::Ok(tmp_path)
+                })
+            };
 
             let provider2 = provider.clone();
             tokio::select! {
@@ -381,24 +601,36 @@ async fn main_impl() -> Result<()> {
         }
         Commands::Validate { rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
+            let mut state = ValidateProgressState::new();
             let mut response = client.server_streaming(ValidateRequest).await?;
-            let ok_char = style(Emoji("✔", "OK")).green();
-            let fail_char = style(Emoji("✗", "Error")).red();
+
             while let Some(item) = response.next().await {
-                let item = item?;
-                println!(
-                    "{} {} {} {}{}",
-                    item.path
-                        .map(|x| x.display().to_string())
-                        .unwrap_or("Collection".to_owned()),
-                    Blake3Cid(item.hash),
-                    HumanBytes(item.size),
-                    item.error
-                        .as_ref()
-                        .map(|x| format!("{} ", x))
-                        .unwrap_or("".to_owned()),
-                    item.error.map(|_| &fail_char).unwrap_or(&ok_char),
-                );
+                match item? {
+                    ValidateProgress::Starting { total } => {
+                        state.starting(total);
+                    }
+                    ValidateProgress::Entry {
+                        id,
+                        hash,
+                        path,
+                        size,
+                    } => {
+                        state.add_entry(id, hash, path, size);
+                    }
+                    ValidateProgress::Progress { id, offset } => {
+                        state.progress(id, offset);
+                    }
+                    ValidateProgress::Done { id, error } => {
+                        state.done(id, error);
+                    }
+                    ValidateProgress::Abort(error) => {
+                        state.abort(error.to_string());
+                        break;
+                    }
+                    ValidateProgress::AllDone => {
+                        break;
+                    }
+                }
             }
             Ok(())
         }
@@ -420,9 +652,17 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let absolute = path.canonicalize()?;
             println!("Adding {} as {}...", path.display(), absolute.display());
-            let ProvideResponse { hash, entries } =
-                client.rpc(ProvideRequest { path: absolute }).await??;
+            let stream = client
+                .server_streaming(ProvideRequest { path: absolute })
+                .await?;
+            let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
+            Ok(())
+        }
+        Commands::Addresses { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(AddrsRequest).await?;
+            println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
     }
@@ -456,7 +696,7 @@ async fn provide(
         builder.keypair(keypair).spawn()?
     };
 
-    println!("Listening address: {}", provider.listen_addr());
+    println!("Listening address: {}", provider.local_address());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();
@@ -506,13 +746,30 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
     }
 }
 
-async fn get_interactive(
-    hash: Hash,
-    opts: get::Options,
-    token: AuthToken,
-    out: Option<PathBuf>,
-) -> Result<()> {
-    progress!("Fetching: {}", Blake3Cid::new(hash));
+#[derive(Debug)]
+enum GetInteractive {
+    Ticket {
+        ticket: Ticket,
+        keylog: bool,
+    },
+    Hash {
+        hash: Hash,
+        opts: get::Options,
+        token: AuthToken,
+    },
+}
+
+impl GetInteractive {
+    fn hash(&self) -> Hash {
+        match self {
+            GetInteractive::Ticket { ticket, .. } => ticket.hash(),
+            GetInteractive::Hash { hash, .. } => *hash,
+        }
+    }
+}
+
+async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()> {
+    progress!("Fetching: {}", Blake3Cid::new(get.hash()));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
@@ -536,11 +793,10 @@ async fn get_interactive(
     };
     let on_collection = |collection: &iroh::blobs::Collection| {
         let pb = &pb;
-        let name = collection.name().to_string();
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
         async move {
-            progress!("{} Downloading {name}...", style("[3/3]").bold().dim());
+            progress!("{} Downloading ...", style("[3/3]").bold().dim());
             progress!(
                 "  {total_entries} file(s) with total transfer size {}",
                 HumanBytes(size)
@@ -558,11 +814,11 @@ async fn get_interactive(
         let pb = &pb;
         async move {
             let name = if name.is_empty() {
-                hash.to_string()
+                PathBuf::from(hash.to_string())
             } else {
-                name
+                pathbuf_from_name(&name)
             };
-            pb.set_message(format!("Receiving '{name}'..."));
+            pb.set_message(format!("Receiving '{}'...", name.display()));
 
             // Wrap the reader to show progress.
             let mut wrapped_reader = pb.wrap_async_read(&mut reader);
@@ -591,6 +847,11 @@ async fn get_interactive(
 
                 // Rename temp file, to target name
                 let filepath2 = filepath.clone();
+                if let Some(parent) = filepath2.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .context("Unable to create directory {parent}")?;
+                }
                 tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                     .await?
                     .context("Failed to write output file")?;
@@ -603,7 +864,22 @@ async fn get_interactive(
             Ok(reader)
         }
     };
-    let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
+    let stats = match get {
+        GetInteractive::Ticket { ticket, keylog } => {
+            get::run_ticket(
+                &ticket,
+                keylog,
+                MAX_CONCURRENT_DIALS,
+                on_connected,
+                on_collection,
+                on_blob,
+            )
+            .await?
+        }
+        GetInteractive::Hash { hash, opts, token } => {
+            get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
+        }
+    };
 
     pb.finish_and_clear();
     progress!(

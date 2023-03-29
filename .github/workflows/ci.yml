@@ -28,23 +28,16 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
-
+      
     - name: check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all --bins --tests
-
+      run: cargo check --all --bins --tests
+      
     - name: tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --all 
-
+      run: cargo test --all
+      
   build_and_test_windows:
     name: Build and test (Windows)
     runs-on: ${{ matrix.os }}
@@ -54,7 +47,7 @@ jobs:
         rust: [nightly, stable]
         target:
           - x86_64-pc-windows-gnu
-          -  x86_64-pc-windows-msvc
+          - x86_64-pc-windows-msvc
 
     steps:
     - name: Checkout
@@ -63,32 +56,117 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
         target: ${{ matrix.target }}
-        override: true
-
+      
     - uses: msys2/setup-msys2@v2
     - name: check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all --bins --tests --target ${{ matrix.target }}
-
+      run: cargo check --all --bins --tests --target ${{ matrix.target }}
+      
     - name: check bench
-      uses: actions-rs/cargo@v1
       if: matrix.rust == 'nightly'
-      with:
-        command:  check
-        target: ${{ matrix.target }}
-        args: --benches
+      run: cargo check --target ${{ matrix.target }} --benches
 
     - name: tests
-      uses: actions-rs/cargo@v1
+      run: cargo test --all  --target ${{ matrix.target }}
+
+  build_release:
+    name: Build release binaries
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
+    needs: build_and_test_nix
+    if: ${{ always() && github.ref_name=='main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
+        rust: [stable]
+        experimental: [false]
+        include:
+          - name: ubuntu-arm-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: aarch64
+            runner: [self-hosted, linux, ARM64]
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: [self-hosted, linux, X64]
+          - name: macOS-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: x86_64
+            runner: [self-hosted, macOS, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: [self-hosted, macOS, ARM64]
+          # - os: windows-latest
+          #   release-os: windows
+          #   release-arch: amd64
+          #   runner: [windows-latest]
+    env:
+      RUST_BACKTRACE: full
+      RUSTV: ${{ matrix.rust }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
       with:
-        command: test
-        args: --all  --target ${{ matrix.target }}
+        submodules: recursive
+
+    - name: Set build arch
+      run: |
+        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
+
+    - name: Install ${{ matrix.rust }}
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
+
+    - name: build release
+      run: |
+        cargo build --profile optimized-release
+
+    - name: Setup awscli on linux
+      if: matrix.name == 'ubuntu-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+
+    - name: Setup awscli on linux
+      if: matrix.name == 'ubuntu-arm-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+
+    - name: Setup awscli on mac
+      if: matrix.os == 'macos-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+        sudo installer -pkg AWSCLIV2.pkg -target /
+
+    - name: Set aws credentials
+      if: matrix.os != 'windows-latest'
+      run: |
+          echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
+
+    - name: push release
+      if: matrix.os != 'windows-latest'
+      run: |
+        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+
+    - name: push release latest
+      if: matrix.os != 'windows-latest'
+      run: |
+        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   cross:
     name: Cross compile
@@ -97,7 +175,8 @@ jobs:
       matrix:
         target:
           - i686-unknown-linux-gnu
-          - arm-linux-androideabi
+          - armv7-linux-androideabi
+          - aarch64-linux-android
 
     steps:
     - name: Checkout
@@ -106,10 +185,8 @@ jobs:
         submodules: recursive
 
     - name: Install nightly
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        override: true
+      # See https://github.com/cross-rs/cross/issues/1222
+      uses: dtolnay/rust-toolchain@1.67
 
     - name: Install cross
       run: cargo install cross
@@ -126,17 +203,9 @@ jobs:
     steps:
     - uses: actions/checkout@master
 
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-          components: rustfmt
-
-    - name: setup
-      run: |
-        rustup component add rustfmt
-        rustc --version
+        components: rustfmt
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -148,12 +217,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: clippy
+
     - name: clippy check
       run: cargo clippy --message-format=json --all-features --all-targets
 
@@ -162,11 +229,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
-          profile: minimal
-          toolchain: "${{ env.MSRV }}"
-          override: true
+        toolchain: ${{ env.MSRV }}
+
     - name: Check MSRV all features
       run: |
         cargo +$MSRV check --workspace --all-targets --no-default-features
@@ -181,3 +247,69 @@ jobs:
           arguments: --workspace --all-features
           command: check
           command-arguments: "-Dwarnings"
+
+  netsim-integration-tests:
+    name: Run network simulations/benchmarks
+    runs-on: [self-hosted, linux, X64]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+      with:
+        submodules: recursive
+    
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build iroh
+      run: |
+        cargo build --release
+
+    - name: Fetch and build chuck
+      run: |
+        git clone https://github.com/n0-computer/chuck.git
+        cd chuck
+        cargo build --release
+    
+    - name: Install netsim deps
+      run: |
+        cd chuck/netsim
+        sudo apt update
+        ./setup.sh
+
+    - name: Copy binaries to right location
+      run: |
+        cp target/release/iroh chuck/netsim/bins/iroh
+        cp chuck/target/release/chuck chuck/netsim/bins/chuck
+
+    - name: Run tests
+      run: |
+        cd chuck/netsim
+        sudo kill -9 $(pgrep ovs)
+        sudo mn --clean
+        sudo python3 main.py --integration sims/standard/iroh.json
+
+    - name: Setup Environment (PR)  
+      if: ${{ github.event_name == 'pull_request' }}  
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
+        echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
+    - name: Setup Environment (Push)  
+      if: ${{ github.event_name == 'push' }}  
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
+
+    - name: Generate reports
+      run: |
+        cd chuck/netsim
+        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+
+    - name: Echo metrics
+      run: |
+        cd chuck/netsim
+        d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        echo "$metro_data" 

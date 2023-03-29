@@ -67,8 +67,28 @@ impl PublicKey {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
+
+impl Serialize for SecretKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        serdect::array::serialize_hex_upper_or_bin(self.0.as_bytes(), serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let mut bytes = [0u8; KEY_SIZE];
+        serdect::array::deserialize_hex_or_bin(&mut bytes, deserializer)?;
+        Ok(SecretKey::from(bytes))
+    }
+}
 
 impl SecretKey {
     pub fn generate() -> Self {

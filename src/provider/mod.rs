@@ -7,13 +7,11 @@
 //! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
-use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -21,42 +19,49 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future::{self, BoxFuture, Shared};
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use futures::future::{BoxFuture, Shared};
+use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
+use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
+use crate::net::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideRequest, ProvideResponse,
-    ProvideResponseEntry, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateRequest, ValidateResponse, VersionRequest, VersionResponse, WatchRequest,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, Hash};
+use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
+
 mod database;
+mod ticket;
+
 pub use database::Database;
 #[cfg(cli)]
 pub use database::Snapshot;
+pub use ticket::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Default bind address for the provider.
+pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -109,7 +114,7 @@ impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
     pub fn with_db(db: Database) -> Self {
         Self {
-            bind_addr: "127.0.0.1:4433".parse().unwrap(),
+            bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
@@ -375,9 +380,20 @@ impl Provider {
         Builder::with_db(db)
     }
 
-    /// Returns the address on which the server is listening for connections.
-    pub fn listen_addr(&self) -> SocketAddr {
+    /// The address on which the provider socket is bound.
+    ///
+    /// Note that this could be an unspecified address, if you need an address on which you
+    /// can contact the provider consider using [`Provider::listen_addresses`].  However the
+    /// port will always be the concrete port.
+    pub fn local_address(&self) -> SocketAddr {
         self.inner.listen_addr
+    }
+
+    /// Returns all addresses on which the provider is reachable.
+    ///
+    /// This will never be empty.
+    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(self.inner.listen_addr)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -406,14 +422,10 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        Ticket {
-            hash,
-            peer: self.peer_id(),
-            addr: self.inner.listen_addr,
-            token: self.inner.auth_token,
-        }
+        let addrs = self.listen_addresses()?;
+        Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
     }
 
     /// Aborts the provider.
@@ -461,40 +473,70 @@ impl RpcHandler {
     fn validate(
         self,
         _msg: ValidateRequest,
-    ) -> impl Stream<Item = ValidateResponse> + Send + 'static {
-        self.inner
-            .db
-            .validate(num_cpus::get())
-            .map(|(hash, size, path, error)| ValidateResponse {
-                hash,
-                size,
-                path,
-                error: error.map(|e| e.to_string()),
-            })
+    ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
+        let (tx, rx) = mpsc::channel(1);
+        let tx2 = tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = self.inner.db.validate(tx).await {
+                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            }
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
-        let path = msg.path;
-        let data_sources: Vec<DataSource> = if path.is_dir() {
-            let mut paths = Vec::new();
-            let mut iter = tokio::fs::read_dir(&path).await?;
-            while let Some(el) = iter.next_entry().await? {
-                if el.path().is_file() {
-                    paths.push(el.path().into());
-                }
+    fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
+        let (tx, rx) = mpsc::channel(1);
+        let tx2 = tx.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = self.provide0(msg, tx).await {
+                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
             }
-            paths
-        } else if path.is_file() {
-            vec![path.into()]
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
+    }
+
+    async fn provide0(
+        self,
+        msg: ProvideRequest,
+        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+    ) -> anyhow::Result<()> {
+        let root = msg.path;
+        anyhow::ensure!(
+            root.is_dir() || root.is_file(),
+            "path must be either a Directory or a File"
+        );
+        let data_sources = if root.is_dir() {
+            let files = futures::stream::iter(WalkDir::new(&root));
+            let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
+                let root = root.clone();
+                async move {
+                    if !entry.file_type().is_file() {
+                        // Skip symlinks. Directories are handled by WalkDir.
+                        return Ok(None);
+                    }
+                    let path = entry.into_path();
+                    let name = canonicalize_path(path.strip_prefix(&root)?)?;
+                    anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+                }
+            });
+            let data_sources: Vec<anyhow::Result<DataSource>> =
+                data_sources.collect::<Vec<_>>().await;
+            data_sources
+                .into_iter()
+                .collect::<anyhow::Result<Vec<_>>>()?
         } else {
-            anyhow::bail!("path must be either a Directory or a File");
+            // A single file, use the file name as the name of the blob.
+            vec![DataSource::NamedFile {
+                name: canonicalize_path(root.file_name().context("path must be a file")?)?,
+                path: root,
+            }]
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, entries, hash) = create_collection_inner(data_sources).await?;
+        let (db, _) = create_collection_inner(data_sources, Progress::new(progress)).await?;
         self.inner.db.union_with(db);
 
-        Ok(ProvideResponse { hash, entries })
+        Ok(())
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
@@ -507,6 +549,11 @@ impl RpcHandler {
             auth_token: Box::new(self.inner.auth_token),
             listen_addr: Box::new(self.inner.listen_addr),
             version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
+        AddrsResponse {
+            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -542,10 +589,14 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
         use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
-            Provide(msg) => chan.rpc_map_err(msg, handler, RpcHandler::provide).await,
+            Provide(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::provide)
+                    .await
+            }
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
             Validate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::validate)
@@ -683,8 +734,8 @@ async fn transfer_collection(
     let _ = events.send(Event::TransferCollectionStarted {
         connection_id,
         request_id,
-        num_blobs: c.blobs.len() as u64,
-        total_blobs_size: c.total_blobs_size,
+        num_blobs: c.blobs().len() as u64,
+        total_blobs_size: c.total_blobs_size(),
     });
 
     // TODO: we should check if the blobs referenced in this container
@@ -693,15 +744,15 @@ async fn transfer_collection(
         &mut writer,
         buffer,
         Res::FoundCollection {
-            total_blobs_size: c.total_blobs_size,
+            total_blobs_size: c.total_blobs_size(),
         },
     )
     .await?;
 
     let mut data = BytesMut::from(&encoded[..]);
     writer.write_buf(&mut data).await?;
-    for (i, blob) in c.blobs.iter().enumerate() {
-        debug!("writing blob {}/{}", i, c.blobs.len());
+    for (i, blob) in c.blobs().iter().enumerate() {
+        debug!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
         let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
         writer = writer1;
@@ -884,10 +935,10 @@ pub enum DataSource {
     /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
     /// name. Passing in the empty string will explicitly _not_ persist the filename.
     NamedFile {
-        /// Path to the file
-        path: PathBuf,
         /// Custom name
         name: String,
+        /// Path to the file
+        path: PathBuf,
     },
 }
 
@@ -923,19 +974,18 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-///
-/// path and name are returned with the result to provide context
 fn compute_outboard(
     path: PathBuf,
-    name: Option<String>,
-) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
+    size: u64,
+    progress: impl Fn(u64) + Send + Sync + 'static,
+) -> anyhow::Result<(Hash, Vec<u8>)> {
     ensure!(
         path.is_file(),
         "can only transfer blob data: {}",
         path.display()
     );
+    tracing::debug!("computing outboard for {}", path.display());
     let file = std::fs::File::open(&path)?;
-    let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
     //
     // outboard is ~1/16 of data size, so this will fail for really large files
@@ -943,7 +993,7 @@ fn compute_outboard(
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(abao::encode::outboard_size(len))
+    let outboard_size = usize::try_from(abao::encode::outboard_size(size))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
@@ -951,67 +1001,98 @@ fn compute_outboard(
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
     let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
-    let mut reader = BufReader::new(file);
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(file, |p| {
+        if let ProgressReaderUpdate::Progress(offset) = p {
+            progress(offset);
+        }
+    });
+
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
     // the length we have actually written, should be the same as the length of the file.
-    let len2 = std::io::copy(&mut reader, &mut encoder)?;
+    let size2 = std::io::copy(&mut reader, &mut encoder)?;
     // this can fail if the file was appended to during encoding.
-    ensure!(len == len2, "file changed during encoding");
+    ensure!(size == size2, "file changed during encoding");
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
+    tracing::debug!("done. hash for {} is {hash}", path.display());
 
-    Ok((path, name, hash.into(), outboard))
+    Ok((hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, _, hash) = create_collection_inner(data_sources).await?;
+    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
 }
 
 /// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
 /// a public Database.
 async fn create_collection_inner(
-    data_sources: Vec<DataSource>,
-) -> Result<(
-    HashMap<Hash, BlobOrCollection>,
-    Vec<ProvideResponseEntry>,
-    Hash,
-)> {
+    mut data_sources: Vec<DataSource>,
+    progress: Progress<ProvideProgress>,
+) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
 
-    // compute outboards in parallel, using tokio's blocking thread pool
-    let outboards = data_sources.into_iter().map(|data| {
-        let (path, name) = match data {
-            DataSource::File(path) => (path, None),
-            DataSource::NamedFile { path, name } => (path, Some(name)),
-        };
-        tokio::task::spawn_blocking(move || compute_outboard(path, name))
-    });
-    // wait for completion and collect results
-    let outboards = future::join_all(outboards)
-        .await
-        .into_iter()
-        .collect::<Result<Result<Vec<_>, _>, _>>()??;
+    data_sources.sort();
 
-    // compute information about the collection
-    let entries = outboards
-        .iter()
-        .map(|(path, name, hash, outboard)| {
-            let name = name
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| path.display().to_string());
-            ProvideResponseEntry {
-                name,
-                hash: *hash,
-                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
+    let outboard_progress = progress.clone();
+    // compute outboards in parallel, using tokio's blocking thread pool
+    let outboards = stream::iter(data_sources)
+        .enumerate()
+        .map(|(id, data)| {
+            let id = id as u64;
+            let (path, name) = match data {
+                DataSource::File(path) => (path, None),
+                DataSource::NamedFile { path, name } => (path, Some(name)),
+            };
+            let size = path.metadata().unwrap().len();
+            let find_progress = outboard_progress.clone();
+            let outboard_progress = outboard_progress.clone();
+            let done_progress = outboard_progress.clone();
+            async move {
+                // found events must be sent
+                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
+                find_progress
+                    .send(ProvideProgress::Found {
+                        name: pname,
+                        id,
+                        size,
+                    })
+                    .await?;
+                let rpath = path.clone();
+                let (hash, outboard) = tokio::task::spawn_blocking(move || {
+                    compute_outboard(path, size, move |offset| {
+                        outboard_progress.try_send(ProvideProgress::Progress { id, offset })
+                    })
+                })
+                .await??;
+                // done events must be sent
+                done_progress
+                    .send(ProvideProgress::Done { id, hash })
+                    .await?;
+                anyhow::Ok((rpath, name, hash, outboard))
             }
         })
-        .collect();
+        // allow at most num_cpus tasks at a time, otherwise we might get too many open files
+        // todo: this assumes that this is 100% cpu bound, which is likely not true.
+        // we might get better performance by using a larger number here.
+        .buffer_unordered(num_cpus::get());
+    // wait for completion and collect results
+    // weird massaging of the output to get rid of the results
+    let mut outboards = outboards
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    outboards.sort();
 
     // insert outboards into the database and build collection
     for (path, name, hash, outboard) in outboards {
@@ -1036,11 +1117,7 @@ async fn create_collection_inner(
         blobs.push(Blob { name, hash });
     }
 
-    let c = Collection {
-        name: "collection".to_string(),
-        blobs,
-        total_blobs_size,
-    };
+    let c = Collection::new(blobs, total_blobs_size)?;
 
     let data = postcard::to_stdvec(&c).context("blob encoding")?;
     let (outboard, hash) = abao::encode::outboard(&data);
@@ -1052,8 +1129,9 @@ async fn create_collection_inner(
             data: Bytes::from(data.to_vec()),
         },
     );
+    progress.send(ProvideProgress::AllDone { hash }).await?;
 
-    Ok((db, entries, hash))
+    Ok((db, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
@@ -1073,54 +1151,6 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
     debug!("written response of length {}", used.len());
     Ok(())
-}
-
-/// A token containing everything to get a file from the provider.
-///
-/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base64.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Ticket {
-    /// The hash to retrieve.
-    pub hash: Hash,
-    /// The peer ID identifying the provider.
-    pub peer: PeerId,
-    /// The socket address the provider is listening on.
-    pub addr: SocketAddr,
-    /// The authentication token with permission to retrieve the hash.
-    pub token: AuthToken,
-}
-
-impl Ticket {
-    /// Deserializes from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
-        Ok(slf)
-    }
-
-    /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-}
-
-/// Serializes to base64.
-impl Display for Ticket {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        write!(f, "{}", util::encode(encoded))
-    }
-}
-
-/// Deserializes from base64.
-impl FromStr for Ticket {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
-    }
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
@@ -1146,6 +1176,8 @@ pub fn make_server_config(
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use std::net::Ipv4Addr;
+    use std::path::Path;
     use std::str::FromStr;
     use testdir::testdir;
 
@@ -1187,11 +1219,7 @@ mod tests {
                     }),
                 );
             }
-            let collection = Collection {
-                blobs: cblobs,
-                total_blobs_size,
-                name: "".to_string(),
-            };
+            let collection = Collection::new(cblobs, total_blobs_size).unwrap();
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
@@ -1225,27 +1253,6 @@ mod tests {
             let db2 = db2.to_inner();
             prop_assert_eq!(db, db2);
         }
-    }
-
-    #[test]
-    fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = abao::encode::encode(b"hi there");
-        let hash = Hash::from(hash);
-        let peer = PeerId::from(Keypair::generate().public());
-        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = AuthToken::generate();
-        let ticket = Ticket {
-            hash,
-            peer,
-            addr,
-            token,
-        };
-        let base64 = ticket.to_string();
-        println!("Ticket: {base64}");
-        println!("{} bytes", base64.len());
-
-        let ticket2: Ticket = base64.parse().unwrap();
-        assert_eq!(ticket2, ticket);
     }
 
     #[tokio::test]
@@ -1282,11 +1289,7 @@ mod tests {
             hash,
         });
 
-        let expect_collection = Collection {
-            name: "collection".to_string(),
-            blobs: expect_blobs,
-            total_blobs_size: 0,
-        };
+        let expect_collection = Collection::new(expect_blobs, 0).unwrap();
 
         let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
 
@@ -1302,5 +1305,19 @@ mod tests {
         assert_eq!(expect_collection, collection);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ticket_multiple_addrs() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = Provider::builder(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .spawn()
+            .unwrap();
+        let _drop_guard = provider.cancel_token().drop_guard();
+        let ticket = provider.ticket(hash).unwrap();
+        println!("addrs: {:?}", ticket.addrs());
+        assert!(!ticket.addrs().is_empty());
     }
 }

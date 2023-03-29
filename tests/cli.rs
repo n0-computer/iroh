@@ -8,8 +8,10 @@ use std::process::{Child, Command, Stdio};
 use anyhow::{Context, Result};
 use rand::{RngCore, SeedableRng};
 use testdir::testdir;
+use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
+const RPC_PORT: &str = "4999";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<()> {
     let mut content = vec![0u8; size];
@@ -34,6 +36,23 @@ fn cli_provide_folder() -> Result<()> {
     let bar_path = dir.join("bar");
     make_rand_file(1000, &foo_path)?;
     make_rand_file(10000, &bar_path)?;
+    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+    test_provide_get_loop(&dir, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_tree() -> Result<()> {
+    let dir = testdir!();
+    let foo_path = dir.join("foo");
+    let bar_path = dir.join("bar");
+    let file1 = foo_path.join("file1");
+    let file2 = bar_path.join("file2");
+    let file3 = bar_path.join("file3");
+    std::fs::create_dir(&foo_path)?;
+    std::fs::create_dir(&bar_path)?;
+    make_rand_file(1000, &file1)?;
+    make_rand_file(10000, &file2)?;
+    make_rand_file(5000, &file3)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
@@ -110,6 +129,65 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn cli_provide_addresses() -> Result<()> {
+    let home = testdir!();
+    let dir = testdir!();
+    let path = dir.join("foo");
+    make_rand_file(1000, &path)?;
+    let input = Input::Path;
+
+    let _provider = make_provider(
+        &path,
+        &input,
+        home.clone(),
+        Some("127.0.0.1:4333"),
+        Some(RPC_PORT),
+    )?;
+
+    // wait for the provider to start
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    let mut cmd = Command::new(iroh_bin());
+    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
+
+    // test output
+    let get_output = cmd.output()?;
+    let stdout = String::from_utf8(get_output.stdout).unwrap();
+    assert!(get_output.status.success());
+    assert_eq!(stdout, "Listening addresses: [127.0.0.1:4333]\n");
+
+    let _provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
+    let mut cmd = Command::new(iroh_bin());
+    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
+
+    // test output
+    let get_output = cmd.output()?;
+    let stdout = String::from_utf8(get_output.stdout).unwrap();
+    assert!(get_output.status.success());
+    assert!(stdout != "Listening addresses: [0.0.0.0:4333]\n");
+    assert!(stdout.contains("Listening addresses: ["));
+
+    //parse the output to get the addresses
+    let addresses = stdout
+        .split('[')
+        .nth(1)
+        .unwrap()
+        .split(']')
+        .next()
+        .unwrap()
+        .split(',')
+        .map(|x| x.trim().to_string())
+        .collect::<Vec<_>>();
+
+    for address in addresses {
+        let addr: std::net::SocketAddr = address.parse()?;
+        assert_eq!(addr.port(), 4333);
+    }
+
+    Ok(())
+}
+
 /// Parameter for `test_provide_get_loop`, that determines how we handle the fetched data from the
 /// `iroh get` command
 #[derive(Debug, PartialEq)]
@@ -135,7 +213,13 @@ fn iroh_bin() -> &'static str {
     env!("CARGO_BIN_EXE_iroh")
 }
 
-fn make_provider(path: &Path, input: &Input, home: impl AsRef<Path>) -> Result<ProvideProcess> {
+fn make_provider(
+    path: &Path,
+    input: &Input,
+    home: impl AsRef<Path>,
+    addr: Option<&str>,
+    rpc_port: Option<&str>,
+) -> Result<ProvideProcess> {
     // spawn a provider & optionally provide from stdin
     let mut command = Command::new(iroh_bin());
     let res = command
@@ -150,9 +234,9 @@ fn make_provider(path: &Path, input: &Input, home: impl AsRef<Path>) -> Result<P
         .arg("provide")
         .arg(path)
         .arg("--addr")
-        .arg(ADDR)
+        .arg(addr.unwrap_or(ADDR))
         .arg("--rpc-port")
-        .arg("disabled");
+        .arg(rpc_port.unwrap_or("disabled"));
 
     let provider = match input {
         Input::Stdin => {
@@ -188,14 +272,16 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     let path = src.join(path);
     let num_blobs = if path.is_dir() {
-        let entries = std::fs::read_dir(&path)?;
-        entries.count()
+        WalkDir::new(&path)
+            .into_iter()
+            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
+            .count()
     } else {
         1
     };
 
     let home = testdir!();
-    let mut provider = make_provider(&path, &input, home)?;
+    let mut provider = make_provider(&path, &input, home, None, None)?;
     // std::io::copy(&mut provider.child.stderr.take().unwrap(), &mut std::io::stderr())?;
 
     let stdout = provider.child.stdout.take().unwrap();
@@ -247,10 +333,20 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
     let expect_path = expect_path.as_ref();
     let got_dir_path = got_dir_path.as_ref();
     if expect_path.is_dir() {
-        let paths = std::fs::read_dir(expect_path)?;
+        let paths = WalkDir::new(expect_path).into_iter().filter(|x| {
+            x.as_ref()
+                .ok()
+                .map(|x| x.file_type().is_file())
+                .unwrap_or(false)
+        });
         for entry in paths {
             let entry = entry?;
-            compare_files(entry.path(), got_dir_path)?;
+            let file_path = entry.path();
+            let rel = file_path.strip_prefix(expect_path)?;
+            let expected_file_path = got_dir_path.join(rel);
+            let got = std::fs::read(file_path)?;
+            let expect = std::fs::read(expected_file_path)?;
+            assert_eq!(expect, got);
         }
     } else {
         let file_name = expect_path.file_name().unwrap();
@@ -273,7 +369,7 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
         r"Fetching: [\da-z]{59}"; 1,
         r"\[1/3\] Connecting ..."; 1,
         r"\[2/3\] Requesting ..."; 1,
-        r"\[3/3\] Downloading collection..."; 1,
+        r"\[3/3\] Downloading ..."; 1,
         r"\d* file\(s\) with total transfer size [\d.]* ?[BKMGT]?i?B"; 1,
         r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d*? [BKMGT]iB/s"; 1
     ];

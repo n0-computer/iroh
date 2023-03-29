@@ -30,14 +30,11 @@ jobs:
         submodules: recursive
     
     - name: Install rust stable
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Build iroh
       run: |
-        cargo build --release
+        cargo build --profile optimized-release
 
     - name: Fetch and build chuck
       run: |
@@ -53,7 +50,7 @@ jobs:
 
     - name: Copy binaries to right location
       run: |
-        cp target/release/iroh chuck/netsim/bins/iroh
+        cp target/optimized-release/iroh chuck/netsim/bins/iroh
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
     
     - name: Detect comment commands
@@ -76,17 +73,10 @@ jobs:
         cd chuck/netsim
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
-        sudo python3 main.py sims/standard
-
-    - name: Run tests
-      run: |
-        cd chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
-          sudo python3 main.py sims/standard
+          sudo python3 main.py sims/iroh
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json

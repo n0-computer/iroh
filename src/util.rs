@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
@@ -7,11 +7,13 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
-    io::{self, Read, Seek},
+    io::{self, BufReader, Read, Seek},
+    path::{Component, Path},
     result,
     str::FromStr,
 };
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -152,6 +154,7 @@ impl From<anyhow::Error> for RpcError {
 }
 
 /// A serializable result type for use in RPC responses.
+#[allow(dead_code)]
 pub type RpcResult<T> = result::Result<T, RpcError>;
 
 /// Todo: gather more information about validation errors. E.g. offset
@@ -178,10 +181,17 @@ pub(crate) fn validate_bao(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
+    progress: impl Fn(u64),
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard_reader = io::Cursor::new(outboard);
-    let mut decoder = abao::decode::Decoder::new_outboard(data_reader, outboard_reader, &hash);
+    let progress_reader = ProgressReader::new(data_reader, |p| {
+        if let ProgressReaderUpdate::Progress(x) = p {
+            progress(x)
+        }
+    });
+    let buffered_reader = BufReader::with_capacity(1024 * 1024, progress_reader);
+    let mut decoder = abao::decode::Decoder::new_outboard(buffered_reader, outboard_reader, &hash);
     // todo: expose chunk group size in abao, so people can allocate good sized buffers
     let mut buffer = vec![0u8; 1024 * 16 + 4096];
     loop {
@@ -197,6 +207,32 @@ pub(crate) fn validate_bao(
     Ok(())
 }
 
+/// converts a canonicalized relative path to a string, returning an error if
+/// the path is not valid unicode
+///
+/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
+/// or if the path components contain any windows or unix path separators
+pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    let parts = path
+        .as_ref()
+        .components()
+        .map(|c| {
+            let c = if let Component::Normal(x) = c {
+                x.to_str().context("invalid character in path")?
+            } else {
+                anyhow::bail!("invalid path component {:?}", c)
+            };
+            anyhow::ensure!(
+                !c.contains('/') && !c.contains('\\'),
+                "invalid path component {:?}",
+                c
+            );
+            Ok(c)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(parts.join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +244,74 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
+}
+
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> Read for ProgressReader<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(ProgressReaderUpdate::Progress(self.offset));
+        Ok(read)
+    }
+}
+
+impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
+    fn drop(&mut self) {
+        (self.cb)(ProgressReaderUpdate::Done);
+    }
+}
+
+pub(crate) enum ProgressReaderUpdate {
+    Progress(u64),
+    Done,
+}
+
+pub struct Progress<T>(Option<mpsc::Sender<T>>);
+
+impl<T> Clone for Progress<T> {
+    fn clone(&self) -> Self {
+        Progress(self.0.clone())
+    }
+}
+
+impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
+    pub fn new(sender: mpsc::Sender<T>) -> Self {
+        Self(Some(sender))
+    }
+    pub fn none() -> Self {
+        Self(None)
+    }
+    pub fn try_send(&self, msg: T) {
+        if let Some(progress) = &self.0 {
+            progress.try_send(msg).ok();
+        }
+    }
+    pub async fn send(&self, msg: T) -> anyhow::Result<()> {
+        if let Some(progress) = &self.0 {
+            progress.send(msg).await?;
+        }
+        Ok(())
     }
 }
