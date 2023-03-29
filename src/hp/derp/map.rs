@@ -55,9 +55,23 @@ pub enum UseIpv4 {
     Some(Ipv4Addr),
 }
 
+impl UseIpv4 {
+    /// Is this enabled?
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, &UseIpv4::Disabled)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum UseIpv6 {
     None,
     Disabled,
     Some(Ipv6Addr),
+}
+
+impl UseIpv6 {
+    /// Is this enabled?
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, &UseIpv6::Disabled)
+    }
 }

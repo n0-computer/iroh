@@ -1,5 +1,9 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use anyhow::Result;
-use futures::future::{BoxFuture, FutureExt};
+use futures::future::FutureExt;
+use futures::Future;
 use hyper::header::{HeaderValue, UPGRADE};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Request, Response, StatusCode};
@@ -34,20 +38,32 @@ where
 
 type HyperResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-/// Return a closure that takes an http Request, upgrades that connection, and hands it off to the
-/// derp server.
-fn derp_upgrade_fn<P: PacketForwarder>(
-    conn_handler: ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>,
-) -> impl Fn(Request<Body>) -> BoxFuture<'static, HyperResult<Response<Body>>> {
-    move |mut req| {
+impl<P> hyper::service::Service<Request<Body>>
+    for ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>
+where
+    P: PacketForwarder,
+{
+    type Response = Response<Body>;
+    type Error = hyper::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         // TODO: soooo much cloning. See if there is an alternative
-        let closure_conn_handler = conn_handler.clone();
+        let closure_conn_handler = self.clone();
+        let mut builder = Response::builder();
+        for (key, value) in self.default_headers.iter() {
+            builder = builder.header(key, value);
+        }
+
         async move {
             {
-                let mut res = Response::new(Body::empty());
+                let mut res = builder.body(Body::empty()).unwrap();
 
-                // Send a 400 to any request that doesn't have
-                // an `Upgrade` header.
+                // Send a 400 to any request that doesn't have an `Upgrade` header.
                 if !req.headers().contains_key(UPGRADE) {
                     *res.status_mut() = StatusCode::BAD_REQUEST;
                     return Ok(res);
@@ -91,19 +107,20 @@ mod tests {
 
     use anyhow::Result;
     use std::net::SocketAddr;
-
-    use tokio::sync::oneshot;
+    use tokio::net::TcpListener;
 
     use hyper::header::UPGRADE;
-    use hyper::service::{make_service_fn, service_fn};
+    use hyper::server::conn::Http;
     use hyper::upgrade::Upgraded;
-    use hyper::{Body, Client, Request, Server, StatusCode};
+    use hyper::{Body, Client, Request, StatusCode};
+    use tokio::sync::oneshot;
 
     use crate::hp::derp::server::Server as DerpServer;
     use crate::hp::key::node::{PublicKey, SecretKey};
 
     /// Handle client-side I/O after HTTP upgraded.
     async fn derp_client(mut upgraded: Upgraded) -> Result<()> {
+        println!("in derp_client handshake");
         let secret_key = SecretKey::generate();
         let got_server_key = crate::hp::derp::client::recv_server_key(&mut upgraded).await?;
         let client_info = crate::hp::derp::types::ClientInfo {
@@ -126,13 +143,22 @@ mod tests {
 
     /// Our client HTTP handler to initiate HTTP upgrades.
     async fn client_upgrade_request(addr: SocketAddr) -> Result<()> {
+        let tcp_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        let (mut request_sender, connection) =
+            hyper::client::conn::handshake(tcp_stream).await.unwrap();
+
+        let task = tokio::spawn(async move {
+            let _ = connection.without_shutdown().await;
+        });
+
         let req = Request::builder()
-            .uri(format!("http://{}/", addr))
-            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
+            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
             .body(Body::empty())
             .unwrap();
 
-        let res = Client::new().request(req).await?;
+        let res = request_sender.send_request(req).await.unwrap();
+
         if res.status() != StatusCode::SWITCHING_PROTOCOLS {
             panic!("Our server didn't upgrade: {}", res.status());
         }
@@ -161,7 +187,7 @@ mod tests {
     async fn test_connection_handler() -> Result<()> {
         // inspired by https://github.com/hyperium/hyper/blob/v0.14.25/examples/upgrades.rs
 
-        let addr = ([127, 0, 0, 1], 0).into();
+        let addr = "127.0.0.1:0";
 
         // create derp_server
         let server_key = SecretKey::generate();
@@ -169,45 +195,50 @@ mod tests {
             DerpServer::new(server_key, None);
 
         // create handler that sends new connections to the client
-        let derp_client_handler = derp_server.client_conn_handler();
+        let derp_client_handler = derp_server.client_conn_handler(Default::default());
 
-        // Would love to wrap this in a `make_derp_server_service` function that returns
-        // a `hyper::service::make::MakeServiceFn`, but that's a private struct so I don't think we
-        // can
-        let make_service = make_service_fn(move |_| {
-            let derp_client_handler = derp_client_handler.clone();
-            async { Ok::<_, hyper::Error>(service_fn(derp_upgrade_fn(derp_client_handler))) }
-        });
-
-        let server = Server::bind(&addr).serve(make_service);
-
+        let listener = TcpListener::bind(&addr).await?;
         // We need the assigned address for the client to send it messages.
-        let addr = server.local_addr();
+        let addr = listener.local_addr()?;
 
         // For this example, a oneshot is used to signal that after 1 request,
         // the server should be shutdown.
-        let (tx, rx) = oneshot::channel::<()>();
-        let server = server.with_graceful_shutdown(async move {
-            rx.await.ok();
-        });
+        let (tx, mut rx) = oneshot::channel::<()>();
 
         // Spawn server on the default executor,
         // which is usually a thread-pool from tokio default runtime.
-        tokio::task::spawn(async move {
-            if let Err(e) = server.await {
-                eprintln!("server error: {}", e);
+        let server_task = tokio::task::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut rx => {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    conn = listener.accept() => {
+                        let (stream, _) = conn?;
+                        let derp_client_handler = derp_client_handler.clone();
+                        tokio::task::spawn(async move {
+                            if let Err(err) = Http::new()
+                                .serve_connection(stream, derp_client_handler)
+                                .await
+                            {
+                                eprintln!("Failed to serve connection: {:?}", err);
+                            }
+                        });
+                    }
+                }
             }
         });
 
         // Client requests a HTTP connection upgrade.
         let request = client_upgrade_request(addr.clone());
-        if let Err(e) = request.await {
-            eprintln!("client error: {}", e);
-        }
+        request.await?;
 
         // Complete the oneshot so that the server stops
         // listening and the process can close down.
-        let _ = tx.send(());
+        assert!(tx.send(()).is_ok());
+        server_task.await??;
         Ok(())
     }
 }

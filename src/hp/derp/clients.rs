@@ -260,7 +260,6 @@ impl Clients {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
     use std::time::Instant;
 
     use super::*;
