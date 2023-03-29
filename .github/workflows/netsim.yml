@@ -30,10 +30,7 @@ jobs:
         submodules: recursive
     
     - name: Install rust stable
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Build iroh
       run: |
@@ -79,7 +76,7 @@ jobs:
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
-          sudo python3 main.py sims/standard
+          sudo python3 main.py sims/iroh
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json

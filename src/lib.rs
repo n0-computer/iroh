@@ -3,13 +3,13 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+pub mod net;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
-pub mod net;
-
+mod subnet;
 mod tls;
 mod util;
 
@@ -26,7 +26,7 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
-        net::SocketAddr,
+        net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
         time::Duration,
@@ -168,7 +168,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.listen_addr(),
+                provider.local_address(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -257,7 +257,7 @@ mod tests {
         });
 
         let opts = get::Options {
-            addr: dbg!(provider.listen_addr()),
+            addr: dbg!(provider.local_address()),
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -353,7 +353,7 @@ mod tests {
             .spawn()
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.listen_addr();
+        let provider_addr = provider.local_address();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -426,7 +426,7 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.listen_addr();
+        let provider_addr = provider.local_address();
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -473,7 +473,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.listen_addr();
+        let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),
@@ -496,5 +496,49 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_run_ticket() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = Provider::builder(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .spawn()
+            .unwrap();
+        let _drop_guard = provider.cancel_token().drop_guard();
+        let ticket = provider.ticket(hash).unwrap();
+        let mut on_connected = false;
+        let mut on_collection = false;
+        let mut on_blob = false;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run_ticket(
+                &ticket,
+                true,
+                16,
+                || {
+                    on_connected = true;
+                    async { Ok(()) }
+                },
+                |_| {
+                    on_collection = true;
+                    async { Ok(()) }
+                },
+                |_hash, mut stream, _name| {
+                    on_blob = true;
+                    async move {
+                        io::copy(&mut stream, &mut io::sink()).await?;
+                        Ok(stream)
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get ticket failed");
+        assert!(on_connected);
+        assert!(on_collection);
+        assert!(on_blob);
     }
 }

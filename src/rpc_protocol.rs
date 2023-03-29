@@ -115,6 +115,13 @@ impl RpcMsg<ProviderService> for IdRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AddrsRequest;
+
+impl RpcMsg<ProviderService> for AddrsRequest {
+    type Response = AddrsResponse;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WatchResponse {
     pub version: String,
 }
@@ -125,6 +132,11 @@ pub struct IdResponse {
     pub auth_token: Box<AuthToken>,
     pub listen_addr: Box<SocketAddr>,
     pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AddrsResponse {
+    pub addrs: Vec<SocketAddr>,
 }
 
 impl Msg<ProviderService> for WatchRequest {
@@ -152,6 +164,7 @@ pub enum ProviderRequest {
     List(ListRequest),
     Provide(ProvideRequest),
     Id(IdRequest),
+    Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
     Validate(ValidateRequest),
 }
@@ -164,6 +177,7 @@ pub enum ProviderResponse {
     List(ListResponse),
     Provide(ProvideProgress),
     Id(IdResponse),
+    Addrs(AddrsResponse),
     Validate(ValidateProgress),
     Shutdown(()),
 }

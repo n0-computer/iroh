@@ -28,23 +28,16 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
-
+      
     - name: check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all --bins --tests
-
+      run: cargo check --all --bins --tests
+      
     - name: tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --all 
-
+      run: cargo test --all
+      
   build_and_test_windows:
     name: Build and test (Windows)
     runs-on: ${{ matrix.os }}
@@ -54,7 +47,7 @@ jobs:
         rust: [nightly, stable]
         target:
           - x86_64-pc-windows-gnu
-          -  x86_64-pc-windows-msvc
+          - x86_64-pc-windows-msvc
 
     steps:
     - name: Checkout
@@ -63,32 +56,21 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
         target: ${{ matrix.target }}
-        override: true
-
+      
     - uses: msys2/setup-msys2@v2
     - name: check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --all --bins --tests --target ${{ matrix.target }}
-
+      run: cargo check --all --bins --tests --target ${{ matrix.target }}
+      
     - name: check bench
-      uses: actions-rs/cargo@v1
       if: matrix.rust == 'nightly'
-      with:
-        command:  check
-        target: ${{ matrix.target }}
-        args: --benches
+      run: cargo check --target ${{ matrix.target }} --benches
 
     - name: tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --all  --target ${{ matrix.target }}
+      run: cargo test --all  --target ${{ matrix.target }}
 
   build_release:
     name: Build release binaries
@@ -203,11 +185,8 @@ jobs:
         submodules: recursive
 
     - name: Install nightly
-      uses: actions-rs/toolchain@v1
-      with:
-        # See https://github.com/cross-rs/cross/issues/1222
-        toolchain: 1.67
-        override: true
+      # See https://github.com/cross-rs/cross/issues/1222
+      uses: dtolnay/rust-toolchain@1.67
 
     - name: Install cross
       run: cargo install cross
@@ -224,17 +203,9 @@ jobs:
     steps:
     - uses: actions/checkout@master
 
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
-
-    - name: setup
-      run: |
-        rustup component add rustfmt
-        rustc --version
+        components: rustfmt
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -246,12 +217,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: clippy
+
     - name: clippy check
       run: cargo clippy --message-format=json --all-features --all-targets
 
@@ -260,11 +229,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
-          profile: minimal
-          toolchain: "${{ env.MSRV }}"
-          override: true
+        toolchain: ${{ env.MSRV }}
+
     - name: Check MSRV all features
       run: |
         cargo +$MSRV check --workspace --all-targets --no-default-features
@@ -290,10 +258,7 @@ jobs:
         submodules: recursive
     
     - name: Install rust stable
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Build iroh
       run: |

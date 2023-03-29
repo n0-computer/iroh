@@ -31,6 +31,7 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
+const MAX_CONCURRENT_DIALS: u8 = 16;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -87,7 +88,7 @@ enum Commands {
     Provide {
         path: Option<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, defaults to 127.0.01:4433.
+        /// Optional listening address, defaults to 127.0.0.1:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
         /// Auth token, defaults to random generated.
@@ -170,6 +171,13 @@ enum Commands {
         out: Option<PathBuf>,
         /// Ticket containing everything to retrieve a hash from provider.
         ticket: Ticket,
+    },
+    /// List Provide Addresses
+    #[clap(about = "List addresses")]
+    Addresses {
+        /// Optional rpc port, defaults to 4919
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
     },
 }
 
@@ -470,11 +478,14 @@ async fn main_impl() -> Result<()> {
             }
             let token = AuthToken::from_str(&auth_token)
                 .context("Wrong format for authentication token")?;
+            let get = GetInteractive::Hash {
+                hash: *hash.as_hash(),
+                opts,
+                token,
+            };
             tokio::select! {
                 biased;
-                res = get_interactive(*hash.as_hash(), opts, token, out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -482,26 +493,13 @@ async fn main_impl() -> Result<()> {
             }
         }
         Commands::GetTicket { out, ticket } => {
-            let Ticket {
-                hash,
-                peer,
-                addrs,
-                token,
-            } = ticket;
-            let addr = addrs
-                .get(0)
-                .copied()
-                .context("missing SocketAddr in ticket")?;
-            let opts = get::Options {
-                addr,
-                peer_id: Some(peer),
+            let get = GetInteractive::Ticket {
+                ticket,
                 keylog: cli.keylog,
             };
             tokio::select! {
                 biased;
-                res = get_interactive(hash, opts, token, out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -536,33 +534,35 @@ async fn main_impl() -> Result<()> {
             )
             .await?;
             let controller = provider.controller();
-            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
 
             // task that will add data to the provider, either from a file or from stdin
-            let fut = tokio::spawn(async move {
-                let (path, tmp_path) = if let Some(path) = path {
-                    let absolute = path.canonicalize()?;
-                    println!("Adding {} as {}...", path.display(), absolute.display());
-                    (absolute, None)
-                } else {
-                    // Store STDIN content into a temporary file
-                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                    let mut file = tokio::fs::File::from_std(file);
-                    let path_buf = path.to_path_buf();
-                    // Copy from stdin to the file, until EOF
-                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                    println!("Adding from stdin...");
-                    // return the TempPath to keep it alive
-                    (path_buf, Some(path))
-                };
-                // tell the provider to add the data
-                let stream = controller.server_streaming(ProvideRequest { path }).await?;
-                let (hash, entries) = aggregate_add_response(stream).await?;
-                print_add_response(hash, entries);
-                ticket.hash = hash;
-                println!("All-in-one ticket: {ticket}");
-                anyhow::Ok(tmp_path)
-            });
+            let fut = {
+                let provider = provider.clone();
+                tokio::spawn(async move {
+                    let (path, tmp_path) = if let Some(path) = path {
+                        let absolute = path.canonicalize()?;
+                        println!("Adding {} as {}...", path.display(), absolute.display());
+                        (absolute, None)
+                    } else {
+                        // Store STDIN content into a temporary file
+                        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                        let mut file = tokio::fs::File::from_std(file);
+                        let path_buf = path.to_path_buf();
+                        // Copy from stdin to the file, until EOF
+                        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                        println!("Adding from stdin...");
+                        // return the TempPath to keep it alive
+                        (path_buf, Some(path))
+                    };
+                    // tell the provider to add the data
+                    let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                    let (hash, entries) = aggregate_add_response(stream).await?;
+                    print_add_response(hash, entries);
+                    let ticket = provider.ticket(hash)?;
+                    println!("All-in-one ticket: {ticket}");
+                    anyhow::Ok(tmp_path)
+                })
+            };
 
             let provider2 = provider.clone();
             tokio::select! {
@@ -659,6 +659,12 @@ async fn main_impl() -> Result<()> {
             print_add_response(hash, entries);
             Ok(())
         }
+        Commands::Addresses { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(AddrsRequest).await?;
+            println!("Listening addresses: {:?}", response.addrs);
+            Ok(())
+        }
     }
 }
 
@@ -690,7 +696,7 @@ async fn provide(
         builder.keypair(keypair).spawn()?
     };
 
-    println!("Listening address: {}", provider.listen_addr());
+    println!("Listening address: {}", provider.local_address());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();
@@ -740,13 +746,30 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
     }
 }
 
-async fn get_interactive(
-    hash: Hash,
-    opts: get::Options,
-    token: AuthToken,
-    out: Option<PathBuf>,
-) -> Result<()> {
-    progress!("Fetching: {}", Blake3Cid::new(hash));
+#[derive(Debug)]
+enum GetInteractive {
+    Ticket {
+        ticket: Ticket,
+        keylog: bool,
+    },
+    Hash {
+        hash: Hash,
+        opts: get::Options,
+        token: AuthToken,
+    },
+}
+
+impl GetInteractive {
+    fn hash(&self) -> Hash {
+        match self {
+            GetInteractive::Ticket { ticket, .. } => ticket.hash(),
+            GetInteractive::Hash { hash, .. } => *hash,
+        }
+    }
+}
+
+async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()> {
+    progress!("Fetching: {}", Blake3Cid::new(get.hash()));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
@@ -841,7 +864,22 @@ async fn get_interactive(
             Ok(reader)
         }
     };
-    let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
+    let stats = match get {
+        GetInteractive::Ticket { ticket, keylog } => {
+            get::run_ticket(
+                &ticket,
+                keylog,
+                MAX_CONCURRENT_DIALS,
+                on_connected,
+                on_collection,
+                on_blob,
+            )
+            .await?
+        }
+        GetInteractive::Hash { hash, opts, token } => {
+            get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
+        }
+    };
 
     pb.finish_and_clear();
     progress!(

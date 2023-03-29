@@ -7,13 +7,11 @@
 //! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
-use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Cursor};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -30,7 +28,6 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use range_collections::RangeSet2;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
@@ -41,26 +38,33 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
-use crate::net::LocalAddresses;
+use crate::net::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
+    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{self, canonicalize_path, Hash, Progress, ProgressReader, ProgressUpdate};
+use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressUpdate};
 use crate::IROH_BLOCK_SIZE;
+
 mod database;
+mod ticket;
+
 pub use database::Database;
 #[cfg(cli)]
 pub use database::Snapshot;
+pub use ticket::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Default bind address for the provider.
+pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -113,7 +117,7 @@ impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
     pub fn with_db(db: Database) -> Self {
         Self {
-            bind_addr: "127.0.0.1:4433".parse().unwrap(),
+            bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
@@ -379,9 +383,20 @@ impl Provider {
         Builder::with_db(db)
     }
 
-    /// Returns the address on which the server is listening for connections.
-    pub fn listen_addr(&self) -> SocketAddr {
+    /// The address on which the provider socket is bound.
+    ///
+    /// Note that this could be an unspecified address, if you need an address on which you
+    /// can contact the provider consider using [`Provider::listen_addresses`].  However the
+    /// port will always be the concrete port.
+    pub fn local_address(&self) -> SocketAddr {
         self.inner.listen_addr
+    }
+
+    /// Returns all addresses on which the provider is reachable.
+    ///
+    /// This will never be empty.
+    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(self.inner.listen_addr)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -410,34 +425,10 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let listen_ip = self.inner.listen_addr.ip();
-        let listen_port = self.inner.listen_addr.port();
-        let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
-            true => {
-                // Find all the local addresses for this address family.
-                let addrs = LocalAddresses::new();
-                addrs
-                    .regular
-                    .iter()
-                    .filter(|addr| match addr {
-                        IpAddr::V4(_) if listen_ip.is_ipv4() => true,
-                        IpAddr::V6(_) if listen_ip.is_ipv6() => true,
-                        _ => false,
-                    })
-                    .copied()
-                    .map(|addr| SocketAddr::from((addr, listen_port)))
-                    .collect()
-            }
-            false => vec![self.inner.listen_addr],
-        };
-        Ticket {
-            hash,
-            peer: self.peer_id(),
-            addrs,
-            token: self.inner.auth_token,
-        }
+        let addrs = self.listen_addresses()?;
+        Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
     }
 
     /// Aborts the provider.
@@ -563,6 +554,11 @@ impl RpcHandler {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
+    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
+        AddrsResponse {
+            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
+        }
+    }
     async fn shutdown(self, request: ShutdownRequest) {
         if request.force {
             tracing::info!("hard shutdown requested");
@@ -603,6 +599,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
+            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
             Validate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::validate)
@@ -1148,54 +1145,6 @@ async fn write_response<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// A token containing everything to get a file from the provider.
-///
-/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base64.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Ticket {
-    /// The hash to retrieve.
-    pub hash: Hash,
-    /// The peer ID identifying the provider.
-    pub peer: PeerId,
-    /// The socket addresses the provider is listening on.
-    pub addrs: Vec<SocketAddr>,
-    /// The authentication token with permission to retrieve the hash.
-    pub token: AuthToken,
-}
-
-impl Ticket {
-    /// Deserializes from bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let slf = postcard::from_bytes(bytes)?;
-        Ok(slf)
-    }
-
-    /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
-    }
-}
-
-/// Serializes to base64.
-impl Display for Ticket {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        write!(f, "{}", util::encode(encoded))
-    }
-}
-
-/// Deserializes from base64.
-impl FromStr for Ticket {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
-    }
-}
-
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
 pub fn make_server_config(
     keypair: &Keypair,
@@ -1298,27 +1247,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_ticket_base64_roundtrip() {
-        let hash = blake3::hash(b"hi there");
-        let hash = Hash::from(hash);
-        let peer = PeerId::from(Keypair::generate().public());
-        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = AuthToken::generate();
-        let ticket = Ticket {
-            hash,
-            peer,
-            addrs: vec![addr],
-            token,
-        };
-        let base64 = ticket.to_string();
-        println!("Ticket: {base64}");
-        println!("{} bytes", base64.len());
-
-        let ticket2: Ticket = base64.parse().unwrap();
-        assert_eq!(ticket2, ticket);
-    }
-
     #[tokio::test]
     async fn test_create_collection() -> Result<()> {
         let dir: PathBuf = testdir!();
@@ -1380,8 +1308,8 @@ mod tests {
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash);
-        println!("addrs: {:?}", ticket.addrs);
-        assert!(!ticket.addrs.is_empty());
+        let ticket = provider.ticket(hash).unwrap();
+        println!("addrs: {:?}", ticket.addrs());
+        assert!(!ticket.addrs().is_empty());
     }
 }

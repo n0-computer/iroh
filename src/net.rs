@@ -1,12 +1,14 @@
 //! Networking related utilities
 
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+
+use anyhow::{ensure, Result};
 
 const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
 
 /// List of machine's IP addresses.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalAddresses {
     /// Loopback addresses.
     pub loopback: Vec<IpAddr>,
@@ -144,6 +146,32 @@ fn to_canonical(ip: IpAddr) -> IpAddr {
 // Copied from std lib, not stable yet
 const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
+}
+
+/// Given a listen/bind address, finds all the local addresses for that address family.
+pub(crate) fn find_local_addresses(listen_addr: SocketAddr) -> Result<Vec<SocketAddr>> {
+    let listen_ip = listen_addr.ip();
+    let listen_port = listen_addr.port();
+    let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
+        true => {
+            // Find all the local addresses for this address family.
+            let addrs = LocalAddresses::new();
+            addrs
+                .regular
+                .iter()
+                .filter(|addr| match addr {
+                    IpAddr::V4(_) if listen_ip.is_ipv4() => true,
+                    IpAddr::V6(_) if listen_ip.is_ipv6() => true,
+                    _ => false,
+                })
+                .copied()
+                .map(|addr| SocketAddr::from((addr, listen_port)))
+                .collect()
+        }
+        false => vec![listen_addr],
+    };
+    ensure!(!addrs.is_empty(), "No local addresses found");
+    Ok(addrs)
 }
 
 #[cfg(test)]
