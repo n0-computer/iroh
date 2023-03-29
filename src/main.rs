@@ -31,6 +31,7 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
+const MAX_CONCURRENT_DIALS: u8 = 16;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -477,11 +478,14 @@ async fn main_impl() -> Result<()> {
             }
             let token = AuthToken::from_str(&auth_token)
                 .context("Wrong format for authentication token")?;
+            let get = GetInteractive::Hash {
+                hash: *hash.as_hash(),
+                opts,
+                token,
+            };
             tokio::select! {
                 biased;
-                res = get_interactive(*hash.as_hash(), opts, token, out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -489,21 +493,13 @@ async fn main_impl() -> Result<()> {
             }
         }
         Commands::GetTicket { out, ticket } => {
-            let addr = ticket
-                .addrs()
-                .get(0)
-                .copied()
-                .context("missing SocketAddr in ticket")?;
-            let opts = get::Options {
-                addr,
-                peer_id: Some(ticket.peer()),
+            let get = GetInteractive::Ticket {
+                ticket,
                 keylog: cli.keylog,
             };
             tokio::select! {
                 biased;
-                res = get_interactive(ticket.hash(), opts, ticket.token(), out) => {
-                    res
-                }
+                res = get_interactive(get, out) => res,
                 _ = tokio::signal::ctrl_c() => {
                     println!("Ending transfer early...");
                     Ok(())
@@ -750,13 +746,30 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
     }
 }
 
-async fn get_interactive(
-    hash: Hash,
-    opts: get::Options,
-    token: AuthToken,
-    out: Option<PathBuf>,
-) -> Result<()> {
-    progress!("Fetching: {}", Blake3Cid::new(hash));
+#[derive(Debug)]
+enum GetInteractive {
+    Ticket {
+        ticket: Ticket,
+        keylog: bool,
+    },
+    Hash {
+        hash: Hash,
+        opts: get::Options,
+        token: AuthToken,
+    },
+}
+
+impl GetInteractive {
+    fn hash(&self) -> Hash {
+        match self {
+            GetInteractive::Ticket { ticket, .. } => ticket.hash(),
+            GetInteractive::Hash { hash, .. } => *hash,
+        }
+    }
+}
+
+async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()> {
+    progress!("Fetching: {}", Blake3Cid::new(get.hash()));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
@@ -851,7 +864,22 @@ async fn get_interactive(
             Ok(reader)
         }
     };
-    let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
+    let stats = match get {
+        GetInteractive::Ticket { ticket, keylog } => {
+            get::run_ticket(
+                &ticket,
+                keylog,
+                MAX_CONCURRENT_DIALS,
+                on_connected,
+                on_collection,
+                on_blob,
+            )
+            .await?
+        }
+        GetInteractive::Hash { hash, opts, token } => {
+            get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
+        }
+    };
 
     pb.finish_and_clear();
     progress!(
