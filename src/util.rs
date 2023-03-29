@@ -170,10 +170,6 @@ pub(crate) enum BaoValidationError {
     IoError(io::Error),
     /// The data failed to validate
     EncodeError(EncodeError),
-    // /// The hash of the data does not match the hash of the outboard.
-    // HashMismatch,
-    // /// The size of the data does not match the size of the outboard.
-    // SizeMismatch,
 }
 
 impl From<EncodeError> for BaoValidationError {
@@ -273,13 +269,13 @@ mod tests {
     }
 }
 
-pub(crate) struct ProgressReader<R, F: Fn(ProgressUpdate)> {
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
     cb: F,
 }
 
-impl<R: Read, F: Fn(ProgressUpdate)> ProgressReader<R, F> {
+impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
     pub fn new(inner: R, cb: F) -> Self {
         Self {
             inner,
@@ -289,22 +285,22 @@ impl<R: Read, F: Fn(ProgressUpdate)> ProgressReader<R, F> {
     }
 }
 
-impl<R: Read, F: Fn(ProgressUpdate)> Read for ProgressReader<R, F> {
+impl<R: Read, F: Fn(ProgressReaderUpdate)> Read for ProgressReader<R, F> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let read = self.inner.read(buf)?;
         self.offset += read as u64;
-        (self.cb)(ProgressUpdate::Progress(self.offset));
+        (self.cb)(ProgressReaderUpdate::Progress(self.offset));
         Ok(read)
     }
 }
 
-impl<R, F: Fn(ProgressUpdate)> Drop for ProgressReader<R, F> {
+impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
     fn drop(&mut self) {
-        (self.cb)(ProgressUpdate::Done);
+        (self.cb)(ProgressReaderUpdate::Done);
     }
 }
 
-pub(crate) enum ProgressUpdate {
+pub(crate) enum ProgressReaderUpdate {
     Progress(u64),
     Done,
 }

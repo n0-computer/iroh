@@ -18,7 +18,7 @@ use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
-use bao_tree::ChunkNum;
+use bao_tree::r#async::AsyncResponseDecoder;
 use bytes::BytesMut;
 use default_net::Interface;
 use futures::{Future, StreamExt};
@@ -108,16 +108,12 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(bao_tree::r#async::AsyncResponseDecoder<quinn::RecvStream>);
+pub struct DataStream(AsyncResponseDecoder<quinn::RecvStream>);
 
 impl DataStream {
     fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
-        let decoder = bao_tree::r#async::AsyncResponseDecoder::new(
-            hash.into(),
-            RangeSet2::from(ChunkNum(0)..),
-            IROH_BLOCK_SIZE,
-            inner,
-        );
+        let decoder =
+            AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
         DataStream(decoder)
     }
 

@@ -49,7 +49,7 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressUpdate};
+use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
 use crate::IROH_BLOCK_SIZE;
 
 mod database;
@@ -992,13 +992,9 @@ fn compute_outboard(
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
-    // copy the file into the encoder. Data will be skipped by the encoder in outboard mode.
-    // let outboard_cursor = std::io::Cursor::new(&mut outboard);
-    // let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
-
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader::new(file, |p| {
-        if let ProgressUpdate::Progress(offset) = p {
+        if let ProgressReaderUpdate::Progress(offset) = p {
             progress(offset);
         }
     });

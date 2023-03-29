@@ -4,7 +4,6 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -119,7 +118,7 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
 ) -> Result<Vec<u8>> {
     let mut decoder = bao_tree::r#async::AsyncResponseDecoder::new(
         hash.into(),
-        RangeSet2::from(ChunkNum(0)..),
+        RangeSet2::all(),
         IROH_BLOCK_SIZE,
         reader,
     );
