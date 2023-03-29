@@ -1,4 +1,5 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -6,16 +7,23 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use futures::future::BoxFuture;
+use hyper::{header::UPGRADE, Body, Request};
+use rand::Rng;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
-use crate::hp::derp::{DerpNode, PacketForwarder, UseIpv4, UseIpv6};
+use crate::hp::derp::{
+    client::ClientBuilder as DerpClientBuilder, DerpNode, PacketForwarder, UseIpv4, UseIpv6,
+};
 use crate::hp::key;
 
 use crate::hp::derp::{client::Client as DerpClient, DerpRegion, ReceivedMessage};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ClientError {
@@ -27,6 +35,8 @@ pub enum ClientError {
     NoClient,
     #[error("send")]
     Send,
+    #[error("connect timeout")]
+    ConnectTimeout,
 }
 
 /// An HTTP DERP client.
@@ -62,6 +72,9 @@ struct InnerClient {
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     conn_gen: AtomicUsize,
+    ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
+    mesh_key: Option<[u8; 32]>,
+    is_prober: bool,
 }
 
 /// Build a Client
@@ -73,6 +86,10 @@ pub struct ClientBuilder {
     /// Default is None
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
+    /// Default is None
+    mesh_key: Option<[u8; 32]>,
+    /// Default is false
+    is_prober: bool,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -91,6 +108,8 @@ impl ClientBuilder {
             can_ack_pings: false,
             is_preferred: false,
             address_family_selector: None,
+            mesh_key: None,
+            is_prober: false,
         }
     }
 
@@ -118,6 +137,11 @@ impl ClientBuilder {
         self
     }
 
+    pub fn is_prober(mut self, is: bool) -> Self {
+        self.is_prober = is;
+        self
+    }
+
     pub fn new_region<F>(self, key: key::node::SecretKey, f: F) -> Client
     where
         F: Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static,
@@ -132,6 +156,9 @@ impl ClientBuilder {
                 is_closed: AtomicBool::new(false),
                 address_family_selector: self.address_family_selector,
                 conn_gen: AtomicUsize::new(0),
+                ping_tracker: Mutex::new(HashMap::default()),
+                mesh_key: self.mesh_key,
+                is_prober: self.is_prober,
             }),
         }
     }
@@ -198,218 +225,98 @@ impl Client {
                 self.inner.conn_gen.load(Ordering::SeqCst),
             ));
         }
-        // do connection work
-        // // timeout is the fallback maximum time (if ctx doesn't limit
-        // // it further) to do all of: DNS + TCP + TLS + HTTP Upgrade +
-        // // DERP upgrade.
-        // const timeout = 10 * time.Second
-        // ctx, cancel := context.WithTimeout(ctx, timeout)
-        // go func() {
-        // select {
-        // case <-ctx.Done():
-        // // Either timeout fired (handled below), or
-        // // we're returning via the defer cancel()
-        // // below.
-        // case <-c.ctx.Done():
-        // // Propagate a Client.Close call into
-        // // cancelling this context.
-        // cancel()
-        // }
-        // }()
-        // defer cancel()
 
-        // var reg *tailcfg.DERPRegion // nil when using c.url to dial
-        // if c.getRegion != nil {
-        // reg = c.getRegion()
-        // if reg == nil {
-        // return nil, 0, errors.New("DERP region not available")
-        // }
-        // }
+        tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+            .await
+            .map_err(|_| ClientError::ConnectTimeout)?
+    }
 
-        // var tcpConn net.Conn
+    async fn connect_0(
+        &self,
+    ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
+        let region = {
+            if let Some(get_region) = &self.inner.get_region {
+                get_region()
+                    .await
+                    .expect("Cannot connection client: DERP region is unknown")
+            } else {
+                // TODO: ClientError::DerpRegionNotAvail? "DERP region not available"
+                return Err(ClientError::Todo);
+            }
+        };
 
-        // defer func() {
-        // if err != nil {
-        // if ctx.Err() != nil {
-        // err = fmt.Errorf("%v: %v", ctx.Err(), err)
-        // }
-        // err = fmt.Errorf("%s connect to %v: %v", caller, c.targetString(reg), err)
-        // if tcpConn != nil {
-        // go tcpConn.Close()
-        // }
-        // }
-        // }()
+        let (tcp_stream, _node) = self
+            .dial_region(region)
+            .await
+            // TODO: adjust `dial_region` to use `ClientError`
+            .map_err(|_| ClientError::Todo)?;
 
-        // var node *tailcfg.DERPNode // nil when using c.url to dial
-        // switch {
-        // case useWebsockets():
-        // var urlStr string
-        // if c.url != nil {
-        // urlStr = c.url.String()
-        // } else {
-        // urlStr = c.urlString(reg.Nodes[0])
-        // }
-        // c.logf("%s: connecting websocket to %v", caller, urlStr)
-        // conn, err := dialWebsocketFunc(ctx, urlStr)
-        // if err != nil {
-        // c.logf("%s: websocket to %v error: %v", caller, urlStr, err)
-        // return nil, 0, err
-        // }
-        // brw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
-        // derpClient, err := derp.NewClient(c.privateKey, conn, brw, c.logf,
-        // derp.MeshKey(c.MeshKey),
-        // derp.CanAckPings(c.canAckPings),
-        // derp.IsProber(c.IsProber),
-        // )
-        // if err != nil {
-        // return nil, 0, err
-        // }
-        // if c.preferred {
-        // if err := derpClient.NotePreferred(true); err != nil {
-        // go conn.Close()
-        // return nil, 0, err
-        // }
-        // }
-        // c.serverPubKey = derpClient.ServerPublicKey()
-        // c.client = derpClient
-        // c.netConn = conn
-        // c.connGen++
-        // return c.client, c.connGen, nil
-        // case c.url != nil:
-        // c.logf("%s: connecting to %v", caller, c.url)
-        // tcpConn, err = c.dialURL(ctx)
-        // default:
-        // c.logf("%s: connecting to derp-%d (%v)", caller, reg.RegionID, reg.RegionCode)
-        // tcpConn, node, err = c.dialRegion(ctx, reg)
-        // }
-        // if err != nil {
-        // return nil, 0, err
-        // }
+        let local_addr = tcp_stream.local_addr().map_err(|_| ClientError::Todo)?;
 
-        // // Now that we have a TCP connection, force close it if the
-        // // TLS handshake + DERP setup takes too long.
-        // done := make(chan struct{})
-        // defer close(done)
-        // go func() {
-        // select {
-        // case <-done:
-        // // Normal path. Upgrade occurred in time.
-        // case <-ctx.Done():
-        // select {
-        // case <-done:
-        // // Normal path. Upgrade occurred in time.
-        // // But the ctx.Done() is also done because
-        // // the "defer cancel()" above scheduled
-        // // before this goroutine.
-        // default:
-        // // The TLS or HTTP or DERP exchanges didn't complete
-        // // in time. Force close the TCP connection to force
-        // // them to fail quickly.
-        // tcpConn.Close()
-        // }
-        // }
-        // }()
+        let (mut request_sender, connection) = hyper::client::conn::handshake(tcp_stream)
+            .await
+            // TODO:: ClientError::HttpHandshake ??
+            .map_err(|_| ClientError::Todo)?;
 
-        // var httpConn net.Conn        // a TCP conn or a TLS conn; what we speak HTTP to
-        // var serverPub key.NodePublic // or zero if unknown (if not using TLS or TLS middlebox eats it)
-        // var serverProtoVersion int
-        // var tlsState *tls.ConnectionState
-        // if c.useHTTPS() {
-        // tlsConn := c.tlsClient(tcpConn, node)
-        // httpConn = tlsConn
+        tokio::spawn(async move {
+            // polling `connection` drives the HTTP exchange
+            // this will poll until we upgrade the connection, but not shutdown the underlying
+            // stream
+            let _ = connection.without_shutdown().await;
+        });
 
-        // // Force a handshake now (instead of waiting for it to
-        // // be done implicitly on read/write) so we can check
-        // // the ConnectionState.
-        // if err := tlsConn.Handshake(); err != nil {
-        // return nil, 0, err
-        // }
+        let req = Request::builder()
+            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
+            .body(Body::empty())
+            .unwrap();
 
-        // // We expect to be using TLS 1.3 to our own servers, and only
-        // // starting at TLS 1.3 are the server's returned certificates
-        // // encrypted, so only look for and use our "meta cert" if we're
-        // // using TLS 1.3. If we're not using TLS 1.3, it might be a user
-        // // running cmd/derper themselves with a different configuration,
-        // // in which case we can avoid this fast-start optimization.
-        // // (If a corporate proxy is MITM'ing TLS 1.3 connections with
-        // // corp-mandated TLS root certs than all bets are off anyway.)
-        // // Note that we're not specifically concerned about TLS downgrade
-        // // attacks. TLS handles that fine:
-        // // https://blog.gypsyengineer.com/en/security/how-does-tls-1-3-protect-against-downgrade-attacks.html
-        // cs := tlsConn.ConnectionState()
-        // tlsState = &cs
-        // if cs.Version >= tls.VersionTLS13 {
-        // serverPub, serverProtoVersion = parseMetaCert(cs.PeerCertificates)
-        // }
-        // } else {
-        // httpConn = tcpConn
-        // }
+        let res = request_sender
+            .send_request(req)
+            .await
+            // TODO: ClientError::HttpRequest ??
+            .map_err(|_| ClientError::Todo)?;
 
-        // brw := bufio.NewReadWriter(bufio.NewReader(httpConn), bufio.NewWriter(httpConn))
-        // var derpClient *derp.Client
+        if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            // TODO: ClientError::ConnUpgradeError ??
+            return Err(ClientError::Todo);
+        }
 
-        // req, err := http.NewRequest("GET", c.urlString(node), nil)
-        // if err != nil {
-        // return nil, 0, err
-        // }
-        // req.Header.Set("Upgrade", "DERP")
-        // req.Header.Set("Connection", "Upgrade")
+        let upgraded = match hyper::upgrade::on(res).await {
+            Ok(upgraded) => upgraded,
+            // TODO: ClientError::HttpUpgradeError ??
+            Err(_) => return Err(ClientError::Todo),
+        };
 
-        // if !serverPub.IsZero() && serverProtoVersion != 0 {
-        // // parseMetaCert found the server's public key (no TLS
-        // // middlebox was in the way), so skip the HTTP upgrade
-        // // exchange.  See https://github.com/tailscale/tailscale/issues/693
-        // // for an overview. We still send the HTTP request
-        // // just to get routed into the server's HTTP Handler so it
-        // // can Hijack the request, but we signal with a special header
-        // // that we don't want to deal with its HTTP response.
-        // req.Header.Set(fastStartHeader, "1") // suppresses the server's HTTP response
-        // if err := req.Write(brw); err != nil {
-        // return nil, 0, err
-        // }
-        // // No need to flush the HTTP request. the derp.Client's initial
-        // // client auth frame will flush it.
-        // } else {
-        // if err := req.Write(brw); err != nil {
-        // return nil, 0, err
-        // }
-        // if err := brw.Flush(); err != nil {
-        // return nil, 0, err
-        // }
+        // TODO: ClientError??
+        let parts = upgraded
+            .downcast::<TcpStream>()
+            .map_err(|_| ClientError::Todo)?;
 
-        // resp, err := http.ReadResponse(brw.Reader, req)
-        // if err != nil {
-        // return nil, 0, err
-        // }
-        // if resp.StatusCode != http.StatusSwitchingProtocols {
-        // b, _ := io.ReadAll(resp.Body)
-        // resp.Body.Close()
-        // return nil, 0, fmt.Errorf("GET failed: %v: %s", err, b)
-        // }
-        // }
-        // derpClient, err = derp.NewClient(c.privateKey, httpConn, brw, c.logf,
-        // derp.MeshKey(c.MeshKey),
-        // derp.ServerPublicKey(serverPub),
-        // derp.CanAckPings(c.canAckPings),
-        // derp.IsProber(c.IsProber),
-        // )
-        // if err != nil {
-        // return nil, 0, err
-        // }
-        // if c.preferred {
-        // if err := derpClient.NotePreferred(true); err != nil {
-        // go httpConn.Close()
-        // return nil, 0, err
-        // }
-        // }
+        // TODO: shouldn't be ignoring the parts.buf, but I am for now
+        let (reader, writer) = parts.io.into_split();
 
-        // c.serverPubKey = derpClient.ServerPublicKey()
-        // c.client = derpClient
-        // c.netConn = tcpConn
-        // c.tlsState = tlsState
-        let _conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+        let derp_client =
+            DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
+                .mesh_key(self.inner.mesh_key.clone())
+                .can_ack_pings(self.inner.can_ack_pings)
+                .is_prober(self.inner.is_prober)
+                .build()
+                // TODO: ClientError::BuildingDerpClient ??
+                .await
+                .map_err(|_| ClientError::Todo)?;
 
-        todo!();
+        if *self.inner.is_preferred.lock().await {
+            if let Err(_) = derp_client.note_preferred(true).await {
+                derp_client.close().await;
+                return Err(ClientError::Todo);
+            }
+        }
+
+        let derp_client_clone = derp_client.clone();
+        let mut dc = self.inner.derp_client.lock().await;
+        *dc = Some(derp_client_clone);
+        let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+        Ok((derp_client, conn_gen))
     }
 
     /// String representation of the url or derp region we are trying to
@@ -419,10 +326,11 @@ impl Client {
         format!("region {} ({})", reg.region_id, reg.region_code)
     }
 
+    /// Creates the uri string from a [`DerpNode`]
+    ///
+
     /// Return a TCP stream to the provided region, trying each node in order
-    /// (using [`Client::dial_node`]) until one connects or we timeout
-    // TODO add timeout?
-    // TODO implement dial_node
+    /// (using [`Client::dial_node`]) until one connects
     async fn dial_region(&self, reg: DerpRegion) -> anyhow::Result<(TcpStream, DerpNode)> {
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
@@ -532,13 +440,22 @@ impl Client {
     }
 
     /// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<(), ClientError> {
         let (client, _) = self.connect().await?;
-        // TODO: NOT DONE, need to keep track of pings send and pongs we are waiting to receive
-        // TODO: generate random data to send
-        if let Err(_) = client.send_ping(*b"pingpong").await {
+        let ping = rand::thread_rng().gen::<[u8; 8]>();
+        let (send, recv) = oneshot::channel();
+        self.register_ping(ping, send).await;
+        if let Err(_) = client.send_ping(ping).await {
             self.close_for_reconnect().await;
+            let _ = self.unregister_ping(ping).await;
             return Err(ClientError::Send);
+        }
+        if tokio::time::timeout(PING_TIMEOUT, recv).await.is_err() {
+            self.unregister_ping(ping).await;
+            // TODO: ClientERror::PingTimeout ??
+            return Err(ClientError::Todo);
         }
         Ok(())
     }
@@ -559,6 +476,21 @@ impl Client {
         Ok(())
     }
 
+    /// Note that we have sent a ping, and store the [`oneshot::Sender`] we
+    /// must notify when the pong returns
+    async fn register_ping(&self, data: [u8; 8], chan: oneshot::Sender<()>) {
+        let mut ping_tracker = self.inner.ping_tracker.lock().await;
+        ping_tracker.insert(data, chan);
+    }
+
+    /// Remove the associated [`oneshot::Sender`] for `data` & return it.
+    ///
+    /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
+    async fn unregister_ping(&self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
+        let mut ping_tracker = self.inner.ping_tracker.lock().await;
+        ping_tracker.remove(&data)
+    }
+
     /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
     pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
@@ -566,7 +498,14 @@ impl Client {
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
-                    // TODO: NOT DONE if pong is received handle it
+                    if let ReceivedMessage::Pong(ping) = msg {
+                        if let Some(chan) = self.unregister_ping(ping).await {
+                            if let Err(_) = chan.send(()) {
+                                tracing::warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                            }
+                            continue;
+                        }
+                    }
                     return Ok((msg, conn_gen));
                 }
                 Err(_) => {

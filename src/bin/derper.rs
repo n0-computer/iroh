@@ -25,7 +25,6 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
-    sync::mpsc,
     task::JoinSet,
 };
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
@@ -234,7 +233,7 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder> =
+        let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient> =
             derp::Server::new(cfg.private_key, mesh_key);
         Some(derp_server)
     } else {
@@ -309,7 +308,7 @@ const TLS_HEADERS: [(&str, &str); 2] = [
 struct Derper {
     /// If this is a derper server, the derp handler.
     client_conn_handler:
-        Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder>>,
+        Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient>>,
     /// TLS config if used.
     tls_config: Option<(Arc<rustls::ServerConfig>, AcmeAcceptor)>,
 }
@@ -541,32 +540,6 @@ async fn server_stun_listener(pc: tokio::net::UdpSocket) {
                 continue;
             }
         }
-    }
-}
-
-// TODO: replace with derp::http::Client
-struct MockPacketForwarder {
-    packets: mpsc::Sender<(key::node::PublicKey, key::node::PublicKey, bytes::Bytes)>,
-}
-
-impl MockPacketForwarder {
-    fn new() -> (
-        mpsc::Receiver<(key::node::PublicKey, key::node::PublicKey, bytes::Bytes)>,
-        Self,
-    ) {
-        let (send, recv) = mpsc::channel(10);
-        (recv, Self { packets: send })
-    }
-}
-
-impl derp::PacketForwarder for MockPacketForwarder {
-    fn forward_packet(
-        &mut self,
-        srckey: key::node::PublicKey,
-        dstkey: key::node::PublicKey,
-        packet: bytes::Bytes,
-    ) {
-        let _ = self.packets.try_send((srckey, dstkey, packet));
     }
 }
 

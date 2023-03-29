@@ -18,9 +18,10 @@ mod server;
 pub(crate) mod types;
 
 pub use self::client::ReceivedMessage;
+pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::server::{ClientConnHandler, Server};
-pub use self::types::PacketForwarder; // ?
+pub use self::types::PacketForwarder;
 
 use std::time::Duration;
 
