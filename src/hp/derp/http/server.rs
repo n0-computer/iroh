@@ -28,6 +28,11 @@ where
             anyhow::bail!("could not downcast the upgraded connection to a tokio::net::TcpStream")
         }
     };
+    anyhow::ensure!(
+        parts.read_buf.is_empty(),
+        "can not deal with buffered data yet: {:?}",
+        parts.read_buf
+    );
 
     // split into the reader and writer parts
     let (reader, writer) = parts.io.into_split();
@@ -82,7 +87,7 @@ where
                             if let Err(e) =
                                 derp_connection_handler(&closure_conn_handler, upgraded).await
                             {
-                                tracing::warn!("server {HTTP_UPGRADE_PROTOCOL} io error: {}", e)
+                                tracing::warn!("server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {}", e)
                             };
                         }
                         Err(e) => tracing::warn!("upgrade error: {}", e),
@@ -221,6 +226,7 @@ mod tests {
                         tokio::task::spawn(async move {
                             if let Err(err) = Http::new()
                                 .serve_connection(stream, derp_client_handler)
+                                .with_upgrades()
                                 .await
                             {
                                 eprintln!("Failed to serve connection: {:?}", err);

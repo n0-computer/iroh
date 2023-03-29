@@ -3271,6 +3271,7 @@ mod tests {
                         tokio::task::spawn(async move {
                             if let Err(err) = Http::new()
                                 .serve_connection(stream, derp_client_handler)
+                                .with_upgrades()
                                 .await
                             {
                                 eprintln!("Failed to serve connection: {:?}", err);
