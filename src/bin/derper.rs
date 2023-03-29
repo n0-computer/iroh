@@ -22,15 +22,13 @@ use rustls_acme::AcmeConfig;
 use rustls_acme::{caches::DirCache, AcmeAcceptor};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
     task::JoinSet,
 };
-use tokio_rustls::StartHandshake;
-use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -108,7 +106,7 @@ impl CertMode {
         is_production: bool,
         dir: PathBuf,
     ) -> Result<(Arc<rustls::ServerConfig>, TlsAcceptor)> {
-        let mut config = rustls::ServerConfig::builder()
+        let config = rustls::ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth();
 

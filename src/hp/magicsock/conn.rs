@@ -287,7 +287,7 @@ pub(super) struct ConnState {
     private_key: key::node::SecretKey,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: usize,
-    // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
+    derp_started: bool,
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<usize, ActiveDerp>,
     prev_derp: HashMap<usize, wg::AsyncWaitGroup>,
@@ -322,6 +322,7 @@ impl ConnState {
             net_map: None,
             private_key,
             my_derp: 0,
+            derp_started: false,
             active_derp: HashMap::new(),
             prev_derp: HashMap::new(),
             derp_route: HashMap::new(),
@@ -368,7 +369,6 @@ impl Conn {
         // TODO:
         // GetSTUNConn4:        func() netcheck.STUNConn { return &c.pconn4 },
         // GetSTUNConn6:        func() netcheck.STUNConn { return &c.pconn6 },
-        // SkipExternalNetwork: inTest(),
         net_checker.port_mapper = Some(port_mapper.clone());
 
         let Options {
@@ -1162,8 +1162,6 @@ impl Conn {
                 })
             });
 
-        let this = self.clone();
-
         // TODO: DNS Cache
         // dc.DNSCache = dnscache.Get();
 
@@ -1176,6 +1174,7 @@ impl Conn {
             last_write: Instant::now(),
             create_time: Instant::now(),
         };
+        let first_derp = state.active_derp.is_empty();
         state.active_derp.insert(region_id, ad);
 
         // TODO:
@@ -1198,14 +1197,15 @@ impl Conn {
             .insert(region_id, wg.clone())
             .unwrap_or_else(|| wg::AsyncWaitGroup::new());
 
-        // if firstDerp {
-        //     startGate = c.derpStarted;
-        //     go func() {
-        // 	dc.Connect(ctx)
-        // 	  close(c.derpStarted)
-        // 	    c.muCond.Broadcast()
-        //     }()
-        // }
+        if first_derp {
+            state.derp_started = true;
+            //     startGate = c.derpStarted;
+            //     go func() {
+            // 	dc.Connect(ctx)
+            // 	  close(c.derpStarted)
+            // 	    c.muCond.Broadcast()
+            //     }()
+        }
 
         {
             let this = self.clone();
@@ -2793,7 +2793,7 @@ impl AsyncUdpSocket for Conn {
                     None => {
                         // Should this error, do we need to create the EP?
                         debug!("trying to find endpoint for {}", dest);
-                        todo!()
+                        None
                     }
                 }
             },
@@ -3070,6 +3070,7 @@ impl From<Transmit> for TransmitCow<'_> {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use hyper::server::conn::Http;
     use rand::RngCore;
     use tokio::{net, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -3238,14 +3239,47 @@ mod tests {
 
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
         // TODO: pass a mesh_key?
-        let d: derp::Server<tokio::io::DuplexStream, tokio::io::DuplexStream, MockPacketForwarder> =
-            derp::Server::new(key::node::SecretKey::generate(), None);
+        let derp_server: derp::Server<
+            net::tcp::OwnedReadHalf,
+            net::tcp::OwnedWriteHalf,
+            derp::http::Client,
+        > = derp::Server::new(key::node::SecretKey::generate(), None);
 
-        // TODO: configure DERP server when actually implemented
-        // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
-        // httpsrv.Config.ErrorLog = logger.StdLogger(logf)
-        // httpsrv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+        let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
+        let http_addr = http_listener.local_addr()?;
+
+        let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
+
+        // TODO: TLS
         // httpsrv.StartTLS()
+
+        // Spawn server on the default executor,
+        // which is usually a thread-pool from tokio default runtime.
+        let server_task = tokio::task::spawn(async move {
+            let derp_client_handler = derp_server.client_conn_handler(Default::default());
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut rx => {
+                        derp_server.close().await;
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    conn = http_listener.accept() => {
+                        let (stream, _) = conn?;
+                        let derp_client_handler = derp_client_handler.clone();
+                        tokio::task::spawn(async move {
+                            if let Err(err) = Http::new()
+                                .serve_connection(stream, derp_client_handler)
+                                .await
+                            {
+                                eprintln!("Failed to serve connection: {:?}", err);
+                            }
+                        });
+                    }
+                }
+            }
+        });
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve().await?;
         let m = DerpMap {
@@ -3258,12 +3292,12 @@ mod tests {
                         name: "t1".into(),
                         region_id: 1,
                         host_name: "test-node.invalid".into(),
-                        stun_only: true, // TODO: switch to false once derp is implemented,
+                        stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
 
-                        derp_port: 1234, // TODO: httpsrv.Listener.Addr().(*net.TCPAddr).Port,
+                        derp_port: http_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
@@ -3274,11 +3308,8 @@ mod tests {
         };
 
         let cleanup = || {
-            // httpsrv.CloseClientConnections()
-            // httpsrv.Close()
-            // d.Close()
-            tokio::spawn(async move { d.close().await });
             stun_cleanup.send(()).unwrap();
+            derp_shutdown.send(()).unwrap();
         };
 
         Ok((m, cleanup))
@@ -3309,6 +3340,14 @@ mod tests {
             )
             .await?;
             conn.set_derp_map(Some(derp_map)).await;
+
+            let c = conn.clone();
+            tokio::time::timeout(Duration::from_secs(10), async move {
+                while !c.0.state.lock().await.derp_started {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
@@ -3499,12 +3538,12 @@ mod tests {
                 "127.0.0.1".parse().unwrap(),
                 m2.quic_ep.local_addr()?.port(),
             );
-            m1.conn
+            /*m1.conn
                 .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
                 .await;
             m2.conn
                 .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
-                .await;
+                .await;*/
         }
 
         // msg from  m2 -> m1
