@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tracing::debug;
 
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
@@ -465,10 +466,22 @@ where
         Ok(self)
     }
 
-    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
-        let server_key = recv_server_key(&mut self.reader)
-            .await
-            .context("failed to receive server key")?;
+    async fn server_handshake(
+        &mut self,
+        buf: Option<Bytes>,
+    ) -> Result<(PublicKey, Option<RateLimiter>)> {
+        debug!("server_handshake: started");
+        let server_key = if let Some(buf) = buf {
+            recv_server_key(buf.chain(&mut self.reader))
+                .await
+                .context("failed to receive server key")?
+        } else {
+            recv_server_key(&mut self.reader)
+                .await
+                .context("failed to receive server key")?
+        };
+        debug!("server_handshake: received server_key: {:?}", server_key);
+
         if let Some(expected_key) = &self.server_public_key {
             if *expected_key != server_key {
                 bail!("unexpected server key, expected {expected_key:?} got {server_key:?}");
@@ -480,6 +493,7 @@ where
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
         };
+        debug!("server_handshake: sending client_key: {:?}", &client_info);
         crate::hp::derp::send_client_key(
             &mut self.writer,
             &self.secret_key,
@@ -503,15 +517,17 @@ where
             info.token_bucket_bytes_per_second,
             info.token_bucket_bytes_burst,
         )?;
+
+        debug!("server_handshake: done");
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self) -> Result<Client<R>>
+    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client<R>>
     where
         R: AsyncRead + Unpin,
     {
         // exchange information with the server
-        let (server_key, rate_limiter) = self.server_handshake().await?;
+        let (server_key, rate_limiter) = self.server_handshake(buf).await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(self.writer_queue_depth);
@@ -548,7 +564,6 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
     let magic_len = MAGIC.len();
     let expected_frame_len = magic_len + 32;
     let mut buf = BytesMut::with_capacity(expected_frame_len);
-
     let (frame_type, frame_len) = read_frame(&mut reader, MAX_FRAME_SIZE, &mut buf).await?;
 
     if expected_frame_len != frame_len

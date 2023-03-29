@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
+use tracing::{debug, warn};
 
 use crate::hp::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, PacketForwarder, UseIpv4, UseIpv6,
@@ -262,7 +263,11 @@ impl Client {
             // polling `connection` drives the HTTP exchange
             // this will poll until we upgrade the connection, but not shutdown the underlying
             // stream
-            let _ = connection.without_shutdown().await;
+            debug!("connect: waiting for connection");
+            if let Err(err) = connection.await {
+                warn!("client connection error: {:?}", err);
+            }
+            debug!("connect: connection done");
         });
 
         let req = Request::builder()
@@ -270,6 +275,7 @@ impl Client {
             .body(Body::empty())
             .unwrap();
 
+        debug!("connect: sending upgrade request");
         let res = request_sender
             .send_request(req)
             .await
@@ -277,16 +283,22 @@ impl Client {
             .map_err(|_| ClientError::Todo)?;
 
         if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            warn!("connect: invalid status received: {:?}", res.status());
             // TODO: ClientError::ConnUpgradeError ??
             return Err(ClientError::Todo);
         }
 
+        debug!("connect: starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
             // TODO: ClientError::HttpUpgradeError ??
-            Err(_) => return Err(ClientError::Todo),
+            Err(err) => {
+                warn!("connect: upgrade failed: {:?}", err);
+                return Err(ClientError::Todo);
+            }
         };
 
+        debug!("connect: connection upgraded");
         // TODO: ClientError??
         let parts = upgraded
             .downcast::<TcpStream>()
@@ -294,13 +306,15 @@ impl Client {
 
         // TODO: shouldn't be ignoring the parts.buf, but I am for now
         let (reader, writer) = parts.io.into_split();
+        debug!("connect: buf: {:?}", parts.read_buf);
 
+        debug!("connect: building..");
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.inner.mesh_key.clone())
                 .can_ack_pings(self.inner.can_ack_pings)
                 .is_prober(self.inner.is_prober)
-                .build()
+                .build(Some(parts.read_buf))
                 // TODO: ClientError::BuildingDerpClient ??
                 .await
                 .map_err(|_| ClientError::Todo)?;
@@ -316,6 +330,7 @@ impl Client {
         let mut dc = self.inner.derp_client.lock().await;
         *dc = Some(derp_client_clone);
         let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+        debug!("connect: done");
         Ok((derp_client, conn_gen))
     }
 

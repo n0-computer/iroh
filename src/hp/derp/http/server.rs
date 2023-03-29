@@ -9,11 +9,12 @@ use hyper::upgrade::Upgraded;
 use hyper::{Body, Request, Response, StatusCode};
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tracing::debug;
 
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::derp::{server::ClientConnHandler, types::PacketForwarder};
 
-// The server HTTP handler to do HTTP upgrades
+/// The server HTTP handler to do HTTP upgrades
 pub async fn derp_connection_handler<P>(
     conn_handler: &ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>,
     upgraded: Upgraded,
@@ -21,6 +22,7 @@ pub async fn derp_connection_handler<P>(
 where
     P: PacketForwarder,
 {
+    debug!("derp_connection upgraded");
     // get the underlying TcpStream
     let parts = match upgraded.downcast::<tokio::net::TcpStream>() {
         Ok(p) => p,
@@ -87,10 +89,13 @@ where
                             if let Err(e) =
                                 derp_connection_handler(&closure_conn_handler, upgraded).await
                             {
-                                tracing::warn!("server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {}", e)
+                                tracing::warn!(
+                                    "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
+                                    e
+                                )
                             };
                         }
-                        Err(e) => tracing::warn!("upgrade error: {}", e),
+                        Err(e) => tracing::warn!("upgrade error: {:?}", e),
                     }
                 });
 

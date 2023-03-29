@@ -12,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
@@ -289,9 +290,11 @@ where
     ///
     /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
     pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
+        debug!("accept: start");
         self.send_server_key(&mut writer)
             .await
             .context("unable to send server key to client")?;
+        debug!("accept: recv client key");
         let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
             .await
             .context("unable to receive client information")?;
@@ -978,7 +981,7 @@ mod tests {
         let (reader_a, writer_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
-        let client_a = client_a_builder.build().await?;
+        let client_a = client_a_builder.build(None).await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -987,7 +990,7 @@ mod tests {
         let (reader_b, writer_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
-        let client_b = client_b_builder.build().await?;
+        let client_b = client_b_builder.build(None).await?;
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server

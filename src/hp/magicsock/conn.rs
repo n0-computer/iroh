@@ -1273,9 +1273,7 @@ impl Conn {
                     for peer in peer_present.drain() {
                         self.remove_derp_peer_route(peer, region_id, &dc).await;
                     }
-                    if err == derp::http::ClientError::Closed
-                        || err == derp::http::ClientError::Todo
-                    {
+                    if err == derp::http::ClientError::Closed {
                         return;
                     }
                     if self.network_down() {
@@ -1417,14 +1415,15 @@ impl Conn {
                                     // metricSendDERP.Add(1)
                                 }
                                 Err(err) => {
-                                    info!("derp.send({:?}): {:?}", wr.addr, err);
+                                    warn!("derp.send({:?}): failed {:?}", wr.addr, err);
                                     // TODO:
                                     // metricSendDERPError.Add(1)
                                 }
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(err) => {
+                        warn!("derp.recv: failed {:?}", err);
                         return;
                     }
                 }
