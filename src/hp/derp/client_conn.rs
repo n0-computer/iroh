@@ -226,7 +226,7 @@ impl ClientConnManager {
             match res {
                 Err(e) => {
                     tracing::warn!(
-                        "connection manager for {key:?} {conn_num}: reader closed in error {e}"
+                        "connection manager for {key:?} {conn_num}: reader closed in error: {e:?}"
                     );
                     Err(e)
                 }
@@ -556,33 +556,42 @@ where
     async fn read(&mut self) -> Result<()> {
         let mut buf = BytesMut::new();
         loop {
-            // TODO: return Ok(()) if EOF error
-            let (frame_type, frame_len) =
-                read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-            // TODO: "note client activity", meaning we update the server that the client with this
-            // public key was the last one to receive data
-            let frame = buf.split_to(frame_len);
-            match frame_type {
-                FRAME_NOTE_PREFERRED => {
-                    self.handle_frame_note_preferred(&frame)?;
+            match read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await {
+                Ok((frame_type, frame_len)) => {
+                    // TODO: "note client activity", meaning we update the server that the client with this
+                    // public key was the last one to receive data
+                    let frame = buf.split_to(frame_len);
+                    match frame_type {
+                        FRAME_NOTE_PREFERRED => {
+                            self.handle_frame_note_preferred(&frame)?;
+                        }
+                        FRAME_SEND_PACKET => {
+                            self.handle_frame_send_packet(&frame).await?;
+                        }
+                        FRAME_FORWARD_PACKET => {
+                            self.handle_frame_forward_packet(&frame).await?;
+                        }
+                        FRAME_WATCH_CONNS => {
+                            self.handle_frame_watch_conns(&frame).await?;
+                        }
+                        FRAME_CLOSE_PEER => {
+                            self.handle_frame_close_peer(&frame).await?;
+                        }
+                        FRAME_PING => {
+                            self.handle_frame_ping(&frame).await?;
+                        }
+                        _ => {
+                            buf.clear();
+                        }
+                    }
                 }
-                FRAME_SEND_PACKET => {
-                    self.handle_frame_send_packet(&frame).await?;
-                }
-                FRAME_FORWARD_PACKET => {
-                    self.handle_frame_forward_packet(&frame).await?;
-                }
-                FRAME_WATCH_CONNS => {
-                    self.handle_frame_watch_conns(&frame).await?;
-                }
-                FRAME_CLOSE_PEER => {
-                    self.handle_frame_close_peer(&frame).await?;
-                }
-                FRAME_PING => {
-                    self.handle_frame_ping(&frame).await?;
-                }
-                _ => {
-                    buf.clear();
+                Err(err) => {
+                    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+                        if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                            return Ok(());
+                        }
+                    }
+                    return Err(err);
                 }
             }
         }
