@@ -44,6 +44,9 @@ struct Cli {
     /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
     #[clap(long)]
     keylog: bool,
+    /// metrics server address
+    #[clap(long)]
+    metrics_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone)]
@@ -462,9 +465,10 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let metrics_addr = cli.metrics_addr;
     init_metrics();
     let metrics_fut = tokio::spawn(async move {
-        iroh::metrics::start_metrics_server(None).await;
+        iroh::metrics::start_metrics_server(metrics_addr).await;
     });
 
     let r = match cli.command {

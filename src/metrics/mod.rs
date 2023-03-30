@@ -9,7 +9,7 @@
 //! To increment a metric by 1, use the `inc!` macro with the metric.
 //! To observe a metric, use the `observe!` macro with the metric and the value to observe.
 //! To expose the metrics, start the metrics service with `start_metrics_service()`.
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use self::core::CORE;
 
@@ -29,10 +29,9 @@ pub fn init_metrics() {
 
 /// Spawn a server to serve the OpenMetrics endpoint.
 pub async fn start_metrics_server(addr: Option<SocketAddr>) {
-    let metrics_addr = addr.unwrap_or_else(|| {
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9090);
-        tracing::info!("Metrics server listening on {}", addr);
-        addr
-    });
-    self::service::run(metrics_addr).await
+    if let Some(metrics_addr) = addr {
+        self::service::run(metrics_addr).await
+    } else {
+        tracing::info!("Metrics server not started, no address provided");
+    }
 }
