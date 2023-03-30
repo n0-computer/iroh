@@ -7,25 +7,18 @@ use hyper::{
     Body, Request, Response, Server,
 };
 
-use tokio::signal::unix::{signal, SignalKind};
 use tracing::info;
 
 use super::core::CORE;
 
 /// Start a HTTP server to report metrics.
 pub async fn run(metrics_addr: SocketAddr) {
-    let mut shutdown_stream = signal(SignalKind::terminate()).unwrap();
-
     info!("Starting metrics server on {metrics_addr}");
-
     Server::bind(&metrics_addr)
         .serve(make_service_fn(move |_conn| async move {
             let handler = make_handler();
             Ok::<_, io::Error>(service_fn(handler))
         }))
-        .with_graceful_shutdown(async move {
-            shutdown_stream.recv().await;
-        })
         .await
         .unwrap();
 }
