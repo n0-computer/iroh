@@ -4,6 +4,7 @@
 pub mod blobs;
 pub mod get;
 pub mod net;
+pub mod metrics;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
@@ -15,6 +16,9 @@ mod util;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::Hash;
+
+#[macro_use]
+extern crate lazy_static;
 
 use bao_tree::BlockSize;
 

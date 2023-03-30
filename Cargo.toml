@@ -55,6 +55,10 @@ x509-parser = "0.14"
 zeroize = "1.5"
 bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
 range-collections = "0.4.0"
+lazy_static = "1.4.0"
+prometheus-client = "0.18.0"
+paste = "1.0.12"
+hyper = { version = "0.14.16", features = ["server", "http1", "tcp"] }
 
 [dev-dependencies]
 proptest = "1.0.0"

@@ -27,6 +27,8 @@ use main_util::Blake3Cid;
 
 use crate::main_util::{iroh_data_root, pathbuf_from_name};
 
+use iroh::metrics::init_metrics;
+
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -460,7 +462,12 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
+    init_metrics();
+    let metrics_fut = tokio::spawn(async move {
+        iroh::metrics::start_metrics_server(None).await;
+    });
+
+    let r = match cli.command {
         Commands::Get {
             hash,
             peer,
@@ -665,7 +672,11 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
-    }
+    };
+
+    metrics_fut.abort();
+    drop(metrics_fut);
+    r
 }
 
 async fn provide(
