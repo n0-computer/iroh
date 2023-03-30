@@ -329,7 +329,7 @@ impl Endpoint {
                     && Instant::now() > *state.trust_best_addr_until.as_ref().unwrap())
             {
                 info!(
-                    "[v1] disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
+                    "disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
                     txid, sp.to, self.public_key, state.disco_key
                 );
             }
@@ -1031,9 +1031,10 @@ impl PeerMap {
                     v.remove(&ep.public_key);
                 }
             }
-            let set = self.nodes_of_disco.entry(disco_key).or_default();
-            set.insert(ep.public_key.clone());
         }
+        let set = self.nodes_of_disco.entry(disco_key).or_default();
+        set.insert(ep.public_key.clone());
+
         if !self.by_node_key.contains_key(&ep.public_key) {
             let id = self.next_id;
             let public_key = ep.public_key.clone();

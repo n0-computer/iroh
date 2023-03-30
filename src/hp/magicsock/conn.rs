@@ -1261,7 +1261,9 @@ impl Conn {
         let mut last_packet_src: Option<key::node::PublicKey> = None;
 
         loop {
-            match dc.recv_detail().await {
+            let msg = dc.recv_detail().await;
+            debug!("derp.recv(derp-{}) received: {:?}", region_id, msg);
+            match msg {
                 Err(err) => {
                     // Forget that all these peers have routes.
                     for peer in peer_present.drain() {
@@ -1315,7 +1317,11 @@ impl Conn {
                             continue;
                         }
                         derp::ReceivedMessage::ReceivedPacket { source, data } => {
-                            debug!("magicsock: got derp-{} packet: {:?}", region_id, data);
+                            debug!(
+                                "magicsock: got derp-{} packet: {} bytes",
+                                region_id,
+                                data.len()
+                            );
                             // If this is a new sender we hadn't seen before, remember it and
                             // register a route for this peer.
                             if last_packet_src.is_none()
@@ -3435,7 +3441,6 @@ mod tests {
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
-            let me = &ms[my_idx];
             let mut peers = Vec::new();
 
             for (i, peer) in ms.iter().enumerate() {
@@ -3463,17 +3468,7 @@ mod tests {
                 });
             }
 
-            let nm = netmap::NetworkMap {
-                peers,
-                // 	PrivateKey: me.privateKey,
-                // 	NodeKey:    me.privateKey.Public(),
-                // 	Addresses:  []netip.Prefix{netip.PrefixFrom(netaddr.IPv4(1, 0, 0, byte(myIdx+1)), 32)},
-            };
-
-            // if mutateNetmap != nil {
-            // 	mutateNetmap(myIdx, nm)
-            // }
-            nm
+            netmap::NetworkMap { peers }
         }
 
         async fn update_eps(

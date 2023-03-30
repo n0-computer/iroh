@@ -14,7 +14,7 @@ use super::{hostinfo::Hostinfo, key};
 /// the WireGuard endpoint is the DERP region ID number to use.
 ///
 /// Mnemonic: 3.3.40 are numbers above the keys D, E, R, P.
-pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 30));
+pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 40));
 
 /// An endpoint IPPort and an associated type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
