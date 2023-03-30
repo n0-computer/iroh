@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
 use futures::future::BoxFuture;
 use hyper::{header::UPGRADE, Body, Request};
 use rand::Rng;
@@ -27,18 +26,40 @@ const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("todo")]
-    Todo,
-    #[error("closed")]
+    #[error("client is closed")]
     Closed,
     #[error("no derp client")]
     NoClient,
-    #[error("send")]
+    #[error("error sending a packet")]
     Send,
     #[error("connect timeout")]
     ConnectTimeout,
+    #[error("DERP region is not available")]
+    DerpRegionNotAvail,
+    #[error("no nodes available for {0}")]
+    NoNodeForTarget(String),
+    #[error("no derp nodes found for {0}, only are stun_only nodes")]
+    StunOnlyNodesFound(String),
+    #[error("dial error")]
+    DialIO(#[from] std::io::Error),
+    #[error("dial error")]
+    DialTask(#[from] tokio::task::JoinError),
+    #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
+    IPDisabled,
+    #[error("no local addr: {0}")]
+    NoLocalAddr(String),
+    #[error("http connection error")]
+    Hyper(#[from] hyper::Error),
+    #[error("unexpected status code: expected {0}, got {1}")]
+    UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
+    #[error("failed to upgrade connection")]
+    Upgrade,
+    #[error("failed to build derp client: {0}")]
+    Build(String),
+    #[error("ping timeout")]
+    PingTimeout,
 }
 
 /// An HTTP DERP client.
@@ -144,6 +165,11 @@ impl ClientBuilder {
         self
     }
 
+    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
+        self.mesh_key = mesh_key;
+        self
+    }
+
     pub fn new_region<F>(self, key: key::node::SecretKey, f: F) -> Client
     where
         F: Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static,
@@ -217,48 +243,59 @@ impl Client {
     async fn connect(
         &self,
     ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
+        let key = self.inner.secret_key.public_key();
+        debug!("client {key:?} - connect");
         if self.inner.is_closed.load(Ordering::Relaxed) {
             return Err(ClientError::Closed);
         }
 
-        if let Some(derp_client) = &*self.inner.derp_client.lock().await {
-            return Ok((
-                derp_client.clone(),
-                self.inner.conn_gen.load(Ordering::SeqCst),
-            ));
-        }
+        {
+            // acquire lock on the derp client
+            // we must hold onto the lock until we are sure we have a connection
+            // or other calls to `connect` will attempt to start a connection
+            // as well
+            let mut derp_client_lock = self.inner.derp_client.lock().await;
+            if let Some(derp_client) = &*derp_client_lock {
+                debug!("client {key:?} - already had connection");
+                return Ok((
+                    derp_client.clone(),
+                    self.inner.conn_gen.load(Ordering::SeqCst),
+                ));
+            }
 
-        tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-            .await
-            .map_err(|_| ClientError::ConnectTimeout)?
+            debug!("client {key:?} - no connection, trying to connect");
+            let derp_client = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                .await
+                .map_err(|_| ClientError::ConnectTimeout)??;
+
+            let derp_client_clone = derp_client.clone();
+            *derp_client_lock = Some(derp_client_clone);
+            let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
+            debug!("client {key:?} - got connection, conn num {conn_gen}");
+            Ok((derp_client, conn_gen))
+        }
     }
 
-    async fn connect_0(
-        &self,
-    ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
+    async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
         let region = {
             if let Some(get_region) = &self.inner.get_region {
                 get_region()
                     .await
                     .expect("Cannot connection client: DERP region is unknown")
             } else {
-                // TODO: ClientError::DerpRegionNotAvail? "DERP region not available"
-                return Err(ClientError::Todo);
+                return Err(ClientError::DerpRegionNotAvail);
             }
         };
 
-        let (tcp_stream, _node) = self
-            .dial_region(region)
-            .await
-            // TODO: adjust `dial_region` to use `ClientError`
-            .map_err(|_| ClientError::Todo)?;
+        let (tcp_stream, _node) = self.dial_region(region).await?;
 
-        let local_addr = tcp_stream.local_addr().map_err(|_| ClientError::Todo)?;
+        let local_addr = tcp_stream
+            .local_addr()
+            .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
 
         let (mut request_sender, connection) = hyper::client::conn::handshake(tcp_stream)
             .await
-            // TODO:: ClientError::HttpHandshake ??
-            .map_err(|_| ClientError::Todo)?;
+            .map_err(|e| ClientError::Hyper(e))?;
 
         tokio::spawn(async move {
             // polling `connection` drives the HTTP exchange
@@ -280,32 +317,30 @@ impl Client {
         let res = request_sender
             .send_request(req)
             .await
-            // TODO: ClientError::HttpRequest ??
-            .map_err(|_| ClientError::Todo)?;
+            .map_err(|e| ClientError::Hyper(e))?;
 
         if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
             warn!("connect: invalid status received: {:?}", res.status());
-            // TODO: ClientError::ConnUpgradeError ??
-            return Err(ClientError::Todo);
+            return Err(ClientError::UnexpectedStatusCode(
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                res.status(),
+            ));
         }
 
         debug!("connect: starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
-            // TODO: ClientError::HttpUpgradeError ??
             Err(err) => {
                 warn!("connect: upgrade failed: {:?}", err);
-                return Err(ClientError::Todo);
+                return Err(ClientError::Hyper(err));
             }
         };
 
         debug!("connect: connection upgraded");
-        // TODO: ClientError??
         let parts = upgraded
             .downcast::<TcpStream>()
-            .map_err(|_| ClientError::Todo)?;
+            .map_err(|_| ClientError::Upgrade)?;
 
-        // TODO: shouldn't be ignoring the parts.buf, but I am for now
         let (reader, writer) = parts.io.into_split();
         debug!("connect: buf: {:?}", parts.read_buf);
 
@@ -316,23 +351,17 @@ impl Client {
                 .can_ack_pings(self.inner.can_ack_pings)
                 .is_prober(self.inner.is_prober)
                 .build(Some(parts.read_buf))
-                // TODO: ClientError::BuildingDerpClient ??
                 .await
-                .map_err(|_| ClientError::Todo)?;
+                .map_err(|e| ClientError::Build(e.to_string()))?;
 
         if *self.inner.is_preferred.lock().await {
             if let Err(_) = derp_client.note_preferred(true).await {
                 derp_client.close().await;
-                return Err(ClientError::Todo);
+                return Err(ClientError::Send);
             }
         }
-
-        let derp_client_clone = derp_client.clone();
-        let mut dc = self.inner.derp_client.lock().await;
-        *dc = Some(derp_client_clone);
-        let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
-        debug!("connect: done");
-        Ok((derp_client, conn_gen))
+        debug!("connect: built");
+        Ok(derp_client)
     }
 
     /// String representation of the url or derp region we are trying to
@@ -347,18 +376,16 @@ impl Client {
 
     /// Return a TCP stream to the provided region, trying each node in order
     /// (using [`Client::dial_node`]) until one connects
-    async fn dial_region(&self, reg: DerpRegion) -> anyhow::Result<(TcpStream, DerpNode)> {
+    async fn dial_region(&self, reg: DerpRegion) -> Result<(TcpStream, DerpNode), ClientError> {
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
-            anyhow::bail!("no nodes for {target}");
+            return Err(ClientError::NoNodeForTarget(target));
         }
-        let mut first_err: Option<anyhow::Error> = None;
+        let mut first_err: Option<ClientError> = None;
         for node in reg.nodes {
             if node.stun_only {
                 if first_err.is_none() {
-                    first_err = Some(anyhow::Error::msg(format!(
-                        "no non-stun_only nodes for {target}"
-                    )));
+                    first_err = Some(ClientError::StunOnlyNodesFound(target.clone()));
                 }
                 continue;
             }
@@ -378,7 +405,7 @@ impl Client {
     ///
     // TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
     // overall but have dialRegion start overlapping races?
-    async fn dial_node(&self, node: &DerpNode) -> anyhow::Result<TcpStream> {
+    async fn dial_node(&self, node: &DerpNode) -> Result<TcpStream, ClientError> {
         // TODO: Add support for HTTP proxies.
 
         let mut dials = JoinSet::new();
@@ -397,7 +424,7 @@ impl Client {
         // Return the first successfull dial, otherwise the first error we saw.
         let mut first_err = None;
         while let Some(res) = dials.join_next().await {
-            match res? {
+            match res.map_err(|e| ClientError::DialTask(e))? {
                 Ok(conn) => {
                     // Cancel rest
                     dials.abort_all();
@@ -408,12 +435,12 @@ impl Client {
                         first_err = Some(err);
                     }
                     if dials.is_empty() {
-                        return Err(first_err.unwrap());
+                        return Err(ClientError::DialIO(first_err.unwrap()));
                     }
                 }
             }
         }
-        bail!("both IPv4 and IPv6 are explicitly disabled for node");
+        Err(ClientError::IPDisabled)
     }
 
     /// Reports whether IPv4 dials should be slightly
@@ -428,7 +455,11 @@ impl Client {
         }
     }
 
-    async fn start_dial(&self, node: &DerpNode, dst_primary: UseIp) -> anyhow::Result<TcpStream> {
+    async fn start_dial(
+        &self,
+        node: &DerpNode,
+        dst_primary: UseIp,
+    ) -> Result<TcpStream, std::io::Error> {
         if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
             tokio::time::sleep(Duration::from_millis(200)).await;
             // Start v4 dial
@@ -459,6 +490,7 @@ impl Client {
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<(), ClientError> {
+        debug!("ping");
         let (client, _) = self.connect().await?;
         let ping = rand::thread_rng().gen::<[u8; 8]>();
         let (send, recv) = oneshot::channel();
@@ -470,8 +502,7 @@ impl Client {
         }
         if tokio::time::timeout(PING_TIMEOUT, recv).await.is_err() {
             self.unregister_ping(ping).await;
-            // TODO: ClientERror::PingTimeout ??
-            return Err(ClientError::Todo);
+            return Err(ClientError::PingTimeout);
         }
         Ok(())
     }
@@ -484,6 +515,7 @@ impl Client {
     /// If there is an error sending pong, it closes the underlying derp connection before
     /// returning.
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
+        debug!("send_pong");
         let (client, _) = self.connect().await?;
         if let Err(_) = client.send_pong(data).await {
             self.close_for_reconnect().await;
@@ -511,6 +543,7 @@ impl Client {
     /// re-connections this Client has ever made
     pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
         loop {
+            debug!("recv_detail");
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
@@ -542,6 +575,7 @@ impl Client {
     /// If there is an error sending the packet, it closes the underlying derp connection before
     /// returning.
     pub async fn send(&self, dst_key: key::node::PublicKey, b: Vec<u8>) -> Result<(), ClientError> {
+        debug!("send");
         let (client, _) = self.connect().await?;
         if let Err(_) = client.send(dst_key, b).await {
             self.close_for_reconnect().await;
@@ -573,6 +607,7 @@ impl Client {
     /// If there is an error sending the message, it closes the underlying derp connection before
     /// returning.
     pub async fn watch_connection_changes(&self) -> Result<(), ClientError> {
+        debug!("watch_connection_changes");
         let (client, _) = self.connect().await?;
         if let Err(_) = client.watch_connection_changes().await {
             self.close_for_reconnect().await;
@@ -589,6 +624,7 @@ impl Client {
     /// If there is an error sending, it closes the underlying derp connection before
     /// returning.
     pub async fn close_peer(&self, target: key::node::PublicKey) -> Result<(), ClientError> {
+        debug!("close_peer");
         let (client, _) = self.connect().await?;
         if let Err(_) = client.close_peer(target).await {
             self.close_for_reconnect().await;

@@ -37,8 +37,6 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A DERP server.
 ///
-/// TODO: how small does this have to be before this is considered cheap to clone?
-/// It would make alot of the APIs easier if we could just clone this.
 #[derive(Debug)]
 pub struct Server<R, W, P>
 where

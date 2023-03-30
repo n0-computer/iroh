@@ -78,9 +78,6 @@ where
     reader: Mutex<R>,
 }
 
-/// A channel on which we recieve messages from the server
-type ReceivedMessages = mpsc::Receiver<ReceivedMessage>;
-
 // TODO: I believe that any of these that error should actually trigger a shut down of the client
 impl<R: AsyncRead + Unpin> Client<R> {
     /// Returns a reference to the server's public key.
