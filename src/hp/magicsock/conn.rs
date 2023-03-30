@@ -1267,8 +1267,9 @@ impl Conn {
                     for peer in peer_present.drain() {
                         self.remove_derp_peer_route(peer, region_id, &dc).await;
                     }
-                    if err == derp::http::ClientError::Closed {
-                        return;
+                    match err {
+                        derp::http::ClientError::Closed => return,
+                        _ => {}
                     }
                     if self.network_down() {
                         info!("derp.recv(derp-{}): network down, closing", region_id);

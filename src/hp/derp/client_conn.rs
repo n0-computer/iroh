@@ -18,10 +18,7 @@ use crate::hp::{
 use super::{
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
-    write_frame_timeout, FRAME_CLOSE_PEER, FRAME_FORWARD_PACKET, FRAME_KEEP_ALIVE,
-    FRAME_NOTE_PREFERRED, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_PING, FRAME_PONG,
-    FRAME_RECV_PACKET, FRAME_SEND_PACKET, FRAME_WATCH_CONNS, KEEP_ALIVE, MAX_FRAME_SIZE,
-    MAX_PACKET_SIZE, PREFERRED,
+    write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
 };
 
 #[derive(Debug)]
@@ -367,11 +364,11 @@ where
         }
     }
 
-    /// Send  `FRAME_KEEP_ALIVE`, does not flush
+    /// Send  `FrameType::KeepAlive`, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame_timeout(&mut self.writer, FRAME_KEEP_ALIVE, &[], self.timeout).await
+        write_frame_timeout(&mut self.writer, FrameType::KeepAlive, &[], self.timeout).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -380,7 +377,7 @@ where
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame_timeout(&mut self.writer, FRAME_PONG, &[&data], self.timeout).await
+        write_frame_timeout(&mut self.writer, FrameType::Pong, &[&data], self.timeout).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -391,7 +388,7 @@ where
         // c.s.peerGoneFrames.Add(1)
         write_frame_timeout(
             &mut self.writer,
-            FRAME_PEER_GONE,
+            FrameType::PeerGone,
             &[peer.as_bytes()],
             self.timeout,
         )
@@ -404,7 +401,7 @@ where
     async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
         write_frame_timeout(
             &mut self.writer,
-            FRAME_PEER_PRESENT,
+            FrameType::PeerPresent,
             &[peer.as_bytes()],
             self.timeout,
         )
@@ -474,7 +471,7 @@ where
             // TODO: ensure we handle this correctly on the client side
             write_frame_timeout(
                 &mut self.writer,
-                FRAME_RECV_PACKET,
+                FrameType::RecvPacket,
                 &[&contents],
                 self.timeout,
             )
@@ -482,7 +479,7 @@ where
         } else {
             write_frame_timeout(
                 &mut self.writer,
-                FRAME_RECV_PACKET,
+                FrameType::RecvPacket,
                 &[srckey.as_bytes(), &contents],
                 self.timeout,
             )
@@ -562,22 +559,22 @@ where
                     // public key was the last one to receive data
                     let frame = buf.split_to(frame_len);
                     match frame_type {
-                        FRAME_NOTE_PREFERRED => {
+                        FrameType::NotePreferred => {
                             self.handle_frame_note_preferred(&frame)?;
                         }
-                        FRAME_SEND_PACKET => {
+                        FrameType::SendPacket => {
                             self.handle_frame_send_packet(&frame).await?;
                         }
-                        FRAME_FORWARD_PACKET => {
+                        FrameType::ForwardPacket => {
                             self.handle_frame_forward_packet(&frame).await?;
                         }
-                        FRAME_WATCH_CONNS => {
+                        FrameType::WatchConns => {
                             self.handle_frame_watch_conns(&frame).await?;
                         }
-                        FRAME_CLOSE_PEER => {
+                        FrameType::ClosePeer => {
                             self.handle_frame_close_peer(&frame).await?;
                         }
-                        FRAME_PING => {
+                        FrameType::Ping => {
                             self.handle_frame_ping(&frame).await?;
                         }
                         _ => {
@@ -629,7 +626,7 @@ where
     fn handle_frame_note_preferred(&mut self, data: &[u8]) -> Result<()> {
         ensure!(
             data.len() == 1,
-            "FRAME_NOTE_PREFERRED content is an unexpected size"
+            "FrameType::NotePreferred content is an unexpected size"
         );
         self.set_preferred(data[0] == PREFERRED)
     }
@@ -637,7 +634,7 @@ where
     async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
         ensure!(
             data.len() == 0,
-            "FRAME_WATCH_CONNS content is an unexpected size"
+            "FrameType::WatchConns content is an unexpected size"
         );
         ensure!(self.can_mesh, "insufficient permissions");
         self.server_channel
@@ -650,7 +647,7 @@ where
     async fn handle_frame_ping(&mut self, data: &[u8]) -> Result<()> {
         ensure!(
             data.len() == 8,
-            "FRAME_PING unexpected length {}",
+            "FrameType::Ping unexpected length {}",
             data.len()
         );
         // TODO:stats
@@ -942,7 +939,7 @@ mod tests {
         };
         send_queue_s.send(packet.clone()).await?;
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
         let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
         assert_eq!(key, got_key);
@@ -951,7 +948,7 @@ mod tests {
         // send disco packet
         disco_send_queue_s.send(packet.clone()).await?;
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
         let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
         assert_eq!(key, got_key);
@@ -961,14 +958,14 @@ mod tests {
         let msg = b"pingpong";
         send_pong_s.send(*msg).await?;
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_PONG, frame_type);
+        assert_eq!(FrameType::Pong, frame_type);
         assert_eq!(8, frame_len);
         assert_eq!(msg, &buf[..]);
 
         // send peer_gone
         peer_gone_s.send(key.clone()).await?;
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_PEER_GONE, frame_type);
+        assert_eq!(FrameType::PeerGone, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 
@@ -986,12 +983,12 @@ mod tests {
 
         mesh_update_s.send(updates.clone()).await?;
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_PEER_PRESENT, frame_type);
+        assert_eq!(FrameType::PeerPresent, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(FRAME_PEER_GONE, frame_type);
+        assert_eq!(FrameType::PeerGone, frame_type);
         assert_eq!(PUBLIC_KEY_LENGTH, frame_len);
         assert_eq!(key, PublicKey::try_from(&buf[..])?);
 

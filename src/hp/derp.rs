@@ -21,7 +21,7 @@ pub use self::client::ReceivedMessage;
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 pub use self::server::{ClientConnHandler, Server};
-pub use self::types::PacketForwarder;
+pub use self::types::{MeshKey, PacketForwarder};
 
 use std::time::Duration;
 
@@ -41,7 +41,7 @@ const MAX_PACKET_SIZE: usize = 64 * 1024;
 
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
-/// The DERP magic number, sent in the FRAME_SERVER_KEY frame
+/// The DERP magic number, sent in the FrameType::ServerKey frame
 /// upon initial connection
 ///
 /// 8 bytes: 0x44 45 52 50 f0 9f 94 91
@@ -59,103 +59,135 @@ const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 32;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
-///  - version 2: received packets have src addrs in FRAME_RECV_PACKET at beginning
+///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning
 const PROTOCOL_VERSION: usize = 2;
-
-/// The one byte frame type at the beginning of the frame
-/// header. The second field is a big-endian u32 describing the
-/// length of the remaining frame (not including the initial 5 bytes)
-/// TODO: this should probably be an enum
-type FrameType = u8;
 
 ///
 /// Protocol flow:
 ///
 /// Login:
 ///  * client connects
-///  * server sends FRAME_SERVER_KEY
-///  * client sends FRAME_CLIENT_INFO
-///  * server sends FRAME_SERVER_INFO
+///  * server sends FrameType::ServerKey
+///  * client sends FrameType::ClientInfo
+///  * server sends FrameType::ServerInfo
 ///
 ///  Steady state:
-///  * server occasionally sends FRAME_KEEP_ALIVE (or FRAME_PING)
-///  * client responds to any FRAME_PING with a FRAME_PONG
-///  * clients sends FRAME_SEND_PACKET
-///  * server then sends FRAME_RECV_PACKET to recipient
+///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
+///  * client responds to any FrameType::Ping with a FrameType::Pong
+///  * clients sends FrameType::SendPacket
+///  * server then sends FrameType::RecvPacket to recipient
 ///
 
-/// 8B magic + 32B public key + (0+ bytes future use)
-const FRAME_SERVER_KEY: FrameType = 0x01;
-/// 32b pub key + 24B nonce + naclbox(json)
-const FRAME_CLIENT_INFO: FrameType = 0x02;
-/// 24B nonce + naclbox(json)
-const FRAME_SERVER_INFO: FrameType = 0x03;
-/// 32B dest pub key + packet bytes
-const FRAME_SEND_PACKET: FrameType = 0x04;
-/// 32B src pub key + 32B dst pub key + packet bytes
-const FRAME_FORWARD_PACKET: FrameType = 0x0a;
-/// v0/1 packet bytes, v2: 32B src pub key + packet bytes
-const FRAME_RECV_PACKET: FrameType = 0x05;
-/// no payload, no-op (to be replaced with ping/pong)
-const FRAME_KEEP_ALIVE: FrameType = 0x06;
-/// 1 byte payload: 0x01 or 0x00 for whether this is client's home node
-const FRAME_NOTE_PREFERRED: FrameType = 0x07;
-/// indicates this is the client's home node
 const PREFERRED: u8 = 1u8;
 /// indicates this is NOT the client's home node
 const NOT_PREFERRED: u8 = 0u8;
 
-/// Sent from server to client to signal that a previous sender is no longer connected.
-///
-/// That is, if A sent to B, and then if A disconnects, the server sends `FRAME_PEER_GONE`
-/// to B so B can forget that a reverse path exists on that connection to get back to A
-///
-/// 32B pub key of peer that's gone
-const FRAME_PEER_GONE: FrameType = 0x08;
+/// The one byte frame type at the beginning of the frame
+/// header. The second field is a big-endian u32 describing the
+/// length of the remaining frame (not including the initial 5 bytes)
+#[derive(Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum FrameType {
+    /// 8B magic + 32B public key + (0+ bytes future use)
+    ServerKey = 1,
+    /// 32b pub key + 24B nonce + chachabox(bytes)
+    ClientInfo = 2,
+    /// 24B nonce + chachabox(bytes)
+    ServerInfo = 3,
+    /// 32B dest pub key + packet bytes
+    SendPacket = 4,
+    /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
+    RecvPacket = 5,
+    /// no payload, no-op (to be replaced with ping/pong)
+    KeepAlive = 6,
+    /// 1 byte payload: 0x01 or 0x00 for whether this is client's home node
+    NotePreferred = 7,
+    /// Sent from server to client to signal that a previous sender is no longer connected.
+    ///
+    /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
+    /// to B so B can forget that a reverse path exists on that connection to get back to A
+    ///
+    /// 32B pub key of peer that's gone
+    PeerGone = 8,
+    /// Like [`FrameType::PeerGone`], but for other members of the DERP region
+    /// when they're meshed up together
+    ///
+    /// 32B pub key of peer that's connected
+    PeerPresent = 9,
+    /// How one DERP node in a regional mesh subscribes to the others in the region.
+    ///
+    /// There's no payload. If the sender doesn't have permission, the connection
+    /// is closed. Otherwise, the client is initially flooded with
+    /// [`FrameType::PeerPresent`] for all connected nodes, and then a stream of
+    /// [`FrameType::PeerPresent`] & [`FrameType::PeerGone`] has peers connect and disconnect.
+    WatchConns = 10,
+    /// A priviledged frame type (requires the mesh key for now) that closes
+    /// the provided peer's connection. (To be used for cluster load balancing
+    /// purposes, when clients end up on a non-ideal node)
+    ///
+    /// 32B pub key of peer close.
+    ClosePeer = 11,
+    /// 8 byte ping payload, to be echoed back in FrameType::Pong
+    Ping = 12,
+    /// 8 byte payload, the contents of ping being replied to
+    Pong = 13,
+    /// Sent from server to client to tell the client if their connection is
+    /// unhealthy somehow. Currently the only unhealthy state is whether the
+    /// connection is detected as a duplicate.
+    /// The entire frame body is the text of the error message. An empty message
+    /// clears the error state.
+    Health = 14,
 
-/// Like [`FRAME_PEER_GONE`], but for other members of the DERP region
-/// when they're meshed up together
-///
-/// 32B pub key of peer that's connected
-const FRAME_PEER_PRESENT: FrameType = 0x09;
+    /// Sent from server to client for the server to declare that it's restarting.
+    /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
+    /// and how long to try total. See [`SERVER_RESTARTING_MESSAGE`] for
+    /// more details on how the client should interpret them.
+    Restarting = 15,
+    /// 32B src pub key + 32B dst pub key + packet bytes
+    ForwardPacket = 16,
+    Unknown = 255,
+}
 
-/// How one DERP node in a regional mesh subscribes to the others in the region.
-///
-/// There's no payload. If the sender doesn't have permission, the connection
-/// is closed. Otherwise, the client is initially flooded with
-/// [`FRAME_PEER_PRESENT`] for all connected nodes, and then a stream of
-/// [`FRAME_PEER_PRESENT`] & [`FRAME_PEER_GONE`] has peers connect and disconnect.
-const FRAME_WATCH_CONNS: FrameType = 0x10;
+impl std::fmt::Display for FrameType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
-/// A priviledged frame type (requires the mesh key for now) that closes
-/// the provided peer's connection. (To be used for cluster load balancing
-/// purposes, when clients end up on a non-ideal node)
-///
-/// 32B pub key of peer close.
-const FRAME_CLOSE_PEER: FrameType = 0x11;
+impl From<u8> for FrameType {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => FrameType::ServerKey,
+            2 => FrameType::ClientInfo,
+            3 => FrameType::ServerInfo,
+            4 => FrameType::SendPacket,
+            5 => FrameType::RecvPacket,
+            6 => FrameType::KeepAlive,
+            7 => FrameType::NotePreferred,
+            8 => FrameType::PeerGone,
+            9 => FrameType::PeerPresent,
+            10 => FrameType::WatchConns,
+            11 => FrameType::ClosePeer,
+            12 => FrameType::Ping,
+            13 => FrameType::Pong,
+            14 => FrameType::Health,
+            15 => FrameType::Restarting,
+            16 => FrameType::ForwardPacket,
+            _ => FrameType::Unknown,
+        }
+    }
+}
 
-/// 8 byte ping payload, to be echoed back in FRAME_PONG
-const FRAME_PING: FrameType = 0x12;
-/// 8 byte payload, the contents of ping being replied to
-const FRAME_PONG: FrameType = 0x13;
-
-/// Sent from server to client to tell the client if their connection is
-/// unhealthy somehow. Currently the only unhealthy state is whether the
-/// connection is detected as a duplicate.
-/// The entire frame body is the text of the error message. An empty message
-/// clears the error state.
-const FRAME_HEALTH: FrameType = 0x14;
-
-/// Sent from server to client for the server to declare that it's restarting.
-/// Payload is two big endian u32 durations in milliseconds: when to reconnect,
-/// and how long to try total. See [`SERVER_RESTARTING_MESSAGE`] for
-/// more details on how the client should interpret them.
-const FRAME_RESTARTING: FrameType = 0x15;
+impl From<FrameType> for u8 {
+    fn from(value: FrameType) -> Self {
+        value as u8
+    }
+}
 
 async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, usize)> {
     let frame_type = reader.read_u8().await?;
     let frame_len = reader.read_u32().await?;
-    Ok((frame_type, frame_len.try_into()?))
+    Ok((frame_type.into(), frame_len.try_into()?))
 }
 
 /// AsyncReads a frame header and then reads a `frame_len` of bytes into `buf`.
@@ -206,7 +238,7 @@ async fn write_frame_header(
     frame_len: usize,
 ) -> Result<()> {
     let frame_len = u32::try_from(frame_len)?;
-    writer.write_u8(frame_type).await?;
+    writer.write_u8(frame_type.into()).await?;
     writer.write_u32(frame_len).await?;
     Ok(())
 }
@@ -247,7 +279,7 @@ async fn write_frame_timeout(
     }
 }
 
-/// Writes a `FRAME_CLIENT_INFO`, including the client's [`PublicKey`],
+/// Writes a `FrameType::ClientInfo`, including the client's [`PublicKey`],
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
@@ -262,7 +294,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     let sealed_msg = secret_key.seal_to(server_key, msg);
     write_frame(
         &mut writer,
-        FRAME_CLIENT_INFO,
+        FrameType::ClientInfo,
         &[secret_key.public_key().as_bytes(), &sealed_msg],
     )
     .await?;
@@ -270,7 +302,7 @@ pub(crate) async fn send_client_key<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// Reads the `FRAME_CLIENT_INFO` frame from the client (its proof of identity)
+/// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 async fn recv_client_key<R: AsyncRead + Unpin>(
     secret_key: SecretKey,
@@ -288,8 +320,8 @@ async fn recv_client_key<R: AsyncRead + Unpin>(
     .await
     .context("read frame")?;
     ensure!(
-        frame_type == FRAME_CLIENT_INFO,
-        "expected FRAME_CLIENT_INFO frame got {frame_type}"
+        frame_type == FrameType::ClientInfo,
+        "expected FrameType::ClientInfo frame got {frame_type}"
     );
     let key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH]).context("public key")?;
     let msg = &buf[PUBLIC_KEY_LENGTH..];
@@ -306,18 +338,18 @@ mod tests {
     async fn test_basic_read_write() -> Result<()> {
         let (mut reader, mut writer) = tokio::io::duplex(1024);
 
-        write_frame_header(&mut writer, FRAME_PEER_GONE, 301).await?;
+        write_frame_header(&mut writer, FrameType::PeerGone, 301).await?;
         let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(frame_len, 301);
 
         let expect_buf = b"hello world!";
-        write_frame(&mut writer, FRAME_HEALTH, &[expect_buf]).await?;
+        write_frame(&mut writer, FrameType::Health, &[expect_buf]).await?;
         writer.flush().await?;
         println!("{:?}", reader);
         let mut got_buf = BytesMut::new();
         let (frame_type, frame_len) = read_frame(&mut reader, 1024, &mut got_buf).await?;
-        assert_eq!(FRAME_HEALTH, frame_type);
+        assert_eq!(FrameType::Health, frame_type);
         assert_eq!(expect_buf.len(), frame_len);
         assert_eq!(expect_buf.as_slice(), &got_buf);
         Ok(())

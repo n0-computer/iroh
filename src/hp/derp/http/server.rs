@@ -145,7 +145,7 @@ mod tests {
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut upgraded, crate::hp::derp::MAX_FRAME_SIZE, &mut buf)
                 .await?;
-        assert_eq!(crate::hp::derp::FRAME_SERVER_INFO, frame_type);
+        assert_eq!(crate::hp::derp::FrameType::ServerInfo, frame_type);
         let msg = secret_key.open_from(&got_server_key, &buf)?;
         let _info: crate::hp::derp::types::ServerInfo = postcard::from_bytes(&msg)?;
         Ok(())

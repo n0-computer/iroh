@@ -10,6 +10,9 @@ use super::client_conn::ClientConnBuilder;
 use super::PROTOCOL_VERSION;
 use crate::hp::key::node::PublicKey;
 
+/// A key to identify if a node belongs in a mesh
+pub type MeshKey = [u8; 32];
+
 pub(crate) struct RateLimiter {
     inner: governor::RateLimiter<
         governor::state::direct::NotKeyed,
@@ -74,7 +77,7 @@ pub(crate) struct ClientInfo {
     /// packets. It's empty for regular users.
     /// TODO: this is a string in the go-impl, using an Option<array> here
     /// to satisfy postcard's `MaxSize` trait
-    pub(crate) mesh_key: Option<[u8; 32]>,
+    pub(crate) mesh_key: Option<MeshKey>,
     /// Whether the client declares it's able to ack pings
     pub(crate) can_ack_pings: bool,
     /// Whether this client is a prober.
