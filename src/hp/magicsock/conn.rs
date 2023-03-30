@@ -699,13 +699,9 @@ impl Conn {
         }
     }
 
-    /// Makes the provided addr validated address for the given key.
-    pub async fn add_valid_path(&self, node_key: &key::node::PublicKey, addr: &SocketAddr) {
-        let mut peer_map = self.peer_map.write().await;
-        peer_map.set_node_key_for_ip_port(addr, node_key);
-        if let Some(ep) = peer_map.endpoint_for_node_key(node_key) {
-            ep.maybe_add_best_addr(*addr).await;
-        }
+    pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
+        let peer_map = self.peer_map.read().await;
+        peer_map.mapping_addr_for_node_key(node_key)
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
@@ -981,14 +977,15 @@ impl Conn {
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         pub_key: Option<&key::node::PublicKey>,
         transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        if transmit[0].destination.ip() != DERP_MAGIC_IP {
-            return self.poll_send_udp(udp_state, cx, transmit);
+        if addr.ip() != DERP_MAGIC_IP {
+            return self.poll_send_udp(udp_state, cx, addr, transmit);
         }
 
-        match self.derp_write_chan_of_addr(transmit[0].destination, pub_key) {
+        match self.derp_write_chan_of_addr(addr, pub_key) {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
@@ -1001,9 +998,9 @@ impl Conn {
                         "connection closed",
                     )));
                 }
-                let (addr, content) = match transmit {
-                    TransmitCow::Borrowed(t) => (t[0].destination, t[0].contents.clone()),
-                    TransmitCow::Owned([t]) => (t.destination, t.contents),
+                let content = match transmit {
+                    TransmitCow::Borrowed(t) => t[0].contents.clone(),
+                    TransmitCow::Owned([t]) => t.contents,
                 };
                 match ch.try_send(DerpWriteRequest {
                     pub_key: pub_key.cloned(),
@@ -1032,9 +1029,12 @@ impl Conn {
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        match transmit[0].destination {
+        let mut transmit = transmit.to_owned();
+        transmit[0].destination = addr;
+        match addr {
             SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmit),
             SocketAddr::V6(_) => {
                 if let Some(ref conn) = self.pconn6 {
@@ -1434,6 +1434,7 @@ impl Conn {
         meta: &mut quinn_udp::RecvMeta,
         cache: &SocketEndpointCache,
     ) -> bool {
+        debug!("received data {} from {}", meta.len, meta.addr);
         // Trunacte the slice, to the actual message length.
         let b = &b[..meta.len];
         if stun::is(b) {
@@ -1483,12 +1484,10 @@ impl Conn {
         b: &mut io::IoSliceMut<'_>,
         meta: &mut quinn_udp::RecvMeta,
     ) -> usize {
-        let b = &b[..meta.len];
+        debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             return 0;
         }
-        let buf = &dm.buf;
-        let n = buf.len();
         let region_id = dm.region_id;
 
         let ipp = SocketAddr::new(
@@ -1496,7 +1495,7 @@ impl Conn {
             u16::try_from(region_id).expect("invalid region id"),
         );
 
-        if self.handle_disco_message(&b[..n], ipp, Some(&dm.src)) {
+        if self.handle_disco_message(&dm.buf, ipp, Some(&dm.src)) {
             // Message was internal, do not bubble up.
             return 0;
         }
@@ -1512,12 +1511,15 @@ impl Conn {
 
         let ep = ep.unwrap();
         ep.note_recv_activity();
+
+        b[..dm.buf.len()].copy_from_slice(&dm.buf);
+        meta.len = dm.buf.len();
         meta.dst_ip = Some(ep.fake_wg_addr.ip());
 
         // if stats := c.stats.Load(); stats != nil {
         // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
         // }
-        n
+        meta.len
     }
 
     /// Sends discovery message m to dst_disco at dst.
@@ -1569,6 +1571,7 @@ impl Conn {
             self.poll_send_addr(
                 &udp_state,
                 cx,
+                dst,
                 dst_key,
                 quinn_proto::Transmit {
                     destination: dst,
@@ -2619,38 +2622,51 @@ impl Conn {
         &self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
         debug!("poll_send_raw: {} packets", transmits.len());
 
         let mut sum = 0;
 
-        let res = group_by(
-            transmits,
-            |a, b| a.destination.is_ipv6() == b.destination.is_ipv6(),
-            |group| {
-                let res = if group[0].destination.is_ipv6() {
-                    if let Some(ref conn) = self.pconn6 {
-                        conn.poll_send(state, cx, &transmits)
-                    } else {
-                        Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "no IPv6 connection",
-                        )))
-                    }
-                } else {
-                    self.pconn4.poll_send(state, cx, group)
-                };
-                match res {
-                    Poll::Pending => None,
-                    Poll::Ready(Ok(r)) => {
-                        sum += r;
-                        None
-                    }
-                    Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
-                }
-            },
-        );
+        if addr.is_ipv6() && self.pconn6.is_none() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no IPv6 connection",
+            )));
+        }
+
+        let conn = if addr.is_ipv6() {
+            self.pconn6.as_ref().unwrap()
+        } else {
+            &self.pconn4
+        };
+
+        let res = if transmits.iter().any(|t| t.destination != addr) {
+            // :(
+            let g: Vec<Transmit> = transmits
+                .iter()
+                .map(|t| Transmit {
+                    destination: addr, // update destination
+                    ecn: t.ecn,
+                    contents: t.contents.clone(),
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                })
+                .collect();
+
+            conn.poll_send(state, cx, &g[..])
+        } else {
+            conn.poll_send(state, cx, transmits)
+        };
+        let res = match res {
+            Poll::Pending => None,
+            Poll::Ready(Ok(r)) => {
+                sum += r;
+                None
+            }
+            Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
+        };
 
         if let Some(err) = res {
             return err;
@@ -2890,6 +2906,7 @@ impl AsyncUdpSocket for Conn {
                     }
 
                     let n = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
+                    debug!("received derp message, is internal? {}", n == 0);
                     if n == 0 {
                         // No read, continue
                         continue;
@@ -2900,6 +2917,7 @@ impl AsyncUdpSocket for Conn {
                     break;
                 }
             }
+            num_msgs_total = i;
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
@@ -3035,6 +3053,21 @@ where
 pub(super) enum TransmitCow<'a> {
     Borrowed(&'a [Transmit; 1]),
     Owned([Transmit; 1]),
+}
+
+impl TransmitCow<'_> {
+    fn to_owned(self) -> [Transmit; 1] {
+        match self {
+            Self::Borrowed([t]) => [Transmit {
+                destination: t.destination,
+                ecn: t.ecn,
+                contents: t.contents.clone(),
+                segment_size: t.segment_size,
+                src_ip: t.src_ip,
+            }],
+            Self::Owned(t) => t,
+        }
+    }
 }
 
 impl Deref for TransmitCow<'_> {
@@ -3323,7 +3356,7 @@ mod tests {
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
-                    ep_s.send(eps.to_vec()).unwrap();
+                    let _ = ep_s.send(eps.to_vec());
                 })),
                 ..Default::default()
             };
@@ -3380,7 +3413,7 @@ mod tests {
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
             let peer_map = &*self.conn.peer_map.read().await;
             let mut out = Vec::new();
-            for ep in peer_map.endpoints() {
+            for ep in dbg!(peer_map).endpoints() {
                 out.push(ep.public_key.clone());
             }
             out
@@ -3419,7 +3452,7 @@ mod tests {
                     disco_key: peer.conn.disco_public_key().await,
                     allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
-                    derp: Some("127.3.3.40:1".parse().unwrap()),
+                    derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),
                     hostinfo: crate::hp::hostinfo::Hostinfo::new(),
                     keep_alive: false,
@@ -3522,23 +3555,6 @@ mod tests {
         .await
         .context("failed to connect peers")?;
 
-        // Setup connection information for discovery
-        {
-            // This is needed because dialing in quic land happens per IP,
-            // but our information is only build upon public keys, so we need to add
-            // one matching path for the machinery to work.
-            let m1_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m1.quic_ep.local_addr()?.port(),
-            );
-            let m2_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m2.quic_ep.local_addr()?.port(),
-            );
-            m1.conn.add_valid_path(&m2.public(), &m2_addr).await;
-            m2.conn.add_valid_path(&m1.public(), &m1_addr).await;
-        }
-
         // msg from  m2 -> m1
         macro_rules! roundtrip {
             ($a:expr, $b:expr, $msg:expr) => {
@@ -3547,10 +3563,10 @@ mod tests {
                 let a_name = stringify!($a);
                 let b_name = stringify!($b);
                 info!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-                let a_addr =
-                    SocketAddr::new("127.0.0.1".parse().unwrap(), a.quic_ep.local_addr()?.port());
-                let b_addr =
-                    SocketAddr::new("127.0.0.1".parse().unwrap(), b.quic_ep.local_addr()?.port());
+
+                let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
+                let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();
+
                 info!(
                     "{}: {}, {}: {}",
                     a_name,

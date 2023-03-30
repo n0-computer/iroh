@@ -24,6 +24,7 @@ const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 /// All the information magicsock tracks about a particular peer.
 #[derive(Clone, Debug)]
 pub struct PeerInfo {
+    pub id: u32,
     pub ep: Endpoint,
     /// An inverted version of `PeerMap.by_ip_port` (below), so
     /// that when we're deleting this node, we can rapidly find out the
@@ -33,8 +34,9 @@ pub struct PeerInfo {
 }
 
 impl PeerInfo {
-    pub fn new(ep: Endpoint) -> Self {
+    pub fn new(id: u32, ep: Endpoint) -> Self {
         PeerInfo {
+            id,
             ep,
             ip_ports: Default::default(),
         }
