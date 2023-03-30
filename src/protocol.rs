@@ -4,7 +4,7 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::tokio_io::AsyncResponseDecoder;
+use bao_tree::io::tokio::AsyncResponseDecoder;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;

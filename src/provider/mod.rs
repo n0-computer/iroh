@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::encode_ranges_validated;
+use bao_tree::io::sync::encode_ranges_validated;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -888,7 +888,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             let outboard =
                 PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
             let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::tokio_io::encode_ranges_validated(
+            bao_tree::io::tokio::encode_ranges_validated(
                 file_reader,
                 outboard,
                 &RangeSet2::all(),
@@ -1001,7 +1001,7 @@ fn compute_outboard(
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
 
     let hash =
-        bao_tree::io::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
+        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
     tracing::debug!("done. hash for {} is {hash}", path.display());
 
