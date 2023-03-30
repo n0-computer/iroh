@@ -86,65 +86,66 @@ const NOT_PREFERRED: u8 = 0u8;
 /// header. The second field is a big-endian u32 describing the
 /// length of the remaining frame (not including the initial 5 bytes)
 #[derive(Debug, PartialEq, Eq)]
+#[repr(u8)]
 enum FrameType {
     /// 8B magic + 32B public key + (0+ bytes future use)
-    ServerKey,
+    ServerKey = 1,
     /// 32b pub key + 24B nonce + chachabox(bytes)
-    ClientInfo,
+    ClientInfo = 2,
     /// 24B nonce + chachabox(bytes)
-    ServerInfo,
+    ServerInfo = 3,
     /// 32B dest pub key + packet bytes
-    SendPacket,
-    /// 32B src pub key + 32B dst pub key + packet bytes
-    ForwardPacket,
+    SendPacket = 4,
     /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
-    RecvPacket,
+    RecvPacket = 5,
     /// no payload, no-op (to be replaced with ping/pong)
-    KeepAlive,
+    KeepAlive = 6,
     /// 1 byte payload: 0x01 or 0x00 for whether this is client's home node
-    NotePreferred,
+    NotePreferred = 7,
     /// Sent from server to client to signal that a previous sender is no longer connected.
     ///
     /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
     /// to B so B can forget that a reverse path exists on that connection to get back to A
     ///
     /// 32B pub key of peer that's gone
-    PeerGone,
+    PeerGone = 8,
     /// Like [`FrameType::PeerGone`], but for other members of the DERP region
     /// when they're meshed up together
     ///
     /// 32B pub key of peer that's connected
-    PeerPresent,
+    PeerPresent = 9,
     /// How one DERP node in a regional mesh subscribes to the others in the region.
     ///
     /// There's no payload. If the sender doesn't have permission, the connection
     /// is closed. Otherwise, the client is initially flooded with
     /// [`FrameType::PeerPresent`] for all connected nodes, and then a stream of
     /// [`FrameType::PeerPresent`] & [`FrameType::PeerGone`] has peers connect and disconnect.
-    WatchConns,
+    WatchConns = 10,
     /// A priviledged frame type (requires the mesh key for now) that closes
     /// the provided peer's connection. (To be used for cluster load balancing
     /// purposes, when clients end up on a non-ideal node)
     ///
     /// 32B pub key of peer close.
-    ClosePeer,
+    ClosePeer = 11,
     /// 8 byte ping payload, to be echoed back in FrameType::Pong
-    Ping,
+    Ping = 12,
     /// 8 byte payload, the contents of ping being replied to
-    Pong,
+    Pong = 13,
     /// Sent from server to client to tell the client if their connection is
     /// unhealthy somehow. Currently the only unhealthy state is whether the
     /// connection is detected as a duplicate.
     /// The entire frame body is the text of the error message. An empty message
     /// clears the error state.
-    Health,
+    Health = 14,
 
     /// Sent from server to client for the server to declare that it's restarting.
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total. See [`SERVER_RESTARTING_MESSAGE`] for
     /// more details on how the client should interpret them.
-    Restarting,
-    Unknown,
+    Restarting = 15,
+    /// 32B src pub key + 32B dst pub key + packet bytes
+    ForwardPacket = 16,
+    Unknown = 255,
 }
 
 impl std::fmt::Display for FrameType {
@@ -156,22 +157,22 @@ impl std::fmt::Display for FrameType {
 impl From<u8> for FrameType {
     fn from(value: u8) -> Self {
         match value {
-            0x01 => FrameType::ServerKey,
-            0x02 => FrameType::ClientInfo,
-            0x03 => FrameType::ServerInfo,
-            0x04 => FrameType::SendPacket,
-            0x05 => FrameType::RecvPacket,
-            0x06 => FrameType::KeepAlive,
-            0x07 => FrameType::NotePreferred,
-            0x08 => FrameType::PeerGone,
-            0x09 => FrameType::PeerPresent,
-            0x10 => FrameType::WatchConns,
-            0x11 => FrameType::ClosePeer,
-            0x12 => FrameType::Ping,
-            0x13 => FrameType::Pong,
-            0x14 => FrameType::Health,
-            0x15 => FrameType::Restarting,
-            0x0a => FrameType::ForwardPacket,
+            1 => FrameType::ServerKey,
+            2 => FrameType::ClientInfo,
+            3 => FrameType::ServerInfo,
+            4 => FrameType::SendPacket,
+            5 => FrameType::RecvPacket,
+            6 => FrameType::KeepAlive,
+            7 => FrameType::NotePreferred,
+            8 => FrameType::PeerGone,
+            9 => FrameType::PeerPresent,
+            10 => FrameType::WatchConns,
+            11 => FrameType::ClosePeer,
+            12 => FrameType::Ping,
+            13 => FrameType::Pong,
+            14 => FrameType::Health,
+            15 => FrameType::Restarting,
+            16 => FrameType::ForwardPacket,
             _ => FrameType::Unknown,
         }
     }
@@ -179,25 +180,7 @@ impl From<u8> for FrameType {
 
 impl From<FrameType> for u8 {
     fn from(value: FrameType) -> Self {
-        match value {
-            FrameType::ServerKey => 0x01,
-            FrameType::ClientInfo => 0x02,
-            FrameType::ServerInfo => 0x03,
-            FrameType::SendPacket => 0x04,
-            FrameType::RecvPacket => 0x05,
-            FrameType::KeepAlive => 0x06,
-            FrameType::NotePreferred => 0x07,
-            FrameType::PeerGone => 0x08,
-            FrameType::PeerPresent => 0x09,
-            FrameType::WatchConns => 0x10,
-            FrameType::ClosePeer => 0x11,
-            FrameType::Ping => 0x12,
-            FrameType::Pong => 0x13,
-            FrameType::Health => 0x14,
-            FrameType::Restarting => 0x15,
-            FrameType::ForwardPacket => 0x0a,
-            FrameType::Unknown => 0xff,
-        }
+        value as u8
     }
 }
 
