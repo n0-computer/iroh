@@ -1,6 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
-use bao_tree::{error::EncodeError, io::encode_ranges_validated};
+use bao_tree::io::{error::EncodeError, sync::encode_ranges_validated};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
