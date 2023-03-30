@@ -7,6 +7,7 @@ use std::fmt::Debug;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
@@ -18,10 +19,13 @@ use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
-use bao_tree::tokio_io::AsyncResponseDecoder;
-use bytes::BytesMut;
+use bao_tree::outboard::{OutboardMut, PostOrderMemOutboard};
+use bao_tree::tokio_io::{DecodeResponseStream, DecodeResponseStreamItem};
+use bao_tree::BaoTree;
+use bytes::{Buf, Bytes, BytesMut};
 use default_net::Interface;
-use futures::{Future, StreamExt};
+use futures::stream::FusedStream;
+use futures::{ready, Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -106,23 +110,35 @@ impl Stats {
 /// A verified stream of data coming from the provider
 ///
 /// We guarantee that the data is correct by incrementally verifying a hash
-#[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncResponseDecoder<quinn::RecvStream>);
+pub struct DataStream {
+    /// response stream we are decoding
+    inner: DecodeResponseStream<quinn::RecvStream>,
+    /// outboard where we store hashes
+    outboard: PostOrderMemOutboard,
+    /// current data to output, must not be empty
+    curr: Option<Bytes>,
+}
 
 impl DataStream {
     fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
-        let decoder =
-            AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
-        DataStream(decoder)
+        let inner =
+            DecodeResponseStream::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
+        let outboard =
+            PostOrderMemOutboard::new(hash.into(), BaoTree::empty(IROH_BLOCK_SIZE), vec![]);
+        DataStream {
+            inner,
+            outboard,
+            curr: None,
+        }
     }
 
     async fn read_size(&mut self) -> io::Result<u64> {
-        self.0.read_size().await
+        Ok(self.inner.read_tree().await?.size().0)
     }
 
     fn into_inner(self) -> quinn::RecvStream {
-        self.0.into_inner()
+        self.inner.into_inner()
     }
 }
 
@@ -131,8 +147,42 @@ impl AsyncRead for DataStream {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    ) -> Poll<io::Result<()>> {
+        Poll::Ready(loop {
+            // first check if we got something to output
+            if let Some(mut data) = self.curr.take() {
+                debug_assert!(!data.is_empty());
+                let len = data.len().min(buf.remaining());
+                buf.put_slice(&data[..len]);
+                data.advance(len);
+                if !data.is_empty() {
+                    self.curr = Some(data);
+                }
+                // only return when either we wrote something or we were called
+                // with an empty buffer.
+                // Returning without writing for a non empty buffer would mean EOF.
+                break Ok(());
+            };
+            // otherwise, try to get more data
+            match ready!(self.inner.poll_next_unpin(cx)) {
+                Some(Ok(DecodeResponseStreamItem::Header { size })) => {
+                    // resize the outboard
+                    self.outboard.set_size(size)?;
+                }
+                Some(Ok(DecodeResponseStreamItem::Parent { node, pair })) => {
+                    // update the outboard
+                    self.outboard.save(node, &pair)?;
+                }
+                Some(Ok(DecodeResponseStreamItem::Leaf { data, .. })) => {
+                    // we got some data to output, store it in curr
+                    if !data.is_empty() {
+                        self.curr = Some(data);
+                    }
+                }
+                Some(Err(cause)) => break Err(cause.into()),
+                None => break Ok(()),
+            }
+        })
     }
 }
 

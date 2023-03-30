@@ -1,10 +1,10 @@
 //! Protocol for communication between provider and client.
-use std::{fmt::Display, io::Cursor};
 use std::io;
 use std::str::FromStr;
+use std::{fmt::Display, io::Cursor};
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::{outboard::PostOrderMemOutboard, BaoTree, tokio_io::decode_response_into};
+use bao_tree::{outboard::PostOrderMemOutboard, tokio_io::decode_response_into, BaoTree};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -119,7 +119,13 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
 ) -> Result<Vec<u8>> {
     let outboard = PostOrderMemOutboard::new(hash.into(), BaoTree::empty(IROH_BLOCK_SIZE), vec![]);
     let mut decoded = Vec::new();
-    decode_response_into(&RangeSet2::all(), reader, outboard, Cursor::new(&mut decoded)).await?;
+    decode_response_into(
+        &RangeSet2::all(),
+        reader,
+        outboard,
+        Cursor::new(&mut decoded),
+    )
+    .await?;
     // store outboard?
     Ok(decoded)
 }
