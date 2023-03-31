@@ -701,7 +701,9 @@ impl Conn {
 
     pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let peer_map = self.peer_map.read().await;
-        peer_map.mapping_addr_for_node_key(node_key)
+        peer_map
+            .endpoint_for_node_key(node_key)
+            .map(|ep| ep.fake_wg_addr)
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
@@ -1457,9 +1459,8 @@ impl Conn {
             debug!("received DISCO message {}", b.len());
             return false;
         }
-
         if let Some(de) = cache.get(&meta.addr) {
-            meta.dst_ip = Some(de.fake_wg_addr.ip());
+            meta.addr = de.fake_wg_addr;
         } else {
             let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
             match peer_map.endpoint_for_ip_port(&meta.addr) {
@@ -1469,7 +1470,7 @@ impl Conn {
                 }
                 Some(de) => {
                     cache.update(meta.addr, de.clone());
-                    meta.dst_ip = Some(de.fake_wg_addr.ip());
+                    meta.addr = de.fake_wg_addr;
                 }
             }
         }
@@ -1522,7 +1523,8 @@ impl Conn {
         b[..dm.buf.len()].copy_from_slice(&dm.buf);
         meta.len = dm.buf.len();
         meta.stride = dm.buf.len();
-        meta.dst_ip = Some(ep.fake_wg_addr.ip());
+        debug!("derp: endpoint fake addr {}", ep.fake_wg_addr);
+        meta.addr = ep.fake_wg_addr;
 
         // if stats := c.stats.Load(); stats != nil {
         // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
@@ -2929,8 +2931,13 @@ impl AsyncUdpSocket for Conn {
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
-        debug!("received {} msgs", num_msgs_total);
         if num_msgs_total > 0 {
+            info!(
+                "received {:?} msgs {}",
+                meta.iter().map(|m| m.addr).collect::<Vec<_>>(),
+                num_msgs_total
+            );
+
             return Poll::Ready(Ok(num_msgs_total));
         }
 
@@ -2938,7 +2945,11 @@ impl AsyncUdpSocket for Conn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        // TODO: Just uses ip4 for now, is this enough?
+        // TODO: think more about this
+        // needs to pretend ipv6 always as the fake addrs are ipv6
+        if let Some(ref conn) = self.pconn6 {
+            return conn.local_addr_blocking();
+        }
         let addr = self.pconn4.local_addr_blocking()?;
         Ok(addr)
     }
@@ -3421,7 +3432,7 @@ mod tests {
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
             let peer_map = &*self.conn.peer_map.read().await;
             let mut out = Vec::new();
-            for ep in dbg!(peer_map).endpoints() {
+            for ep in peer_map.endpoints() {
                 out.push(ep.public_key.clone());
             }
             out
@@ -3564,13 +3575,7 @@ mod tests {
                 let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
                 let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();
 
-                info!(
-                    "{}: {}, {}: {}",
-                    a_name,
-                    a_addr,
-                    b_name,
-                    b.quic_ep.local_addr()?
-                );
+                info!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
                 let b_task = tokio::task::spawn(async move {
                     info!("[{}] accepting conn", b_name);

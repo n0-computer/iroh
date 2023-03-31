@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
     hash::Hash,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
     pin::Pin,
     sync::{
@@ -920,37 +920,13 @@ pub struct AddrLatency {
 }
 
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct PeerMap {
-    next_id: u32,
-    pub by_id: HashMap<u32, PeerInfo>,
     pub by_node_key: HashMap<key::node::PublicKey, PeerInfo>,
     pub by_ip_port: HashMap<SocketAddr, PeerInfo>,
 
     /// Contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
     pub nodes_of_disco: HashMap<key::disco::PublicKey, HashSet<key::node::PublicKey>>,
-}
-
-impl Default for PeerMap {
-    fn default() -> Self {
-        PeerMap {
-            next_id: 1, // need to start with 1 for valid addrs
-            by_id: Default::default(),
-            by_node_key: Default::default(),
-            by_ip_port: Default::default(),
-            nodes_of_disco: Default::default(),
-        }
-    }
-}
-
-/// Use this as the port to indicate this is not a "real" address.
-const FAKE_PORT: u16 = u16::MAX;
-
-fn fake_addr(id: u32) -> SocketAddr {
-    let mut octets = [0u8; 4];
-    octets.copy_from_slice(&id.to_le_bytes());
-
-    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), FAKE_PORT))
 }
 
 impl PeerMap {
@@ -971,28 +947,7 @@ impl PeerMap {
 
     /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
     pub fn endpoint_for_ip_port(&self, ipp: &SocketAddr) -> Option<&Endpoint> {
-        if let Some(ep) = self.by_ip_port.get(ipp).map(|i| &i.ep) {
-            return Some(ep);
-        }
-        self.endpoint_for_mapping_addr(ipp)
-    }
-
-    pub fn mapping_addr_for_node_key(&self, nk: &key::node::PublicKey) -> Option<SocketAddr> {
-        self.by_node_key.get(nk).map(|i| fake_addr(i.id))
-    }
-
-    fn endpoint_for_mapping_addr(&self, addr: &SocketAddr) -> Option<&Endpoint> {
-        match addr {
-            SocketAddr::V6(_) => None,
-            SocketAddr::V4(addr) => {
-                if addr.port() != FAKE_PORT {
-                    return None;
-                }
-                let octets = addr.ip().octets();
-                let id = u32::from_le_bytes(octets);
-                self.by_id.get(&id).map(|i| &i.ep)
-            }
-        }
+        self.by_ip_port.get(ipp).map(|i| &i.ep)
     }
 
     pub fn endpoints(&self) -> impl Iterator<Item = &Endpoint> {
@@ -1010,10 +965,6 @@ impl PeerMap {
             .into_iter()
             .flat_map(|n| n)
             .flat_map(|nk| self.by_node_key.get(nk).map(|pi| &pi.ep))
-    }
-
-    pub fn id_for_node_key(&self, nk: &key::node::PublicKey) -> Option<u32> {
-        self.by_node_key.get(nk).map(|i| i.id)
     }
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
@@ -1036,15 +987,13 @@ impl PeerMap {
         set.insert(ep.public_key.clone());
 
         if !self.by_node_key.contains_key(&ep.public_key) {
-            let id = self.next_id;
             let public_key = ep.public_key.clone();
-            let info = PeerInfo::new(id, ep);
+            let fake_wg_addr = ep.fake_wg_addr;
+            let mut info = PeerInfo::new(ep);
+            info.ip_ports.insert(fake_wg_addr);
             self.by_node_key.insert(public_key, info.clone());
-            self.by_id.insert(id, info);
-            self.next_id = self
-                .next_id
-                .checked_add(1)
-                .expect("overflow not handled yet");
+            // allow lookups by the fake addr
+            self.by_ip_port.insert(fake_wg_addr, info);
         }
     }
 
@@ -1072,8 +1021,6 @@ impl PeerMap {
             for ip in &pi.ip_ports {
                 self.by_ip_port.remove(ip);
             }
-
-            self.by_id.remove(&pi.id);
         }
     }
 }
@@ -1152,14 +1099,16 @@ impl EndpointState {
     }
 }
 
-const ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Generates a globally unique fake UDPAddr.
-fn init_fake_udp_addr() -> SocketAddr {
+pub(super) fn init_fake_udp_addr() -> SocketAddr {
     let mut addr = [0u8; 16];
     addr[0] = 0xfd;
     addr[1] = 0x00;
-    addr[2..10].copy_from_slice(&ADDR_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+
+    let counter = ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    addr[2..10].copy_from_slice(&counter.to_le_bytes());
 
     SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345)
 }
