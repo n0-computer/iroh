@@ -19,12 +19,12 @@ use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
+use bao_tree::io::DecodeResponseItem;
+use bao_tree::io::tokio::DecodeResponseStream;
 use bao_tree::outboard::{OutboardMut, PostOrderMemOutboard};
-use bao_tree::tokio_io::{DecodeResponseStream, DecodeResponseStreamItem};
 use bao_tree::BaoTree;
 use bytes::{Buf, Bytes, BytesMut};
 use default_net::Interface;
-use futures::stream::FusedStream;
 use futures::{ready, Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
@@ -165,15 +165,15 @@ impl AsyncRead for DataStream {
             };
             // otherwise, try to get more data
             match ready!(self.inner.poll_next_unpin(cx)) {
-                Some(Ok(DecodeResponseStreamItem::Header { size })) => {
+                Some(Ok(DecodeResponseItem::Header { size })) => {
                     // resize the outboard
                     self.outboard.set_size(size)?;
                 }
-                Some(Ok(DecodeResponseStreamItem::Parent { node, pair })) => {
+                Some(Ok(DecodeResponseItem::Parent { node, pair })) => {
                     // update the outboard
                     self.outboard.save(node, &pair)?;
                 }
-                Some(Ok(DecodeResponseStreamItem::Leaf { data, .. })) => {
+                Some(Ok(DecodeResponseItem::Leaf { data, .. })) => {
                     // we got some data to output, store it in curr
                     if !data.is_empty() {
                         self.curr = Some(data);

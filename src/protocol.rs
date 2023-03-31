@@ -4,7 +4,8 @@ use std::str::FromStr;
 use std::{fmt::Display, io::Cursor};
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::{outboard::PostOrderMemOutboard, tokio_io::decode_response_into, BaoTree};
+use bao_tree::io::tokio::decode_response_into;
+use bao_tree::{outboard::PostOrderMemOutboard, BaoTree};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
