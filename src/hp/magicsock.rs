@@ -164,3 +164,13 @@ pub enum DiscoPingPurpose {
 // )
 
 // TODO: better place
+
+#[macro_export]
+macro_rules! measure {
+    ($name:expr, $block:expr) => {{
+        let start = Instant::now();
+        let res = $block;
+        tracing::info!("{} took {}ms", $name, start.elapsed().as_millis());
+        res
+    }};
+}
