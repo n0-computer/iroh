@@ -16,7 +16,7 @@ abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-f
 anyhow = { version = "1", features = ["backtrace"] }
 base64 = "0.21.0"
 blake3 = "1.3.3"
-bytes = "1"
+bytes = "1.4"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
 data-encoding = { version = "2.3.3", optional = true }
