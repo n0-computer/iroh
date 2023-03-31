@@ -1521,6 +1521,7 @@ impl Conn {
 
         b[..dm.buf.len()].copy_from_slice(&dm.buf);
         meta.len = dm.buf.len();
+        meta.stride = dm.buf.len();
         meta.dst_ip = Some(ep.fake_wg_addr.ip());
 
         // if stats := c.stats.Load(); stats != nil {
