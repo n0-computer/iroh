@@ -192,10 +192,7 @@ impl Endpoint {
         now: &Instant,
     ) -> (Option<SocketAddr>, Option<SocketAddr>) {
         let udp_addr = state.best_addr.as_ref().map(|a| a.addr);
-        let derp_addr = if udp_addr.is_none()
-            || state.trust_best_addr_until.is_some()
-                && state.trust_best_addr_until.as_ref().unwrap() > now
-        {
+        let derp_addr = if udp_addr.is_none() || !state.is_best_addr_valid(*now) {
             // We had a best_addr but it expired so send both to it and DERP.
             state.derp_addr
         } else {
@@ -248,12 +245,10 @@ impl Endpoint {
 
     /// Reports whether we should ping to all our peers looking for a better path.
     fn want_full_ping(&self, state: &InnerMutEndpoint, now: &Instant) -> bool {
-        if state.best_addr.is_none() || state.last_full_ping.is_none() {
+        if state.last_full_ping.is_none() {
             return true;
         }
-        if state.trust_best_addr_until.is_some()
-            && state.trust_best_addr_until.as_ref().unwrap() > now
-        {
+        if !state.is_best_addr_valid(*now) {
             return true;
         }
         if state.best_addr.as_ref().unwrap().latency <= GOOD_ENOUGH_LATENCY {
@@ -302,9 +297,7 @@ impl Endpoint {
             self.start_ping(&mut state, derp_addr, now, DiscoPingPurpose::Cli);
         }
         if let Some(udp_addr) = udp_addr {
-            if state.trust_best_addr_until.is_some()
-                && now < *state.trust_best_addr_until.as_ref().unwrap()
-            {
+            if state.is_best_addr_valid(now) {
                 // Already have an active session, so just ping the address we're using.
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
@@ -324,17 +317,12 @@ impl Endpoint {
         let mut state = self.state.lock().await;
 
         if let Some(sp) = state.sent_ping.remove(&txid) {
-            if state.best_addr.is_none()
-                || (state.trust_best_addr_until.is_some()
-                    && Instant::now() > *state.trust_best_addr_until.as_ref().unwrap())
-            {
+            if !state.is_best_addr_valid(Instant::now()) {
                 info!(
                     "disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
                     txid, sp.to, self.public_key, state.disco_key
                 );
             }
-
-            sp.timer.stop().await;
         }
     }
 
@@ -387,31 +375,23 @@ impl Endpoint {
         now: Instant,
         purpose: DiscoPingPurpose,
     ) {
-        debug!("start ping {:?}", purpose);
+        info!("start ping {:?}", purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = state.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
             } else {
-                /*// Shouldn't happen. But don't ping an endpoint that's not active for us.
+                // Shouldn't happen. But don't ping an endpoint that's not active for us.
                 warn!(
                     "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
                     ep
-                );*/
+                );
                 return;
-                /*// TODO: verify this doesn't break anything
-                // needed for non relay based connections
-                state.endpoint_state.insert(
-                    ep,
-                    EndpointState {
-                        last_ping: Some(now),
-                        ..Default::default()
-                    },
-                );*/
             }
         }
 
         let txid = stun::TransactionId::default();
         let this = self.clone();
+        info!("disco: sent ping [{}]", txid);
         state.sent_ping.insert(
             txid,
             SentPing {
@@ -646,15 +626,25 @@ impl Endpoint {
         let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
+        info!(
+            "disco: received pong [{}] from {} (is_derp: {}) {}",
+            m.tx_id, src, is_derp, m.src
+        );
         match state.sent_ping.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
+                info!(
+                    "disco: received unexpected pong {:?} from {:?}",
+                    m.tx_id, src,
+                );
                 return false;
             }
             Some(sp) => {
                 let known_tx_id = true;
+                let txid = m.tx_id;
                 tokio::task::spawn(async move {
                     sp.timer.stop().await;
+                    info!("disco: timer aborted for {}", txid);
                 });
                 di.set_node_key(self.public_key.clone());
 
@@ -840,7 +830,7 @@ impl Endpoint {
             "available addrs: UDP({:?}), DERP({:?})",
             udp_addr, derp_addr
         );
-        if udp_addr.is_none() || state.trust_best_addr_until.map(|s| s > now).unwrap_or(true) {
+        if udp_addr.is_none() || !state.is_best_addr_valid(now) {
             self.send_pings(&mut state, now, true);
         }
         self.note_active(&mut state);
@@ -888,6 +878,16 @@ impl Endpoint {
 }
 
 impl InnerMutEndpoint {
+    fn is_best_addr_valid(&self, instant: Instant) -> bool {
+        match self.best_addr {
+            None => false,
+            Some(_) => match self.trust_best_addr_until {
+                Some(expiry) => expiry < instant,
+                None => false,
+            },
+        }
+    }
+
     /// Clears all the endpoint's p2p state, reverting it to a
     // DERP-only endpoint. It does not stop the endpoint's heartbeat
     // timer, if one is running.
