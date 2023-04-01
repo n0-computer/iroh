@@ -96,18 +96,6 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
-    /// If provided, is a function for magicsock to call
-    /// whenever it receives a packet from a a peer if it's been more
-    /// than ~10 seconds since the last one. (10 seconds is somewhat
-    /// arbitrary; the sole user just doesn't need or want it called on
-    /// every packet, just every minute or two for WireGuard timeouts,
-    /// and 10 seconds seems like a good trade-off between often enough
-    /// and not too often.)
-    /// The provided func is likely to call back into
-    /// Conn.ParseEndpoint, which acquires Conn.mu. As such, you should
-    /// not hold Conn.mu while calling it.
-    pub on_note_recv_activity: Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
-
     /// The link monitor to use. With one, the portmapper won't be used.
     pub link_monitor: Option<monitor::Monitor>,
 
@@ -123,7 +111,6 @@ impl Default for Options {
             on_derp_active: None,
             idle_for: None,
             on_net_info: None,
-            on_note_recv_activity: None,
             link_monitor: None,
             private_key: key::node::SecretKey::generate(),
         }
@@ -154,8 +141,6 @@ pub struct Inner {
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    pub(super) on_note_recv_activity:
-        Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
     link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
@@ -378,7 +363,6 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            on_note_recv_activity,
             link_monitor,
             private_key,
         } = opts;
@@ -400,7 +384,6 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            on_note_recv_activity,
             link_monitor,
             network_up: AtomicBool::new(true), // assume up until told otherwise
             port: AtomicU16::new(port),
@@ -705,22 +688,6 @@ impl Conn {
         peer_map
             .endpoint_for_node_key(node_key)
             .map(|ep| ep.fake_wg_addr)
-    }
-
-    /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
-        let peer_map = self.peer_map.read().await;
-        match peer_map.endpoint_for_node_key(nk) {
-            Some(de) => {
-                let saw = &*de.last_recv.read().await;
-                match saw {
-                    Some(saw) => saw.elapsed().as_secs().to_string(),
-                    None => "never".to_string(),
-                }
-            }
-            None => "never".to_string(),
-        }
     }
 
     /// Handles a "ping" CLI query.
@@ -1486,16 +1453,17 @@ impl Conn {
         true
     }
 
+    /// Returns `true` if the message was internal, `false` otherwise.
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn process_derp_read_result(
         &self,
         dm: DerpReadResult,
         b: &mut io::IoSliceMut<'_>,
         meta: &mut quinn_udp::RecvMeta,
-    ) -> usize {
+    ) -> bool {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
-            return 0;
+            return true;
         }
         let region_id = dm.region_id;
 
@@ -1506,31 +1474,35 @@ impl Conn {
 
         if self.handle_disco_message(&dm.buf, ipp, Some(&dm.src)) {
             // Message was internal, do not bubble up.
-            return 0;
+            return true;
         }
 
-        let ep = {
+        let ep_fake_wg_addr = {
             let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-            peer_map.endpoint_for_node_key(&dm.src).cloned()
+            peer_map
+                .endpoint_for_node_key(&dm.src)
+                .map(|ep| ep.fake_wg_addr)
         };
-        if ep.is_none() {
-            // We don't know anything about this node key, nothing to record or process.
-            return 0;
+
+        match ep_fake_wg_addr {
+            Some(ep_fake_wg_addr) => {
+                b[..dm.buf.len()].copy_from_slice(&dm.buf);
+
+                // Update RecvMeta structure accordingly.
+                meta.len = dm.buf.len();
+                meta.stride = dm.buf.len();
+                meta.addr = ep_fake_wg_addr;
+
+                // if stats := c.stats.Load(); stats != nil {
+                // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
+                // }
+                false
+            }
+            None => {
+                // We don't know anything about this node key, nothing to record or process.
+                true
+            }
         }
-
-        let ep = ep.unwrap();
-        ep.note_recv_activity();
-
-        b[..dm.buf.len()].copy_from_slice(&dm.buf);
-        meta.len = dm.buf.len();
-        meta.stride = dm.buf.len();
-        debug!("derp: endpoint fake addr {}", ep.fake_wg_addr);
-        meta.addr = ep.fake_wg_addr;
-
-        // if stats := c.stats.Load(); stats != nil {
-        // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
-        // }
-        meta.len
     }
 
     /// Sends discovery message m to dst_disco at dst.
@@ -2919,9 +2891,9 @@ impl AsyncUdpSocket for Conn {
                         break;
                     }
 
-                    let n = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
-                    debug!("received derp message, is internal? {}", n == 0);
-                    if n == 0 {
+                    let is_internal = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
+                    debug!("received derp message, is internal? {}", is_internal);
+                    if is_internal {
                         // No read, continue
                         continue;
                     }

@@ -14,19 +14,16 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use tokio::{
-    sync::{self, Mutex, RwLock},
-    time::Instant,
-};
+use tokio::{sync::Mutex, time::Instant};
 use tracing::{debug, info, instrument, warn};
 
-use crate::net::is_unicast_link_local;
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
         disco, key, stun,
     },
     measure,
+    net::is_unicast_link_local,
 };
 
 use super::{
@@ -84,7 +81,6 @@ impl Deref for Endpoint {
 }
 
 pub struct InnerEndpoint {
-    pub last_recv: RwLock<Option<Instant>>,
     pub num_stop_and_reset_atomic: AtomicU64,
 
     pub c: Conn,
@@ -138,7 +134,6 @@ impl Endpoint {
             public_key: n.key.clone(),
             node_addr: n.addresses.first().copied(),
             fake_wg_addr,
-            last_recv: Default::default(),
             num_stop_and_reset_atomic: Default::default(),
             state: Mutex::new(InnerMutEndpoint {
                 disco_key: n.disco_key.clone(),
@@ -164,25 +159,6 @@ impl Endpoint {
         tokio::task::block_in_place(|| self.state.blocking_lock())
             .disco_key
             .clone()
-    }
-
-    /// Records receive activity on this endpoint.
-    pub fn note_recv_activity(&self) {
-        if let Some(ref on_recv) = self.c.on_note_recv_activity {
-            let now = Instant::now();
-
-            let last_recv = &*self.last_recv.blocking_read();
-            if last_recv.is_none()
-                || last_recv
-                    .as_ref()
-                    .map(|l| l.elapsed() > Duration::from_secs(10))
-                    .expect("checked")
-            {
-                drop(last_recv);
-                self.last_recv.blocking_write().replace(now);
-                on_recv(&self.public_key);
-            }
-        }
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
