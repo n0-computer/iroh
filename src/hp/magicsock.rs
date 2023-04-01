@@ -48,9 +48,6 @@ const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 /// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(1 * 60);
 
-/// How often pings to the best UDP address are sent.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
-
 /// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
@@ -100,11 +97,9 @@ pub struct SentPing {
 /// The reason why a discovery ping message was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoPingPurpose {
-    /// Means that purpose of a ping was to see if a path was valid.
+    /// The purpose of a ping was to see if a path was valid.
     Discovery,
-    /// Means that purpose of a ping was whether a peer was still there.
-    Heartbeat,
-    /// Mmeans that the user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
+    /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
     Cli,
 }
 
