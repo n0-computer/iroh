@@ -51,7 +51,7 @@ quinn-udp = "0.3"
 rand = "0.8"
 rcgen = "0.10"
 regex = { version = "1.7.1", optional = true }
-reqwest = "0.11.14"
+reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 rustls-acme = { version = "0.5.2", optional = true, features = ["tokio"] }
@@ -63,7 +63,6 @@ socket2 = "0.4.7"
 ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 subtle = "2.4.1"
-syscalls = { version = "0.6.7", features = ["full"] } # todo not all
 tempfile = "3.4"
 thiserror = "1"
 time = "0.3.20"
@@ -85,6 +84,9 @@ zeroize = "1.5"
 [target.'cfg(target_os = "linux")'.dependencies]
 netlink-packet-route = "0.15.0"
 rtnetlink = "0.12.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wmi = "0.12.2"
 
 [dev-dependencies]
 async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }

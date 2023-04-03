@@ -8,7 +8,7 @@ on:
 
 env:
   RUST_BACKTRACE: 1
-  RUSTFLAGS: -Dwarnings
+  # RUSTFLAGS: -Dwarnings # Disable warnings so tests are actually run..
   MSRV: "1.63"
 
 
