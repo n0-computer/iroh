@@ -9,11 +9,12 @@ use hyper::upgrade::Upgraded;
 use hyper::{Body, Request, Response, StatusCode};
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tracing::debug;
 
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::derp::{server::ClientConnHandler, types::PacketForwarder};
 
-// The server HTTP handler to do HTTP upgrades
+/// The server HTTP handler to do HTTP upgrades
 pub async fn derp_connection_handler<P>(
     conn_handler: &ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>,
     upgraded: Upgraded,
@@ -21,6 +22,7 @@ pub async fn derp_connection_handler<P>(
 where
     P: PacketForwarder,
 {
+    debug!("derp_connection upgraded");
     // get the underlying TcpStream
     let parts = match upgraded.downcast::<tokio::net::TcpStream>() {
         Ok(p) => p,
@@ -28,6 +30,11 @@ where
             anyhow::bail!("could not downcast the upgraded connection to a tokio::net::TcpStream")
         }
     };
+    anyhow::ensure!(
+        parts.read_buf.is_empty(),
+        "can not deal with buffered data yet: {:?}",
+        parts.read_buf
+    );
 
     // split into the reader and writer parts
     let (reader, writer) = parts.io.into_split();
@@ -82,10 +89,13 @@ where
                             if let Err(e) =
                                 derp_connection_handler(&closure_conn_handler, upgraded).await
                             {
-                                tracing::warn!("server {HTTP_UPGRADE_PROTOCOL} io error: {}", e)
+                                tracing::warn!(
+                                    "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
+                                    e
+                                )
                             };
                         }
-                        Err(e) => tracing::warn!("upgrade error: {}", e),
+                        Err(e) => tracing::warn!("upgrade error: {:?}", e),
                     }
                 });
 
@@ -112,7 +122,7 @@ mod tests {
     use hyper::header::UPGRADE;
     use hyper::server::conn::Http;
     use hyper::upgrade::Upgraded;
-    use hyper::{Body, Client, Request, StatusCode};
+    use hyper::{Body, Request, StatusCode};
     use tokio::sync::oneshot;
 
     use crate::hp::derp::server::Server as DerpServer;
@@ -135,7 +145,7 @@ mod tests {
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut upgraded, crate::hp::derp::MAX_FRAME_SIZE, &mut buf)
                 .await?;
-        assert_eq!(crate::hp::derp::FRAME_SERVER_INFO, frame_type);
+        assert_eq!(crate::hp::derp::FrameType::ServerInfo, frame_type);
         let msg = secret_key.open_from(&got_server_key, &buf)?;
         let _info: crate::hp::derp::types::ServerInfo = postcard::from_bytes(&msg)?;
         Ok(())
@@ -221,6 +231,7 @@ mod tests {
                         tokio::task::spawn(async move {
                             if let Err(err) = Http::new()
                                 .serve_connection(stream, derp_client_handler)
+                                .with_upgrades()
                                 .await
                             {
                                 eprintln!("Failed to serve connection: {:?}", err);

@@ -95,18 +95,6 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
-    /// If provided, is a function for magicsock to call
-    /// whenever it receives a packet from a a peer if it's been more
-    /// than ~10 seconds since the last one. (10 seconds is somewhat
-    /// arbitrary; the sole user just doesn't need or want it called on
-    /// every packet, just every minute or two for WireGuard timeouts,
-    /// and 10 seconds seems like a good trade-off between often enough
-    /// and not too often.)
-    /// The provided func is likely to call back into
-    /// Conn.ParseEndpoint, which acquires Conn.mu. As such, you should
-    /// not hold Conn.mu while calling it.
-    pub on_note_recv_activity: Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
-
     /// The link monitor to use. With one, the portmapper won't be used.
     pub link_monitor: Option<monitor::Monitor>,
 
@@ -122,7 +110,6 @@ impl Default for Options {
             on_derp_active: None,
             idle_for: None,
             on_net_info: None,
-            on_note_recv_activity: None,
             link_monitor: None,
             private_key: key::node::SecretKey::generate(),
         }
@@ -149,12 +136,10 @@ impl Debug for Inner {
 }
 
 pub struct Inner {
-    name: String,
+    pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    pub(super) on_note_recv_activity:
-        Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
     link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
@@ -163,15 +148,10 @@ pub struct Inner {
     // connCtx:       context.Context, // closed on Conn.Close
     // connCtxCancel: func(),          // closes connCtx
 
-    // The underlying UDP sockets used to send/rcv packets for wireguard and other magicsock protocols.
+    // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
 
-    // TODO:
-    // closeDisco4 and closeDisco6 are io.Closers to shut down the raw
-    // disco packet receivers. If None, no raw disco receiver is running for the given family.
-    close_disco4: Option<()>, // io.Closer
-    close_disco6: Option<()>, // io.Closer
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
 
@@ -189,25 +169,19 @@ pub struct Inner {
         flume::Receiver<DerpReadResult>,
     ),
 
-    // owned by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
+    // Used by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
     socket_endpoint4: SocketEndpointCache,
     socket_endpoint6: SocketEndpointCache,
 
-    // ============================================================
-    // Fields that must be accessed via atomic load/stores.
     /// Whether IPv4 UDP is known to be unable to transmit
     /// at all. This could happen if the socket is in an invalid state
     /// (as can happen on darwin after a network link status change).
     no_v4_send: AtomicBool,
 
-    /// Whether the network is up (some interface is up
-    /// with IPv4 or IPv6). It's used to suppress log spam and prevent new connection that'll fail.
-    network_up: AtomicBool,
-
     pub(super) public_key: key::node::PublicKey,
     last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
 
-    /// Preferred port from opts.Port; 0 means auto.
+    /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
 
     state: Mutex<ConnState>,
@@ -218,7 +192,7 @@ pub struct Inner {
     /// Tracked outside to avoid deadlock issues (replaces atomic acess from go)
     derp_map: RwLock<Option<DerpMap>>,
 
-    /// Tracks the networkmap Node entity for each peer discovery key.
+    /// Tracks the networkmap node entity for each peer discovery key.
     pub(super) peer_map: RwLock<PeerMap>,
 }
 
@@ -287,7 +261,7 @@ pub(super) struct ConnState {
     private_key: key::node::SecretKey,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: usize,
-    // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
+    derp_started: bool,
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<usize, ActiveDerp>,
     prev_derp: HashMap<usize, wg::AsyncWaitGroup>,
@@ -322,6 +296,7 @@ impl ConnState {
             net_map: None,
             private_key,
             my_derp: 0,
+            derp_started: false,
             active_derp: HashMap::new(),
             prev_derp: HashMap::new(),
             derp_route: HashMap::new(),
@@ -368,7 +343,6 @@ impl Conn {
         // TODO:
         // GetSTUNConn4:        func() netcheck.STUNConn { return &c.pconn4 },
         // GetSTUNConn6:        func() netcheck.STUNConn { return &c.pconn6 },
-        // SkipExternalNetwork: inTest(),
         net_checker.port_mapper = Some(port_mapper.clone());
 
         let Options {
@@ -377,7 +351,6 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            on_note_recv_activity,
             link_monitor,
             private_key,
         } = opts;
@@ -399,9 +372,7 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            on_note_recv_activity,
             link_monitor,
-            network_up: AtomicBool::new(true), // assume up until told otherwise
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
@@ -414,8 +385,6 @@ impl Conn {
             socket_endpoint6: SocketEndpointCache::default(),
             on_stun_receive: Default::default(),
             state: ConnState::new(private_key).into(),
-            close_disco4: None,
-            close_disco6: None,
             closing: AtomicBool::new(false),
             derp_recv_ch,
             derp_map: Default::default(),
@@ -572,7 +541,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     async fn update_net_info(&self) -> Result<Arc<netcheck::Report>> {
         let dm = self.derp_map.read().await.clone();
-        if dm.is_none() || self.network_down() {
+        if dm.is_none() {
             return Ok(Default::default());
         }
 
@@ -589,7 +558,7 @@ impl Conn {
             let report = self.net_checker.get_report(&dm).await?;
             *self.last_net_check_report.write().await = Some(report.clone());
             let r = &report;
-            self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
+            self.no_v4_send.store(!r.ipv4_can_send, Ordering::Relaxed);
 
             let mut ni = cfg::NetInfo {
                 derp_latency: Default::default(),
@@ -699,35 +668,11 @@ impl Conn {
         }
     }
 
-    /// Makes addr a validated disco address for discoKey.
-    /// Used to provide user/externally discovered addresses.
-    #[cfg(test)]
-    async fn add_valid_disco_path_for_test(
-        &self,
-        node_key: &key::node::PublicKey,
-        addr: &SocketAddr,
-    ) {
-        let mut peer_map = self.peer_map.write().await;
-        peer_map.set_node_key_for_ip_port(addr, node_key);
-        if let Some(ep) = peer_map.endpoint_for_node_key(node_key) {
-            ep.maybe_add_best_addr(*addr).await;
-        }
-    }
-
-    /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
+    pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let peer_map = self.peer_map.read().await;
-        match peer_map.endpoint_for_node_key(nk) {
-            Some(de) => {
-                let saw = &*de.last_recv.read().await;
-                match saw {
-                    Some(saw) => saw.elapsed().as_secs().to_string(),
-                    None => "never".to_string(),
-                }
-            }
-            None => "never".to_string(),
-        }
+        peer_map
+            .endpoint_for_node_key(node_key)
+            .map(|ep| ep.fake_wg_addr)
     }
 
     /// Handles a "ping" CLI query.
@@ -970,10 +915,6 @@ impl Conn {
         self.pconn4.port().await
     }
 
-    fn network_down(&self) -> bool {
-        !self.network_up.load(Ordering::Relaxed)
-    }
-
     /// Sends packet b to addr, which is either a real UDP address
     /// or a fake UDP address representing a DERP server (see derpmap).
     /// The provided public key identifies the recipient.
@@ -987,14 +928,15 @@ impl Conn {
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         pub_key: Option<&key::node::PublicKey>,
         transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        if transmit[0].destination.ip() != DERP_MAGIC_IP {
-            return self.poll_send_udp(udp_state, cx, transmit);
+        if addr.ip() != DERP_MAGIC_IP {
+            return self.poll_send_udp(udp_state, cx, addr, transmit);
         }
 
-        match self.derp_write_chan_of_addr(transmit[0].destination, pub_key) {
+        match self.derp_write_chan_of_addr(addr, pub_key) {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
@@ -1007,9 +949,9 @@ impl Conn {
                         "connection closed",
                     )));
                 }
-                let (addr, content) = match transmit {
-                    TransmitCow::Borrowed(t) => (t[0].destination, t[0].contents.clone()),
-                    TransmitCow::Owned([t]) => (t.destination, t.contents),
+                let content = match transmit {
+                    TransmitCow::Borrowed(t) => t[0].contents.clone(),
+                    TransmitCow::Owned([t]) => t.contents,
                 };
                 match ch.try_send(DerpWriteRequest {
                     pub_key: pub_key.cloned(),
@@ -1038,9 +980,12 @@ impl Conn {
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         transmit: TransmitCow<'_>,
     ) -> Poll<io::Result<usize>> {
-        match transmit[0].destination {
+        let mut transmit = transmit.to_owned();
+        transmit[0].destination = addr;
+        match addr {
             SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmit),
             SocketAddr::V6(_) => {
                 if let Some(ref conn) = self.pconn6 {
@@ -1066,9 +1011,6 @@ impl Conn {
         peer: Option<&key::node::PublicKey>,
     ) -> Option<flume::Sender<DerpWriteRequest>> {
         if addr.ip() != DERP_MAGIC_IP {
-            return None;
-        }
-        if self.network_down() {
             return None;
         }
         let region_id = usize::from(addr.port());
@@ -1162,8 +1104,6 @@ impl Conn {
                 })
             });
 
-        let this = self.clone();
-
         // TODO: DNS Cache
         // dc.DNSCache = dnscache.Get();
 
@@ -1176,6 +1116,7 @@ impl Conn {
             last_write: Instant::now(),
             create_time: Instant::now(),
         };
+        let first_derp = state.active_derp.is_empty();
         state.active_derp.insert(region_id, ad);
 
         // TODO:
@@ -1198,14 +1139,15 @@ impl Conn {
             .insert(region_id, wg.clone())
             .unwrap_or_else(|| wg::AsyncWaitGroup::new());
 
-        // if firstDerp {
-        //     startGate = c.derpStarted;
-        //     go func() {
-        // 	dc.Connect(ctx)
-        // 	  close(c.derpStarted)
-        // 	    c.muCond.Broadcast()
-        //     }()
-        // }
+        if first_derp {
+            state.derp_started = true;
+            //     startGate = c.derpStarted;
+            //     go func() {
+            // 	dc.Connect(ctx)
+            // 	  close(c.derpStarted)
+            // 	    c.muCond.Broadcast()
+            //     }()
+        }
 
         {
             let this = self.clone();
@@ -1267,22 +1209,18 @@ impl Conn {
         let mut last_packet_src: Option<key::node::PublicKey> = None;
 
         loop {
-            match dc.recv_detail().await {
+            let msg = dc.recv_detail().await;
+            debug!("derp.recv(derp-{}) received: {:?}", region_id, msg);
+            match msg {
                 Err(err) => {
                     // Forget that all these peers have routes.
                     for peer in peer_present.drain() {
                         self.remove_derp_peer_route(peer, region_id, &dc).await;
                     }
-                    if err == derp::http::ClientError::Closed
-                        || err == derp::http::ClientError::Todo
-                    {
-                        return;
+                    match err {
+                        derp::http::ClientError::Closed => return,
+                        _ => {}
                     }
-                    if self.network_down() {
-                        info!("derp.recv(derp-{}): network down, closing", region_id);
-                        return;
-                    }
-
                     if *cancel.borrow() {
                         return;
                     }
@@ -1322,7 +1260,11 @@ impl Conn {
                             continue;
                         }
                         derp::ReceivedMessage::ReceivedPacket { source, data } => {
-                            debug!("magicsock: got derp-{} packet: {:?}", region_id, data);
+                            debug!(
+                                "magicsock: got derp-{} packet: {} bytes",
+                                region_id,
+                                data.len()
+                            );
                             // If this is a new sender we hadn't seen before, remember it and
                             // register a route for this peer.
                             if last_packet_src.is_none()
@@ -1417,14 +1359,15 @@ impl Conn {
                                     // metricSendDERP.Add(1)
                                 }
                                 Err(err) => {
-                                    info!("derp.send({:?}): {:?}", wr.addr, err);
+                                    warn!("derp.send({:?}): failed {:?}", wr.addr, err);
                                     // TODO:
                                     // metricSendDERPError.Add(1)
                                 }
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(err) => {
+                        warn!("derp.recv: failed {:?}", err);
                         return;
                     }
                 }
@@ -1441,6 +1384,7 @@ impl Conn {
         meta: &mut quinn_udp::RecvMeta,
         cache: &SocketEndpointCache,
     ) -> bool {
+        debug!("received data {} from {}", meta.len, meta.addr);
         // Trunacte the slice, to the actual message length.
         let b = &b[..meta.len];
         if stun::is(b) {
@@ -1456,9 +1400,8 @@ impl Conn {
             debug!("received DISCO message {}", b.len());
             return false;
         }
-
         if let Some(de) = cache.get(&meta.addr) {
-            meta.dst_ip = Some(de.fake_wg_addr.ip());
+            meta.addr = de.fake_wg_addr;
         } else {
             let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
             match peer_map.endpoint_for_ip_port(&meta.addr) {
@@ -1468,7 +1411,7 @@ impl Conn {
                 }
                 Some(de) => {
                     cache.update(meta.addr, de.clone());
-                    meta.dst_ip = Some(de.fake_wg_addr.ip());
+                    meta.addr = de.fake_wg_addr;
                 }
             }
         }
@@ -1483,19 +1426,18 @@ impl Conn {
         true
     }
 
+    /// Returns `true` if the message was internal, `false` otherwise.
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn process_derp_read_result(
         &self,
         dm: DerpReadResult,
         b: &mut io::IoSliceMut<'_>,
         meta: &mut quinn_udp::RecvMeta,
-    ) -> usize {
-        let b = &b[..meta.len];
+    ) -> bool {
+        debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
-            return 0;
+            return true;
         }
-        let buf = &dm.buf;
-        let n = buf.len();
         let region_id = dm.region_id;
 
         let ipp = SocketAddr::new(
@@ -1503,28 +1445,37 @@ impl Conn {
             u16::try_from(region_id).expect("invalid region id"),
         );
 
-        if self.handle_disco_message(&b[..n], ipp, Some(&dm.src)) {
+        if self.handle_disco_message(&dm.buf, ipp, Some(&dm.src)) {
             // Message was internal, do not bubble up.
-            return 0;
+            return true;
         }
 
-        let ep = {
+        let ep_fake_wg_addr = {
             let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
-            peer_map.endpoint_for_node_key(&dm.src).cloned()
+            peer_map
+                .endpoint_for_node_key(&dm.src)
+                .map(|ep| ep.fake_wg_addr)
         };
-        if ep.is_none() {
-            // We don't know anything about this node key, nothing to record or process.
-            return 0;
+
+        match ep_fake_wg_addr {
+            Some(ep_fake_wg_addr) => {
+                b[..dm.buf.len()].copy_from_slice(&dm.buf);
+
+                // Update RecvMeta structure accordingly.
+                meta.len = dm.buf.len();
+                meta.stride = dm.buf.len();
+                meta.addr = ep_fake_wg_addr;
+
+                // if stats := c.stats.Load(); stats != nil {
+                // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
+                // }
+                false
+            }
+            None => {
+                // We don't know anything about this node key, nothing to record or process.
+                true
+            }
         }
-
-        let ep = ep.unwrap();
-        ep.note_recv_activity();
-        meta.dst_ip = Some(ep.fake_wg_addr.ip());
-
-        // if stats := c.stats.Load(); stats != nil {
-        // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
-        // }
-        n
     }
 
     /// Sends discovery message m to dst_disco at dst.
@@ -1576,6 +1527,7 @@ impl Conn {
             self.poll_send_addr(
                 &udp_state,
                 cx,
+                dst,
                 dst_key,
                 quinn_proto::Transmit {
                     destination: dst,
@@ -1611,9 +1563,7 @@ impl Conn {
                 Ok(true)
             }
             Err(err) => {
-                if !self.network_down() {
-                    warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
-                }
+                warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
                 Err(err.into())
             }
         }
@@ -2026,24 +1976,6 @@ impl Conn {
         })
     }
 
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub async fn set_network_up(&self, up: bool) {
-        let mut state = self.state.lock().await;
-        if self.network_up.load(Ordering::Relaxed) == up {
-            return;
-        }
-
-        info!("magicsock: set_network_up({})", up);
-        self.network_up.store(up, Ordering::Relaxed);
-
-        if up {
-            self.start_derp_home_connect(&mut state);
-        } else {
-            self.port_mapper.note_network_down();
-            self.close_all_derp(&mut state, "network-down");
-        }
-    }
-
     /// Sets the connection's preferred local port.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_preferred_port(&self, port: u16) {
@@ -2436,7 +2368,7 @@ impl Conn {
         String::new()
     }
 
-    /// Close closes the connection.
+    /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -2492,9 +2424,6 @@ impl Conn {
 
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn should_do_periodic_re_stun(&self, state: &mut ConnState) -> bool {
-        if self.network_down() {
-            return false;
-        }
         if state.peer_set.is_empty() {
             // If no peers, not worth doing.
             return false;
@@ -2626,38 +2555,51 @@ impl Conn {
         &self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
+        addr: SocketAddr,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
         debug!("poll_send_raw: {} packets", transmits.len());
 
         let mut sum = 0;
 
-        let res = group_by(
-            transmits,
-            |a, b| a.destination.is_ipv6() == b.destination.is_ipv6(),
-            |group| {
-                let res = if group[0].destination.is_ipv6() {
-                    if let Some(ref conn) = self.pconn6 {
-                        conn.poll_send(state, cx, &transmits)
-                    } else {
-                        Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "no IPv6 connection",
-                        )))
-                    }
-                } else {
-                    self.pconn4.poll_send(state, cx, group)
-                };
-                match res {
-                    Poll::Pending => None,
-                    Poll::Ready(Ok(r)) => {
-                        sum += r;
-                        None
-                    }
-                    Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
-                }
-            },
-        );
+        if addr.is_ipv6() && self.pconn6.is_none() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no IPv6 connection",
+            )));
+        }
+
+        let conn = if addr.is_ipv6() {
+            self.pconn6.as_ref().unwrap()
+        } else {
+            &self.pconn4
+        };
+
+        let res = if transmits.iter().any(|t| t.destination != addr) {
+            // :(
+            let g: Vec<Transmit> = transmits
+                .iter()
+                .map(|t| Transmit {
+                    destination: addr, // update destination
+                    ecn: t.ecn,
+                    contents: t.contents.clone(),
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                })
+                .collect();
+
+            conn.poll_send(state, cx, &g[..])
+        } else {
+            conn.poll_send(state, cx, transmits)
+        };
+        let res = match res {
+            Poll::Pending => None,
+            Poll::Ready(Ok(r)) => {
+                sum += r;
+                None
+            }
+            Poll::Ready(Err(err)) => Some(Poll::Ready(Err(err))),
+        };
 
         if let Some(err) = res {
             return err;
@@ -2793,7 +2735,7 @@ impl AsyncUdpSocket for Conn {
                     None => {
                         // Should this error, do we need to create the EP?
                         debug!("trying to find endpoint for {}", dest);
-                        todo!()
+                        None
                     }
                 }
             },
@@ -2896,8 +2838,9 @@ impl AsyncUdpSocket for Conn {
                         break;
                     }
 
-                    let n = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
-                    if n == 0 {
+                    let is_internal = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
+                    debug!("received derp message, is internal? {}", is_internal);
+                    if is_internal {
                         // No read, continue
                         continue;
                     }
@@ -2907,11 +2850,17 @@ impl AsyncUdpSocket for Conn {
                     break;
                 }
             }
+            num_msgs_total = i;
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
-        debug!("received {} msgs", num_msgs_total);
         if num_msgs_total > 0 {
+            info!(
+                "received {:?} msgs {}",
+                meta.iter().map(|m| m.addr).collect::<Vec<_>>(),
+                num_msgs_total
+            );
+
             return Poll::Ready(Ok(num_msgs_total));
         }
 
@@ -2919,7 +2868,11 @@ impl AsyncUdpSocket for Conn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        // TODO: Just uses ip4 for now, is this enough?
+        // TODO: think more about this
+        // needs to pretend ipv6 always as the fake addrs are ipv6
+        if let Some(ref conn) = self.pconn6 {
+            return conn.local_addr_blocking();
+        }
         let addr = self.pconn4.local_addr_blocking()?;
         Ok(addr)
     }
@@ -3044,6 +2997,21 @@ pub(super) enum TransmitCow<'a> {
     Owned([Transmit; 1]),
 }
 
+impl TransmitCow<'_> {
+    fn to_owned(self) -> [Transmit; 1] {
+        match self {
+            Self::Borrowed([t]) => [Transmit {
+                destination: t.destination,
+                ecn: t.ecn,
+                contents: t.contents.clone(),
+                segment_size: t.segment_size,
+                src_ip: t.src_ip,
+            }],
+            Self::Owned(t) => t,
+        }
+    }
+}
+
 impl Deref for TransmitCow<'_> {
     type Target = [Transmit];
 
@@ -3070,6 +3038,7 @@ impl From<Transmit> for TransmitCow<'_> {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use hyper::server::conn::Http;
     use rand::RngCore;
     use tokio::{net, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -3225,27 +3194,50 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    struct MockPacketForwarder;
-    impl derp::types::PacketForwarder for MockPacketForwarder {
-        fn forward_packet(
-            &mut self,
-            srckey: key::node::PublicKey,
-            dstkey: key::node::PublicKey,
-            packet: bytes::Bytes,
-        ) {
-        }
-    }
-
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
         // TODO: pass a mesh_key?
-        let d: derp::Server<tokio::io::DuplexStream, tokio::io::DuplexStream, MockPacketForwarder> =
-            derp::Server::new(key::node::SecretKey::generate(), None);
+        let derp_server: derp::Server<
+            net::tcp::OwnedReadHalf,
+            net::tcp::OwnedWriteHalf,
+            derp::http::Client,
+        > = derp::Server::new(key::node::SecretKey::generate(), None);
 
-        // TODO: configure DERP server when actually implemented
-        // httpsrv := httptest.NewUnstartedServer(derphttp.Handler(d))
-        // httpsrv.Config.ErrorLog = logger.StdLogger(logf)
-        // httpsrv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+        let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
+        let http_addr = http_listener.local_addr()?;
+
+        let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
+
+        // TODO: TLS
         // httpsrv.StartTLS()
+
+        // Spawn server on the default executor,
+        // which is usually a thread-pool from tokio default runtime.
+        let server_task = tokio::task::spawn(async move {
+            let derp_client_handler = derp_server.client_conn_handler(Default::default());
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut rx => {
+                        derp_server.close().await;
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    conn = http_listener.accept() => {
+                        let (stream, _) = conn?;
+                        let derp_client_handler = derp_client_handler.clone();
+                        tokio::task::spawn(async move {
+                            if let Err(err) = Http::new()
+                                .serve_connection(stream, derp_client_handler)
+                                .with_upgrades()
+                                .await
+                            {
+                                eprintln!("Failed to serve connection: {:?}", err);
+                            }
+                        });
+                    }
+                }
+            }
+        });
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve().await?;
         let m = DerpMap {
@@ -3258,12 +3250,12 @@ mod tests {
                         name: "t1".into(),
                         region_id: 1,
                         host_name: "test-node.invalid".into(),
-                        stun_only: true, // TODO: switch to false once derp is implemented,
+                        stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
 
-                        derp_port: 1234, // TODO: httpsrv.Listener.Addr().(*net.TCPAddr).Port,
+                        derp_port: http_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
@@ -3274,11 +3266,9 @@ mod tests {
         };
 
         let cleanup = || {
-            // httpsrv.CloseClientConnections()
-            // httpsrv.Close()
-            // d.Close()
-            tokio::spawn(async move { d.close().await });
+            println!("CLEANUP");
             stun_cleanup.send(()).unwrap();
+            derp_shutdown.send(()).unwrap();
         };
 
         Ok((m, cleanup))
@@ -3298,7 +3288,7 @@ mod tests {
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
-                    ep_s.send(eps.to_vec()).unwrap();
+                    let _ = ep_s.send(eps.to_vec());
                 })),
                 ..Default::default()
             };
@@ -3309,6 +3299,14 @@ mod tests {
             )
             .await?;
             conn.set_derp_map(Some(derp_map)).await;
+
+            let c = conn.clone();
+            tokio::time::timeout(Duration::from_secs(10), async move {
+                while !c.0.state.lock().await.derp_started {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
@@ -3368,7 +3366,6 @@ mod tests {
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
-            let me = &ms[my_idx];
             let mut peers = Vec::new();
 
             for (i, peer) in ms.iter().enumerate() {
@@ -3386,7 +3383,7 @@ mod tests {
                     disco_key: peer.conn.disco_public_key().await,
                     allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
-                    derp: Some("127.3.3.40:1".parse().unwrap()),
+                    derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),
                     hostinfo: crate::hp::hostinfo::Hostinfo::new(),
                     keep_alive: false,
@@ -3396,17 +3393,7 @@ mod tests {
                 });
             }
 
-            let nm = netmap::NetworkMap {
-                peers,
-                // 	PrivateKey: me.privateKey,
-                // 	NodeKey:    me.privateKey.Public(),
-                // 	Addresses:  []netip.Prefix{netip.PrefixFrom(netaddr.IPv4(1, 0, 0, byte(myIdx+1)), 32)},
-            };
-
-            // if mutateNetmap != nil {
-            // 	mutateNetmap(myIdx, nm)
-            // }
-            nm
+            netmap::NetworkMap { peers }
         }
 
         async fn update_eps(
@@ -3489,24 +3476,6 @@ mod tests {
         .await
         .context("failed to connect peers")?;
 
-        // Setup connection information for discovery
-        {
-            let m1_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m1.quic_ep.local_addr()?.port(),
-            );
-            let m2_addr = SocketAddr::new(
-                "127.0.0.1".parse().unwrap(),
-                m2.quic_ep.local_addr()?.port(),
-            );
-            m1.conn
-                .add_valid_disco_path_for_test(&m2.public(), &m2_addr)
-                .await;
-            m2.conn
-                .add_valid_disco_path_for_test(&m1.public(), &m1_addr)
-                .await;
-        }
-
         // msg from  m2 -> m1
         macro_rules! roundtrip {
             ($a:expr, $b:expr, $msg:expr) => {
@@ -3514,33 +3483,27 @@ mod tests {
                 let b = $b.clone();
                 let a_name = stringify!($a);
                 let b_name = stringify!($b);
-                info!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-                let a_addr =
-                    SocketAddr::new("127.0.0.1".parse().unwrap(), a.quic_ep.local_addr()?.port());
-                let b_addr =
-                    SocketAddr::new("127.0.0.1".parse().unwrap(), b.quic_ep.local_addr()?.port());
-                info!(
-                    "{}: {}, {}: {}",
-                    a_name,
-                    a_addr,
-                    b_name,
-                    b.quic_ep.local_addr()?
-                );
+                println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
+
+                let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
+                let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();
+
+                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
                 let b_task = tokio::task::spawn(async move {
-                    info!("[{}] accepting conn", b_name);
+                    println!("[{}] accepting conn", b_name);
                     while let Some(conn) = b.quic_ep.accept().await {
-                        info!("[{}] connecting", b_name);
+                        println!("[{}] connecting", b_name);
                         let conn = conn
                             .await
                             .with_context(|| format!("[{}] connecting", b_name))?;
-                        info!("[{}] accepting bi", b_name);
+                        println!("[{}] accepting bi", b_name);
                         let (mut send_bi, recv_bi) = conn
                             .accept_bi()
                             .await
                             .with_context(|| format!("[{}] accepting bi", b_name))?;
 
-                        info!("[{}] reading", b_name);
+                        println!("[{}] reading", b_name);
                         let val = recv_bi
                             .read_to_end(usize::MAX)
                             .await
@@ -3549,50 +3512,51 @@ mod tests {
                             .finish()
                             .await
                             .with_context(|| format!("[{}] finishing", b_name))?;
-                        info!("[{}] finished", b_name);
+                        println!("[{}] finished", b_name);
+
                         return Ok::<_, anyhow::Error>(val);
                     }
                     bail!("no connections available anymore");
                 });
 
-                info!("[{}] connecting to {}", a_name, b_addr);
+                println!("[{}] connecting to {}", a_name, b_addr);
                 let conn = a
                     .quic_ep
                     .connect(b_addr, "localhost")?
                     .await
                     .with_context(|| format!("[{}] connect", a_name))?;
 
-                info!("[{}] opening bi", a_name);
+                println!("[{}] opening bi", a_name);
                 let (mut send_bi, recv_bi) = conn
                     .open_bi()
                     .await
                     .with_context(|| format!("[{}] open bi", a_name))?;
-                info!("[{}] writing message", a_name);
+                println!("[{}] writing message", a_name);
                 send_bi
                     .write_all(&$msg[..])
                     .await
                     .with_context(|| format!("[{}] write all", a_name))?;
 
-                info!("[{}] finishing", a_name);
+                println!("[{}] finishing", a_name);
                 send_bi
                     .finish()
                     .await
                     .with_context(|| format!("[{}] finish", a_name))?;
 
-                info!("[{}] reading_to_end", a_name);
+                println!("[{}] reading_to_end", a_name);
                 let _ = recv_bi
                     .read_to_end(usize::MAX)
                     .await
                     .with_context(|| format!("[{}]", a_name))?;
-                info!("[{}] close", a_name);
+                println!("[{}] close", a_name);
                 conn.close(0u32.into(), b"done");
-                info!("[{}] wait idle", a_name);
+                println!("[{}] wait idle", a_name);
                 a.quic_ep.wait_idle().await;
 
                 drop(send_bi);
 
                 // make sure the right values arrived
-                info!("waiting for channel");
+                println!("waiting for channel");
                 let val = b_task.await??;
                 anyhow::ensure!(
                     val == $msg,
@@ -3604,12 +3568,12 @@ mod tests {
         }
 
         for i in 0..10 {
-            info!("-- round {}", i + 1);
-            roundtrip!(m1, m2, b"hello");
-            roundtrip!(m2, m1, b"hello");
+            println!("-- round {}", i + 1);
+            roundtrip!(m1, m2, b"hello m1");
+            roundtrip!(m2, m1, b"hello m2");
         }
 
-        info!("-- larger data");
+        println!("-- larger data");
         {
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
@@ -3617,7 +3581,7 @@ mod tests {
             roundtrip!(m2, m1, data);
         }
 
-        info!("cleaning up");
+        println!("cleaning up");
         cleanup();
         cleanup_mesh();
         Ok(())

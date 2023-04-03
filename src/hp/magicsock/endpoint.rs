@@ -5,7 +5,6 @@ use std::{
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
-    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -14,23 +13,22 @@ use std::{
     time::Duration,
 };
 
-use futures::{future::BoxFuture, Future};
-use tokio::{
-    sync::{Mutex, RwLock},
-    time::Instant,
-};
-use tracing::{debug, info, warn};
+use futures::future::BoxFuture;
+use tokio::{sync::Mutex, time::Instant};
+use tracing::{debug, info, instrument, warn};
 
-use crate::hp::{
-    cfg::{self, DERP_MAGIC_IP},
-    disco, key, stun,
+use crate::{
+    hp::{
+        cfg::{self, DERP_MAGIC_IP},
+        disco, key, stun,
+    },
+    net::is_unicast_link_local,
 };
-use crate::net::is_unicast_link_local;
 
 use super::{
     conn::DiscoInfo, Conn, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer,
-    DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, HEARTBEAT_INTERVAL, PING_TIMEOUT_DURATION,
-    PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
+    DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT,
+    SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
@@ -82,9 +80,7 @@ impl Deref for Endpoint {
 }
 
 pub struct InnerEndpoint {
-    pub last_recv: RwLock<Option<Instant>>,
     pub num_stop_and_reset_atomic: AtomicU64,
-
     pub c: Conn,
     /// Peer public key (for WireGuard + DERP)
     pub public_key: key::node::PublicKey,
@@ -100,10 +96,6 @@ pub struct InnerEndpoint {
 pub struct InnerMutEndpoint {
     /// For discovery messages.
     pub disco_key: key::disco::PublicKey,
-    /// None when idle.
-    pub heart_beat_timer: Option<Timer>,
-    /// Last time there was outgoing packets sent to this peer (from wireguard-go)
-    pub last_send: Option<Instant>,
     /// Last time we pinged all endpoints
     pub last_full_ping: Option<Instant>,
     /// fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
@@ -134,17 +126,15 @@ pub struct PendingCliPing {
 impl Endpoint {
     pub fn new(conn: Conn, n: &cfg::Node) -> Self {
         let fake_wg_addr = init_fake_udp_addr();
+
         Endpoint(Arc::new(InnerEndpoint {
             c: conn,
             public_key: n.key.clone(),
             node_addr: n.addresses.first().copied(),
             fake_wg_addr,
-            last_recv: Default::default(),
             num_stop_and_reset_atomic: Default::default(),
             state: Mutex::new(InnerMutEndpoint {
                 disco_key: n.disco_key.clone(),
-                heart_beat_timer: None,
-                last_send: None,
                 last_full_ping: None,
                 derp_addr: None,
                 best_addr: None,
@@ -159,29 +149,14 @@ impl Endpoint {
         }))
     }
 
+    fn name(&self) -> String {
+        format!("ep-{}-{}", self.c.name, &hex::encode(&self.public_key)[..8])
+    }
+
     pub fn disco_key(&self) -> key::disco::PublicKey {
         tokio::task::block_in_place(|| self.state.blocking_lock())
             .disco_key
             .clone()
-    }
-
-    /// Records receive activity on this endpoint.
-    pub fn note_recv_activity(&self) {
-        if let Some(ref on_recv) = self.c.on_note_recv_activity {
-            let now = Instant::now();
-
-            let last_recv = &*self.last_recv.blocking_read();
-            if last_recv.is_none()
-                || last_recv
-                    .as_ref()
-                    .map(|l| l.elapsed() > Duration::from_secs(10))
-                    .expect("checked")
-            {
-                drop(last_recv);
-                self.last_recv.blocking_write().replace(now);
-                on_recv(&self.public_key);
-            }
-        }
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
@@ -192,10 +167,7 @@ impl Endpoint {
         now: &Instant,
     ) -> (Option<SocketAddr>, Option<SocketAddr>) {
         let udp_addr = state.best_addr.as_ref().map(|a| a.addr);
-        let derp_addr = if udp_addr.is_none()
-            || state.trust_best_addr_until.is_some()
-                && state.trust_best_addr_until.as_ref().unwrap() > now
-        {
+        let derp_addr = if udp_addr.is_none() || !state.is_best_addr_valid(*now) {
             // We had a best_addr but it expired so send both to it and DERP.
             state.derp_addr
         } else {
@@ -205,55 +177,13 @@ impl Endpoint {
         (udp_addr, derp_addr)
     }
 
-    /// Called every heartbeat_interval to keep the best UDP path alive, or kick off discovery of other paths.
-    fn heartbeat(&self) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        Box::pin(async move {
-            let mut state = self.state.lock().await;
-            state.heart_beat_timer = None;
-
-            if state.last_send.is_none() {
-                // Shouldn't happen.
-                return;
-            }
-            let last_send = state.last_send.as_ref().unwrap();
-
-            if last_send.elapsed() > SESSION_ACTIVE_TIMEOUT {
-                // Session's idle. Stop heartbeating.
-                info!(
-                    "disco: ending heartbeats for idle session to {:?} ({:?})",
-                    self.public_key, state.disco_key
-                );
-                return;
-            }
-
-            let now = Instant::now();
-            let (udp_addr, _) = self.addr_for_send(&state, &now);
-            if let Some(udp_addr) = udp_addr {
-                // We have a preferred path. Ping that every 2 seconds.
-                self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Heartbeat);
-            }
-
-            if self.want_full_ping(&state, &now) {
-                self.send_pings(&mut state, now, true);
-            }
-
-            let this = self.clone();
-            state
-                .heart_beat_timer
-                .replace(Timer::after(HEARTBEAT_INTERVAL, async move {
-                    this.heartbeat().await;
-                }));
-        })
-    }
-
     /// Reports whether we should ping to all our peers looking for a better path.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     fn want_full_ping(&self, state: &InnerMutEndpoint, now: &Instant) -> bool {
-        if state.best_addr.is_none() || state.last_full_ping.is_none() {
+        if state.last_full_ping.is_none() {
             return true;
         }
-        if state.trust_best_addr_until.is_some()
-            && state.trust_best_addr_until.as_ref().unwrap() > now
-        {
+        if !state.is_best_addr_valid(*now) {
             return true;
         }
         if state.best_addr.as_ref().unwrap().latency <= GOOD_ENOUGH_LATENCY {
@@ -266,20 +196,9 @@ impl Endpoint {
         false
     }
 
-    fn note_active(&self, state: &mut InnerMutEndpoint) {
-        state.last_send.replace(Instant::now());
-        if state.heart_beat_timer.is_none() {
-            let this = self.clone();
-            state
-                .heart_beat_timer
-                .replace(Timer::after(HEARTBEAT_INTERVAL, async move {
-                    this.heartbeat().await;
-                }));
-        }
-    }
-
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn cli_ping<F>(&self, mut res: cfg::PingResult, cb: F)
     where
         F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
@@ -302,9 +221,7 @@ impl Endpoint {
             self.start_ping(&mut state, derp_addr, now, DiscoPingPurpose::Cli);
         }
         if let Some(udp_addr) = udp_addr {
-            if state.trust_best_addr_until.is_some()
-                && now < *state.trust_best_addr_until.as_ref().unwrap()
-            {
+            if state.is_best_addr_valid(now) {
                 // Already have an active session, so just ping the address we're using.
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
@@ -317,28 +234,24 @@ impl Endpoint {
                 }
             }
         }
-        self.note_active(&mut state);
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn ping_timeout(&self, txid: stun::TransactionId) {
         let mut state = self.state.lock().await;
 
         if let Some(sp) = state.sent_ping.remove(&txid) {
-            if state.best_addr.is_none()
-                || (state.trust_best_addr_until.is_some()
-                    && Instant::now() > *state.trust_best_addr_until.as_ref().unwrap())
-            {
+            if !state.is_best_addr_valid(Instant::now()) {
                 info!(
-                    "[v1] disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
+                    "disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
                     txid, sp.to, self.public_key, state.disco_key
                 );
             }
-
-            sp.timer.stop().await;
         }
     }
 
     /// Called by a timer when a ping either fails to send or has taken too long to get a pong reply.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn forget_ping(&self, tx_id: stun::TransactionId) {
         let mut state = self.state.lock().await;
 
@@ -354,6 +267,7 @@ impl Endpoint {
     ///
     /// The caller should use de.disco_key as the disco_key argument.
     /// It is passed in so that send_disco_ping doesn't need to lock de.mu.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn send_disco_ping(
         &self,
         ep: SocketAddr,
@@ -380,6 +294,7 @@ impl Endpoint {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     fn start_ping(
         &self,
         state: &mut InnerMutEndpoint,
@@ -387,31 +302,23 @@ impl Endpoint {
         now: Instant,
         purpose: DiscoPingPurpose,
     ) {
-        debug!("start ping {:?}", purpose);
+        info!("start ping {:?}", purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = state.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
             } else {
-                /*// Shouldn't happen. But don't ping an endpoint that's not active for us.
+                // Shouldn't happen. But don't ping an endpoint that's not active for us.
                 warn!(
                     "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
                     ep
-                );*/
+                );
                 return;
-                /*// TODO: verify this doesn't break anything
-                // needed for non relay based connections
-                state.endpoint_state.insert(
-                    ep,
-                    EndpointState {
-                        last_ping: Some(now),
-                        ..Default::default()
-                    },
-                );*/
             }
         }
 
         let txid = stun::TransactionId::default();
         let this = self.clone();
+        info!("disco: sent ping [{}]", txid);
         state.sent_ping.insert(
             txid,
             SentPing {
@@ -431,6 +338,7 @@ impl Endpoint {
         });
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     fn send_pings(&self, state: &mut InnerMutEndpoint, now: Instant, send_call_me_maybe: bool) {
         state.last_full_ping.replace(now);
 
@@ -487,6 +395,7 @@ impl Endpoint {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn update_from_node(&self, n: &cfg::Node) {
         let mut state = &mut *self.state.lock().await;
         state.expired = n.expired;
@@ -532,11 +441,9 @@ impl Endpoint {
         });
     }
 
-    /// Clears all the endpoint's p2p state, reverting it to a
-    /// DERP-only endpoint. It does not stop the endpoint's heartbeat
-    /// timer, if one is running.
+    /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn reset(&self, state: &mut InnerMutEndpoint) {
-        state.last_send = None;
         state.last_full_ping = None;
         state.best_addr = None;
         state.best_addr_at = None;
@@ -554,6 +461,7 @@ impl Endpoint {
     /// ping TransactionId, this function reports `true`, otherwise `false`.
     ///
     /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub fn add_candidate_endpoint(
         &self,
         ep: SocketAddr,
@@ -613,12 +521,14 @@ impl Endpoint {
 
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn note_connectivity_change(&self) {
         let mut state = self.state.lock().await;
         state.trust_best_addr_until = None;
     }
 
     /// Note that we have a potential best addr.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn maybe_add_best_addr(&self, addr: SocketAddr) {
         let mut state = self.state.lock().await;
         if state.best_addr.is_none() {
@@ -635,6 +545,7 @@ impl Endpoint {
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) fn handle_pong_conn(
         &self,
         peer_map: &mut PeerMap,
@@ -644,17 +555,28 @@ impl Endpoint {
         src: SocketAddr,
     ) -> bool {
         let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
+        info!(
+            "disco: received pong [{}] from {} (is_derp: {}) {}",
+            m.tx_id, src, is_derp, m.src
+        );
         match state.sent_ping.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
+                info!(
+                    "disco: received unexpected pong {:?} from {:?}",
+                    m.tx_id, src,
+                );
                 return false;
             }
             Some(sp) => {
                 let known_tx_id = true;
+                let txid = m.tx_id;
                 tokio::task::spawn(async move {
                     sp.timer.stop().await;
+                    info!("disco: timer aborted for {}", txid);
                 });
                 di.set_node_key(self.public_key.clone());
 
@@ -679,22 +601,21 @@ impl Endpoint {
                     }
                 }
 
-                if sp.purpose != DiscoPingPurpose::Heartbeat {
-                    info!("disco: {:?}<-{:?} ({:?}, {:?})  got pong tx=%x latency={:?} pong.src={:?}{}{}",
-                          conn_disco_public,
-                          state.disco_key,
-                          self.public_key,
-                          src,
-                          m.tx_id,
-                          latency.as_millis(),
-                          m.src,
-        		  if sp.to != src {
-        		      format!(" ping.to={}", sp.to)
-        		  } else {
-                              String::new()
-                          }
-                    );
-                }
+                info!(
+                    "disco: {:?}<-{:?} ({:?}, {:?})  got pong tx=%x latency={:?} pong.src={:?}{}{}",
+                    conn_disco_public,
+                    state.disco_key,
+                    self.public_key,
+                    src,
+                    m.tx_id,
+                    latency.as_millis(),
+                    m.src,
+                    if sp.to != src {
+                        format!(" ping.to={}", sp.to)
+                    } else {
+                        String::new()
+                    }
+                );
 
                 for PendingCliPing { mut res, cb } in state.pending_cli_pings.drain(..) {
                     self.c.populate_cli_ping_response(&mut res, latency, sp.to);
@@ -737,6 +658,7 @@ impl Endpoint {
     /// Handles a CallMeMaybe discovery message via DERP. The contract for use of
     /// this message is that the peer has already sent to us via UDP, so their stateful firewall should be
     /// open. Now we can Ping back and make it through.
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
         let state = &mut *self.state.lock().await;
 
@@ -799,6 +721,7 @@ impl Endpoint {
     /// It's called when a discovery endpoint is no longer present in the
     /// NetworkMap, or when magicsock is transitioning from running to
     /// stopped state (via `set_private_key(None)`).
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn stop_and_reset(&self) {
         self.num_stop_and_reset_atomic
             .fetch_add(1, Ordering::Relaxed);
@@ -809,16 +732,15 @@ impl Endpoint {
         }
 
         state.reset().await;
-        if let Some(timer) = state.heart_beat_timer.take() {
-            timer.stop().await;
-        }
         state.pending_cli_pings.clear();
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub fn num_stop_and_reset(&self) -> u64 {
         self.num_stop_and_reset_atomic.load(Ordering::Relaxed)
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(crate) fn poll_send(
         &self,
         udp_state: &quinn_udp::UdpState,
@@ -826,6 +748,7 @@ impl Endpoint {
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
         let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+
         if state.expired {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -840,10 +763,9 @@ impl Endpoint {
             "available addrs: UDP({:?}), DERP({:?})",
             udp_addr, derp_addr
         );
-        if udp_addr.is_none() || state.trust_best_addr_until.map(|s| s > now).unwrap_or(true) {
+        if udp_addr.is_none() || !state.is_best_addr_valid(now) {
             self.send_pings(&mut state, now, true);
         }
-        self.note_active(&mut state);
         drop(state);
 
         if udp_addr.is_none() && derp_addr.is_none() {
@@ -855,7 +777,7 @@ impl Endpoint {
 
         let res = if let Some(udp_addr) = udp_addr {
             debug!("sending UDP: {}", udp_addr);
-            self.c.poll_send_raw(udp_state, cx, transmits)
+            self.c.poll_send_raw(udp_state, cx, udp_addr, transmits)
         } else {
             Poll::Pending
         };
@@ -865,6 +787,7 @@ impl Endpoint {
                 match self.c.poll_send_addr(
                     udp_state,
                     cx,
+                    derp_addr,
                     Some(&self.public_key),
                     <&[quinn_proto::Transmit; 1]>::try_from(t).unwrap().into(),
                 ) {
@@ -887,11 +810,18 @@ impl Endpoint {
 }
 
 impl InnerMutEndpoint {
-    /// Clears all the endpoint's p2p state, reverting it to a
-    // DERP-only endpoint. It does not stop the endpoint's heartbeat
-    // timer, if one is running.
+    fn is_best_addr_valid(&self, instant: Instant) -> bool {
+        match self.best_addr {
+            None => false,
+            Some(_) => match self.trust_best_addr_until {
+                Some(expiry) => expiry < instant,
+                None => false,
+            },
+        }
+    }
+
+    /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     async fn reset(&mut self) {
-        self.last_send = None;
         self.last_full_ping = None;
         self.best_addr = None;
         self.best_addr_at = None;
@@ -919,7 +849,6 @@ pub struct AddrLatency {
 }
 
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
-/// Doesn't do any locking, all access must be done with Conn.mu held.
 #[derive(Default, Debug)]
 pub struct PeerMap {
     pub by_node_key: HashMap<key::node::PublicKey, PeerInfo>,
@@ -982,12 +911,18 @@ impl PeerMap {
                     v.remove(&ep.public_key);
                 }
             }
-            let set = self.nodes_of_disco.entry(disco_key).or_default();
-            set.insert(ep.public_key.clone());
         }
+        let set = self.nodes_of_disco.entry(disco_key).or_default();
+        set.insert(ep.public_key.clone());
+
         if !self.by_node_key.contains_key(&ep.public_key) {
-            self.by_node_key
-                .insert(ep.public_key.clone(), PeerInfo::new(ep));
+            let public_key = ep.public_key.clone();
+            let fake_wg_addr = ep.fake_wg_addr;
+            let mut info = PeerInfo::new(ep);
+            info.ip_ports.insert(fake_wg_addr);
+            self.by_node_key.insert(public_key, info.clone());
+            // allow lookups by the fake addr
+            self.by_ip_port.insert(fake_wg_addr, info);
         }
     }
 
@@ -1093,14 +1028,16 @@ impl EndpointState {
     }
 }
 
-const ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Generates a globally unique fake UDPAddr.
-fn init_fake_udp_addr() -> SocketAddr {
+pub(super) fn init_fake_udp_addr() -> SocketAddr {
     let mut addr = [0u8; 16];
     addr[0] = 0xfd;
     addr[1] = 0x00;
-    addr[2..10].copy_from_slice(&ADDR_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+
+    let counter = ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    addr[2..10].copy_from_slice(&counter.to_le_bytes());
 
     SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345)
 }

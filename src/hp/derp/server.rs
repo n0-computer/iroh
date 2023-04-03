@@ -12,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
@@ -19,10 +20,11 @@ use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
     types::{PacketForwarder, PeerConnState, ServerMessage},
+    MeshKey,
 };
 use super::{
-    recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FRAME_SERVER_INFO,
-    FRAME_SERVER_KEY, MAGIC, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+    recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FrameType, MAGIC,
+    PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
 // TODO: skiping `verboseDropKeys` for now
 
@@ -35,8 +37,6 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A DERP server.
 ///
-/// TODO: how small does this have to be before this is considered cheap to clone?
-/// It would make alot of the APIs easier if we could just clone this.
 #[derive(Debug)]
 pub struct Server<R, W, P>
 where
@@ -54,7 +54,7 @@ where
     // the size of the serialized struct if this field is a `String`). This should
     // be discussed and worked out.
     // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
     meta_cert: Vec<u8>,
     /// Channel on which to communicate to the `ServerActor`
@@ -111,7 +111,7 @@ where
     P: PacketForwarder,
 {
     /// TODO: replace with builder
-    pub fn new(key: SecretKey, mesh_key: Option<[u8; 32]>) -> Self {
+    pub fn new(key: SecretKey, mesh_key: Option<MeshKey>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.public_key(), server_channel_r);
         let cancel_token = CancellationToken::new();
@@ -139,7 +139,7 @@ where
     }
 
     /// Returns the configured mesh key, may be empty.
-    pub fn mesh_key(&self) -> Option<[u8; 32]> {
+    pub fn mesh_key(&self) -> Option<MeshKey> {
         self.mesh_key
     }
 
@@ -249,7 +249,7 @@ where
     W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
-    mesh_key: Option<[u8; 32]>,
+    mesh_key: Option<MeshKey>,
     server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
@@ -289,9 +289,11 @@ where
     ///
     /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
     pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
+        debug!("accept: start");
         self.send_server_key(&mut writer)
             .await
             .context("unable to send server key to client")?;
+        debug!("accept: recv client key");
         let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
             .await
             .context("unable to receive client information")?;
@@ -322,7 +324,7 @@ where
         let content = &[buf.as_slice()];
         write_frame_timeout(
             &mut writer,
-            FRAME_SERVER_KEY,
+            FrameType::ServerKey,
             content,
             Some(Duration::from_secs(10)),
         )
@@ -336,13 +338,13 @@ where
         let msg = postcard::to_slice(&self.server_info, &mut buf)?;
         let msg = self.secret_key.seal_to(client_key, msg);
         let msg = &[msg.as_slice()];
-        write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+        write_frame(&mut writer, FrameType::ServerInfo, msg).await?;
         writer.flush().await?;
         Ok(())
     }
 
     /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
-    fn can_mesh(&self, client_mesh_key: Option<[u8; 32]>) -> bool {
+    fn can_mesh(&self, client_mesh_key: Option<MeshKey>) -> bool {
         if self.mesh_key.is_none() {
             false
         } else if client_mesh_key.is_none() {
@@ -559,7 +561,7 @@ async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -
     let content = &[buf.as_slice()];
     write_frame_timeout(
         &mut writer,
-        FRAME_SERVER_KEY,
+        FrameType::ServerKey,
         content,
         Some(Duration::from_secs(10)),
     )
@@ -591,12 +593,12 @@ async fn send_server_info<W: AsyncWrite + Unpin>(
     let msg = postcard::to_slice(&server_info, &mut buf)?;
     let msg = secret_key.seal_to(&client_key, msg);
     let msg = &[msg.as_slice()];
-    write_frame(&mut writer, FRAME_SERVER_INFO, msg).await?;
+    write_frame(&mut writer, FrameType::ServerInfo, msg).await?;
     writer.flush().await?;
     Ok(())
 }
 
-fn can_mesh(a: Option<[u8; 32]>, b: Option<[u8; 32]>) -> bool {
+fn can_mesh(a: Option<MeshKey>, b: Option<MeshKey>) -> bool {
     if let (Some(a), Some(b)) = (a, b) {
         return a == b;
     }
@@ -610,8 +612,7 @@ mod tests {
     use crate::hp::{
         derp::{
             client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
-            ReceivedMessage, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET,
-            MAX_FRAME_SIZE,
+            ReceivedMessage, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
     };
@@ -698,7 +699,7 @@ mod tests {
         let mut buf = BytesMut::new();
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         assert_eq!(key_a.as_bytes()[..], buf[..]);
 
         let key_b = PublicKey::from([9u8; PUBLIC_KEY_LENGTH]);
@@ -713,7 +714,7 @@ mod tests {
         // expect mesh update message on client a about client b joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         assert_eq!(key_b.as_bytes()[..], buf[..]);
 
         // server message: create client c
@@ -727,7 +728,7 @@ mod tests {
         // expect mesh update message on client_a about client_c joining the network
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         assert_eq!(key_c.as_bytes()[..], buf[..]);
 
         // server message: add client c as watcher
@@ -738,15 +739,15 @@ mod tests {
         // expect mesh update message on client c about all peers in the network (a, b, & c)
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         let mut peers = vec![buf[..PUBLIC_KEY_LENGTH].to_vec()];
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         peers.push(buf[..PUBLIC_KEY_LENGTH].to_vec());
         assert!(peers.contains(&key_a.as_bytes().to_vec()));
         assert!(peers.contains(&key_b.as_bytes().to_vec()));
@@ -768,7 +769,7 @@ mod tests {
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
-        assert_eq!(FRAME_RECV_PACKET, frame_type);
+        assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(key_b, key);
         assert_eq!(msg, frame);
 
@@ -794,19 +795,19 @@ mod tests {
         // (we get this message because b has sent us a packet before)
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
         // get mesh update on a & c about b leaving the network
         // (we get this message on a & c because they are "watchers")
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut c_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         assert_eq!(&key_b.as_bytes()[..], &buf[..]);
 
         // close gracefully
@@ -861,7 +862,7 @@ mod tests {
             let mut buf = BytesMut::new();
             let (frame_type, _) =
                 crate::hp::derp::read_frame(&mut client_reader, MAX_FRAME_SIZE, &mut buf).await?;
-            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            assert_eq!(FrameType::ServerInfo, frame_type);
             let msg = client_key.open_from(&got_server_key, &buf)?;
             let _info: ServerInfo = postcard::from_bytes(&msg)?;
             Ok(())
@@ -941,7 +942,7 @@ mod tests {
             let mut buf = BytesMut::new();
             let (frame_type, _) =
                 crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-            assert_eq!(FRAME_SERVER_INFO, frame_type);
+            assert_eq!(FrameType::ServerInfo, frame_type);
             let msg = self.secret_key.open_from(&got_server_key, &buf)?;
             let _info: ServerInfo = postcard::from_bytes(&msg)?;
             Ok(())
@@ -957,8 +958,8 @@ mod tests {
         ) -> Result<(PublicKey, &'a [u8])> {
             let (frame_type, _) =
                 crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, buf).await?;
-            if frame_type != FRAME_RECV_PACKET {
-                anyhow::bail!("unexpected frame type {frame_type}, expected FRAME_RECV_PACKET")
+            if frame_type != FrameType::RecvPacket {
+                anyhow::bail!("unexpected frame type {frame_type}, expected FrameType::RecvPacket")
             }
             crate::hp::derp::client::parse_recv_frame(buf)
         }
@@ -978,7 +979,7 @@ mod tests {
         let (reader_a, writer_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
-        let client_a = client_a_builder.build().await?;
+        let client_a = client_a_builder.build(None).await?;
         handler_task.await??;
 
         // create client b and connect it to the server
@@ -987,7 +988,7 @@ mod tests {
         let (reader_b, writer_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
         let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
-        let client_b = client_b_builder.build().await?;
+        let client_b = client_b_builder.build(None).await?;
         handler_task.await??;
 
         // create a packet forwarder for client c and add it to the server

@@ -264,9 +264,7 @@ mod tests {
 
     use super::*;
 
-    use crate::hp::derp::{
-        read_frame, FRAME_PEER_GONE, FRAME_PEER_PRESENT, FRAME_RECV_PACKET, MAX_PACKET_SIZE,
-    };
+    use crate::hp::derp::{read_frame, FrameType, MAX_PACKET_SIZE};
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
@@ -327,7 +325,7 @@ mod tests {
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_RECV_PACKET);
+        assert_eq!(frame_type, FrameType::RecvPacket);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, got_frame);
@@ -335,7 +333,7 @@ mod tests {
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_RECV_PACKET);
+        assert_eq!(frame_type, FrameType::RecvPacket);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, got_frame);
@@ -343,7 +341,7 @@ mod tests {
         // send peer_gone
         clients.send_peer_gone(&a_key.clone(), b_key.clone());
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
@@ -361,12 +359,12 @@ mod tests {
 
         clients.send_mesh_updates(&a_key.clone(), updates);
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_PRESENT);
+        assert_eq!(frame_type, FrameType::PeerPresent);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
-        assert_eq!(frame_type, FRAME_PEER_GONE);
+        assert_eq!(frame_type, FrameType::PeerGone);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
