@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, time::Instant};
+use std::num::NonZeroU32;
 
 use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
@@ -147,7 +147,7 @@ where
                 )
             }
             ServerMessage::RemoveClient(key) => write!(f, "ServerMessage::RemoveClient({key:?})"),
-            ServerMessage::AddPacketForwarder((key, p)) => write!(
+            ServerMessage::AddPacketForwarder((key, ..)) => write!(
                 f,
                 "ServerMessage::AddPacketForwarder(({key:?}, PacketForwarder)))"
             ),

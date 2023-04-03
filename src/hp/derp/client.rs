@@ -57,6 +57,7 @@ where
 {
     // our local addrs
     local_addr: SocketAddr,
+
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
     writer_channel: mpsc::Sender<ClientWriterMessage>,
@@ -494,7 +495,7 @@ where
         R: AsyncRead + Unpin,
     {
         // exchange information with the server
-        let (server_key, rate_limiter) = self.server_handshake(buf).await?;
+        let (_, rate_limiter) = self.server_handshake(buf).await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -510,12 +511,7 @@ where
 
         let client = Client {
             inner: Arc::new(InnerClient {
-                server_key,
-                secret_key: self.secret_key,
                 local_addr: self.local_addr,
-                mesh_key: self.mesh_key,
-                can_ack_pings: self.can_ack_pings,
-                is_prober: self.is_prober,
                 writer_channel: writer_sender,
                 writer_task: Mutex::new(Some(writer_task)),
                 reader: Mutex::new(self.reader),

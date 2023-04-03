@@ -60,6 +60,8 @@ pub enum ClientError {
     Build(String),
     #[error("ping timeout")]
     PingTimeout,
+    #[error("cannot acknowledge pings")]
+    CannotAckPings,
 }
 
 /// An HTTP DERP client.
@@ -527,12 +529,16 @@ impl Client {
     /// returning.
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        let (client, _) = self.connect().await?;
-        if let Err(_) = client.send_pong(data).await {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
+        if self.inner.can_ack_pings {
+            let (client, _) = self.connect().await?;
+            if let Err(_) = client.send_pong(data).await {
+                self.close_for_reconnect().await;
+                return Err(ClientError::Send);
+            }
+            Ok(())
+        } else {
+            Err(ClientError::CannotAckPings)
         }
-        Ok(())
     }
 
     /// Note that we have sent a ping, and store the [`oneshot::Sender`] we

@@ -40,7 +40,7 @@ pub struct SecretKey(crypto_box::SecretKey);
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(self.0.to_bytes()))
+        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
     }
 }
 
@@ -68,13 +68,19 @@ impl SecretKey {
     }
 
     pub fn to_bytes(&self) -> [u8; SECRET_RAW_LEN] {
-        self.0.to_bytes()
+        *self.0.as_bytes()
     }
 }
 
 /// Shared Secret for a very Node.
 #[derive(Clone)]
 pub struct SharedSecret(crypto_box::ChaChaBox);
+
+impl Debug for SharedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedSecret(crypto_box::ChaChaBox)")
+    }
+}
 
 impl SharedSecret {
     /// Seals the provided cleartext.

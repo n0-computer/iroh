@@ -845,68 +845,6 @@ mod tests {
             ),
         )
     }
-    struct TestClient {
-        reader: tokio::io::DuplexStream,
-        writer: tokio::io::DuplexStream,
-        secret_key: SecretKey,
-    }
-
-    /// Can do the "accept" handshake with the server, can read and write packets
-    impl TestClient {
-        fn new(secret_key: SecretKey) -> (tokio::io::DuplexStream, tokio::io::DuplexStream, Self) {
-            let (client_reader, server_writer) = tokio::io::duplex(10);
-            let (server_reader, client_writer) = tokio::io::duplex(10);
-            (
-                server_reader,
-                server_writer,
-                Self {
-                    reader: client_reader,
-                    writer: client_writer,
-                    secret_key,
-                },
-            )
-        }
-
-        async fn accept(&mut self) -> Result<()> {
-            let got_server_key = crate::hp::derp::client::recv_server_key(&mut self.reader).await?;
-            let client_info = ClientInfo {
-                version: PROTOCOL_VERSION,
-                mesh_key: None,
-                can_ack_pings: true,
-                is_prober: true,
-            };
-            crate::hp::derp::send_client_key(
-                &mut self.writer,
-                &self.secret_key,
-                &got_server_key,
-                &client_info,
-            )
-            .await?;
-            let mut buf = BytesMut::new();
-            let (frame_type, _) =
-                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
-            assert_eq!(FrameType::ServerInfo, frame_type);
-            let msg = self.secret_key.open_from(&got_server_key, &buf)?;
-            let _info: ServerInfo = postcard::from_bytes(&msg)?;
-            Ok(())
-        }
-
-        async fn send_packet(&mut self, dst: PublicKey, packet: &[u8]) -> Result<()> {
-            crate::hp::derp::client::send_packet(&mut self.writer, &None, dst, packet).await
-        }
-
-        async fn recv_packet<'a>(
-            &mut self,
-            buf: &'a mut BytesMut,
-        ) -> Result<(PublicKey, &'a [u8])> {
-            let (frame_type, _) =
-                crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, buf).await?;
-            if frame_type != FrameType::RecvPacket {
-                anyhow::bail!("unexpected frame type {frame_type}, expected FrameType::RecvPacket")
-            }
-            crate::hp::derp::client::parse_recv_frame(buf)
-        }
-    }
 
     #[tokio::test]
     async fn test_server_basic() -> Result<()> {
