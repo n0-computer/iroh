@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::sync::encode_ranges_validated;
-use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboard, PreOrderMemOutboardRef};
+use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -885,8 +885,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
         })) => {
             write_response(&mut writer, buffer, Res::Found).await?;
 
-            let outboard =
-                PreOrderMemOutboard::new(name.into(), IROH_BLOCK_SIZE, outboard.to_vec());
+            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
             let file_reader = tokio::fs::File::open(&path).await?;
             bao_tree::io::tokio::encode_ranges_validated(
                 file_reader,

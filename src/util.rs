@@ -167,21 +167,9 @@ pub type RpcResult<T> = result::Result<T, RpcError>;
 #[derive(Debug, Display, Error)]
 pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
-    IoError(io::Error),
+    IoError(#[from] io::Error),
     /// The data failed to validate
-    EncodeError(EncodeError),
-}
-
-impl From<EncodeError> for BaoValidationError {
-    fn from(e: EncodeError) -> Self {
-        BaoValidationError::EncodeError(e)
-    }
-}
-
-impl From<io::Error> for BaoValidationError {
-    fn from(e: io::Error) -> Self {
-        BaoValidationError::IoError(e)
-    }
+    EncodeError(#[from] EncodeError),
 }
 
 /// Validate that the data matches the outboard.
@@ -193,26 +181,7 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard =
-        bao_tree::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.to_vec())
-            .flip();
-    // little util that discards data but prints progress every 1MB
-    struct DevNull<F>(u64, F);
-
-    impl<F: Fn(u64)> Write for DevNull<F> {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let prev = self.0;
-            let curr = prev + buf.len() as u64;
-            if prev % 1000000 != curr % 1000000 {
-                (self.1)(curr);
-            }
-            self.0 = curr;
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
+        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard);
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
     encode_ranges_validated(
@@ -222,6 +191,25 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
         DevNull(0, progress),
     )?;
     Ok(())
+}
+
+// little util that discards data but prints progress every 1MB
+struct DevNull<F>(u64, F);
+
+impl<F: Fn(u64)> Write for DevNull<F> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let prev = self.0;
+        let curr = prev + buf.len() as u64;
+        if prev % 1000000 != curr % 1000000 {
+            (self.1)(curr);
+        }
+        self.0 = curr;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// converts a canonicalized relative path to a string, returning an error if
