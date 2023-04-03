@@ -1,6 +1,5 @@
 pub mod derp;
 pub mod magicsock;
-pub mod monitor;
 pub mod netcheck;
 pub mod ping;
 pub mod portmapper;

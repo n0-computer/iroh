@@ -31,7 +31,7 @@ use crate::{
         derp::{self, DerpMap},
         disco, key,
         magicsock::SESSION_ACTIVE_TIMEOUT,
-        monitor, netcheck, netmap, portmapper, stun,
+        netcheck, netmap, portmapper, stun,
     },
     net::ip::LocalAddresses,
 };
@@ -95,9 +95,6 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
-    /// The link monitor to use. With one, the portmapper won't be used.
-    pub link_monitor: Option<monitor::Monitor>,
-
     /// Private key for this node.
     pub private_key: key::node::SecretKey,
 }
@@ -110,7 +107,6 @@ impl Default for Options {
             on_derp_active: None,
             idle_for: None,
             on_net_info: None,
-            link_monitor: None,
             private_key: key::node::SecretKey::generate(),
         }
     }
@@ -140,7 +136,6 @@ pub struct Inner {
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
@@ -351,14 +346,8 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            link_monitor,
             private_key,
         } = opts;
-
-        if let Some(ref _link_monitor) = link_monitor {
-            // TODO:
-            // self.port_mapper.set_gateway_lookup_func(opts.LinkMonitor.GatewayAndSelfIP);
-        }
 
         let derp_recv_ch = flume::bounded(64);
 
@@ -372,7 +361,6 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            link_monitor,
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
@@ -2524,20 +2512,6 @@ impl Conn {
             return;
         }
 
-        let mut if_ips = Vec::new();
-        if let Some(ref link_mon) = self.link_monitor {
-            let st = link_mon.interface_state();
-            if let Some(ref def_if) = st.default_route_interface {
-                if let Some(ifs) = st.interface_ips.get(def_if) {
-                    for i in ifs {
-                        if_ips.push(i.addr());
-                    }
-                    info!("rebind_all; def_if={:?}, ips={:?}", def_if, if_ips);
-                }
-            }
-        }
-
-        self.maybe_close_derps_on_rebind(&if_ips).await;
         self.reset_endpoint_states().await;
     }
 
