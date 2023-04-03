@@ -5,6 +5,7 @@ use wmi::{query::FilterValue, COMLibrary, WMIConnection};
 
 use super::DefaultRouteDetails;
 
+/// API Docs: https://learn.microsoft.com/en-us/previous-versions/windows/desktop/wmiiprouteprov/win32-ip4routetable
 #[derive(Deserialize, Debug)]
 #[allow(non_camel_case_types, non_snake_case)]
 struct Win32_IP4RouteTable {
