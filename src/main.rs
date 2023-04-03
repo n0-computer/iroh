@@ -27,6 +27,7 @@ use main_util::Blake3Cid;
 
 use crate::main_util::{iroh_data_root, pathbuf_from_name};
 
+#[cfg(feature = "metrics")]
 use iroh::metrics::init_metrics;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
@@ -44,7 +45,8 @@ struct Cli {
     /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
     #[clap(long)]
     keylog: bool,
-    /// metrics server address
+    /// Bind address on which to serve Prometheus metrics
+    #[cfg(feature = "metrics")]
     #[clap(long)]
     metrics_addr: Option<SocketAddr>,
 }
@@ -445,6 +447,23 @@ fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
+#[cfg(feature = "metrics")]
+fn init_metrics_collection(metrics_addr: Option<SocketAddr>) -> tokio::task::JoinHandle<()> {
+    init_metrics();
+    tokio::spawn(async move {
+        // doesn't start the server if the address is None
+        if let Some(metrics_addr) = metrics_addr {
+            iroh::metrics::start_metrics_server(metrics_addr)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to start metrics server: {}", e);
+                });
+        } else {
+            tracing::info!("Metrics server not started, no address provided");
+        }
+    })
+}
+
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -465,11 +484,8 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let metrics_addr = cli.metrics_addr;
-    init_metrics();
-    let metrics_fut = tokio::spawn(async move {
-        iroh::metrics::start_metrics_server(metrics_addr).await;
-    });
+    #[cfg(feature = "metrics")]
+    let metrics_fut = init_metrics_collection(cli.metrics_addr);
 
     let r = match cli.command {
         Commands::Get {
@@ -678,8 +694,11 @@ async fn main_impl() -> Result<()> {
         }
     };
 
-    metrics_fut.abort();
-    drop(metrics_fut);
+    #[cfg(feature = "metrics")]
+    {
+        metrics_fut.abort();
+        drop(metrics_fut);
+    }
     r
 }
 

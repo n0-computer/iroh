@@ -1,12 +1,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 
 use crate::metrics::iroh;
 
-lazy_static! {
-    pub(crate) static ref CORE: Core = Core::default();
-}
+pub(crate) static CORE: Lazy<Core> = Lazy::new(Core::default);
 
 pub(crate) struct Core {
     enabled: AtomicBool,
@@ -44,76 +43,81 @@ impl Core {
         self.enabled.swap(enabled, Ordering::Relaxed);
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
 }
 
-/// defines the metric trait
+/// Defines the metric trait which provides a common interface for all value based metrics
 pub trait MetricType {
-    /// returns the name of the metric
+    /// Returns the name of the metric
     fn name(&self) -> &'static str;
 }
 
-/// defines the histogram trait
+/// Defines the histogram trait which provides a common interface for all  based metrics
 pub trait HistogramType {
-    /// returns the name of the metric
+    /// Returns the name of the metric
     fn name(&self) -> &'static str;
 }
 
-/// definition of the metrics collection interfaces
+/// Definition of the base metrics collection interfaces.
+/// Instances imlementing the MetricsRecorder are expected to have a defined mapping between
+/// types for the respective modules.
 pub trait MetricsRecorder {
-    /// records a metric for any point in time metric (e.g. counter, gauge, etc.)
+    /// Records a metric for any point in time metric (e.g. counter, gauge, etc.)
     fn record<M>(&self, m: M, value: u64)
     where
         M: MetricType + std::fmt::Display;
-    /// observes a metric for any metric over time (e.g. histogram, summary, etc.)
+    /// Observes a metric for any metric over time (e.g. histogram, summary, etc.)
     fn observe<M>(&self, m: M, value: f64)
     where
         M: HistogramType + std::fmt::Display;
 }
 
-/// interface to record metrics
+/// Interface to record metrics
+/// Helps expose the record interface when using metrics as a library
 pub trait MRecorder {
-    /// records a value for the metric
+    /// Records a value for the metric
     fn record(&self, value: u64);
 }
 
-/// interface to observe metrics
+/// Interface to observe metrics
+/// Helps expose the observe interface when using metrics as a library
 pub trait MObserver {
-    /// observes a value for the metric
+    /// Observes a value for the metric
     fn observe(&self, value: f64);
 }
 
-/// defines the generic record function
-#[allow(unused_variables, unreachable_patterns)]
-pub fn record<M>(c: Collector, m: M, v: u64)
+// used as an internal wrapper to record metrics only if the core is enabled
+#[allow(unreachable_patterns)]
+pub(crate) fn record<M>(c: Collector, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
 {
-    if CORE.enabled() {
+    if CORE.is_enabled() {
         match c {
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
-            _ => panic!("not enabled/implemented"),
+            _ => unimplemented!("not enabled/implemented"),
         };
     }
 }
 
-// not currently used
-#[allow(unused_variables, unreachable_patterns, dead_code)]
-fn observe<M>(c: Collector, m: M, v: f64)
+// used as an internal wrapper to observe metrics only if the core is enabled
+#[allow(unreachable_patterns, dead_code)]
+pub(crate) fn observe<M>(c: Collector, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
-    if CORE.enabled() {
+    if CORE.is_enabled() {
         match c {
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
-            _ => panic!("not enabled/implemented"),
+            _ => unimplemented!("not enabled/implemented"),
         };
     }
 }
 
-/// list of all collectors
+/// List of all collectors
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub enum Collector {
     /// Iroh collector aggregates all metrics from the iroh binary

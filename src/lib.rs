@@ -3,6 +3,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod net;
 pub mod progress;

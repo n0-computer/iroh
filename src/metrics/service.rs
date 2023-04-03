@@ -4,7 +4,7 @@ use futures::Future;
 
 use hyper::{
     service::{make_service_fn, service_fn},
-    Body, Request, Response, Server,
+    Body, Error, Request, Response, Server,
 };
 
 use tracing::info;
@@ -12,7 +12,7 @@ use tracing::info;
 use super::core::CORE;
 
 /// Start a HTTP server to report metrics.
-pub async fn run(metrics_addr: SocketAddr) {
+pub async fn run(metrics_addr: SocketAddr) -> Result<(), Error> {
     info!("Starting metrics server on {metrics_addr}");
     Server::bind(&metrics_addr)
         .serve(make_service_fn(move |_conn| async move {
@@ -20,7 +20,6 @@ pub async fn run(metrics_addr: SocketAddr) {
             Ok::<_, io::Error>(service_fn(handler))
         }))
         .await
-        .unwrap();
 }
 
 /// This function returns a HTTP handler (i.e. another function)
@@ -39,7 +38,7 @@ fn make_handler(
                             "application/openmetrics-text; version=1.0.0; charset=utf-8",
                         )
                         .body(body)
-                        .unwrap()
+                        .expect("Failed to build response")
                 })
         })
     }

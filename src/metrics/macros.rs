@@ -1,7 +1,4 @@
-#[allow(unused_imports)]
-use std::any::Any;
-
-/// record a specific metric with a value
+/// Record a specific metric with a value
 #[macro_export]
 macro_rules! record {
     ( $e:expr, $v:expr) => {
@@ -9,7 +6,7 @@ macro_rules! record {
     };
 }
 
-/// increment a specific metric by 1
+/// Increment a specific metric by 1
 #[macro_export]
 macro_rules! inc {
     ( $e:expr) => {
@@ -17,7 +14,7 @@ macro_rules! inc {
     };
 }
 
-/// observe a specific metric with a value
+/// Observe a specific metric with a value
 #[macro_export]
 macro_rules! observe {
     ( $e:expr, $v:expr) => {
@@ -25,7 +22,7 @@ macro_rules! observe {
     };
 }
 
-/// generate metrics for a module
+/// Generate metrics for a module
 #[macro_export]
 macro_rules! make_metrics {
     ($module_name:ident, $($name:ident: $type:ident: $description:expr),+) => {
@@ -46,7 +43,7 @@ macro_rules! make_metrics {
 
         paste::paste! {
             $(
-                /// define a metric for the module
+                /// Define a metric for the module
                 pub const [<METRICS_CNT_ $name:snake:upper>]: &str = stringify!([<$name:snake>]);
             )+
 
@@ -121,11 +118,11 @@ macro_rules! make_metrics {
                 }
             }
 
-            /// enum of metrics for the module
+            /// Enum of metrics for the module
             #[derive(Debug, Copy, Clone)]
             pub enum [<$module_name Metrics>] {
                 $(
-                    /// metric for $name
+                    /// Metric for $name
                     $name,
                 )+
             }
