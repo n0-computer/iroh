@@ -22,7 +22,8 @@ pub async fn run(metrics_addr: SocketAddr) -> Result<(), Error> {
         .await
 }
 
-/// This function returns a HTTP handler (i.e. another function)
+/// This function returns an HTTP handler fn that will respond with the
+/// OpenMetrics encoding of our metrics.
 fn make_handler(
 ) -> impl Fn(Request<Body>) -> Pin<Box<dyn Future<Output = io::Result<Response<Body>>> + Send>> {
     // This closure accepts a request and responds with the OpenMetrics encoding of our metrics.
