@@ -51,7 +51,7 @@ quinn-udp = "0.3"
 rand = "0.8"
 rcgen = "0.10"
 regex = { version = "1.7.1", optional = true }
-reqwest = "0.11.14"
+reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 rustls-acme = { version = "0.5.2", optional = true, features = ["tokio"] }
