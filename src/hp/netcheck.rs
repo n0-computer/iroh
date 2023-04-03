@@ -22,12 +22,11 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::net::to_canonical;
+use crate::net::{interfaces, ip::to_canonical};
 
 use super::{
     clock::Clock,
     derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
-    interfaces,
     ping::Pinger,
     portmapper, stun,
 };

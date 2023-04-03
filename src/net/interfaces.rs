@@ -15,9 +15,22 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use default_net::ip::{Ipv4Net, Ipv6Net};
+pub use default_net::ip::{Ipv4Net, Ipv6Net};
 
-use crate::net::{is_loopback, is_private_v6, is_up};
+use crate::net::ip::{is_loopback, is_private_v6, is_up};
+
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "macos",
+    target_os = "ios"
+))]
+use self::bsd::default_route;
+#[cfg(target_os = "linux")]
+use self::linux::default_route;
+#[cfg(target_os = "windows")]
+use self::windows::default_route;
 
 /// Represents a network interface.
 #[derive(Debug)]
@@ -38,14 +51,17 @@ impl PartialEq for Interface {
 impl Eq for Interface {}
 
 impl Interface {
+    /// Does this represent the loopback interface?
     pub fn is_loopback(&self) -> bool {
         is_loopback(&self.iface)
     }
 
+    /// Is this interface up?
     pub fn is_up(&self) -> bool {
         is_up(&self.iface)
     }
 
+    /// A list of all ip addresses of this interface.
     pub fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
         self.iface
             .ipv4
@@ -56,9 +72,12 @@ impl Interface {
     }
 }
 
+/// Structure of an IP network, either IPv4 or IPv6.
 #[derive(Clone, Debug)]
 pub enum IpNet {
+    /// Structure of IPv4 Network.
     V4(Ipv4Net),
+    /// Structure of IPv6 Network.
     V6(Ipv6Net),
 }
 
@@ -78,6 +97,7 @@ impl PartialEq for IpNet {
 impl Eq for IpNet {}
 
 impl IpNet {
+    /// The IP address of this structure.
     pub fn addr(&self) -> IpAddr {
         match self {
             IpNet::V4(a) => IpAddr::V4(a.addr),
@@ -86,13 +106,13 @@ impl IpNet {
     }
 }
 
-/// Intended to store the state of the machine's network interfaces,
-/// routing table, and other network configuration.
-/// For now it's pretty basic.
+/// Intended to store the state of the machine's network interfaces, routing table, and
+/// other network configuration. For now it's pretty basic.
 #[derive(Debug)]
 pub struct State {
     /// Maps from an interface name to the IP addresses configured on that interface.
     pub interface_ips: HashMap<String, Vec<IpNet>>,
+    /// List of available interfaces, identified by name.
     pub interface: HashMap<String, Interface>,
 
     /// Whether this machine has an IPv6 Global or Unique Local Address
@@ -120,22 +140,59 @@ pub struct State {
     pub pac: Option<String>,
 }
 
-// An InterfaceFilter indicates whether EqualFiltered should use i when deciding whether two States are equal.
-// ips are all the IPPrefixes associated with i.
-// type InterfaceFilter func(i Interface, ips []netip.Prefix) bool
-
-// An IPFilter indicates whether EqualFiltered should use ip when deciding whether two States are equal.
-// ip is an ip address associated with some interface under consideration.
-// type IPFilter func(ip netip.Addr) bool
-
 impl State {
+    /// Returns the state of all the current machine's network interfaces.
+    ///
+    /// It does not set the returned `State.is_expensive`. The caller can populate that.
+    pub async fn new() -> Self {
+        let mut interface_ips = HashMap::new();
+        let mut interface = HashMap::new();
+        let mut have_v6 = false;
+        let mut have_v4 = false;
+
+        let ifaces = default_net::interface::get_interfaces();
+        for iface in ifaces {
+            let ni = Interface { iface };
+            let if_up = ni.is_up();
+            let name = ni.iface.name.clone();
+            let pfxs: Vec<_> = ni.addrs().collect();
+
+            if if_up {
+                for pfx in &pfxs {
+                    if pfx.addr().is_loopback() {
+                        continue;
+                    }
+                    have_v6 |= is_usable_v6(&pfx.addr());
+                    have_v4 |= is_usable_v4(&pfx.addr());
+                }
+            }
+
+            interface.insert(name.clone(), ni);
+            interface_ips.insert(name, pfxs);
+        }
+
+        let default_route_interface = default_route_interface().await;
+
+        State {
+            interface_ips,
+            interface,
+            have_v4,
+            have_v6,
+            is_expensive: false,
+            default_route_interface,
+            http_proxy: None,
+            pac: None,
+        }
+    }
+
+    /// Is a PAC set?
     pub fn has_pac(&self) -> bool {
         self.pac.is_some()
     }
 
-    /// Reports whether s and s2 are equal,
-    /// considering only interfaces in s for which filter returns true,
-    /// and considering only IPs for those interfaces for which filterIP returns true.
+    /// Reports whether this state and `s2` are equal, considering only interfaces in `self`
+    /// for which `use_interface` returns `true`, and considering only IPs for those interfaces
+    /// for which `use_ip` returns `true`.
     pub fn equal_filtered<F, G>(&self, s2: &Self, use_interface: F, use_ip: G) -> bool
     where
         F: Fn(&Interface, &[IpNet]) -> bool,
@@ -195,53 +252,9 @@ impl State {
         false
     }
 
-    /// Reports whether any interface seems like it has Internet access.
+    /// Reports whether any interface seems like it has internet access.
     pub fn any_interface_up(&self) -> bool {
         self.have_v4 || self.have_v6
-    }
-
-    /// Returns the state of all the current machine's network interfaces.
-    ///
-    /// It does not set the returned `State.is_expensive`. The caller can populate that.
-    pub async fn new() -> Self {
-        let mut interface_ips = HashMap::new();
-        let mut interface = HashMap::new();
-        let mut have_v6 = false;
-        let mut have_v4 = false;
-
-        let ifaces = default_net::interface::get_interfaces();
-        for iface in ifaces {
-            let ni = Interface { iface };
-            let if_up = ni.is_up();
-            let name = ni.iface.name.clone();
-            let pfxs: Vec<_> = ni.addrs().collect();
-
-            if if_up {
-                for pfx in &pfxs {
-                    if pfx.addr().is_loopback() {
-                        continue;
-                    }
-                    have_v6 |= is_usable_v6(&pfx.addr());
-                    have_v4 |= is_usable_v4(&pfx.addr());
-                }
-            }
-
-            interface.insert(name.clone(), ni);
-            interface_ips.insert(name, pfxs);
-        }
-
-        let default_route_interface = default_route_interface().await;
-
-        State {
-            interface_ips,
-            interface,
-            have_v4,
-            have_v6,
-            is_expensive: false,
-            default_route_interface,
-            http_proxy: None,
-            pac: None,
-        }
     }
 }
 
@@ -299,38 +312,21 @@ fn is_usable_v6(ip: &IpAddr) -> bool {
 /// The details about a default route.
 #[derive(Debug, Clone)]
 pub struct DefaultRouteDetails {
-    /// The interface name. It must always be populated.
+    /// The interface name.
     /// It's like "eth0" (Linux), "Ethernet 2" (Windows), "en0" (macOS).
     pub interface_name: String,
 
-    /// Ppopulated on Windows at least. It's a
-    /// longer description, like "Red Hat VirtIO Ethernet Adapter".
+    /// Ppopulated on Windows at least. Longer description of the interface.
     pub interface_description: Option<String>,
 
-    /// Like net.Interface.Index. Zero means not populated.
+    /// The index of the interface, `0` means not populated.
     pub interface_index: u32,
 }
 
 impl DefaultRouteDetails {
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
+    /// Reads the default route from the current system and returns the details.
     pub async fn new() -> Option<Self> {
-        bsd::default_route()
-    }
-
-    #[cfg(target_os = "linux")]
-    pub async fn new() -> Option<Self> {
-        linux::default_route().await
-    }
-
-    #[cfg(target_os = "windows")]
-    pub async fn new() -> Option<Self> {
-        windows::default_route().await
+        default_route().await
     }
 }
 

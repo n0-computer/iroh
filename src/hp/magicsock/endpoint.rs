@@ -22,7 +22,7 @@ use crate::{
         cfg::{self, DERP_MAGIC_IP},
         disco, key, stun,
     },
-    net::is_unicast_link_local,
+    net::ip::is_unicast_link_local,
 };
 
 use super::{

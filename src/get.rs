@@ -10,11 +10,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
+use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::provider::Ticket;
-use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
 use anyhow::{anyhow, bail, Context, Result};
