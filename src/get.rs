@@ -266,6 +266,8 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
+    dbg!(&hash);
+    println!("run_connection getting {hash:?}");
     let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
@@ -286,6 +288,7 @@ where
     // 2. Send Request
     {
         debug!("sending request");
+        println!("requesting hash {hash:?}");
         let req = Request { name: hash };
 
         let used = postcard::to_slice(&req, &mut out_buffer)?;
@@ -311,6 +314,7 @@ where
                         data_len = total_blobs_size;
 
                         // read entire collection data into buffer
+                        println!("Expecting hash {hash:?}");
                         let data = read_bao_encoded(&mut reader, hash).await?;
 
                         // decode the collection

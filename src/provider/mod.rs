@@ -912,6 +912,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
+/// The data stored in the database for a `Blob`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Data {
     /// Outboard data from bao.
@@ -1121,6 +1122,11 @@ async fn create_collection_inner(
 
     let data = postcard::to_stdvec(&c).context("blob encoding")?;
     let (outboard, hash) = abao::encode::outboard(&data);
+    println!(
+        "collection size {} hash {}",
+        indicatif::HumanBytes(data.len() as u64),
+        hash
+    );
     let hash = Hash::from(hash);
     db.insert(
         hash,
@@ -1149,6 +1155,7 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
     write_lp(&mut writer, used).await?;
 
+    // TODO: this is always report as length 1???
     debug!("written response of length {}", used.len());
     Ok(())
 }

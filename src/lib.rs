@@ -58,7 +58,7 @@ mod tests {
 
     #[tokio::test]
     async fn many_files() -> Result<()> {
-        let num_files = [10, 100, 1000, 10000];
+        let num_files = [40000];
         for num in num_files {
             println!("NUM_FILES: {num}");
             let file_opts = (0..num).map(|i| (i.to_string(), 10)).collect();
@@ -220,6 +220,7 @@ mod tests {
         expects.sort_by(|a, b| a.0.cmp(&b.0));
 
         let (db, collection_hash) = provider::create_collection(files).await?;
+        dbg!(&collection_hash);
 
         let addr = "127.0.0.1:0".parse().unwrap();
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
@@ -262,8 +263,13 @@ mod tests {
             collection_hash,
             provider.auth_token(),
             opts,
-            || async { Ok(()) },
+            || async {
+                println!("on_connected called");
+                Ok(())
+            },
             |collection| {
+                println!("on_collection called");
+                dbg!(&collection);
                 assert_eq!(collection.blobs().len(), num_blobs);
                 async { Ok(()) }
             },
