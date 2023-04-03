@@ -28,7 +28,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use range_collections::RangeSet2;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -747,8 +747,7 @@ async fn transfer_collection(
     )
     .await?;
 
-    let mut data = BytesMut::from(&encoded[..]);
-    writer.write_buf(&mut data).await?;
+    writer.write_all(&encoded).await?;
     for (i, blob) in c.blobs().iter().enumerate() {
         debug!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
