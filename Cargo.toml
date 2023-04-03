@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 readme = "README.md"
 description = "IPFS reimagined"
