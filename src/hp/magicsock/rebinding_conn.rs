@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use futures::{future::poll_fn, ready, Future, FutureExt};
+use futures::{ready, Future, FutureExt};
 use quinn::AsyncUdpSocket;
 use tokio::{
     io::Interest,
@@ -85,12 +85,6 @@ impl RebindingUdpConn {
     pub async fn close(&self) -> Result<(), io::Error> {
         let mut state = self.inner.write().await;
         state.close()
-    }
-
-    pub async fn send_to(&self, addr: SocketAddr, b: &[u8]) -> io::Result<bool> {
-        let mut state = self.inner.write().await;
-        let res = state.pconn.send_to(addr, b).await?;
-        Ok(res)
     }
 
     pub fn poll_send(
@@ -212,20 +206,6 @@ impl UdpSocket {
             io: tokio::net::UdpSocket::from_std(sock)?,
             inner: quinn_udp::UdpSocketState::new(),
         })
-    }
-
-    pub async fn send_to(&mut self, addr: SocketAddr, b: &[u8]) -> io::Result<bool> {
-        // TODO: store
-        let state = quinn_udp::UdpState::new();
-        let transmits = [quinn_proto::Transmit {
-            destination: addr,
-            ecn: None,
-            contents: b.to_vec(),
-            segment_size: None,
-            src_ip: self.local_addr().ok().map(|a| a.ip()),
-        }];
-        let n = poll_fn(|cx| self.poll_send(&state, cx, &transmits[..])).await?;
-        Ok(n > 0)
     }
 }
 

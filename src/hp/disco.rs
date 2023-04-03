@@ -87,15 +87,8 @@ pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
     &p[..MAGIC_LEN] == MAGIC.as_bytes()
 }
 
-/// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source.
-pub fn source(p: &[u8]) -> Option<[u8; KEY_LEN]> {
-    if !looks_like_disco_wrapper(p) {
-        return None;
-    }
-
-    Some(p[MAGIC_LEN..MAGIC_LEN + KEY_LEN].try_into().unwrap())
-}
-
+/// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source,
+/// and the part that is the box.
 pub fn source_and_box(p: &[u8]) -> Option<([u8; KEY_LEN], &[u8])> {
     if !looks_like_disco_wrapper(p) {
         return None;
@@ -399,7 +392,10 @@ mod tests {
         let bytes = encode_message(&sender_disco_key.public(), seal.clone());
 
         assert!(looks_like_disco_wrapper(&bytes));
-        assert_eq!(source(&bytes).unwrap(), sender_disco_key.public().as_ref());
+        assert_eq!(
+            source_and_box(&bytes).unwrap().0,
+            sender_disco_key.public().as_ref()
+        );
 
         let (raw_key, seal_back) = source_and_box(&bytes).unwrap();
         assert_eq!(raw_key, sender_disco_key.public().as_ref());

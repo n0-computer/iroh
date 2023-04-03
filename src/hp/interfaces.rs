@@ -1,9 +1,6 @@
 //! Contains helpers for looking up system network interfaces.
 
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv6Addr},
-};
+use std::{collections::HashMap, net::IpAddr};
 
 #[cfg(any(
     target_os = "freebsd",
@@ -18,29 +15,7 @@ mod linux;
 
 use default_net::ip::{Ipv4Net, Ipv6Net};
 
-use crate::net::{is_loopback, is_unicast_link_local, is_up};
-
-/// Reports whether ip is a private address, according to RFC 1918
-/// (IPv4 addresses) and RFC 4193 (IPv6 addresses). That is, it reports whether
-/// ip is in 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, or fc00::/7.
-fn is_private(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => {
-            // RFC 1918 allocates 10.0.0.0/8, 172.16.0.0/12, and 192.168.0.0/16 as
-            // private IPv4 address subnets.
-            let octets = ip.octets();
-            octets[0] == 10
-                || (octets[0] == 172 && octets[1] & 0xf0 == 16)
-                || (octets[0] == 192 && octets[1] == 168)
-        }
-        IpAddr::V6(ip) => is_private_v6(ip),
-    }
-}
-
-fn is_private_v6(ip: &Ipv6Addr) -> bool {
-    // RFC 4193 allocates fc00::/7 as the unique local unicast IPv6 address subnet.
-    ip.octets()[0] & 0xfe == 0xfc
-}
+use crate::net::{is_loopback, is_private_v6, is_up};
 
 /// Represents a network interface.
 #[derive(Debug)]
@@ -159,7 +134,7 @@ impl State {
     /// Reports whether s and s2 are equal,
     /// considering only interfaces in s for which filter returns true,
     /// and considering only IPs for those interfaces for which filterIP returns true.
-    fn equal_filtered<F, G>(&self, s2: &Self, use_interface: F, use_ip: G) -> bool
+    pub fn equal_filtered<F, G>(&self, s2: &Self, use_interface: F, use_ip: G) -> bool
     where
         F: Fn(&Interface, &[IpNet]) -> bool,
         G: Fn(IpAddr) -> bool,
@@ -197,7 +172,7 @@ impl State {
     }
 
     /// Reports whether any interface has the provided IP address.
-    fn has_ip(&self, ip: &IpAddr) -> bool {
+    pub fn has_ip(&self, ip: &IpAddr) -> bool {
         for (_, pv) in &self.interface_ips {
             for p in pv {
                 match (p, ip) {
@@ -218,7 +193,7 @@ impl State {
         false
     }
 
-    // Reports whether any interface seems like it has Internet access.
+    /// Reports whether any interface seems like it has Internet access.
     pub fn any_interface_up(&self) -> bool {
         self.have_v4 || self.have_v6
     }
@@ -289,29 +264,6 @@ where
     true
 }
 
-// An InterfaceFilter that reports whether i is an interesting interface.
-// An interesting interface if it routes interesting IP addresses.
-// See `use_interesting_ips` for the definition of an interesting IP address.
-pub fn use_interesting_interfaces(_i: &Interface, ips: &[IpNet]) -> bool {
-    any_interesting_ip(ips)
-}
-
-// An IPFilter that reports whether ip is an interesting IP address.
-// An IP address is interesting if it is neither a loopback nor a link local unicast IP address.
-fn use_interesting_ips(ip: &IpNet) -> bool {
-    is_interesting_ip(ip.addr())
-}
-
-// An InterfaceFilter that includes all interfaces.
-fn use_all_interfaces(_i: &Interface, _ips: &[IpNet]) -> bool {
-    true
-}
-
-// An IPFilter that includes all IPs.
-fn use_all_ips(_ip: &IpNet) -> bool {
-    true
-}
-
 /// Reports whether ip is a usable IPv4 address which could
 /// conceivably be used to get Internet connectivity. Globally routable and
 /// private IPv4 addresses are always Usable, and link local 169.254.x.x
@@ -342,33 +294,6 @@ fn is_usable_v6(ip: &IpAddr) -> bool {
     }
 }
 
-/// Reports whether pfxs contains any IP that matches `is_interesting_ip`.
-fn any_interesting_ip(pfxs: &[IpNet]) -> bool {
-    pfxs.iter().any(|pfx| is_interesting_ip(pfx.addr()))
-}
-
-/// Reports whether ip is an interesting IP that we
-/// should log in interfaces.State logging. We don't need to show
-/// localhost or link-local addresses.
-fn is_interesting_ip(ip: IpAddr) -> bool {
-    if ip.is_loopback() {
-        return false;
-    }
-    match ip {
-        IpAddr::V4(v4) => {
-            if v4.is_link_local() {
-                return false;
-            }
-        }
-        IpAddr::V6(v6) => {
-            if is_unicast_link_local(v6) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 /// The details about a default route.
 #[derive(Debug, Clone)]
 pub struct DefaultRouteDetails {
@@ -382,13 +307,6 @@ pub struct DefaultRouteDetails {
 
     /// Like net.Interface.Index. Zero means not populated.
     pub interface_index: u32,
-}
-
-fn is_link_local(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => ip.is_link_local(),
-        IpAddr::V6(ip) => is_unicast_link_local(ip),
-    }
 }
 
 impl DefaultRouteDetails {

@@ -424,7 +424,6 @@ impl Derper {
                 }
             }
         }
-        Ok(())
     }
 
     fn default_response(&self) -> ResponseBuilder {

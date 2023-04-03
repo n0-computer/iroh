@@ -3212,7 +3212,7 @@ mod tests {
 
         // Spawn server on the default executor,
         // which is usually a thread-pool from tokio default runtime.
-        let server_task = tokio::task::spawn(async move {
+        tokio::task::spawn(async move {
             let derp_client_handler = derp_server.client_conn_handler(Default::default());
             loop {
                 tokio::select! {
@@ -3239,7 +3239,7 @@ mod tests {
             }
         });
 
-        let (stun_addr, _, stun_cleanup) = stun::test::serve().await?;
+        let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
         let m = DerpMap {
             regions: [(
                 1,

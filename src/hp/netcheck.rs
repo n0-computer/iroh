@@ -232,7 +232,7 @@ impl Client {
     }
 
     /// Forces the next `get_report` call to be a full (non-incremental) probe of all DERP regions.
-    async fn make_next_report_full(&self) {
+    pub async fn make_next_report_full(&self) {
         self.reports.lock().await.next_full = true;
     }
 
@@ -571,11 +571,8 @@ impl Client {
             }
         }
 
-        {
-            let reports = self.reports.lock().await;
-            rs.wait_hair_check(last.as_deref()).await;
-            debug!("hair_check done");
-        }
+        rs.wait_hair_check(last.as_deref()).await;
+        debug!("hair_check done");
 
         if !self.skip_external_network && self.port_mapper.is_some() {
             rs.wait_port_map.wait().await;
@@ -1076,10 +1073,6 @@ struct Probe {
 
     /// How the node should be probed.
     proto: ProbeProto,
-
-    /// How long to wait until the probe is considered failed.
-    /// 0 means to use a default value.
-    wait: Duration,
 }
 
 /// Describes a set of node probes to run.
@@ -1205,7 +1198,6 @@ async fn make_probe_plan(
                     delay,
                     node: n.name.clone(),
                     proto: ProbeProto::IPv4,
-                    wait: Duration::default(),
                 });
             }
             if do6 {
@@ -1213,7 +1205,6 @@ async fn make_probe_plan(
                     delay,
                     node: n.name.clone(),
                     proto: ProbeProto::IPv6,
-                    wait: Duration::default(),
                 });
             }
         }
@@ -1242,7 +1233,6 @@ fn make_probe_plan_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbeP
                     delay,
                     node: n.name.clone(),
                     proto: ProbeProto::IPv4,
-                    wait: Duration::default(),
                 });
             }
             if if_state.have_v6 && node_might6(n) {
@@ -1250,7 +1240,6 @@ fn make_probe_plan_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbeP
                     delay,
                     node: n.name.clone(),
                     proto: ProbeProto::IPv6,
-                    wait: Duration::default(),
                 })
             }
         }
@@ -1689,7 +1678,7 @@ mod tests {
             .try_init()
             .ok();
 
-        let (stun_addr, stun_stats, done) = stun::test::serve().await?;
+        let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
         let mut client = Client::default();
         client.udp_bind_addr = "0.0.0.0:0".parse().unwrap();

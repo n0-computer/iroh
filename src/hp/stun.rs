@@ -201,10 +201,10 @@ pub mod test {
     }
 
     /// Sets up a simple STUN server.
-    pub async fn serve() -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
+    pub async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
         let stats = StunStats::default();
 
-        let pc = net::UdpSocket::bind("0.0.0.0:0").await?;
+        let pc = net::UdpSocket::bind((ip, 0)).await?;
         let mut addr = pc.local_addr()?;
         match addr.ip() {
             IpAddr::V4(ip) => {

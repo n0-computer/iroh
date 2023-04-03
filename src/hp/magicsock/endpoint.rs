@@ -178,6 +178,7 @@ impl Endpoint {
     }
 
     /// Reports whether we should ping to all our peers looking for a better path.
+    // TODO: figure out when to call this, now that the heartbeat timer is gone
     #[instrument(skip_all, fields(self.name = %self.name()))]
     fn want_full_ping(&self, state: &InnerMutEndpoint, now: &Instant) -> bool {
         if state.last_full_ping.is_none() {

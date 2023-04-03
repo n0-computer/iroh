@@ -1,12 +1,15 @@
 //! Based on  https://cs.opensource.google/go/x/net/+/master:route
 
+#![allow(unused)]
+
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::DefaultRouteDetails;
 use once_cell::sync::Lazy;
+
+use super::DefaultRouteDetails;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use macos::*;
@@ -415,8 +418,6 @@ type RIBType = i32;
 
 #[derive(Debug, thiserror::Error)]
 enum RouteError {
-    #[error("unsupported message")]
-    UnsupportedMessage,
     #[error("message mismatch")]
     MessageMismatch,
     #[error("message too short")]
@@ -425,8 +426,6 @@ enum RouteError {
     InvalidMessage,
     #[error("invalid address")]
     InvalidAddress,
-    #[error("short buffer")]
-    ShortBuffer,
 }
 
 /// FetchRIB fetches a routing information base from the operating system.
