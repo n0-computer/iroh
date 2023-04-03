@@ -22,15 +22,6 @@ pub struct Hostinfo {
     pub os: String,
 
     /// OSVersion is the version of the OS, if available.
-    //
-    /// For Android, it's like "10", "11", "12", etc. For iOS and macOS it's like
-    /// "15.6.1" or "12.4.0". For Windows it's like "10.0.19044.1889". For
-    /// FreeBSD it's like "12.3-STABLE".
-    //
-    /// For Linux, prior to Tailscale 1.32, we jammed a bunch of fields into this
-    /// String on Linux, like "Debian 10.4; kernel=xxx; container; env=kn" and so
-    /// on. As of Tailscale 1.32, this is simply the kernel version on Linux, like
-    /// "5.10.0-17-amd64".
     pub os_version: String,
 
     /// Whether the client is running in a container

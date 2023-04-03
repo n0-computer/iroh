@@ -86,6 +86,9 @@ zeroize = "1.5"
 netlink-packet-route = "0.15.0"
 rtnetlink = "0.12.0"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+wmi = "0.12.2"
+
 [dev-dependencies]
 async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }
 proptest = "1.0.0"

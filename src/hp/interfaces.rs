@@ -12,6 +12,8 @@ use std::{collections::HashMap, net::IpAddr};
 mod bsd;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use default_net::ip::{Ipv4Net, Ipv6Net};
 
@@ -324,6 +326,10 @@ impl DefaultRouteDetails {
     #[cfg(target_os = "linux")]
     pub async fn new() -> Option<Self> {
         linux::default_route().await
+    }
+    #[cfg(target_os = "windows")]
+    pub async fn new() -> Option<Self> {
+        windows::default_route().await
     }
 }
 
