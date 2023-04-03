@@ -55,16 +55,8 @@ pub struct InnerClient<R>
 where
     R: AsyncRead + Unpin,
 {
-    /// Server key of the DERP server, not a machine or node key
-    server_key: PublicKey,
-    /// The public/private keypair
-    secret_key: SecretKey,
     // our local addrs
     local_addr: SocketAddr,
-    /// TODO: This is a string in the go impl, need to make these back into Strings
-    mesh_key: Option<MeshKey>,
-    can_ack_pings: bool,
-    is_prober: bool,
 
     /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
     /// if there is ever an error writing to the server.
@@ -77,11 +69,6 @@ where
 
 // TODO: I believe that any of these that error should actually trigger a shut down of the client
 impl<R: AsyncRead + Unpin> Client<R> {
-    /// Returns a reference to the server's public key.
-    pub fn server_public_key(&self) -> PublicKey {
-        self.inner.server_key.clone()
-    }
-
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
@@ -405,7 +392,6 @@ where
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     can_ack_pings: bool,
-    writer_queue_depth: usize,
 }
 
 impl<W, R> ClientBuilder<W, R>
@@ -423,7 +409,6 @@ where
             is_prober: false,
             server_public_key: None,
             can_ack_pings: false,
-            writer_queue_depth: PER_CLIENT_SEND_QUEUE_DEPTH,
         }
     }
 
@@ -439,25 +424,14 @@ where
 
     // Set the expected server_public_key. If this is not what is sent by the server, it is an
     // error.
-    pub fn server_public_key(mut self, key: PublicKey) -> Self {
-        self.server_public_key = Some(key);
+    pub fn server_public_key(mut self, key: Option<PublicKey>) -> Self {
+        self.server_public_key = key;
         self
     }
 
     pub fn can_ack_pings(mut self, can_ack_pings: bool) -> Self {
         self.can_ack_pings = can_ack_pings;
         self
-    }
-
-    /// Default is [`derp::PER_CLIENT_SEND_QUEUE_DEPTH`]
-    ///
-    /// Will error if the queue depth is set to zero
-    pub fn writer_queue_depth(mut self, depth: usize) -> Result<Self> {
-        if depth == 0 {
-            bail!("cannot set queue to 0, no unbounded channels allowed");
-        }
-        self.writer_queue_depth = depth;
-        Ok(self)
     }
 
     async fn server_handshake(
@@ -521,10 +495,10 @@ where
         R: AsyncRead + Unpin,
     {
         // exchange information with the server
-        let (server_key, rate_limiter) = self.server_handshake(buf).await?;
+        let (_, rate_limiter) = self.server_handshake(buf).await?;
 
         // create task to handle writing to the server
-        let (writer_sender, writer_recv) = mpsc::channel(self.writer_queue_depth);
+        let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
         let writer_task = tokio::spawn(async move {
             let client_writer = ClientWriter {
                 rate_limiter,
@@ -537,12 +511,7 @@ where
 
         let client = Client {
             inner: Arc::new(InnerClient {
-                server_key,
-                secret_key: self.secret_key,
                 local_addr: self.local_addr,
-                mesh_key: self.mesh_key,
-                can_ack_pings: self.can_ack_pings,
-                is_prober: self.is_prober,
                 writer_channel: writer_sender,
                 writer_task: Mutex::new(Some(writer_task)),
                 reader: Mutex::new(self.reader),

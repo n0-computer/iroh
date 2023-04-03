@@ -43,8 +43,6 @@ where
     conn_handler.accept(reader, writer).await
 }
 
-type HyperResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
 impl<P> hyper::service::Service<Request<Body>>
     for ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>
 where
@@ -181,7 +179,7 @@ mod tests {
             }
             Err(e) => eprintln!("upgrade error: {}", e),
         }
-
+        task.abort();
         Ok(())
     }
 

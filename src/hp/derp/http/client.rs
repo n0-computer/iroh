@@ -60,6 +60,8 @@ pub enum ClientError {
     Build(String),
     #[error("ping timeout")]
     PingTimeout,
+    #[error("cannot acknowledge pings")]
+    CannotAckPings,
 }
 
 /// An HTTP DERP client.
@@ -98,6 +100,7 @@ struct InnerClient {
     ping_tracker: Mutex<HashMap<[u8; 8], oneshot::Sender<()>>>,
     mesh_key: Option<MeshKey>,
     is_prober: bool,
+    server_public_key: Option<key::node::PublicKey>,
 }
 
 /// Build a Client
@@ -113,6 +116,8 @@ pub struct ClientBuilder {
     mesh_key: Option<MeshKey>,
     /// Default is false
     is_prober: bool,
+    /// Expected PublicKey of the server
+    server_public_key: Option<key::node::PublicKey>,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -133,6 +138,7 @@ impl ClientBuilder {
             address_family_selector: None,
             mesh_key: None,
             is_prober: false,
+            server_public_key: None,
         }
     }
 
@@ -187,8 +193,14 @@ impl ClientBuilder {
                 ping_tracker: Mutex::new(HashMap::default()),
                 mesh_key: self.mesh_key,
                 is_prober: self.is_prober,
+                server_public_key: self.server_public_key,
             }),
         }
+    }
+
+    pub fn server_public_key(mut self, server_public_key: key::node::PublicKey) -> Self {
+        self.server_public_key = Some(server_public_key);
+        self
     }
 }
 
@@ -350,6 +362,7 @@ impl Client {
                 .mesh_key(self.inner.mesh_key.clone())
                 .can_ack_pings(self.inner.can_ack_pings)
                 .is_prober(self.inner.is_prober)
+                .server_public_key(self.inner.server_public_key.clone())
                 .build(Some(parts.read_buf))
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
@@ -516,12 +529,16 @@ impl Client {
     /// returning.
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        let (client, _) = self.connect().await?;
-        if let Err(_) = client.send_pong(data).await {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
+        if self.inner.can_ack_pings {
+            let (client, _) = self.connect().await?;
+            if let Err(_) = client.send_pong(data).await {
+                self.close_for_reconnect().await;
+                return Err(ClientError::Send);
+            }
+            Ok(())
+        } else {
+            Err(ClientError::CannotAckPings)
         }
-        Ok(())
     }
 
     /// Note that we have sent a ping, and store the [`oneshot::Sender`] we

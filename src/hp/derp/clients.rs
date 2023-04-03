@@ -33,16 +33,7 @@ const RETRIES: usize = 3;
 // connections doesn't receive data frames."
 #[derive(Debug)]
 struct Client {
-    // The set of all connections associated with the PublicKey
-    // conns: HashMap<usize, ClientConnManager>,
-    // The most recent edition to the set, or the last connection we have received data from. Can
-    // be `None` if that particular connection has disconnected & we have no other previous
-    // connections
-    // last: Option<usize>,
-    // the "home" connection for the client.
-    // TODO: I do not see this used in the go impl, except for setting and un-setting.
-    preferred: Option<usize>,
-    /// the connection
+    /// The client connection associated with the PublicKey
     conn: ClientConnManager,
     /// list of peers we have sent messages to
     sent_to: HashSet<PublicKey>,
@@ -51,7 +42,6 @@ struct Client {
 impl Client {
     pub fn new(conn: ClientConnManager) -> Self {
         Self {
-            preferred: None,
             conn,
             sent_to: HashSet::default(),
         }
@@ -260,8 +250,6 @@ impl Clients {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::*;
 
     use crate::hp::derp::{read_frame, FrameType, MAX_PACKET_SIZE};
@@ -319,7 +307,6 @@ mod tests {
         let data = b"hello world!";
         let expect_packet = Packet {
             src: b_key.clone(),
-            enqueued_at: Instant::now(),
             bytes: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;

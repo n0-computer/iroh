@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -45,10 +44,6 @@ pub(crate) struct ClientConnManager {
     // TODO: replace with rate limiter, also, this should probably be on the ClientSets, not on
     // the client itself
     // replace_limiter: RateLimiter,
-
-    /// Instant at which we created the `ClientConnManager`
-    connected_at: Instant,
-
     reader_handle: JoinHandle<Result<()>>,
     writer_handle: JoinHandle<Result<()>>,
 
@@ -56,26 +51,6 @@ pub(crate) struct ClientConnManager {
     /// the client messages. These `Senders` correspond to `Receivers` on the
     /// [`ClientConnWriter`].
     pub(crate) client_channels: ClientChannels,
-}
-
-/// Channels that the [`ClientConnReader`] needs in order to notify the server
-/// about actions it needs to take on behalf of the client.
-// TODO: in all cases in the code right now, we use `send` to communicate to the server on these
-// channels. It is possible however, that this is not the right call, and we should instead
-// `try_send` & drop any packets that do not make it onto the server at the first attempt, or even
-// use `send_timeout` in a newly spun up thread. It also may be benefitial to have editional channels where we can request
-// the server drop packets from the front of its queue so that newer packets are prioritized when
-// there is heavy load
-#[derive(Debug, Clone)]
-pub(crate) struct ServerChannels {
-    /// Send a notification to the Server to add this client as a watcher
-    pub(crate) add_watcher: mpsc::Sender<PublicKey>,
-    /// Send a notification to the Server to close connections to the given peer
-    pub(crate) close_peer: mpsc::Sender<PublicKey>,
-    /// Send a notification to the server to send this packet to the destination
-    pub(crate) send_queue: mpsc::Sender<(PublicKey, Packet)>,
-    /// Send a notification to the server to forward this pacekt to the destination
-    pub(crate) disco_send_queue: mpsc::Sender<(PublicKey, Packet)>,
 }
 
 /// Channels that the [`ClientConnManager`] uses to communicate with the
@@ -177,13 +152,14 @@ impl ClientConnManager {
             mesh_update_s: mesh_update_s.clone(),
         };
 
+        let preferred = Arc::from(AtomicBool::from(false));
         let conn_reader = ClientConnReader {
             can_mesh,
             reader,
             key: key.clone(),
             send_pong: send_pong_s,
             server_channel: server_channel.clone(),
-            preferred: Arc::from(AtomicBool::from(false)),
+            preferred: Arc::clone(&preferred),
         };
 
         // start writer loop
@@ -238,7 +214,6 @@ impl ClientConnManager {
         ClientConnManager {
             conn_num,
             key,
-            connected_at: Instant::now(),
             writer_handle,
             reader_handle,
             done,
@@ -687,7 +662,6 @@ where
         let packet = Packet {
             src: srckey,
             bytes: Bytes::from(data.to_owned()),
-            enqueued_at: Instant::now(),
         };
         self.transfer_packet(dstkey, packet).await
     }
@@ -705,7 +679,6 @@ where
         let packet = Packet {
             src: self.key.clone(),
             bytes: Bytes::from(data.to_owned()),
-            enqueued_at: Instant::now(),
         };
         self.transfer_packet(dstkey, packet).await
     }
@@ -934,7 +907,6 @@ mod tests {
         // send packet
         let packet = Packet {
             src: key.clone(),
-            enqueued_at: Instant::now(),
             bytes: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
