@@ -14,7 +14,7 @@ use super::DefaultRouteDetails;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use macos::*;
 
-pub fn default_route() -> Option<DefaultRouteDetails> {
+pub async fn default_route() -> Option<DefaultRouteDetails> {
     let idx = default_route_interface_index()?;
     let interfaces = default_net::get_interfaces();
     let iface = interfaces.into_iter().find(|i| i.index == idx)?;

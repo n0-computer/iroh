@@ -33,7 +33,7 @@ use crate::{
         magicsock::SESSION_ACTIVE_TIMEOUT,
         monitor, netcheck, netmap, portmapper, stun,
     },
-    net::LocalAddresses,
+    net::ip::LocalAddresses,
 };
 
 use super::{

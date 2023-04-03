@@ -36,7 +36,7 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
-use crate::net::find_local_addresses;
+use crate::net::ip::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };

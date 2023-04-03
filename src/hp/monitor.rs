@@ -4,7 +4,7 @@
 //!
 //! Based on tailscale/wgengine/monitor
 
-use super::interfaces;
+use crate::net::interfaces;
 
 /// Represents a monitoring instance.
 #[derive(Debug)]
