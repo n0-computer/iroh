@@ -448,20 +448,22 @@ const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
 #[cfg(feature = "metrics")]
-fn init_metrics_collection(metrics_addr: Option<SocketAddr>) -> tokio::task::JoinHandle<()> {
+fn init_metrics_collection(
+    metrics_addr: Option<SocketAddr>,
+) -> Option<tokio::task::JoinHandle<()>> {
     init_metrics();
-    tokio::spawn(async move {
-        // doesn't start the server if the address is None
-        if let Some(metrics_addr) = metrics_addr {
+    // doesn't start the server if the address is None
+    if let Some(metrics_addr) = metrics_addr {
+        return Some(tokio::spawn(async move {
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
                     eprintln!("Failed to start metrics server: {}", e);
                 });
-        } else {
-            tracing::info!("Metrics server not started, no address provided");
-        }
-    })
+        }));
+    }
+    tracing::info!("Metrics server not started, no address provided");
+    None
 }
 
 fn main() -> Result<()> {
@@ -695,7 +697,7 @@ async fn main_impl() -> Result<()> {
     };
 
     #[cfg(feature = "metrics")]
-    {
+    if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
         drop(metrics_fut);
     }
