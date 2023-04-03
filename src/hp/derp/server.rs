@@ -119,8 +119,7 @@ where
         let server_task = tokio::spawn(async move { server_actor.run(done).await });
         let meta_cert = init_meta_cert(&key.public_key());
         Self {
-            // TODO: add some default
-            write_timeout: None,
+            write_timeout: Some(WRITE_TIMEOUT),
             secret_key: key,
             mesh_key,
             meta_cert,
@@ -305,7 +304,7 @@ where
             conn_num: new_conn_num(),
             reader,
             writer,
-            can_mesh: can_mesh(self.mesh_key, client_info.mesh_key),
+            can_mesh: self.can_mesh(client_info.mesh_key),
             write_timeout: self.write_timeout.clone(),
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
@@ -345,15 +344,10 @@ where
 
     /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
     fn can_mesh(&self, client_mesh_key: Option<MeshKey>) -> bool {
-        if self.mesh_key.is_none() {
-            false
-        } else if client_mesh_key.is_none() {
-            false
-        } else {
-            let server_mesh_key = self.mesh_key.unwrap();
-            let client_mesh_key = client_mesh_key.unwrap();
-            server_mesh_key == client_mesh_key
+        if let (Some(a), Some(b)) = (self.mesh_key, client_mesh_key) {
+            return a == b;
         }
+        false
     }
 }
 
@@ -552,57 +546,6 @@ fn init_meta_cert<'a>(server_key: &PublicKey) -> Vec<u8> {
         .expect("fixed inputs")
         .serialize_der()
         .expect("fixed allocations")
-}
-
-async fn send_server_key<W: AsyncWrite + Unpin>(key: PublicKey, mut writer: W) -> Result<()> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(MAGIC.as_bytes());
-    buf.extend_from_slice(key.as_bytes());
-    let content = &[buf.as_slice()];
-    write_frame_timeout(
-        &mut writer,
-        FrameType::ServerKey,
-        content,
-        Some(Duration::from_secs(10)),
-    )
-    .await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-async fn send_server_info<W: AsyncWrite + Unpin>(
-    rate_limit: Option<(usize, usize)>,
-    mut writer: W,
-    secret_key: SecretKey,
-    client_key: PublicKey,
-) -> Result<()> {
-    let server_info = if let Some((bytes_per_second, bytes_burst)) = rate_limit {
-        ServerInfo {
-            version: PROTOCOL_VERSION,
-            token_bucket_bytes_per_second: bytes_per_second,
-            token_bucket_bytes_burst: bytes_burst,
-        }
-    } else {
-        ServerInfo {
-            version: PROTOCOL_VERSION,
-            token_bucket_bytes_per_second: 0,
-            token_bucket_bytes_burst: 0,
-        }
-    };
-    let mut buf = BytesMut::zeroed(ServerInfo::POSTCARD_MAX_SIZE);
-    let msg = postcard::to_slice(&server_info, &mut buf)?;
-    let msg = secret_key.seal_to(&client_key, msg);
-    let msg = &[msg.as_slice()];
-    write_frame(&mut writer, FrameType::ServerInfo, msg).await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-fn can_mesh(a: Option<MeshKey>, b: Option<MeshKey>) -> bool {
-    if let (Some(a), Some(b)) = (a, b) {
-        return a == b;
-    }
-    false
 }
 
 #[cfg(test)]

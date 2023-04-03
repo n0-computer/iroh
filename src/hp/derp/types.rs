@@ -51,11 +51,6 @@ impl RateLimiter {
 pub(crate) struct Packet {
     /// The sender of the packet
     pub(crate) src: PublicKey,
-    /// When a packet was put onto a queue before it was sent,
-    /// and is used for reporting metrics on the duration of packets
-    /// in the queue.
-    pub(crate) enqueued_at: Instant,
-
     /// The data packet bytes.
     pub(crate) bytes: Bytes,
 }
