@@ -2045,7 +2045,7 @@ checksum = "12b6ee2129af8d4fb011108c73d99a1b83a85977f23b82460c0ae2e25bb4b57f"
 
 [[package]]
 name = "iroh"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "abao",
  "anyhow",
