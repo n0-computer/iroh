@@ -1,4 +1,10 @@
 
+# [v0.4.1](https://github.com/n0-computer/iroh/compare/v0.4.0...v0.4.1) (2023-04-03)
+
+### Bug Fixes
+
+* Fix for error when transferring large files ([#920](https://github.com/n0-computer/iroh/issues/920))
+
 # [v0.4.0](https://github.com/n0-computer/iroh/compare/v0.3.0...v0.4.0) (2023-03-29)
 
 ### Bug Fixes
