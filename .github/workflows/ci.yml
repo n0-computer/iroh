@@ -225,7 +225,7 @@ jobs:
       run: cargo clippy --message-format=json --all-features --all-targets
 
   msrv:
-    name: Minimal Supported Rust Version
+    name: Minimal Supported Rust Version (library use only)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
@@ -236,6 +236,17 @@ jobs:
     - name: Check MSRV all features
       run: |
         cargo +$MSRV check --workspace --all-targets --no-default-features
+
+  minimal_crate_versions:
+    name: Minimal Crate Versions (library use only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Cargo check (minimal crate versions)
+        run: |
+          rm Cargo.lock
+          cargo +nightly check -Z minimal-versions --workspace --all-targets --no-default-features
 
   cargo_deny:
     name: cargo deny
