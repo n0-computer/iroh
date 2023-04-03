@@ -121,7 +121,7 @@ impl Report {
 }
 
 /// Generates a netcheck [`Report`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Client {
     /// Controls whether the client should not try
     /// to reach things other than localhost. This is set to true
@@ -135,6 +135,9 @@ pub struct Client {
     // Used for portmap queries.
     // If `None`, portmap discovery is not done.
     pub port_mapper: Option<portmapper::Client>,
+
+    pub get_stun_conn4: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
+    pub get_stun_conn6: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
 
     clock: Clock,
 
@@ -197,6 +200,8 @@ impl Default for Client {
             port_mapper: None,
             clock,
             got_hair_stun,
+            get_stun_conn4: None,
+            get_stun_conn6: None,
             reports: Arc::new(Mutex::new(Reports {
                 next_full: false,
                 prev: Default::default(),
@@ -465,10 +470,15 @@ impl Client {
             .await?;
 
         {
-            let u4 = net::UdpSocket::bind(self.udp_bind_addr_v4())
-                .await
-                .context("udp4: failed to bind")?;
-            let u4 = Arc::new(u4);
+            let u4 = if let Some(ref get_stun_conn4) = self.get_stun_conn4 {
+                get_stun_conn4()
+            } else {
+                let u4 = net::UdpSocket::bind(self.udp_bind_addr_v4())
+                    .await
+                    .context("udp4: failed to bind")?;
+                Arc::new(u4)
+            };
+
             rs.pc4 = Some(u4.clone());
             // TODO: track task
             let this = self.clone();
@@ -476,10 +486,15 @@ impl Client {
         }
 
         if if_state.have_v6 {
-            let u6 = net::UdpSocket::bind(self.udp_bind_addr_v6())
-                .await
-                .context("udp6: failed to bind")?;
-            let u6 = Arc::new(u6);
+            let u6 = if let Some(ref get_stun_conn6) = self.get_stun_conn6 {
+                get_stun_conn6()
+            } else {
+                let u6 = net::UdpSocket::bind(self.udp_bind_addr_v6())
+                    .await
+                    .context("udp6: failed to bind")?;
+                Arc::new(u6)
+            };
+
             rs.pc6 = Some(u6.clone());
             // TODO: track task
             let this = self.clone();

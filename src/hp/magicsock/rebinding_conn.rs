@@ -20,8 +20,10 @@ use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
+#[derive(Clone)]
 pub struct RebindingUdpConn {
-    pub(super) inner: Arc<RwLock<Inner>>,
+    pub(super) pconn: Arc<RwLock<UdpSocket>>,
+
     /// Used to aquire a read lock to inner in poll functions.
     /// Sad type
     /// - std::sync::Mutex -> lock in poll methods, as poll_recv does not take &mut self, but rather &self.
@@ -29,31 +31,53 @@ pub struct RebindingUdpConn {
     /// - Box -> unameable Future
     /// - Send + Sync -> so that this struct is still Send and Sync
     /// - OwnedRwLock{Read|Write}Guard -> need 'static lifetime for the guard
-    read_mutex: std::sync::Mutex<
-        Option<Pin<Box<dyn Future<Output = OwnedRwLockReadGuard<Inner>> + Send + Sync + 'static>>>,
+    read_mutex: Arc<
+        std::sync::Mutex<
+            Option<
+                Pin<
+                    Box<
+                        dyn Future<Output = OwnedRwLockReadGuard<UdpSocket>>
+                            + Send
+                            + Sync
+                            + 'static,
+                    >,
+                >,
+            >,
+        >,
     >,
-    write_mutex: std::sync::Mutex<
-        Option<Pin<Box<dyn Future<Output = OwnedRwLockWriteGuard<Inner>> + Send + Sync + 'static>>>,
+    write_mutex: Arc<
+        std::sync::Mutex<
+            Option<
+                Pin<
+                    Box<
+                        dyn Future<Output = OwnedRwLockWriteGuard<UdpSocket>>
+                            + Send
+                            + Sync
+                            + 'static,
+                    >,
+                >,
+            >,
+        >,
     >,
 }
 
 impl Debug for RebindingUdpConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RebindingUdpConn")
-            .field("inner", &self.inner)
+            .field("pconn", &self.pconn)
             .field("read_mutex", &"..")
             .field("write_mutex", &"..")
             .finish()
     }
 }
 
-#[derive(Debug)]
-pub(super) struct Inner {
-    pub(super) pconn: UdpSocket,
-    pub(super) port: u16,
-}
-
 impl RebindingUdpConn {
+    pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
+        let pconn = tokio::task::block_in_place(|| (self.pconn.blocking_read()));
+
+        pconn.io.clone()
+    }
+
     pub(super) async fn rebind(
         &self,
         port: u16,
@@ -66,9 +90,9 @@ impl RebindingUdpConn {
         }
 
         // Hold the lock the entire time, so that the close+bind is atomic.
-        let mut inner = self.inner.write().await;
+        let mut inner = self.pconn.write().await;
         let pconn = bind(Some(&mut inner), port, network, cur_port_fate).await?;
-        inner.set_conn(pconn, network);
+        *inner = pconn;
         Ok(())
     }
 
@@ -79,12 +103,17 @@ impl RebindingUdpConn {
     }
 
     pub async fn port(&self) -> u16 {
-        self.inner.read().await.port
+        self.pconn
+            .read()
+            .await
+            .local_addr()
+            .map(|p| p.port())
+            .unwrap_or_default()
     }
 
     pub async fn close(&self) -> Result<(), io::Error> {
-        let mut state = self.inner.write().await;
-        state.close()
+        // Nothing to do atm
+        Ok(())
     }
 
     pub fn poll_send(
@@ -97,12 +126,12 @@ impl RebindingUdpConn {
 
         if writemutex.is_none() {
             // Fast path, see if we can just grab the lock
-            if let Ok(ref mut guard) = self.inner.try_write() {
-                return guard.pconn.poll_send(state, cx, transmits);
+            if let Ok(ref mut pconn) = self.pconn.try_write() {
+                return pconn.poll_send(state, cx, transmits);
             }
 
             // Otherwise prepare a lock.
-            let fut = Box::pin(self.inner.clone().write_owned());
+            let fut = Box::pin(self.pconn.clone().write_owned());
             writemutex.replace(fut);
         }
 
@@ -114,7 +143,7 @@ impl RebindingUdpConn {
                 writemutex.replace(fut);
                 Poll::Pending
             }
-            Poll::Ready(mut guard) => guard.pconn.poll_send(state, cx, transmits),
+            Poll::Ready(mut pconn) => pconn.poll_send(state, cx, transmits),
         }
     }
 
@@ -128,12 +157,12 @@ impl RebindingUdpConn {
 
         if read_mutex.is_none() {
             // Fast path, see if we can just grab the lock
-            if let Ok(ref mut guard) = self.inner.try_read() {
-                return guard.pconn.poll_recv(cx, bufs, meta);
+            if let Ok(ref mut pconn) = self.pconn.try_read() {
+                return pconn.poll_recv(cx, bufs, meta);
             }
 
             // Otherwise prepare a lock.
-            let fut = Box::pin(self.inner.clone().read_owned());
+            let fut = Box::pin(self.pconn.clone().read_owned());
             read_mutex.replace(fut);
         }
 
@@ -144,58 +173,32 @@ impl RebindingUdpConn {
                 read_mutex.replace(fut);
                 return Poll::Pending;
             }
-            Poll::Ready(guard) => guard.pconn.poll_recv(cx, bufs, meta),
+            Poll::Ready(pconn) => pconn.poll_recv(cx, bufs, meta),
         }
     }
 
     pub async fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addr = self.inner.read().await.local_addr()?;
+        let addr = self.pconn.read().await.local_addr()?;
         Ok(addr)
     }
 
     pub fn local_addr_blocking(&self) -> io::Result<SocketAddr> {
-        let addr = tokio::task::block_in_place(|| self.inner.blocking_read()).local_addr()?;
+        let addr = tokio::task::block_in_place(|| self.pconn.blocking_read()).local_addr()?;
         Ok(addr)
     }
 
     pub(super) fn from_socket(pconn: UdpSocket) -> Self {
-        let port = pconn.local_addr().map(|a| a.port()).unwrap_or_default();
         RebindingUdpConn {
-            inner: Arc::new(RwLock::new(Inner { pconn, port })),
+            pconn: Arc::new(RwLock::new(pconn)),
             read_mutex: Default::default(),
             write_mutex: Default::default(),
         }
     }
 }
 
-impl Inner {
-    /// Sets the provided nettype.PacketConn. It should be called only
-    /// after acquiring RebindingUDPConn.mu. It upgrades the provided
-    /// nettype.PacketConn to a udpConnWithBatchOps when appropriate. This upgrade
-    /// is intentionally pushed closest to where read/write ops occur in order to
-    /// avoid disrupting surrounding code that assumes nettype.PacketConn is a *net.UDPConn.
-    pub fn set_conn(&mut self, p: UdpSocket, _network: Network) {
-        // upc := upgradePacketConn(p, network)
-        let port = p.local_addr().expect("missing addr").port();
-        self.pconn = p;
-        self.port = port;
-    }
-
-    pub fn close(&mut self) -> Result<(), io::Error> {
-        self.port = 0;
-        // pconn.close() is not available, so we just drop for now
-        // TODO: make sure the recv loops get shutdown
-        Ok(())
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.pconn.local_addr()
-    }
-}
-
 #[derive(Debug)]
 pub(super) struct UdpSocket {
-    io: tokio::net::UdpSocket,
+    io: Arc<tokio::net::UdpSocket>,
     inner: quinn_udp::UdpSocketState,
 }
 
@@ -203,7 +206,7 @@ impl UdpSocket {
     pub fn from_std(sock: std::net::UdpSocket) -> io::Result<Self> {
         quinn_udp::UdpSocketState::configure((&sock).into())?;
         Ok(UdpSocket {
-            io: tokio::net::UdpSocket::from_std(sock)?,
+            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
             inner: quinn_udp::UdpSocketState::new(),
         })
     }
@@ -285,7 +288,7 @@ impl AsyncUdpSocket for UdpSocket {
 }
 
 async fn bind(
-    mut inner: Option<&mut Inner>,
+    mut inner: Option<&mut UdpSocket>,
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
@@ -317,10 +320,8 @@ async fn bind(
 
     for port in &ports {
         // Close the existing conn, in case it is sitting on the port we want.
-        if let Some(ref mut inner) = inner {
-            if let Err(err) = inner.close() {
-                info!("bind_socket {:?} close failed: {:?}", network, err);
-            }
+        if let Some(ref mut _inner) = inner {
+            // TODO: inner.close()
         }
         // Open a new one with the desired port.
         match listen_packet(network, *port).await {
