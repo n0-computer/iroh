@@ -12,6 +12,8 @@ use std::{collections::HashMap, net::IpAddr};
 mod bsd;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use default_net::ip::{Ipv4Net, Ipv6Net};
 
@@ -325,9 +327,27 @@ impl DefaultRouteDetails {
     pub async fn new() -> Option<Self> {
         linux::default_route().await
     }
+
+    #[cfg(target_os = "windows")]
+    pub async fn new() -> Option<Self> {
+        windows::default_route().await
+    }
 }
 
 /// Like `DefaultRoutDetails::new` but only returns the interface name.
 pub async fn default_route_interface() -> Option<String> {
     DefaultRouteDetails::new().await.map(|v| v.interface_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_default_route() {
+        let default_route = DefaultRouteDetails::new()
+            .await
+            .expect("missing default route");
+        println!("default_route: {:#?}", default_route);
+    }
 }
