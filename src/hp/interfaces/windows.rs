@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
+use tracing::warn;
 use wmi::{query::FilterValue, COMLibrary, WMIConnection};
 
 use super::DefaultRouteDetails;
@@ -14,20 +15,34 @@ struct Win32_IP4RouteTable {
     Description: String,
 }
 
-pub async fn default_route() -> Option<DefaultRouteDetails> {
+fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
     let com_con = COMLibrary::new()?;
     let wmi_con = WMIConnection::new(com_con.into())?;
 
     let query: HashMap<_, _> = [("Destination".into(), FilterValue::Str("0.0.0.0"))].into();
-    let route: Win32_IP4RouteTable = wmi_con.filtered_query(&query)?.drain(..).next()?;
+    let route: Win32_IP4RouteTable = wmi_con
+        .filtered_query(&query)?
+        .drain(..)
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no route found"))?;
 
     println!("{:#?}", route);
 
-    let idx = route.InterfaceIndex.try_into().ok()?;
+    let idx = route.InterfaceIndex.try_into()?;
 
-    Some(DefaultRouteDetails {
+    Ok(DefaultRouteDetails {
         interface_index: idx,
         interface_name: route.Name,
         interface_description: Some(route.Description),
     })
+}
+
+pub async fn default_route() -> Option<DefaultRouteDetails> {
+    match get_default_route() {
+        Ok(route) => Some(route),
+        Err(err) => {
+            warn!("failed to retrieve deafult route: {:#?}", err);
+            None
+        }
+    }
 }
