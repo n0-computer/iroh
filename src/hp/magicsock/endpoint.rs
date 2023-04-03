@@ -22,7 +22,6 @@ use crate::{
         cfg::{self, DERP_MAGIC_IP},
         disco, key, stun,
     },
-    measure,
     net::is_unicast_link_local,
 };
 
@@ -82,7 +81,6 @@ impl Deref for Endpoint {
 
 pub struct InnerEndpoint {
     pub num_stop_and_reset_atomic: AtomicU64,
-
     pub c: Conn,
     /// Peer public key (for WireGuard + DERP)
     pub public_key: key::node::PublicKey,
@@ -240,7 +238,7 @@ impl Endpoint {
 
     #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn ping_timeout(&self, txid: stun::TransactionId) {
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
 
         if let Some(sp) = state.sent_ping.remove(&txid) {
             if !state.is_best_addr_valid(Instant::now()) {
@@ -255,7 +253,7 @@ impl Endpoint {
     /// Called by a timer when a ping either fails to send or has taken too long to get a pong reply.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn forget_ping(&self, tx_id: stun::TransactionId) {
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
 
         if let Some(sp) = state.sent_ping.remove(&tx_id) {
             sp.timer.stop().await;
@@ -399,7 +397,7 @@ impl Endpoint {
 
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn update_from_node(&self, n: &cfg::Node) {
-        let mut state = &mut *measure!("state lock", self.state.lock().await);
+        let mut state = &mut *self.state.lock().await;
         state.expired = n.expired;
 
         if state.disco_key != n.disco_key {
@@ -443,9 +441,7 @@ impl Endpoint {
         });
     }
 
-    /// Clears all the endpoint's p2p state, reverting it to a
-    /// DERP-only endpoint. It does not stop the endpoint's heartbeat
-    /// timer, if one is running.
+    /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     async fn reset(&self, state: &mut InnerMutEndpoint) {
         state.last_full_ping = None;
@@ -471,10 +467,7 @@ impl Endpoint {
         ep: SocketAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        let state = &mut *measure!(
-            "state lock",
-            tokio::task::block_in_place(|| self.state.blocking_lock())
-        );
+        let state = &mut *tokio::task::block_in_place(|| self.state.blocking_lock());
 
         if let Some(st) = state.endpoint_state.get_mut(&ep) {
             let duplicate_ping = for_rx_ping_tx_id == st.last_got_ping_tx_id;
@@ -530,14 +523,14 @@ impl Endpoint {
     /// assumptions about which paths work.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn note_connectivity_change(&self) {
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
         state.trust_best_addr_until = None;
     }
 
     /// Note that we have a potential best addr.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn maybe_add_best_addr(&self, addr: SocketAddr) {
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
         if state.best_addr.is_none() {
             state.best_addr = Some(AddrLatency {
                 addr,
@@ -561,10 +554,8 @@ impl Endpoint {
         di: &mut DiscoInfo,
         src: SocketAddr,
     ) -> bool {
-        let mut state = measure!(
-            "state lock",
-            tokio::task::block_in_place(|| self.state.blocking_lock())
-        );
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
         info!(
@@ -669,7 +660,7 @@ impl Endpoint {
     /// open. Now we can Ping back and make it through.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub async fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
-        let state = &mut *measure!("state lock", self.state.lock().await);
+        let state = &mut *self.state.lock().await;
 
         let now = Instant::now();
         for el in state.is_call_me_maybe_ep.values_mut() {
@@ -734,7 +725,7 @@ impl Endpoint {
     pub async fn stop_and_reset(&self) {
         self.num_stop_and_reset_atomic
             .fetch_add(1, Ordering::Relaxed);
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
 
         if !self.c.is_closing() {
             info!("doing cleanup for discovery key {:?}", state.disco_key);
@@ -756,10 +747,8 @@ impl Endpoint {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let mut state = measure!(
-            "blocking_lock",
-            tokio::task::block_in_place(|| self.state.blocking_lock())
-        );
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+
         if state.expired {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::Other,

@@ -33,7 +33,6 @@ use crate::{
         magicsock::SESSION_ACTIVE_TIMEOUT,
         monitor, netcheck, netmap, portmapper, stun,
     },
-    measure,
     net::LocalAddresses,
 };
 
@@ -149,15 +148,10 @@ pub struct Inner {
     // connCtx:       context.Context, // closed on Conn.Close
     // connCtxCancel: func(),          // closes connCtx
 
-    // The underlying UDP sockets used to send/rcv packets for wireguard and other magicsock protocols.
+    // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
 
-    // TODO:
-    // closeDisco4 and closeDisco6 are io.Closers to shut down the raw
-    // disco packet receivers. If None, no raw disco receiver is running for the given family.
-    close_disco4: Option<()>, // io.Closer
-    close_disco6: Option<()>, // io.Closer
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
 
@@ -175,25 +169,19 @@ pub struct Inner {
         flume::Receiver<DerpReadResult>,
     ),
 
-    // owned by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
+    // Used by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
     socket_endpoint4: SocketEndpointCache,
     socket_endpoint6: SocketEndpointCache,
 
-    // ============================================================
-    // Fields that must be accessed via atomic load/stores.
     /// Whether IPv4 UDP is known to be unable to transmit
     /// at all. This could happen if the socket is in an invalid state
     /// (as can happen on darwin after a network link status change).
     no_v4_send: AtomicBool,
 
-    /// Whether the network is up (some interface is up
-    /// with IPv4 or IPv6). It's used to suppress log spam and prevent new connection that'll fail.
-    network_up: AtomicBool,
-
     pub(super) public_key: key::node::PublicKey,
     last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
 
-    /// Preferred port from opts.Port; 0 means auto.
+    /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
 
     state: Mutex<ConnState>,
@@ -204,7 +192,7 @@ pub struct Inner {
     /// Tracked outside to avoid deadlock issues (replaces atomic acess from go)
     derp_map: RwLock<Option<DerpMap>>,
 
-    /// Tracks the networkmap Node entity for each peer discovery key.
+    /// Tracks the networkmap node entity for each peer discovery key.
     pub(super) peer_map: RwLock<PeerMap>,
 }
 
@@ -385,7 +373,6 @@ impl Conn {
             idle_for,
             on_net_info,
             link_monitor,
-            network_up: AtomicBool::new(true), // assume up until told otherwise
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
@@ -398,8 +385,6 @@ impl Conn {
             socket_endpoint6: SocketEndpointCache::default(),
             on_stun_receive: Default::default(),
             state: ConnState::new(private_key).into(),
-            close_disco4: None,
-            close_disco6: None,
             closing: AtomicBool::new(false),
             derp_recv_ch,
             derp_map: Default::default(),
@@ -556,7 +541,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     async fn update_net_info(&self) -> Result<Arc<netcheck::Report>> {
         let dm = self.derp_map.read().await.clone();
-        if dm.is_none() || self.network_down() {
+        if dm.is_none() {
             return Ok(Default::default());
         }
 
@@ -930,10 +915,6 @@ impl Conn {
         self.pconn4.port().await
     }
 
-    fn network_down(&self) -> bool {
-        !self.network_up.load(Ordering::Relaxed)
-    }
-
     /// Sends packet b to addr, which is either a real UDP address
     /// or a fake UDP address representing a DERP server (see derpmap).
     /// The provided public key identifies the recipient.
@@ -1030,9 +1011,6 @@ impl Conn {
         peer: Option<&key::node::PublicKey>,
     ) -> Option<flume::Sender<DerpWriteRequest>> {
         if addr.ip() != DERP_MAGIC_IP {
-            return None;
-        }
-        if self.network_down() {
             return None;
         }
         let region_id = usize::from(addr.port());
@@ -1243,11 +1221,6 @@ impl Conn {
                         derp::http::ClientError::Closed => return,
                         _ => {}
                     }
-                    if self.network_down() {
-                        info!("derp.recv(derp-{}): network down, closing", region_id);
-                        return;
-                    }
-
                     if *cancel.borrow() {
                         return;
                     }
@@ -1526,7 +1499,7 @@ impl Conn {
             time::sleep(Duration::from_millis(10)).await;
         }
 
-        let mut state = measure!("state lock", self.state.lock().await);
+        let mut state = self.state.lock().await;
         if state.closed {
             bail!("connection closed");
         }
@@ -1590,9 +1563,7 @@ impl Conn {
                 Ok(true)
             }
             Err(err) => {
-                if !self.network_down() {
-                    warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
-                }
+                warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
                 Err(err.into())
             }
         }
@@ -1623,10 +1594,7 @@ impl Conn {
 
         let (source, sealed_box) = source.unwrap();
 
-        let mut state = measure!(
-            "state blocking_lock",
-            tokio::task::block_in_place(|| self.state.blocking_lock())
-        );
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
         if state.closed {
             return true;
         }
@@ -2006,24 +1974,6 @@ impl Conn {
                 }
             });
         })
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub async fn set_network_up(&self, up: bool) {
-        let mut state = self.state.lock().await;
-        if self.network_up.load(Ordering::Relaxed) == up {
-            return;
-        }
-
-        info!("magicsock: set_network_up({})", up);
-        self.network_up.store(up, Ordering::Relaxed);
-
-        if up {
-            self.start_derp_home_connect(&mut state);
-        } else {
-            self.port_mapper.note_network_down();
-            self.close_all_derp(&mut state, "network-down");
-        }
     }
 
     /// Sets the connection's preferred local port.
@@ -2474,9 +2424,6 @@ impl Conn {
 
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn should_do_periodic_re_stun(&self, state: &mut ConnState) -> bool {
-        if self.network_down() {
-            return false;
-        }
         if state.peer_set.is_empty() {
             // If no peers, not worth doing.
             return false;
@@ -3566,6 +3513,7 @@ mod tests {
                             .await
                             .with_context(|| format!("[{}] finishing", b_name))?;
                         println!("[{}] finished", b_name);
+
                         return Ok::<_, anyhow::Error>(val);
                     }
                     bail!("no connections available anymore");
@@ -3621,17 +3569,17 @@ mod tests {
 
         for i in 0..10 {
             println!("-- round {}", i + 1);
-            roundtrip!(m1, m2, b"hello");
-            // roundtrip!(m2, m1, b"hello");
+            roundtrip!(m1, m2, b"hello m1");
+            roundtrip!(m2, m1, b"hello m2");
         }
 
-        // println!("-- larger data");
-        // {
-        //     let mut data = vec![0u8; 10 * 1024];
-        //     rand::thread_rng().fill_bytes(&mut data);
-        //     roundtrip!(m1, m2, data);
-        //     roundtrip!(m2, m1, data);
-        // }
+        println!("-- larger data");
+        {
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
+        }
 
         println!("cleaning up");
         cleanup();

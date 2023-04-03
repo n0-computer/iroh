@@ -157,15 +157,3 @@ pub enum DiscoPingPurpose {
 // 	metricRecvDiscoPacketIPv4 = clientmetric.NewCounter("magicsock_disco_recv_bpf_ipv4")
 // 	metricRecvDiscoPacketIPv6 = clientmetric.NewCounter("magicsock_disco_recv_bpf_ipv6")
 // )
-
-// TODO: better place
-
-#[macro_export]
-macro_rules! measure {
-    ($name:expr, $block:expr) => {{
-        let start = Instant::now();
-        let res = $block;
-        tracing::info!("{} took {}ms", $name, start.elapsed().as_millis());
-        res
-    }};
-}
