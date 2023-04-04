@@ -61,6 +61,7 @@ pub trait HistogramType {
 }
 
 /// Definition of the base metrics collection interfaces.
+///
 /// Instances imlementing the MetricsRecorder are expected to have a defined mapping between
 /// types for the respective modules.
 pub trait MetricsRecorder {
@@ -88,7 +89,7 @@ pub trait MObserver {
     fn observe(&self, value: f64);
 }
 
-// used as an internal wrapper to record metrics only if the core is enabled
+// Internal wrapper to record metrics only if the core is enabled
 #[allow(unreachable_patterns)]
 pub(crate) fn record<M>(c: Collector, m: M, v: u64)
 where
@@ -102,7 +103,7 @@ where
     }
 }
 
-// used as an internal wrapper to observe metrics only if the core is enabled
+// Internal wrapper to observe metrics only if the core is enabled
 #[allow(unreachable_patterns, dead_code)]
 pub(crate) fn observe<M>(c: Collector, m: M, v: f64)
 where

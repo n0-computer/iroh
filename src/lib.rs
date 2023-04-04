@@ -18,9 +18,6 @@ mod util;
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::Hash;
 
-#[macro_use]
-extern crate lazy_static;
-
 use bao_tree::BlockSize;
 
 pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {

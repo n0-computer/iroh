@@ -5,6 +5,7 @@
 //! Starting the metrics service will expose the metrics on a OpenMetrics http endpoint.
 //!
 //! To enable metrics collection, call `init_metrics()` before starting the service.
+//!
 //! To record a metric, use the `record!` macro with the metric and the value to record.
 //! To increment a metric by 1, use the `inc!` macro with the metric.
 //! To observe a metric, use the `observe!` macro with the metric and the value to observe.
