@@ -10,7 +10,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek, Write},
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     result,
     str::FromStr,
 };
@@ -239,23 +239,13 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(parts.join("/"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash() {
-        let data = b"hello world";
-        let hash = Hash::new(data);
-
-        let encoded = hash.to_string();
-        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+/// Create a pathbuf from a name.
+pub fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
     }
-
-    #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
-    }
+    path
 }
 
 pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
@@ -319,5 +309,24 @@ impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
             progress.send(msg).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash() {
+        let data = b"hello world";
+        let hash = Hash::new(data);
+
+        let encoded = hash.to_string();
+        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
     }
 }

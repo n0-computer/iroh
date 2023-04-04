@@ -794,7 +794,7 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
         progress!("{} Requesting ...", style("[2/3]").bold().dim());
         Ok(())
     };
-    let on_collection = |collection: &iroh::blobs::Collection| {
+    let on_collection = |_data, collection: &iroh::blobs::Collection| {
         let pb = &pb;
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
@@ -827,33 +827,38 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
                 tokio::fs::create_dir_all(outpath)
                     .await
                     .context("Unable to create directory {outpath}")?;
-                let dirpath = std::path::PathBuf::from(outpath);
-                let filepath = dirpath.join(name);
+                let final_path = outpath.join(name);
+                let tempdir = outpath.join(".iroh-tmp");
+                tokio::fs::create_dir_all(&tempdir)
+                    .await
+                    .context("Unable to create directory {tempdir}")?;
 
-                // Create temp file
-                let (temp_file, dup) = tokio::task::spawn_blocking(|| {
-                    let temp_file = tempfile::Builder::new()
-                        .prefix("iroh-tmp-")
-                        .tempfile_in(dirpath)
-                        .context("Failed to create temporary output file")?;
-                    let dup = temp_file.as_file().try_clone()?;
-                    Ok::<_, anyhow::Error>((temp_file, dup))
-                })
-                .await??;
-
-                let file = tokio::fs::File::from_std(dup);
-                reader.write_all(&mut pb.wrap_async_write(file)).await?;
-
+                let tempname = blake3::Hash::from(hash).to_hex();
+                let data_path = tempdir.join(format!("{}.data", tempname));
+                // let outboard_path = tempdir.join(format!("{}.outboard", tempname));
+                let mut data_file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&data_path)
+                    .await?;
+                // let outboard_file = tokio::fs::OpenOptions::new()
+                //     .write(true)
+                //     .create(true)
+                //     .open(outboard_path)
+                //     .await?;
+                reader
+                    .write_all(&mut pb.wrap_async_write(&mut data_file))
+                    .await?;
+                tokio::fs::create_dir_all(
+                    final_path
+                        .parent()
+                        .context("final path should have parent")?,
+                )
+                .await?;
+                data_file.flush().await?;
+                drop(data_file);
                 // Rename temp file, to target name
-                let filepath2 = filepath.clone();
-                if let Some(parent) = filepath2.parent() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .context("Unable to create directory {parent}")?;
-                }
-                tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
-                    .await?
-                    .context("Failed to write output file")?;
+                tokio::fs::rename(data_path, final_path).await?;
             } else {
                 // Write to OUT_WRITER
                 let mut stdout = tokio::io::stdout();

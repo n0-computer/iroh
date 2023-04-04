@@ -152,7 +152,7 @@ mod tests {
                 token,
                 opts,
                 || async { Ok(()) },
-                |_collection| async { Ok(()) },
+                |_data, _collection| async { Ok(()) },
                 |got_hash, mut reader, got_name| async move {
                     assert_eq!(file_hash, got_hash);
                     let mut got = Vec::new();
@@ -277,7 +277,7 @@ mod tests {
             provider.auth_token(),
             opts,
             || async { Ok(()) },
-            |collection| {
+            |_data, collection| {
                 assert_eq!(collection.blobs().len(), num_blobs);
                 async { Ok(()) }
             },
@@ -397,7 +397,7 @@ mod tests {
                 keylog: true,
             },
             || async move { Ok(()) },
-            |_collection| async move { Ok(()) },
+            |_data, _collection| async move { Ok(()) },
             |_hash, mut stream, _name| async move {
                 stream.drain().await?;
                 Ok(stream)
@@ -446,7 +446,7 @@ mod tests {
                     keylog: true,
                 },
                 || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
+                |_data, _collection| async move { Ok(()) },
                 |_hash, stream, _name| async move {
                     // evil: do nothing with the stream!
                     Ok(stream)
@@ -493,7 +493,7 @@ mod tests {
                     keylog: true,
                 },
                 || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
+                |_data, _collection| async move { Ok(()) },
                 |_hash, mut stream, _name| async move {
                     stream.drain().await?;
                     Ok(stream)
@@ -528,7 +528,7 @@ mod tests {
                     on_connected = true;
                     async { Ok(()) }
                 },
-                |_| {
+                |_, _| {
                     on_collection = true;
                     async { Ok(()) }
                 },

@@ -1,5 +1,5 @@
 use bao_tree::ChunkNum;
-use range_collections::RangeSet2;
+use range_collections::{RangeSet2, RangeSetRef};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
@@ -22,6 +22,20 @@ use smallvec::{smallvec, SmallVec};
 pub(crate) struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
+    pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
+        let ranges = ranges.as_ref().boundaries();
+        let mut res = SmallVec::new();
+        if let Some((start, rest)) = ranges.split_first() {
+            let mut prev = start.0;
+            res.push(prev);
+            for v in rest {
+                res.push(v.0 - prev);
+                prev = v.0;
+            }
+        }
+        Self(res)
+    }
+
     pub fn empty() -> Self {
         Self(SmallVec::new())
     }
@@ -94,9 +108,34 @@ impl RequestRangeSpec {
     /// default is what to use if the children of this RequestRangeSpec are empty.
     pub fn iter<'a>(&'a self, default: &'a RangeSpec) -> RequestRangeSpecIter<'a> {
         RequestRangeSpecIter {
-            count: 0,
-            value: default,
+            current: default,
+            count: None,
             remaining: &self.children,
+        }
+    }
+
+    pub fn new(
+        blob: RangeSet2<ChunkNum>,
+        children: impl IntoIterator<Item = RangeSet2<ChunkNum>>,
+    ) -> Self {
+        let mut prev = RangeSet2::empty();
+        let mut count = 0;
+        let mut res = SmallVec::new();
+        for v in children
+            .into_iter()
+            .chain(std::iter::once(RangeSet2::empty()))
+        {
+            if v == prev {
+                count += 1;
+            } else {
+                res.push((count, RangeSpec::new(&v)));
+                prev = v;
+                count = 1;
+            }
+        }
+        Self {
+            blob: RangeSpec::new(blob),
+            children: res,
         }
     }
 }
@@ -105,10 +144,9 @@ impl RequestRangeSpec {
 ///
 /// default is what to use if the children of this RequestRangeSpec are empty.
 pub(crate) struct RequestRangeSpecIter<'a> {
-    /// number of times we emit the current value
-    count: u64,
-    /// the current value
-    value: &'a RangeSpec,
+    current: &'a RangeSpec,
+    //
+    count: Option<u64>,
     /// remaining ranges
     remaining: &'a [(u64, RangeSpec)],
 }
@@ -118,17 +156,82 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.count > 0 {
-                self.count -= 1;
-                break;
-            } else if let Some(((count, value), rest)) = self.remaining.split_first() {
-                self.count = *count;
-                self.value = value;
-                self.remaining = rest;
+            if let Some(count) = &mut self.count {
+                if *count > 0 {
+                    *count -= 1;
+                    return Some(self.current);
+                } else {
+                    if let Some(((_, new), rest)) = self.remaining.split_first() {
+                        self.current = new;
+                        self.remaining = rest;
+                    }
+                    self.count = None;
+                }
+            } else if self.remaining.is_empty() {
+                return Some(self.current);
             } else {
-                break;
+                self.count = Some(self.remaining[0].0);
             }
         }
-        Some(self.value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Range;
+
+    use super::*;
+    use bao_tree::ChunkNum;
+    use proptest::prelude::*;
+    use range_collections::RangeSet2;
+
+    fn ranges(value_range: Range<u64>) -> impl Strategy<Value = RangeSet2<ChunkNum>> {
+        prop::collection::vec((value_range.clone(), value_range), 0..16).prop_map(|v| {
+            let mut res = RangeSet2::empty();
+            for (a, b) in v {
+                let start = a.min(b) as u64;
+                let end = a.max(b) as u64;
+                res |= RangeSet2::from(ChunkNum(start)..ChunkNum(end));
+            }
+            res
+        })
+    }
+
+    fn request_range_spec_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
+        let spec = RequestRangeSpec::new(RangeSet2::empty(), ranges.iter().cloned());
+        println!("{:?} {:?}", ranges, spec);
+        spec.iter(&RangeSpec::empty())
+            .map(|x| x.to_chunk_ranges())
+            .take(ranges.len())
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn request_range_spec_roundtrip_cases() {
+        for case in [vec![0..1, 0..0]] {
+            let case = case
+                .iter()
+                .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
+                .collect::<Vec<_>>();
+            let expected = case.clone();
+            let actual = request_range_spec_impl(&case);
+            assert_eq!(expected, actual);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn range_spec_roundtrip(ranges in ranges(0..1000)) {
+            let spec = RangeSpec::new(&ranges);
+            let ranges2 = spec.to_chunk_ranges();
+            prop_assert_eq!(ranges, ranges2);
+        }
+
+        #[test]
+        fn request_range_spec_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
+            let expected = ranges.clone();
+            let actual = request_range_spec_impl(&ranges);
+            prop_assert_eq!(expected, actual);
+        }
     }
 }

@@ -4,13 +4,14 @@
 //! be invoked when blobs or collections are received. It is up to the caller
 //! to store the received data.
 use std::fmt::Debug;
-use std::io::SeekFrom;
+use std::io::{self, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::blobs::Collection;
+use crate::blobs::{Blob, Collection};
 use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, RangeSpec, Request,
     RequestRangeSpec, Res, Response,
@@ -18,13 +19,14 @@ use crate::protocol::{
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
+use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::tokio::DecodeResponseStream;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::{ByteNum, ChunkNum};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use default_net::Interface;
 use futures::stream::FusedStream;
 use futures::{Future, Stream, StreamExt};
@@ -182,16 +184,6 @@ impl FusedStream for DataStream {
     }
 }
 
-// impl AsyncRead for DataStream {
-//     fn poll_read(
-//         mut self: std::pin::Pin<&mut Self>,
-//         cx: &mut std::task::Context<'_>,
-//         buf: &mut ReadBuf,
-//     ) -> std::task::Poll<std::io::Result<()>> {
-//         std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
-//     }
-// }
-
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
     ticket: &Ticket,
@@ -204,7 +196,7 @@ pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnOnce(&Collection) -> FutB,
+    B: FnOnce(Bytes, &Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
@@ -280,6 +272,66 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
     false
 }
 
+struct FilePaths {
+    target: PathBuf,
+    temp: PathBuf,
+    outboard: PathBuf,
+}
+
+impl FilePaths {
+    fn new(entry: &Blob, tempdir: impl AsRef<Path>, target_dir: impl AsRef<Path>) -> Self {
+        let target = target_dir.as_ref().join(pathbuf_from_name(&entry.name));
+        let hash = blake3::Hash::from(entry.hash).to_hex();
+        let temp = tempdir.as_ref().join(format!("{}.data", hash));
+        let outboard = tempdir.as_ref().join(format!("{}.outboard", hash));
+        Self {
+            target,
+            temp,
+            outboard,
+        }
+    }
+
+    fn is_final(&self) -> bool {
+        self.target.exists()
+    }
+
+    fn is_incomplete(&self) -> bool {
+        self.temp.exists() && self.outboard.exists()
+    }
+}
+
+fn get_range_spec(
+    collection: &Collection,
+    path: PathBuf,
+    temp: PathBuf,
+) -> io::Result<RequestRangeSpec> {
+    let ranges = collection
+        .blobs()
+        .iter()
+        .map(|blob| {
+            let paths = FilePaths::new(blob, &temp, &path);
+            io::Result::Ok(if paths.is_final() {
+                // we assume that the file is correct
+                RangeSet2::empty()
+            } else if paths.is_incomplete() {
+                // we got incomplete data
+                let outboard = std::fs::read(&paths.outboard)?;
+                let outboard = bao_tree::outboard::PreOrderMemOutboardRef::new(
+                    blob.hash.into(),
+                    IROH_BLOCK_SIZE,
+                    &outboard,
+                );
+                let valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                RangeSet2::all().difference(&valid)
+            } else {
+                // we don't know anything about this file, so we assume it's missing
+                RangeSet2::all()
+            })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    Ok(RequestRangeSpec::new(RangeSet2::empty(), ranges))
+}
+
 /// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: Hash,
@@ -292,7 +344,7 @@ pub async fn run<A, B, C, FutA, FutB, FutC>(
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnOnce(&Collection) -> FutB,
+    B: FnOnce(Bytes, &Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
@@ -327,7 +379,7 @@ async fn run_connection<A, B, C, FutA, FutB, FutC>(
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnOnce(&Collection) -> FutB,
+    B: FnOnce(Bytes, &Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
@@ -350,12 +402,7 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let req = Request {
-            name: hash,
-            ranges: RequestRangeSpec::all(),
-        };
-
-        let serialized = postcard::to_stdvec(&req)?;
+        let serialized = postcard::to_stdvec(&request)?;
         write_lp(&mut writer, &serialized).await?;
     }
     writer.finish().await?;
@@ -367,23 +414,22 @@ where
         let mut in_buffer = BytesMut::with_capacity(1024);
 
         // track total amount of blob data transferred
-        let mut data_len = 0;
+        let data_len = 0;
         // read next message
         match read_lp(&mut reader, &mut in_buffer).await? {
             Some(response_buffer) => {
                 let response: Response = postcard::from_bytes(&response_buffer)?;
                 match response.data {
                     // server is sending over a collection of blobs
-                    Res::FoundCollection { total_blobs_size } => {
-                        data_len = total_blobs_size;
-
+                    Res::FoundCollection { .. } => {
                         // read entire collection data into buffer
-                        let data =
-                            read_bao_encoded(&mut reader, hash, &request.ranges.blob).await?;
+                        let data: Bytes = read_bao_encoded(&mut reader, hash, &request.ranges.blob)
+                            .await?
+                            .into();
 
                         // decode the collection
                         let collection = Collection::from_bytes(&data)?;
-                        on_collection(&collection).await?;
+                        on_collection(data.clone(), &collection).await?;
 
                         // expect to get blob data in the order they appear in the collection
                         let default = RangeSpec::empty();
