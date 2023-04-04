@@ -1,19 +1,23 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
+use bao_tree::io::{error::EncodeError, sync::encode_ranges_validated};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
+use range_collections::RangeSet2;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
-    io::{self, BufReader, Read, Seek},
+    io::{self, Read, Seek, Write},
     path::{Component, Path},
     result,
     str::FromStr,
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
+
+use crate::IROH_BLOCK_SIZE;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
 pub fn encode(buf: impl AsRef<[u8]>) -> String {
@@ -163,48 +167,50 @@ pub type RpcResult<T> = result::Result<T, RpcError>;
 #[derive(Debug, Display, Error)]
 pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
-    IoError(io::Error),
-    // /// The hash of the data does not match the hash of the outboard.
-    // HashMismatch,
-    // /// The size of the data does not match the size of the outboard.
-    // SizeMismatch,
-}
-
-impl From<io::Error> for BaoValidationError {
-    fn from(e: io::Error) -> Self {
-        BaoValidationError::IoError(e)
-    }
+    IoError(#[from] io::Error),
+    /// The data failed to validate
+    EncodeError(#[from] EncodeError),
 }
 
 /// Validate that the data matches the outboard.
-pub(crate) fn validate_bao(
+pub(crate) fn validate_bao<F: Fn(u64)>(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
-    progress: impl Fn(u64),
+    progress: F,
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
-    let outboard_reader = io::Cursor::new(outboard);
-    let progress_reader = ProgressReader::new(data_reader, |p| {
-        if let ProgressReaderUpdate::Progress(x) = p {
-            progress(x)
-        }
-    });
-    let buffered_reader = BufReader::with_capacity(1024 * 1024, progress_reader);
-    let mut decoder = abao::decode::Decoder::new_outboard(buffered_reader, outboard_reader, &hash);
-    // todo: expose chunk group size in abao, so people can allocate good sized buffers
-    let mut buffer = vec![0u8; 1024 * 16 + 4096];
-    loop {
-        match decoder.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(err) => {
-                // todo: figure out exactly what went wrong
-                return Err(BaoValidationError::IoError(err));
-            }
-        }
-    }
+    let outboard =
+        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard);
+
+    // do not wrap the data_reader in a BufReader, that is slow wnen seeking
+    encode_ranges_validated(
+        data_reader,
+        outboard,
+        &RangeSet2::all(),
+        DevNull(0, progress),
+    )?;
     Ok(())
+}
+
+/// little util that discards data but prints progress every 1MB
+struct DevNull<F>(u64, F);
+
+impl<F: Fn(u64)> Write for DevNull<F> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        const NOTIFY_EVERY: u64 = 1024 * 1024;
+        let prev = self.0;
+        let curr = prev + buf.len() as u64;
+        if prev % NOTIFY_EVERY != curr % NOTIFY_EVERY {
+            (self.1)(curr);
+        }
+        self.0 = curr;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// converts a canonicalized relative path to a string, returning an error if

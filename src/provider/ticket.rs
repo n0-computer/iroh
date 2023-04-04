@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = abao::encode::encode(b"hi there");
+        let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
