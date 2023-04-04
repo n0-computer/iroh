@@ -26,6 +26,7 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
+        io::Cursor,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
@@ -35,7 +36,7 @@ mod tests {
     use anyhow::{anyhow, Context, Result};
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -155,7 +156,7 @@ mod tests {
                 |got_hash, mut reader, got_name| async move {
                     assert_eq!(file_hash, got_hash);
                     let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
+                    reader.write_all(Cursor::new(&mut got)).await?;
                     assert_eq!(content, &got);
                     assert_eq!(*name, got_name);
 
@@ -289,7 +290,7 @@ mod tests {
                     assert_eq!(*expect_hash, got_hash);
                     let expect = tokio::fs::read(&path).await?;
                     let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
+                    reader.write_all(Cursor::new(&mut got)).await?;
                     assert_eq!(expect, got);
                     assert_eq!(*expect_name, got_name);
                     i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -398,7 +399,7 @@ mod tests {
             || async move { Ok(()) },
             |_collection| async move { Ok(()) },
             |_hash, mut stream, _name| async move {
-                io::copy(&mut stream, &mut io::sink()).await?;
+                stream.drain().await?;
                 Ok(stream)
             },
         )
@@ -494,7 +495,7 @@ mod tests {
                 || async move { Ok(()) },
                 |_collection| async move { Ok(()) },
                 |_hash, mut stream, _name| async move {
-                    io::copy(&mut stream, &mut io::sink()).await?;
+                    stream.drain().await?;
                     Ok(stream)
                 },
             ),
@@ -534,7 +535,7 @@ mod tests {
                 |_hash, mut stream, _name| {
                     on_blob = true;
                     async move {
-                        io::copy(&mut stream, &mut io::sink()).await?;
+                        stream.drain().await?;
                         Ok(stream)
                     }
                 },

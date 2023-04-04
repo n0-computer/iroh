@@ -4,28 +4,33 @@
 //! be invoked when blobs or collections are received. It is up to the caller
 //! to store the received data.
 use std::fmt::Debug;
-use std::io;
+use std::io::SeekFrom;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
 use crate::protocol::{
-    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, RequestRangeSpec, Res,
-    Response,
+    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, RangeSpec, Request,
+    RequestRangeSpec, Res, Response,
 };
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
-use bao_tree::io::tokio::AsyncResponseDecoder;
+use bao_tree::io::error::DecodeError;
+use bao_tree::io::tokio::DecodeResponseStream;
+use bao_tree::io::DecodeResponseItem;
+use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
 use default_net::Interface;
-use futures::{Future, StreamExt};
+use futures::stream::FusedStream;
+use futures::{Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
-use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -109,17 +114,50 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncResponseDecoder<quinn::RecvStream>);
+pub struct DataStream(DecodeResponseStream<quinn::RecvStream>);
 
 impl DataStream {
-    fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
-        let decoder =
-            AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
+    fn new(inner: quinn::RecvStream, hash: Hash, ranges: RangeSet2<ChunkNum>) -> Self {
+        let decoder = DecodeResponseStream::new(hash.into(), ranges, IROH_BLOCK_SIZE, inner);
         DataStream(decoder)
     }
 
-    async fn read_size(&mut self) -> io::Result<u64> {
-        self.0.read_size().await
+    /// write all the data to a file or buffer
+    pub async fn write_all(
+        &mut self,
+        mut target: impl AsyncWrite + AsyncSeek + Unpin,
+    ) -> std::result::Result<(), DecodeError> {
+        let mut curr = ByteNum(0);
+        while let Some(item) = self.0.next().await {
+            match item? {
+                DecodeResponseItem::Header { .. } => {
+                    // resize the file here?
+                    // target.seek(SeekFrom::Start(size.0)).await?;
+                    // target.rewind().await?;
+                }
+                DecodeResponseItem::Parent { .. } => {
+                    // don't do anything here
+                }
+                DecodeResponseItem::Leaf { offset, data } => {
+                    // only seek if we have to
+                    if curr != offset {
+                        target.seek(SeekFrom::Start(offset.0)).await?;
+                    }
+                    target.write_all(&data).await?;
+                    curr = curr + data.len() as u64;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// drain the entire stream, checking for errors but discarding the data
+    #[cfg(test)]
+    pub(crate) async fn drain(&mut self) -> std::result::Result<(), DecodeError> {
+        while let Some(item) = self.0.next().await {
+            let _ = item?;
+        }
+        Ok(())
     }
 
     fn into_inner(self) -> quinn::RecvStream {
@@ -127,15 +165,32 @@ impl DataStream {
     }
 }
 
-impl AsyncRead for DataStream {
-    fn poll_read(
+impl Stream for DataStream {
+    type Item = std::result::Result<DecodeResponseItem, DecodeError>;
+
+    fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut ReadBuf,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    ) -> std::task::Poll<Option<Self::Item>> {
+        Pin::new(&mut self.0).poll_next(cx)
     }
 }
+
+impl FusedStream for DataStream {
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
+    }
+}
+
+// impl AsyncRead for DataStream {
+//     fn poll_read(
+//         mut self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &mut ReadBuf,
+//     ) -> std::task::Poll<std::io::Result<()>> {
+//         std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+//     }
+// }
 
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
@@ -158,7 +213,10 @@ where
     let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
     run_connection(
         connection,
-        ticket.hash(),
+        Request {
+            name: ticket.hash(),
+            ranges: RequestRangeSpec::all(),
+        },
         ticket.token(),
         start,
         on_connected,
@@ -243,7 +301,10 @@ where
     let connection = dial_peer(opts).await?;
     run_connection(
         connection,
-        hash,
+        Request {
+            name: hash,
+            ranges: RequestRangeSpec::all(),
+        },
         auth_token,
         now,
         on_connected,
@@ -256,7 +317,7 @@ where
 /// Gets a collection and all its blobs from a provider on the established connection.
 async fn run_connection<A, B, C, FutA, FutB, FutC>(
     connection: quinn::Connection,
-    hash: Hash,
+    request: Request,
     auth_token: AuthToken,
     start_time: Instant,
     on_connected: A,
@@ -271,6 +332,7 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
+    let hash = request.name;
     let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
@@ -316,28 +378,27 @@ where
                         data_len = total_blobs_size;
 
                         // read entire collection data into buffer
-                        let data = read_bao_encoded(&mut reader, hash).await?;
+                        let data =
+                            read_bao_encoded(&mut reader, hash, &request.ranges.blob).await?;
 
                         // decode the collection
                         let collection = Collection::from_bytes(&data)?;
                         on_collection(&collection).await?;
 
                         // expect to get blob data in the order they appear in the collection
-                        let mut remaining_size = total_blobs_size;
-                        for blob in collection.into_inner() {
-                            let mut blob_reader =
-                                handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
+                        let default = RangeSpec::empty();
+                        for (blob, ranges) in collection
+                            .into_inner()
+                            .into_iter()
+                            .zip(request.ranges.iter(&default))
+                        {
+                            let blob_reader =
+                                handle_blob_response(blob.hash, reader, ranges, &mut in_buffer)
+                                    .await?;
 
-                            let size = blob_reader.read_size().await?;
-                            anyhow::ensure!(
-                                size <= remaining_size,
-                                "downloaded more than {total_blobs_size}"
-                            );
-                            remaining_size -= size;
-                            let mut blob_reader =
-                                on_blob(blob.hash, blob_reader, blob.name).await?;
+                            let blob_reader = on_blob(blob.hash, blob_reader, blob.name).await?;
 
-                            if blob_reader.read_exact(&mut [0u8; 1]).await.is_ok() {
+                            if !blob_reader.is_terminated() {
                                 bail!("`on_blob` callback did not fully read the blob content")
                             }
                             reader = blob_reader.into_inner();
@@ -384,6 +445,7 @@ where
 async fn handle_blob_response(
     hash: Hash,
     mut reader: quinn::RecvStream,
+    ranges: &RangeSpec,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
     match read_lp(&mut reader, buffer).await? {
@@ -399,7 +461,7 @@ async fn handle_blob_response(
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = DataStream::new(reader, hash);
+                    let decoder = DataStream::new(reader, hash, ranges.to_chunk_ranges());
                     Ok(decoder)
                 }
             }

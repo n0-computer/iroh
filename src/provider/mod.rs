@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::sync::encode_ranges_validated;
+use bao_tree::io::tokio::encode_ranges_validated;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
 use derive_more::From;
@@ -717,6 +717,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
+#[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
     request: Request,
     // Database from which to fetch blobs.
@@ -733,21 +734,9 @@ async fn transfer_collection(
 ) -> Result<SentStatus> {
     let hash = request.name;
     let CollectionData { data, outboard } = collection;
-    // We only respond to requests for collections, not individual blobs
-    let encoded_size: usize = bao_tree::encoded_size(data.len() as u64, IROH_BLOCK_SIZE)
-        .try_into()
-        .unwrap();
-    let mut encoded = Vec::with_capacity(encoded_size);
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
-    encode_ranges_validated(
-        Cursor::new(data),
-        outboard,
-        &request.ranges.blob.to_chunk_ranges(),
-        &mut encoded,
-    )?;
 
     let c: Collection = postcard::from_bytes(data)?;
-
     let _ = events.send(Event::TransferCollectionStarted {
         connection_id,
         request_id,
@@ -765,8 +754,14 @@ async fn transfer_collection(
         },
     )
     .await?;
-
-    writer.write_all(&encoded).await?;
+    // stream the collection data directly to the writer
+    encode_ranges_validated(
+        Cursor::new(data),
+        outboard,
+        &request.ranges.blob.to_chunk_ranges(),
+        &mut writer,
+    )
+    .await?;
     let default = RangeSpec::empty();
     for ((i, blob), ranges) in c
         .blobs()

@@ -101,6 +101,9 @@ impl RequestRangeSpec {
     }
 }
 
+/// An infinite iterator of range specs
+///
+/// default is what to use if the children of this RequestRangeSpec are empty.
 pub(crate) struct RequestRangeSpecIter<'a> {
     /// number of times we emit the current value
     count: u64,
@@ -117,14 +120,15 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
         loop {
             if self.count > 0 {
                 self.count -= 1;
-                break Some(self.value);
+                break;
             } else if let Some(((count, value), rest)) = self.remaining.split_first() {
                 self.count = *count;
                 self.value = value;
                 self.remaining = rest;
             } else {
-                break Some(self.value);
+                break;
             }
         }
+        Some(self.value)
     }
 }

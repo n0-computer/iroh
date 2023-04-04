@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
+use bao_tree::io::DecodeResponseItem;
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
@@ -11,6 +12,7 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
+use iroh::get::DataStream;
 use iroh::protocol::AuthToken;
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -19,6 +21,7 @@ use iroh::rpc_protocol::{
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
 
@@ -809,7 +812,7 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
         }
     };
 
-    let on_blob = |hash: Hash, mut reader, name: String| {
+    let on_blob = |hash: Hash, mut reader: DataStream, name: String| {
         let out = &out;
         let pb = &pb;
         async move {
@@ -819,9 +822,6 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
                 pathbuf_from_name(&name)
             };
             pb.set_message(format!("Receiving '{}'...", name.display()));
-
-            // Wrap the reader to show progress.
-            let mut wrapped_reader = pb.wrap_async_read(&mut reader);
 
             if let Some(ref outpath) = out {
                 tokio::fs::create_dir_all(outpath)
@@ -842,8 +842,7 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
                 .await??;
 
                 let file = tokio::fs::File::from_std(dup);
-                let mut file_buf = tokio::io::BufWriter::new(file);
-                tokio::io::copy(&mut wrapped_reader, &mut file_buf).await?;
+                reader.write_all(&mut pb.wrap_async_write(file)).await?;
 
                 // Rename temp file, to target name
                 let filepath2 = filepath.clone();
@@ -858,7 +857,12 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
             } else {
                 // Write to OUT_WRITER
                 let mut stdout = tokio::io::stdout();
-                tokio::io::copy(&mut wrapped_reader, &mut stdout).await?;
+                while let Some(chunk) = reader.next().await {
+                    if let DecodeResponseItem::Leaf { data, .. } = chunk? {
+                        pb.inc(data.len() as u64);
+                        stdout.write_all(&data).await?;
+                    }
+                }
             }
 
             Ok(reader)

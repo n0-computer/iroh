@@ -8,7 +8,6 @@ use bao_tree::io::tokio::AsyncResponseDecoder;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
-use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
@@ -120,9 +119,14 @@ pub(crate) async fn read_lp(
 pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     reader: R,
     hash: Hash,
+    ranges: &RangeSpec,
 ) -> Result<Vec<u8>> {
-    let mut decoder =
-        AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, reader);
+    let mut decoder = AsyncResponseDecoder::new(
+        hash.into(),
+        ranges.to_chunk_ranges(),
+        IROH_BLOCK_SIZE,
+        reader,
+    );
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;
