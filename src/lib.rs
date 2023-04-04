@@ -67,6 +67,7 @@ mod tests {
 
     #[tokio::test]
     async fn many_files() -> Result<()> {
+        setup_logging();
         let num_files = [10, 100, 1000, 10000];
         for num in num_files {
             println!("NUM_FILES: {num}");

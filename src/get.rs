@@ -25,7 +25,8 @@ use futures::{Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
-use tracing::{debug, error};
+use tracing::{debug, debug_span, error};
+use tracing_futures::Instrument;
 
 pub use crate::util::Hash;
 
@@ -153,17 +154,24 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
-    let start = Instant::now();
-    let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
-    run_connection(
-        connection,
-        ticket.hash(),
-        ticket.token(),
-        start,
-        on_connected,
-        on_collection,
-        on_blob,
-    )
+    let span = debug_span!("get", hash=%ticket.hash());
+    async move {
+        let start = Instant::now();
+        let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
+        let span = debug_span!("connection", remote_addr=%connection.remote_address());
+        run_connection(
+            connection,
+            ticket.hash(),
+            ticket.token(),
+            start,
+            on_connected,
+            on_collection,
+            on_blob,
+        )
+        .instrument(span)
+        .await
+    }
+    .instrument(span)
     .await
 }
 
@@ -238,17 +246,24 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
-    let now = Instant::now();
-    let connection = dial_peer(opts).await?;
-    run_connection(
-        connection,
-        hash,
-        auth_token,
-        now,
-        on_connected,
-        on_collection,
-        on_blob,
-    )
+    let span = debug_span!("get", %hash);
+    async move {
+        let now = Instant::now();
+        let connection = dial_peer(opts).await?;
+        let span = debug_span!("connection", remote_addr=%connection.remote_address());
+        run_connection(
+            connection,
+            hash,
+            auth_token,
+            now,
+            on_connected,
+            on_collection,
+            on_blob,
+        )
+        .instrument(span)
+        .await
+    }
+    .instrument(span)
     .await
 }
 
