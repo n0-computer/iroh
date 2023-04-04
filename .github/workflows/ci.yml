@@ -238,7 +238,7 @@ jobs:
         cargo +$MSRV check --workspace --all-targets --no-default-features
 
   minimal_crate_versions:
-    name: Minimal Crate Versions (library use only)
+    name: Minimal Crate Versions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
@@ -246,7 +246,7 @@ jobs:
       - name: Cargo check (minimal crate versions)
         run: |
           rm Cargo.lock
-          cargo +nightly check -Z minimal-versions --workspace --all-targets --no-default-features
+          cargo +nightly check -Z minimal-versions --workspace --all-targets --all-features
 
   cargo_deny:
     name: cargo deny
