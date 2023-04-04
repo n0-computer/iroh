@@ -189,6 +189,11 @@ pub struct Inner {
 
     /// Tracks the networkmap node entity for each peer discovery key.
     pub(super) peer_map: RwLock<PeerMap>,
+    /// The private naclbox key used for active discovery traffic. It's created once near
+    /// (but not during) construction.
+    disco_private: key::disco::SecretKey,
+    /// Private key for this node
+    private_key: key::node::SecretKey,
 }
 
 #[derive(Debug, Default)]
@@ -239,21 +244,13 @@ pub(super) struct ConnState {
     /// in other maps below that are keyed by peer public key.
     peer_set: HashSet<key::node::PublicKey>,
 
-    /// The private naclbox key used for active discovery traffic. It's created once near
-    /// (but not during) construction.
-    disco_private: key::disco::SecretKey,
-    /// Public key of disco_private.
-    pub(super) disco_public: key::disco::PublicKey,
-
-    // The state for an active DiscoKey.
+    /// The state for an active DiscoKey.
     disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
 
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<cfg::NetInfo>,
 
     net_map: Option<netmap::NetworkMap>,
-    /// WireGuard private key for this node
-    private_key: key::node::SecretKey,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: usize,
     derp_started: bool,
@@ -270,10 +267,7 @@ pub(super) struct ConnState {
 }
 
 impl ConnState {
-    fn new(private_key: key::node::SecretKey) -> Self {
-        let disco_private = key::disco::SecretKey::generate();
-        let disco_public = disco_private.public();
-
+    fn new() -> Self {
         ConnState {
             closed: false,
             derp_cleanup_timer: None,
@@ -284,12 +278,9 @@ impl ConnState {
             last_endpoints_time: None,
             on_endpoint_refreshed: HashMap::new(),
             peer_set: HashSet::new(),
-            disco_private,
-            disco_public,
             disco_info: HashMap::new(),
             net_info_last: None,
             net_map: None,
-            private_key,
             my_derp: 0,
             derp_started: false,
             active_derp: HashMap::new(),
@@ -357,6 +348,7 @@ impl Conn {
         if let Some(conn6) = pconn6.clone() {
             net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
         }
+        let disco_private = key::disco::SecretKey::generate();
 
         let c = Conn(Arc::new(Inner {
             name,
@@ -375,11 +367,13 @@ impl Conn {
             socket_endpoint4: SocketEndpointCache::default(),
             socket_endpoint6: SocketEndpointCache::default(),
             on_stun_receive: Default::default(),
-            state: ConnState::new(private_key).into(),
+            state: ConnState::new().into(),
             closing: AtomicBool::new(false),
             derp_recv_ch,
             derp_map: Default::default(),
             peer_map: Default::default(),
+            disco_private,
+            private_key,
         }));
 
         Ok(c)
@@ -727,10 +721,8 @@ impl Conn {
     }
 
     /// Returns the discovery public key.
-    async fn disco_public_key(&self) -> key::disco::PublicKey {
-        // TODO: move this out of ConnState?
-        let state = self.state.lock().await;
-        state.disco_public.clone()
+    fn disco_public(&self) -> key::disco::PublicKey {
+        self.disco_private.public()
     }
 
     async fn set_nearest_derp(&self, derp_num: usize) -> bool {
@@ -1071,7 +1063,7 @@ impl Conn {
             })
             .can_ack_pings(true)
             .is_preferred(state.my_derp == region_id)
-            .new_region(state.private_key.clone(), move || {
+            .new_region(self.private_key.clone(), move || {
                 let this = this_1.clone();
                 Box::pin(async move {
                     // Warning: it is not legal to acquire
@@ -1495,13 +1487,8 @@ impl Conn {
             bail!("connection closed");
         }
 
-        let disco_public = state.disco_public.clone();
-        let ConnState {
-            disco_info,
-            disco_private,
-            ..
-        } = &mut *state;
-        let di = get_disco_info(disco_info, &*disco_private, dst_disco);
+        let ConnState { disco_info, .. } = &mut *state;
+        let di = get_disco_info(disco_info, &self.disco_private, dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
         drop(state);
 
@@ -1512,7 +1499,7 @@ impl Conn {
         // 	metricSendDiscoUDP.Add(1)
         // }
 
-        let pkt = disco::encode_message(&disco_public, seal);
+        let pkt = disco::encode_message(&self.disco_public(), seal);
         let udp_state = quinn_udp::UdpState::default(); // TODO: store
         let sent = futures::future::poll_fn(move |cx| {
             self.poll_send_addr(
@@ -1605,13 +1592,8 @@ impl Conn {
         // We're now reasonably sure we're expecting communication from
         // this peer, do the heavy crypto lifting to see what they want.
 
-        let ConnState {
-            disco_info,
-            disco_private,
-            disco_public,
-            ..
-        } = &mut *state;
-        let di = get_disco_info(disco_info, &*disco_private, &sender);
+        let ConnState { disco_info, .. } = &mut *state;
+        let di = get_disco_info(disco_info, &self.disco_private, &sender);
         let payload = di.shared_key.open(&sealed_box);
         if payload.is_err() {
             // This might be have been intended for a previous
@@ -1623,7 +1605,7 @@ impl Conn {
             // it's actually a wireguard packet (super unlikely, but).
             debug!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                disco_private.public(),
+                self.disco_public(),
                 sender,
                 payload,
             );
@@ -1672,7 +1654,7 @@ impl Conn {
                     .cloned()
                     .collect();
                 for ep in eps {
-                    if ep.handle_pong_conn(&mut *peer_map, &disco_public, &pong, di, src) {
+                    if ep.handle_pong_conn(&mut *peer_map, &self.disco_public(), &pong, di, src) {
                         break;
                     }
                 }
@@ -1707,17 +1689,13 @@ impl Conn {
                 }
 
                 {
-                    let ConnState {
-                        disco_info,
-                        disco_private,
-                        ..
-                    } = &mut *state;
-                    let di = get_disco_info(disco_info, &*disco_private, &sender);
+                    let ConnState { disco_info, .. } = &mut *state;
+                    let di = get_disco_info(disco_info, &self.disco_private, &sender);
                     di.set_node_key(node_key.clone());
                 }
                 info!(
                     "disco: {:?}<-{:?} ({:?}, {:?})  got call-me-maybe, {} endpoints",
-                    state.disco_public,
+                    self.disco_public(),
                     ep_disco_key,
                     ep.public_key,
                     src,
@@ -1783,13 +1761,8 @@ impl Conn {
         src: SocketAddr,
         derp_node_src: Option<&key::node::PublicKey>,
     ) {
-        let ConnState {
-            disco_info,
-            disco_private,
-            disco_public,
-            ..
-        } = &mut *state;
-        let di = get_disco_info(disco_info, &*disco_private, &sender);
+        let ConnState { disco_info, .. } = &mut *state;
+        let di = get_disco_info(disco_info, &self.disco_private, &sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -1872,7 +1845,11 @@ impl Conn {
             };
             info!(
                 "disco: {:?}<-{:?} ({:?}, {:?})  got ping tx={:?}",
-                disco_public, di.disco_key, ping_node_src_str, src, dm.tx_id
+                self.disco_public(),
+                di.disco_key,
+                ping_node_src_str,
+                src,
+                dm.tx_id
             );
         }
 
@@ -3351,7 +3328,7 @@ mod tests {
                     stable_id: String::new(),
                     name: Some(format!("node{}", i + 1)),
                     key: peer.key.public_key().into(),
-                    disco_key: peer.conn.disco_public_key().await,
+                    disco_key: peer.conn.disco_public(),
                     allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
