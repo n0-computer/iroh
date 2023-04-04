@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
 use crate::protocol::{
-    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
+    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, RequestRangeSpec, Res,
+    Response,
 };
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
@@ -274,10 +275,7 @@ where
 
     on_connected().await?;
 
-    let mut out_buffer = BytesMut::zeroed(std::cmp::max(
-        Request::POSTCARD_MAX_SIZE,
-        Handshake::POSTCARD_MAX_SIZE,
-    ));
+    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
 
     // 1. Send Handshake
     {
@@ -290,10 +288,13 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let req = Request { name: hash };
+        let req = Request {
+            name: hash,
+            ranges: RequestRangeSpec::all(),
+        };
 
-        let used = postcard::to_slice(&req, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
+        let serialized = postcard::to_stdvec(&req)?;
+        write_lp(&mut writer, &serialized).await?;
     }
     writer.finish().await?;
     drop(writer);

@@ -11,6 +11,8 @@ use quinn::VarInt;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+mod range_spec;
+pub(crate) use range_spec::{RangeSpec, RequestRangeSpec};
 
 use crate::{
     util::{self, Hash},
@@ -38,10 +40,12 @@ impl Handshake {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Request {
     /// blake3 hash
     pub name: Hash,
+
+    pub ranges: RequestRangeSpec,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]

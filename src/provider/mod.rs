@@ -20,6 +20,7 @@ use anyhow::{ensure, Context, Result};
 use bao_tree::io::sync::encode_ranges_validated;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
+use derive_more::From;
 use futures::future::{BoxFuture, Shared};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use postcard::experimental::max_size::MaxSize;
@@ -27,7 +28,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
@@ -39,7 +39,7 @@ use walkdir::WalkDir;
 use crate::blobs::{Blob, Collection};
 use crate::net::find_local_addresses;
 use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
+    read_lp, write_lp, AuthToken, Closed, Handshake, RangeSpec, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
@@ -82,10 +82,10 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     keylog: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, From)]
 pub(crate) enum BlobOrCollection {
-    Blob(Data),
-    Collection { outboard: Bytes, data: Bytes },
+    Blob(BlobData),
+    Collection(CollectionData),
 }
 
 impl BlobOrCollection {
@@ -93,10 +93,25 @@ impl BlobOrCollection {
         matches!(self, BlobOrCollection::Blob(_))
     }
 
-    pub fn data(&self) -> Option<&Data> {
+    pub fn blob_data(&self) -> Option<&BlobData> {
         match self {
             BlobOrCollection::Blob(data) => Some(data),
             BlobOrCollection::Collection { .. } => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn collection_data(&self) -> Option<&CollectionData> {
+        match self {
+            BlobOrCollection::Blob { .. } => None,
+            BlobOrCollection::Collection(data) => Some(data),
+        }
+    }
+
+    pub fn outboard(&self) -> &Bytes {
+        match self {
+            BlobOrCollection::Blob(data) => &data.outboard,
+            BlobOrCollection::Collection(collection) => &collection.outboard,
         }
     }
 
@@ -107,7 +122,7 @@ impl BlobOrCollection {
     pub fn size(&self) -> u64 {
         match self {
             BlobOrCollection::Blob(data) => data.size,
-            BlobOrCollection::Collection { data, .. } => data.len() as u64,
+            BlobOrCollection::Collection(CollectionData { data, .. }) => data.len() as u64,
         }
     }
 }
@@ -702,30 +717,34 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-#[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    hash: Hash,
+    request: Request,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
     mut writer: quinn::SendStream,
     // Buffer used when writing to writer.
     buffer: &mut BytesMut,
-    // The bao outboard encoded data.
-    outboard: &Bytes,
-    // The actual blob data.
-    data: &Bytes,
+    // the collection to transfer
+    collection: &CollectionData,
     events: broadcast::Sender<Event>,
     connection_id: u64,
     request_id: u64,
 ) -> Result<SentStatus> {
+    let hash = request.name;
+    let CollectionData { data, outboard } = collection;
     // We only respond to requests for collections, not individual blobs
     let encoded_size: usize = bao_tree::encoded_size(data.len() as u64, IROH_BLOCK_SIZE)
         .try_into()
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
-    encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
+    encode_ranges_validated(
+        Cursor::new(data),
+        outboard,
+        &request.ranges.blob.to_chunk_ranges(),
+        &mut encoded,
+    )?;
 
     let c: Collection = postcard::from_bytes(data)?;
 
@@ -748,10 +767,17 @@ async fn transfer_collection(
     .await?;
 
     writer.write_all(&encoded).await?;
-    for (i, blob) in c.blobs().iter().enumerate() {
+    let default = RangeSpec::empty();
+    for ((i, blob), ranges) in c
+        .blobs()
+        .iter()
+        .enumerate()
+        .zip(request.ranges.iter(&default))
+    {
         debug!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
-        let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
+        let (status, writer1, size) =
+            send_blob(db.clone(), blob.hash, ranges, writer, buffer).await?;
         writer = writer1;
         if SentStatus::NotFound == status {
             writer.finish().await?;
@@ -818,49 +844,53 @@ async fn handle_stream(
     });
 
     // 4. Attempt to find hash
-    let (outboard, data) = match db.get(&hash) {
-        // We only respond to requests for collections, not individual blobs
-        Some(BlobOrCollection::Collection { outboard, data }) => (outboard, data),
-        _ => {
+    match db.get(&hash) {
+        // Collection request
+        Some(BlobOrCollection::Collection(ref collection)) => {
+            // 5. Transfer data!
+            match transfer_collection(
+                request,
+                &db,
+                writer,
+                &mut out_buffer,
+                collection,
+                events.clone(),
+                connection_id,
+                request_id,
+            )
+            .await
+            {
+                Ok(SentStatus::Sent) => {
+                    let _ = events.send(Event::TransferCollectionCompleted {
+                        connection_id,
+                        request_id,
+                    });
+                }
+                Ok(SentStatus::NotFound) => {
+                    notify_transfer_aborted(events, connection_id, request_id);
+                }
+                Err(e) => {
+                    notify_transfer_aborted(events, connection_id, request_id);
+                    return Err(e);
+                }
+            }
+
+            debug!("finished response");
+        }
+        Some(BlobOrCollection::Blob(_)) => {
             debug!("not found {}", hash);
             notify_transfer_aborted(events, connection_id, request_id);
             write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
             writer.finish().await?;
-
-            return Ok(());
+        }
+        None => {
+            debug!("not found {}", hash);
+            notify_transfer_aborted(events, connection_id, request_id);
+            write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
+            writer.finish().await?;
         }
     };
 
-    // 5. Transfer data!
-    match transfer_collection(
-        hash,
-        &db,
-        writer,
-        &mut out_buffer,
-        &outboard,
-        &data,
-        events.clone(),
-        connection_id,
-        request_id,
-    )
-    .await
-    {
-        Ok(SentStatus::Sent) => {
-            let _ = events.send(Event::TransferCollectionCompleted {
-                connection_id,
-                request_id,
-            });
-        }
-        Ok(SentStatus::NotFound) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-        }
-        Err(e) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-            return Err(e);
-        }
-    }
-
-    debug!("finished response");
     Ok(())
 }
 
@@ -873,11 +903,12 @@ enum SentStatus {
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: Database,
     name: Hash,
+    ranges: &RangeSpec,
     mut writer: W,
     buffer: &mut BytesMut,
 ) -> Result<(SentStatus, W, u64)> {
     match db.get(&name) {
-        Some(BlobOrCollection::Blob(Data {
+        Some(BlobOrCollection::Blob(BlobData {
             outboard,
             path,
             size,
@@ -889,7 +920,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             bao_tree::io::tokio::encode_ranges_validated(
                 file_reader,
                 outboard,
-                &RangeSet2::all(),
+                &ranges.to_chunk_ranges(),
                 &mut writer,
             )
             .await?;
@@ -904,7 +935,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Data {
+pub(crate) struct BlobData {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -915,6 +946,14 @@ pub(crate) struct Data {
     path: PathBuf,
     /// Size of the original data.
     size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CollectionData {
+    /// Outboard for the collection
+    outboard: Bytes,
+    /// Serialized collection
+    data: Bytes,
 }
 
 /// A data source
@@ -1084,11 +1123,12 @@ async fn create_collection_inner(
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
         db.insert(
             hash,
-            BlobOrCollection::Blob(Data {
+            BlobData {
                 outboard: Bytes::from(outboard),
                 path: path.clone(),
                 size,
-            }),
+            }
+            .into(),
         );
         total_blobs_size += size;
         // if the given name is `None`, use the filename from the given path as the name
@@ -1108,10 +1148,11 @@ async fn create_collection_inner(
     let hash = Hash::from(hash);
     db.insert(
         hash,
-        BlobOrCollection::Collection {
+        CollectionData {
             outboard: Bytes::from(outboard),
             data: Bytes::from(data.to_vec()),
-        },
+        }
+        .into(),
     );
     progress.send(ProvideProgress::AllDone { hash }).await?;
 
@@ -1196,11 +1237,12 @@ mod tests {
                 });
                 map.insert(
                     hash,
-                    BlobOrCollection::Blob(Data {
+                    BlobData {
                         outboard,
                         size,
                         path,
-                    }),
+                    }
+                    .into(),
                 );
             }
             let collection = Collection::new(cblobs, total_blobs_size).unwrap();
@@ -1210,7 +1252,7 @@ mod tests {
                 let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
-                map.insert(hash, BlobOrCollection::Collection { outboard, data });
+                map.insert(hash, CollectionData { outboard, data }.into());
             }
             let db = Database::default();
             db.union_with(map);
@@ -1279,7 +1321,7 @@ mod tests {
 
         let collection = {
             let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection { data, .. } = c {
+            if let BlobOrCollection::Collection(CollectionData { data, .. }) = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
