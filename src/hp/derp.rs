@@ -47,10 +47,6 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// 8 bytes: 0x44 45 52 50 f0 9f 94 91
 const MAGIC: &str = "DERP🔑";
 
-const NONCE_LEN: usize = 24;
-const FRAME_HEADER_LEN: usize = 1 + 4; // FrameType byte + 4 byte length
-const KEY_LEN: usize = 32;
-const MAX_INFO_LEN: usize = 1024 * 1024;
 const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
 const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
@@ -200,7 +196,7 @@ async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameT
 async fn read_frame(
     mut reader: impl AsyncRead + Unpin,
     max_size: usize,
-    mut buf: &mut BytesMut,
+    buf: &mut BytesMut,
 ) -> Result<(FrameType, usize)> {
     let (frame_type, frame_len) = read_frame_header(&mut reader)
         .await
@@ -211,24 +207,24 @@ async fn read_frame(
         "frame header size {frame_len} exceeds reader limit of {max_size}"
     );
     buf.resize(frame_len, 0u8);
-    reader.read_exact(&mut buf).await.context("read exact")?;
+    reader.read_exact(buf).await.context("read exact")?;
     Ok((frame_type, frame_len))
 }
 
 async fn read_frame_timeout(
     mut reader: impl AsyncRead + Unpin,
     max_size: usize,
-    mut buf: &mut BytesMut,
+    buf: &mut BytesMut,
     timeout: Option<Duration>,
 ) -> Result<(FrameType, usize)> {
     if let Some(duration) = timeout {
         let (frame_type, frame_len) =
-            tokio::time::timeout(duration, read_frame(&mut reader, max_size, &mut buf))
+            tokio::time::timeout(duration, read_frame(&mut reader, max_size, buf))
                 .await
                 .context("timeout")??;
         Ok((frame_type, frame_len))
     } else {
-        read_frame(&mut reader, max_size, &mut buf).await
+        read_frame(&mut reader, max_size, buf).await
     }
 }
 
@@ -275,7 +271,7 @@ async fn write_frame_timeout(
         tokio::time::timeout(duration, write_frame(writer, frame_type, bytes)).await??;
         Ok(())
     } else {
-        write_frame(writer, frame_type, &bytes).await
+        write_frame(writer, frame_type, bytes).await
     }
 }
 

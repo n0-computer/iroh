@@ -22,7 +22,7 @@ use std::{
 
 use anyhow::{anyhow, ensure, Result};
 
-use crate::net::to_canonical;
+use crate::net::ip::to_canonical;
 
 use super::{key, stun};
 

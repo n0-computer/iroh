@@ -31,9 +31,9 @@ use crate::{
         derp::{self, DerpMap},
         disco, key,
         magicsock::SESSION_ACTIVE_TIMEOUT,
-        monitor, netcheck, netmap, portmapper, stun,
+        netcheck, netmap, portmapper, stun,
     },
-    net::LocalAddresses,
+    net::ip::LocalAddresses,
 };
 
 use super::{
@@ -95,9 +95,6 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
-    /// The link monitor to use. With one, the portmapper won't be used.
-    pub link_monitor: Option<monitor::Monitor>,
-
     /// Private key for this node.
     pub private_key: key::node::SecretKey,
 }
@@ -110,7 +107,6 @@ impl Default for Options {
             on_derp_active: None,
             idle_for: None,
             on_net_info: None,
-            link_monitor: None,
             private_key: key::node::SecretKey::generate(),
         }
     }
@@ -140,7 +136,6 @@ pub struct Inner {
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
@@ -340,9 +335,6 @@ impl Conn {
     pub async fn new(name: String, opts: Options) -> Result<Self> {
         let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
         let mut net_checker = netcheck::Client::default();
-        // TODO:
-        // GetSTUNConn4:        func() netcheck.STUNConn { return &c.pconn4 },
-        // GetSTUNConn6:        func() netcheck.STUNConn { return &c.pconn6 },
         net_checker.port_mapper = Some(port_mapper.clone());
 
         let Options {
@@ -351,14 +343,8 @@ impl Conn {
             on_derp_active,
             idle_for,
             on_net_info,
-            link_monitor,
             private_key,
         } = opts;
-
-        if let Some(ref _link_monitor) = link_monitor {
-            // TODO:
-            // self.port_mapper.set_gateway_lookup_func(opts.LinkMonitor.GatewayAndSelfIP);
-        }
 
         let derp_recv_ch = flume::bounded(64);
 
@@ -366,13 +352,18 @@ impl Conn {
         let port = pconn4.port().await;
         port_mapper.set_local_port(port).await;
 
+        let conn4 = pconn4.clone();
+        net_checker.get_stun_conn4 = Some(Arc::new(Box::new(move || conn4.as_socket())));
+        if let Some(conn6) = pconn6.clone() {
+            net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
+        }
+
         let c = Conn(Arc::new(Inner {
             name,
             on_endpoints,
             on_derp_active,
             idle_for,
             on_net_info,
-            link_monitor,
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
@@ -547,12 +538,12 @@ impl Conn {
 
         let report = time::timeout(Duration::from_secs(2), async move {
             let dm = dm.unwrap();
-            let this = self.clone();
+            let net_checker = self.net_checker.clone();
             *self.on_stun_receive.write().await = Some(Box::new(move |a, b| {
                 let a = a.to_vec(); // :(
-                let this = this.clone();
+                let net_checker = net_checker.clone();
                 Box::pin(async move {
-                    this.net_checker.receive_stun_packet(&a, b).await;
+                    net_checker.receive_stun_packet(&a, b).await;
                 })
             }));
             let report = self.net_checker.get_report(&dm).await?;
@@ -772,7 +763,7 @@ impl Conn {
                 info!("home is now derp-{} ({})", derp_num, dr.region_code);
             }
             None => {
-                info!("[unexpected]: derpMap.Regions[{}] is empty", derp_num);
+                warn!("derp_map.regions[{}] is empty", derp_num);
             }
         }
         for (i, ad) in &state.active_derp {
@@ -1906,14 +1897,14 @@ impl Conn {
     /// Schedules a send of disco.CallMeMaybe to de via derpAddr
     /// once we know that our STUN endpoint is fresh.
     ///
-    /// derpAddr is de.derpAddr at the time of send. It's assumed the peer won't be
+    /// derpAddr is endpoint.derpAddr at the time of send. It's assumed the peer won't be
     /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn enqueue_call_me_maybe(
         &self,
         derp_addr: SocketAddr,
-        de: Endpoint,
+        endpoint: Endpoint,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
         Box::pin(async move {
             let mut state = self.state.lock().await;
@@ -1929,50 +1920,44 @@ impl Conn {
 
                 let this = self.clone();
                 state.on_endpoint_refreshed.insert(
-                    de.clone(),
+                    endpoint.clone(),
                     Box::new(move || {
                         let this = this.clone();
-                        let de = de.clone();
+                        let endpoint = endpoint.clone();
                         Box::pin(async move {
                             info!(
                                 "STUN done; sending call-me-maybe to {:?} {:?}",
-                                de.disco_key(),
-                                de.public_key
+                                endpoint.disco_key(),
+                                endpoint.public_key
                             );
-                            this.enqueue_call_me_maybe(derp_addr, de).await;
+                            this.enqueue_call_me_maybe(derp_addr, endpoint).await;
                         })
                     }),
                 );
 
-                // TODO(bradfitz): make a new 'reSTUNQuickly' method
-                // that passes down a do-a-lite-netcheck flag down to
-                // netcheck that does 1 (or 2 max) STUN queries
-                // (UDP-only, not HTTPs) to find our port mapping to
-                // our home DERP and maybe one other. For now we do a
-                // "full" ReSTUN which may or may not be a full one
-                // (depending on age) and may do HTTPS timing queries
-                // (if UDP is blocked). Good enough for now.
                 let this = self.clone();
                 tokio::task::spawn(async move {
                     this.re_stun("refresh-for-peering").await;
                 });
-                return;
-            }
+            } else {
+                let eps: Vec<_> = state.last_endpoints.iter().map(|ep| ep.addr).collect();
+                let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
-            let eps: Vec<_> = state.last_endpoints.iter().map(|ep| ep.addr).collect();
-            tokio::task::spawn(async move {
-                if let Err(err) =
-                    de.c.send_disco_message(
-                        derp_addr,
-                        Some(&de.public_key),
-                        &de.disco_key(),
-                        disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps }),
-                    )
-                    .await
-                {
-                    warn!("failed to send disco message to {}: {:?}", derp_addr, err);
-                }
-            });
+                tokio::task::spawn(async move {
+                    if let Err(err) = endpoint
+                        .c
+                        .send_disco_message(
+                            derp_addr,
+                            Some(&endpoint.public_key),
+                            &endpoint.disco_key(),
+                            msg,
+                        )
+                        .await
+                    {
+                        warn!("failed to send disco message to {}: {:?}", derp_addr, err);
+                    }
+                });
+            }
         })
     }
 
@@ -2524,20 +2509,6 @@ impl Conn {
             return;
         }
 
-        let mut if_ips = Vec::new();
-        if let Some(ref link_mon) = self.link_monitor {
-            let st = link_mon.interface_state();
-            if let Some(ref def_if) = st.default_route_interface {
-                if let Some(ifs) = st.interface_ips.get(def_if) {
-                    for i in ifs {
-                        if_ips.push(i.addr());
-                    }
-                    info!("rebind_all; def_if={:?}, ips={:?}", def_if, if_ips);
-                }
-            }
-        }
-
-        self.maybe_close_derps_on_rebind(&if_ips).await;
         self.reset_endpoint_states().await;
     }
 
@@ -3508,6 +3479,7 @@ mod tests {
                             .read_to_end(usize::MAX)
                             .await
                             .with_context(|| format!("[{}] reading to end", b_name))?;
+                        println!("[{}] finishing", b_name);
                         send_bi
                             .finish()
                             .await

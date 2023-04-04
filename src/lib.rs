@@ -9,7 +9,6 @@ pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
-mod subnet;
 mod tls;
 mod util;
 
