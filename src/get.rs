@@ -16,12 +16,14 @@ use crate::protocol::{
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
-use abao::decode::AsyncSliceDecoder;
+use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
+use bao_tree::io::tokio::AsyncResponseDecoder;
 use bytes::BytesMut;
 use default_net::Interface;
 use futures::{Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
+use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tracing::{debug, error};
 
@@ -106,11 +108,13 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncSliceDecoder<quinn::RecvStream>);
+pub struct DataStream(AsyncResponseDecoder<quinn::RecvStream>);
 
 impl DataStream {
     fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
-        DataStream(AsyncSliceDecoder::new(inner, &hash.into(), 0, u64::MAX))
+        let decoder =
+            AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
+        DataStream(decoder)
     }
 
     async fn read_size(&mut self) -> io::Result<u64> {
