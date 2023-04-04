@@ -97,12 +97,18 @@ jobs:
       run: |  
         echo "LAST_COMMIT_SHA=unknown" >> ${GITHUB_ENV}  
         echo "HEAD_REF=unknown" >> ${GITHUB_ENV}  
+    - name: Resolve PR refs (Issue)
+      if: ${{ github.event_name == 'issue_comment' }}  
+      id: refs
+      uses: arqu/resolve-pr-refs@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Environment (Issue)  
       if: ${{ github.event_name == 'issue_comment' }}  
       shell: bash  
       run: |  
-        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.issue.pull_request.head.sha }})" >> ${GITHUB_ENV}  
-        echo "HEAD_REF=${{ github.event.issue.pull_request.head.ref }}" >> ${GITHUB_ENV}
+        echo "LAST_COMMIT_SHA=${{ steps.refs.outputs.head_sha }}" >> ${GITHUB_ENV}  
+        echo "HEAD_REF=${{ steps.refs.outputs.head_ref }}" >> ${GITHUB_ENV}
     - name: Setup Environment (PR)  
       if: ${{ github.event_name == 'pull_request' }}  
       shell: bash  
@@ -114,7 +120,7 @@ jobs:
       shell: bash  
       run: |  
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-        echo "HEAD_REF=${{ github.head_ref }}" >> ${GITHUB_ENV}
+        echo "HEAD_REF=${{ github.ref }}" >> ${GITHUB_ENV}
 
     - name: Respond Issue
       uses: peter-evans/create-or-update-comment@v2
