@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 readme = "README.md"
 description = "IPFS reimagined"
@@ -12,7 +12,7 @@ repository = "https://github.com/n0-computer/iroh"
 rust-version = "1.63"
 
 [dependencies]
-abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
+# abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
 anyhow = { version = "1", features = ["backtrace"] }
 async-time-mock-tokio = "0.0.1"
 backoff = "0.4.0"
@@ -80,6 +80,8 @@ webpki = "0.22"
 wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
+bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
+range-collections = "0.4.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 netlink-packet-route = "0.15.0"
