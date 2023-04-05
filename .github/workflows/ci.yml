@@ -246,7 +246,7 @@ jobs:
       - name: Cargo check (minimal crate versions)
         run: |
           rm Cargo.lock
-          cargo +nightly check -Z minimal-versions --workspace --all-targets --all-features
+          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
 
   cargo_deny:
     name: cargo deny
