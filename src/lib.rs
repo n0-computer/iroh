@@ -148,7 +148,7 @@ mod tests {
             let content = &content;
             let name = &name;
             get::run(
-                hash,
+                Request::all(hash),
                 token,
                 opts,
                 || async { Ok(()) },
@@ -273,7 +273,7 @@ mod tests {
         let expects = Arc::new(expects);
 
         get::run(
-            collection_hash,
+            Request::all(collection_hash),
             provider.auth_token(),
             opts,
             || async { Ok(()) },
@@ -389,7 +389,7 @@ mod tests {
         });
 
         get::run(
-            hash,
+            Request::all(hash),
             auth_token,
             get::Options {
                 addr: provider_addr,
@@ -438,7 +438,7 @@ mod tests {
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             get::run(
-                hash,
+                Request::all(hash),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
@@ -485,7 +485,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(10),
             get::run(
-                hash,
+                Request::all(hash),
                 auth_token,
                 get::Options {
                     addr,

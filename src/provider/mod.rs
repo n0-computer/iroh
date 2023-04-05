@@ -734,7 +734,7 @@ async fn transfer_collection(
 ) -> Result<SentStatus> {
     let hash = request.name;
     let CollectionData { data, outboard } = collection;
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
     let c: Collection = postcard::from_bytes(data)?;
     let _ = events.send(Event::TransferCollectionStarted {
@@ -910,7 +910,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
         })) => {
             write_response(&mut writer, buffer, Res::Found).await?;
 
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
+            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
             let file_reader = tokio::fs::File::open(&path).await?;
             bao_tree::io::tokio::encode_ranges_validated(
                 file_reader,

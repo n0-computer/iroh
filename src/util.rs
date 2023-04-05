@@ -181,7 +181,7 @@ pub(crate) fn validate_bao<F: Fn(u64)>(
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard =
-        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard);
+        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard)?;
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
     encode_ranges_validated(

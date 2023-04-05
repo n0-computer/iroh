@@ -29,7 +29,7 @@ impl Collection {
     /// Deserialize a collection from a byte slice
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
-            postcard::from_bytes(data).context("failed to serialize Collection data")?;
+            postcard::from_bytes(data).context("failed to deserialize Collection data")?;
         Ok(c)
     }
 

@@ -25,6 +25,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::tokio::DecodeResponseStream;
 use bao_tree::io::DecodeResponseItem;
+use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::{Bytes, BytesMut};
 use default_net::Interface;
@@ -147,6 +148,41 @@ impl DataStream {
                     }
                     target.write_all(&data).await?;
                     curr = curr + data.len() as u64;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// write all the data to a file or buffer
+    pub async fn write_all_ob(
+        &mut self,
+        mut target: impl AsyncWrite + AsyncSeek + Unpin,
+        mut outboard: impl AsyncWrite + AsyncSeek + Unpin,
+        mut on_size: impl FnMut(u64),
+        mut on_write: impl FnMut(u64, usize),
+    ) -> std::result::Result<(), DecodeError> {
+        let tree = self.0.read_tree().await?;
+        while let Some(item) = self.0.next().await {
+            match item? {
+                DecodeResponseItem::Header { size } => {
+                    // only seek if we have to
+                    on_size(size.0);
+                    outboard.seek(SeekFrom::Start(0)).await?;
+                    outboard.write_all(&size.0.to_le_bytes()).await?;
+                }
+                DecodeResponseItem::Parent { node, pair: (l_hash, r_hash) } => {
+                    let offset = tree.pre_order_offset(node).unwrap();
+                    let byte_offset = offset * 64 + 8;
+                    outboard.seek(SeekFrom::Start(byte_offset)).await?;
+                    outboard.write_all(l_hash.as_bytes()).await?;
+                    outboard.write_all(r_hash.as_bytes()).await?;
+                }
+                DecodeResponseItem::Leaf { offset, data } => {
+                    // only seek if we have to
+                    on_write(offset.0, data.len());
+                    target.seek(SeekFrom::Start(offset.0)).await?;
+                    target.write_all(&data).await?;
                 }
             }
         }
@@ -276,6 +312,7 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
     false
 }
 
+#[derive(Debug)]
 struct FilePaths {
     target: PathBuf,
     temp: PathBuf,
@@ -304,11 +341,16 @@ impl FilePaths {
     }
 }
 
+///
+pub fn get_data_path(temp_dir: impl AsRef<Path>, hash: Hash) -> PathBuf {
+    let data_path = temp_dir.as_ref();
+    let hash = blake3::Hash::from(hash).to_hex();
+    data_path.join(format!("{}.data", hash))
+}
+
 /// Load a collection from a data path
 fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option<Collection>> {
-    let data_path = data_path.as_ref();
-    let hash = blake3::Hash::from(hash).to_hex();
-    let collection_path = data_path.join(format!("{}.data", hash));
+    let collection_path = get_data_path(data_path, hash);
     Ok(if collection_path.exists() {
         let collection = std::fs::read(&collection_path)?;
         // todo: error
@@ -336,7 +378,7 @@ pub fn get_range_spec(
         ));
     }
     // try to load the collection from the temp directory
-    let collection = load_collection(path.clone(), hash)?;
+    let collection = load_collection(temp, hash)?;
     let collection = match collection {
         Some(collection) => collection,
         None => return Ok(RequestRangeSpec::all()),
@@ -347,37 +389,56 @@ pub fn get_range_spec(
         .map(|blob| {
             let paths = FilePaths::new(blob, &temp, &path);
             io::Result::Ok(if paths.is_final() {
+                tracing::debug!("Found final file: {:?}", paths.target);
                 // we assume that the file is correct
                 RangeSet2::empty()
             } else if paths.is_incomplete() {
+                tracing::debug!("Found incomplete file: {:?}", paths.temp);
                 // we got incomplete data
                 let outboard = std::fs::read(&paths.outboard)?;
-                let outboard = bao_tree::outboard::PreOrderMemOutboardRef::new(
+                let outboard = PreOrderMemOutboard::new(
                     blob.hash.into(),
                     IROH_BLOCK_SIZE,
-                    &outboard,
+                    outboard,
+                    false,
                 );
-                // compute set of valid ranges from the outboard and the file
-                //
-                // We assume that the file is correct and does not contain holes.
-                // Otherwise, we would have to rehash the file.
-                //
-                // Do a quick check of the outboard in case something went wrong when writing.
-                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
-                valid &= RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
-                RangeSet2::all().difference(&valid)
+                match outboard {
+                    Ok(outboard) => {
+                        // compute set of valid ranges from the outboard and the file
+                        //
+                        // We assume that the file is correct and does not contain holes.
+                        // Otherwise, we would have to rehash the file.
+                        //
+                        // Do a quick check of the outboard in case something went wrong when writing.
+                        let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                        let valid_from_file = RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
+                        tracing::debug!("valid_from_file: {:?}", valid_from_file);
+                        tracing::debug!("valid_from_outboard: {:?}", valid);
+                        valid &= valid_from_file;
+                        RangeSet2::all().difference(&valid)
+                    }
+                    Err(cause) => {
+                        tracing::debug!("Outboard damaged, assuming missing {cause:?}");
+                        // the outboard is invalid, so we assume that the file is missing
+                        RangeSet2::all()
+                    }
+                }
             } else {
+                tracing::debug!("Found missing file: {:?}", paths.target);
                 // we don't know anything about this file, so we assume it's missing
                 RangeSet2::all()
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
-    Ok(RequestRangeSpec::new(RangeSet2::empty(), ranges))
+    ranges.iter().zip(collection.blobs()).for_each(|(ranges, blob)| {
+        println!("{} {:?}", blob.name, ranges);
+    });
+    Ok(RequestRangeSpec::new(RangeSet2::all(), ranges))
 }
 
 /// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
-    hash: Hash,
+    request: Request,
     auth_token: AuthToken,
     opts: Options,
     on_connected: A,
@@ -396,10 +457,7 @@ where
     let connection = dial_peer(opts).await?;
     run_connection(
         connection,
-        Request {
-            name: hash,
-            ranges: RequestRangeSpec::all(),
-        },
+        request,
         auth_token,
         now,
         on_connected,

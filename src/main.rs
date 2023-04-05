@@ -12,7 +12,7 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::get::{get_range_spec, DataStream};
+use iroh::get::{get_range_spec, DataStream, get_data_path};
 use iroh::protocol::{AuthToken, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -771,14 +771,19 @@ impl GetInteractive {
     }
 }
 
-async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()> {
-    progress!("Fetching: {}", Blake3Cid::new(get.hash()));
+async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Result<()> {
+    let hash = get.hash();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
     use iroh::protocol::RequestRangeSpec;
 
-    let temp_dir = out.as_ref().map(|out| out.join(".iroh-tmp"));
-    let query = match (&out, temp_dir) {
+    let temp_dir = if let Some(ref out) = out_dir {
+        Some(out.join(".iroh-tmp"))
+    } else {
+        None
+    };
+    let query = match (&out_dir, &temp_dir) {
         (Some(out), Some(temp_dir)) => get_range_spec(get.hash(), out, temp_dir)?,
         _ => RequestRangeSpec::all(),
     };
@@ -801,11 +806,22 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
         progress!("{} Requesting ...", style("[2/3]").bold().dim());
         Ok(())
     };
-    let on_collection = |_data, collection: &iroh::blobs::Collection| {
+    let on_collection = |data, collection: &iroh::blobs::Collection| {
         let pb = &pb;
+        let out_dir = &out_dir;
+        let temp_dir = &temp_dir;
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
         async move {
+            if let (Some(ref temp_dir), Some(ref out_dir)) = (temp_dir, out_dir) {
+                let path = get_data_path(temp_dir, hash);
+                tokio::fs::create_dir_all(temp_dir).await
+                    .context("unable to create directory {temp_dir}")?;
+                tokio::fs::create_dir_all(out_dir)
+                    .await
+            .       context("Unable to create directory {out_dir}")?;
+                tokio::fs::write(path, data).await?;
+            };
             progress!("{} Downloading ...", style("[3/3]").bold().dim());
             progress!(
                 "  {total_entries} file(s) with total transfer size {}",
@@ -820,7 +836,8 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
     };
 
     let on_blob = |hash: Hash, mut reader: DataStream, name: String| {
-        let out = &out;
+        let out = &out_dir;
+        let temp_dir = &temp_dir;
         let pb = &pb;
         async move {
             let name = if name.is_empty() {
@@ -829,43 +846,48 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
                 pathbuf_from_name(&name)
             };
             pb.set_message(format!("Receiving '{}'...", name.display()));
-
-            if let Some(ref outpath) = out {
-                tokio::fs::create_dir_all(outpath)
-                    .await
-                    .context("Unable to create directory {outpath}")?;
+            if let (Some(ref outpath), Some(ref temp_dir)) = (out, temp_dir) {
                 let final_path = outpath.join(name);
-                let tempdir = outpath.join(".iroh-tmp");
-                tokio::fs::create_dir_all(&tempdir)
-                    .await
-                    .context("Unable to create directory {tempdir}")?;
-
                 let tempname = blake3::Hash::from(hash).to_hex();
-                let data_path = tempdir.join(format!("{}.data", tempname));
-                // let outboard_path = tempdir.join(format!("{}.outboard", tempname));
+                let data_path = temp_dir.join(format!("{}.data.part", tempname));
+                let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
                 let mut data_file = tokio::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
                     .open(&data_path)
                     .await?;
-                // let outboard_file = tokio::fs::OpenOptions::new()
-                //     .write(true)
-                //     .create(true)
-                //     .open(outboard_path)
-                //     .await?;
-                reader
-                    .write_all(&mut pb.wrap_async_write(&mut data_file))
+                let mut outboard_file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&outboard_path)
                     .await?;
+                tracing::info!("piping data to {:?} and {:?}", data_path, outboard_path);
+                reader
+                    .write_all_ob(&mut data_file, &mut outboard_file,
+                        |size| pb.set_length(size),
+                        |offset, _size| {
+                            pb.set_position(offset)
+                        },
+                    )
+                    .await?;
+                pb.finish();
                 tokio::fs::create_dir_all(
                     final_path
                         .parent()
                         .context("final path should have parent")?,
                 )
                 .await?;
-                data_file.flush().await?;
+                // Flush the data file first, it is the only thing that matters at this point
+                data_file.shutdown().await?;
                 drop(data_file);
+                // not sure if we have to do this
+                outboard_file.shutdown().await?;
+                drop(outboard_file);
                 // Rename temp file, to target name
+                // once this is done, the file is considered complete
                 tokio::fs::rename(data_path, final_path).await?;
+                // delete the outboard file
+                tokio::fs::remove_file(outboard_path).await?;
             } else {
                 // Write to OUT_WRITER
                 let mut stdout = tokio::io::stdout();
@@ -880,11 +902,12 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
             Ok(reader)
         }
     };
+    let request = Request::new(get.hash(), query);
     let stats = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(
                 &ticket,
-                Request::all(ticket.hash()),
+                request,
                 keylog,
                 MAX_CONCURRENT_DIALS,
                 on_connected,
@@ -893,11 +916,14 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
             )
             .await?
         }
-        GetInteractive::Hash { hash, opts, token } => {
-            get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
+        GetInteractive::Hash { opts, token, .. } => {
+            get::run(request, token, opts, on_connected, on_collection, on_blob).await?
         }
     };
 
+    if let Some(temp_dir) = &temp_dir {
+        tokio::fs::remove_dir_all(temp_dir).await?;
+    }
     pb.finish_and_clear();
     progress!(
         "Transferred {} in {}, {}/s",
