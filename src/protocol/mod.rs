@@ -11,7 +11,7 @@ use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
-pub(crate) use range_spec::{RangeSpec, RequestRangeSpec};
+pub use range_spec::{RangeSpec, RequestRangeSpec};
 
 use crate::{
     util::{self, Hash},
@@ -39,12 +39,28 @@ impl Handshake {
     }
 }
 
+/// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub(crate) struct Request {
+pub struct Request {
     /// blake3 hash
     pub name: Hash,
-
+    /// The range of data to request
     pub ranges: RequestRangeSpec,
+}
+
+impl Request {
+    /// Request a blob or collection with specified ranges
+    pub fn new(name: Hash, ranges: RequestRangeSpec) -> Self {
+        Self { name, ranges }
+    }
+
+    /// Request a collection and all its children
+    pub fn all(name: Hash) -> Self {
+        Self {
+            name,
+            ranges: RequestRangeSpec::all(),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]

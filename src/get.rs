@@ -153,6 +153,12 @@ impl DataStream {
         Ok(())
     }
 
+    /// Read the size of the file this is about
+    pub async fn read_size(&mut self) -> io::Result<u64> {
+        let tree = self.0.read_tree().await?;
+        Ok(tree.size().0)
+    }
+
     /// drain the entire stream, checking for errors but discarding the data
     #[cfg(test)]
     pub(crate) async fn drain(&mut self) -> std::result::Result<(), DecodeError> {
@@ -187,6 +193,7 @@ impl FusedStream for DataStream {
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
     ticket: &Ticket,
+    request: Request,
     keylog: bool,
     max_concurrent: u8,
     on_connected: A,
@@ -205,10 +212,7 @@ where
     let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
     run_connection(
         connection,
-        Request {
-            name: ticket.hash(),
-            ranges: RequestRangeSpec::all(),
-        },
+        request,
         ticket.token(),
         start,
         on_connected,
@@ -282,8 +286,8 @@ impl FilePaths {
     fn new(entry: &Blob, tempdir: impl AsRef<Path>, target_dir: impl AsRef<Path>) -> Self {
         let target = target_dir.as_ref().join(pathbuf_from_name(&entry.name));
         let hash = blake3::Hash::from(entry.hash).to_hex();
-        let temp = tempdir.as_ref().join(format!("{}.data", hash));
-        let outboard = tempdir.as_ref().join(format!("{}.outboard", hash));
+        let temp = tempdir.as_ref().join(format!("{}.data.part", hash));
+        let outboard = tempdir.as_ref().join(format!("{}.outboard.part", hash));
         Self {
             target,
             temp,
@@ -300,11 +304,43 @@ impl FilePaths {
     }
 }
 
-fn get_range_spec(
-    collection: &Collection,
-    path: PathBuf,
-    temp: PathBuf,
+/// Load a collection from a data path
+fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option<Collection>> {
+    let data_path = data_path.as_ref();
+    let hash = blake3::Hash::from(hash).to_hex();
+    let collection_path = data_path.join(format!("{}.data", hash));
+    Ok(if collection_path.exists() {
+        let collection = std::fs::read(&collection_path)?;
+        // todo: error
+        let collection = Collection::from_bytes(&collection).unwrap();
+        Some(collection)
+    } else {
+        None
+    })
+}
+
+/// Given a target directory and a temp directory, get a set of ranges that we are missing
+pub fn get_range_spec(
+    hash: Hash,
+    path: impl AsRef<Path>,
+    temp: impl AsRef<Path>,
 ) -> io::Result<RequestRangeSpec> {
+    let path = path.as_ref();
+    let temp = temp.as_ref();
+    if path.exists() && !temp.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Target directory exists but does not contain temp directory",
+        ));
+    }
+    // try to load the collection from the temp directory
+    let collection = load_collection(path.clone(), hash)?;
+    let collection = match collection {
+        Some(collection) => collection,
+        None => return Ok(RequestRangeSpec::all()),
+    };
     let ranges = collection
         .blobs()
         .iter()
@@ -321,7 +357,14 @@ fn get_range_spec(
                     IROH_BLOCK_SIZE,
                     &outboard,
                 );
-                let valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                // compute set of valid ranges from the outboard and the file
+                //
+                // We assume that the file is correct and does not contain holes.
+                // Otherwise, we would have to rehash the file.
+                //
+                // Do a quick check of the outboard in case something went wrong when writing.
+                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                valid &= RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
                 RangeSet2::all().difference(&valid)
             } else {
                 // we don't know anything about this file, so we assume it's missing
@@ -390,6 +433,7 @@ where
     on_connected().await?;
 
     let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+    let mut data_len = 0;
 
     // 1. Send Handshake
     {
@@ -414,7 +458,6 @@ where
         let mut in_buffer = BytesMut::with_capacity(1024);
 
         // track total amount of blob data transferred
-        let data_len = 0;
         // read next message
         match read_lp(&mut reader, &mut in_buffer).await? {
             Some(response_buffer) => {
@@ -436,13 +479,15 @@ where
                         for (blob, ranges) in collection
                             .into_inner()
                             .into_iter()
-                            .zip(request.ranges.iter(&default))
+                            .zip(request.ranges.children.iter(&default))
                         {
                             let blob_reader =
                                 handle_blob_response(blob.hash, reader, ranges, &mut in_buffer)
                                     .await?;
 
-                            let blob_reader = on_blob(blob.hash, blob_reader, blob.name).await?;
+                            let mut blob_reader =
+                                on_blob(blob.hash, blob_reader, blob.name).await?;
+                            data_len += blob_reader.read_size().await?;
 
                             if !blob_reader.is_terminated() {
                                 bail!("`on_blob` callback did not fully read the blob content")

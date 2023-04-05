@@ -767,7 +767,7 @@ async fn transfer_collection(
         .blobs()
         .iter()
         .enumerate()
-        .zip(request.ranges.iter(&default))
+        .zip(request.ranges.children.iter(&default))
     {
         debug!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;

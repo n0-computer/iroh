@@ -12,8 +12,8 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::get::DataStream;
-use iroh::protocol::AuthToken;
+use iroh::get::{get_range_spec, DataStream};
+use iroh::protocol::{AuthToken, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -775,6 +775,13 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
     progress!("Fetching: {}", Blake3Cid::new(get.hash()));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    use iroh::protocol::RequestRangeSpec;
+
+    let temp_dir = out.as_ref().map(|out| out.join(".iroh-tmp"));
+    let query = match (&out, temp_dir) {
+        (Some(out), Some(temp_dir)) => get_range_spec(get.hash(), out, temp_dir)?,
+        _ => RequestRangeSpec::all(),
+    };
 
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
@@ -877,6 +884,7 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(
                 &ticket,
+                Request::all(ticket.hash()),
                 keylog,
                 MAX_CONCURRENT_DIALS,
                 on_connected,

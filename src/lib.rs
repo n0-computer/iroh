@@ -40,7 +40,7 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::AuthToken;
+    use crate::protocol::{AuthToken, Request};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
@@ -522,6 +522,7 @@ mod tests {
             Duration::from_secs(10),
             get::run_ticket(
                 &ticket,
+                Request::all(ticket.hash()),
                 true,
                 16,
                 || {

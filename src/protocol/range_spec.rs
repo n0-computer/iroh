@@ -19,9 +19,10 @@ use smallvec::{smallvec, SmallVec};
 /// This is a SmallVec so we can avoid allocations for the very common case of a single chunk range.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 #[repr(transparent)]
-pub(crate) struct RangeSpec(SmallVec<[u64; 2]>);
+pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
+    /// Create a new range spec from a range set
     pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
@@ -36,10 +37,12 @@ impl RangeSpec {
         Self(res)
     }
 
+    /// Create an empty range spec
     pub fn empty() -> Self {
         Self(SmallVec::new())
     }
 
+    /// Create a range spec that covers the entire range
     pub fn all() -> Self {
         Self(smallvec![0])
     }
@@ -66,58 +69,44 @@ impl RangeSpec {
     }
 }
 
+/// Range specification for a request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub(crate) struct RequestRangeSpec {
+pub struct RequestRangeSpec {
     /// ranges for the document itself
     pub blob: RangeSpec,
     /// sub ranges for the items of this collection, empty means nothing
     ///
     /// This is also a sequence of spans, but the value after the span is given by the second argument
-    ///
-    /// Examples:
-    ///
-    /// All child ranges: `[(0, [0])]` starting at offset 0, all offsets (see above)
-    /// First chunk of all child: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
-    /// All of child 1234: `[(1234, [0]), [1, []]]`.
-    /// First 33 chunks of child 5678: `[(5678, [0, 33]), (1, [])]`.
-    /// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.
-    /// No child ranges: `[]`
-    ///
-    /// This is a smallvec so that we can avoid allocations in the common case of a single child range.
-    pub children: SmallVec<[(u64, RangeSpec); 2]>,
+    pub children: RangeSpecSeq,
 }
 
-impl RequestRangeSpec {
+/// A compressed sequence of range specs
+///
+/// Examples:
+///
+/// All child ranges: `[(0, [0])]` starting at offset 0, all offsets (see above)
+/// First chunk of all child: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
+/// All of child 1234: `[(1234, [0]), [1, []]]`.
+/// First 33 chunks of child 5678: `[(5678, [0, 33]), (1, [])]`.
+/// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.
+/// No child ranges: `[]`
+///
+/// This is a smallvec so that we can avoid allocations in the common case of a single child range.
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[repr(transparent)]
+pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
+
+impl RangeSpecSeq {
     #[allow(dead_code)]
     pub fn empty() -> Self {
-        Self {
-            blob: RangeSpec::empty(),
-            children: SmallVec::new(),
-        }
+        Self(SmallVec::new())
     }
 
     pub fn all() -> Self {
-        Self {
-            blob: RangeSpec::all(),
-            children: smallvec![(0, RangeSpec::all())],
-        }
+        Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// An infinite iterator of range specs
-    ///
-    /// default is what to use if the children of this RequestRangeSpec are empty.
-    pub fn iter<'a>(&'a self, default: &'a RangeSpec) -> RequestRangeSpecIter<'a> {
-        RequestRangeSpecIter {
-            current: default,
-            count: None,
-            remaining: &self.children,
-        }
-    }
-
-    pub fn new(
-        blob: RangeSet2<ChunkNum>,
-        children: impl IntoIterator<Item = RangeSet2<ChunkNum>>,
-    ) -> Self {
+    pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
         let mut prev = RangeSet2::empty();
         let mut count = 0;
         let mut res = SmallVec::new();
@@ -133,9 +122,49 @@ impl RequestRangeSpec {
                 count = 1;
             }
         }
+        Self(res)
+    }
+
+    /// An infinite iterator of range specs
+    ///
+    /// default is what to use if the children of this RequestRangeSpec are empty.
+    pub fn iter<'a>(&'a self, default: &'a RangeSpec) -> RequestRangeSpecIter<'a> {
+        let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
+        RequestRangeSpecIter {
+            current: default,
+            count: before_first,
+            remaining: &self.0,
+        }
+    }
+}
+
+impl RequestRangeSpec {
+    /// Create an empty request range spec
+    #[allow(dead_code)]
+    pub fn empty() -> Self {
+        Self {
+            blob: RangeSpec::empty(),
+            children: RangeSpecSeq::empty(),
+        }
+    }
+
+    /// Create a request range spec that covers the entire collection and all children
+    pub fn all() -> Self {
+        Self {
+            blob: RangeSpec::all(),
+            children: RangeSpecSeq::all(),
+        }
+    }
+
+    /// Create a request range spec from a range set for the blob and a sequence
+    /// of range sets for the children
+    pub fn new(
+        blob: RangeSet2<ChunkNum>,
+        children: impl IntoIterator<Item = RangeSet2<ChunkNum>>,
+    ) -> Self {
         Self {
             blob: RangeSpec::new(blob),
-            children: res,
+            children: RangeSpecSeq::new(children),
         }
     }
 }
@@ -143,10 +172,13 @@ impl RequestRangeSpec {
 /// An infinite iterator of range specs
 ///
 /// default is what to use if the children of this RequestRangeSpec are empty.
-pub(crate) struct RequestRangeSpecIter<'a> {
+#[derive(Debug)]
+pub struct RequestRangeSpecIter<'a> {
+    /// current value
     current: &'a RangeSpec,
-    //
-    count: Option<u64>,
+    /// number of times to emit current before grabbing next value
+    /// if remaining is empty, this is ignored and current is emitted forever
+    count: u64,
     /// remaining ranges
     remaining: &'a [(u64, RangeSpec)],
 }
@@ -155,24 +187,22 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     type Item = &'a RangeSpec;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(count) = &mut self.count {
-                if *count > 0 {
-                    *count -= 1;
-                    return Some(self.current);
-                } else {
-                    if let Some(((_, new), rest)) = self.remaining.split_first() {
-                        self.current = new;
-                        self.remaining = rest;
-                    }
-                    self.count = None;
-                }
-            } else if self.remaining.is_empty() {
-                return Some(self.current);
+        Some(loop {
+            break if self.count > 0 {
+                // emit current value count times
+                self.count -= 1;
+                self.current
+            } else if let Some(((_, new), rest)) = self.remaining.split_first() {
+                // get next current value, new count, and set remaining
+                self.current = new;
+                self.count = rest.get(0).map(|(c, _)| *c).unwrap_or_default();
+                self.remaining = rest;
+                continue;
             } else {
-                self.count = Some(self.remaining[0].0);
-            }
-        }
+                // no more values, just repeat current forever
+                self.current
+            };
+        })
     }
 }
 
@@ -197,24 +227,28 @@ mod tests {
         })
     }
 
-    fn request_range_spec_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
+    fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
         let spec = RequestRangeSpec::new(RangeSet2::empty(), ranges.iter().cloned());
-        println!("{:?} {:?}", ranges, spec);
-        spec.iter(&RangeSpec::empty())
+        spec.children
+            .iter(&RangeSpec::empty())
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
             .collect::<Vec<_>>()
     }
 
     #[test]
-    fn request_range_spec_roundtrip_cases() {
-        for case in [vec![0..1, 0..0]] {
+    fn range_spec_seq_roundtrip_cases() {
+        for case in [
+            vec![0..1, 0..0],
+            vec![1..2, 1..2, 1..2],
+            vec![1..2, 1..2, 2..3, 2..3],
+        ] {
             let case = case
                 .iter()
                 .map(|x| RangeSet2::from(ChunkNum(x.start)..ChunkNum(x.end)))
                 .collect::<Vec<_>>();
             let expected = case.clone();
-            let actual = request_range_spec_impl(&case);
+            let actual = range_spec_seq_roundtrip_impl(&case);
             assert_eq!(expected, actual);
         }
     }
@@ -228,9 +262,9 @@ mod tests {
         }
 
         #[test]
-        fn request_range_spec_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
+        fn range_spec_seq_roundtrip(ranges in proptest::collection::vec(ranges(0..100), 0..10)) {
             let expected = ranges.clone();
-            let actual = request_range_spec_impl(&ranges);
+            let actual = range_spec_seq_roundtrip_impl(&ranges);
             prop_assert_eq!(expected, actual);
         }
     }
