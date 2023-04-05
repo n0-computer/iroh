@@ -31,6 +31,7 @@ use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
+use tokio_util::io::SyncIoBridge;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
@@ -883,16 +884,31 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             write_response(&mut writer, buffer, Res::Found).await?;
-
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
-            let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::io::tokio::encode_ranges(
-                file_reader,
-                outboard,
-                &RangeSet2::all(),
-                &mut writer,
-            )
-            .await?;
+            // need to thread the writer though the spawn_blocking, since
+            // taking a reference does not work. spawn_blocking requires
+            // 'static lifetime.
+            writer = tokio::task::spawn_blocking(move || {
+                let file_reader = std::fs::File::open(&path)?;
+                let mut wrapper = SyncIoBridge::new(&mut writer);
+                let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
+                bao_tree::io::sync::encode_ranges(
+                    file_reader,
+                    outboard,
+                    &RangeSet2::all(),
+                    &mut wrapper,
+                )?;
+                std::io::Result::Ok(writer)
+            })
+            .await??;
+            // let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
+            // let file_reader = tokio::fs::File::open(&path).await?;
+            // bao_tree::io::tokio::encode_ranges(
+            //     file_reader,
+            //     outboard,
+            //     &RangeSet2::all(),
+            //     &mut writer,
+            // )
+            // .await?;
 
             Ok((SentStatus::Sent, writer, size))
         }
