@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::sync::encode_ranges_validated;
+use bao_tree::io::sync::encode_ranges;
 use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboardRef};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -725,7 +725,7 @@ async fn transfer_collection(
         .unwrap();
     let mut encoded = Vec::with_capacity(encoded_size);
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
-    encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
+    encode_ranges(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
 
     let c: Collection = postcard::from_bytes(data)?;
 
@@ -886,7 +886,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
 
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
             let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::io::tokio::encode_ranges_validated(
+            bao_tree::io::tokio::encode_ranges(
                 file_reader,
                 outboard,
                 &RangeSet2::all(),
