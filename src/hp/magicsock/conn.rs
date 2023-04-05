@@ -14,7 +14,10 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
-use futures::{future::BoxFuture, StreamExt};
+use futures::{
+    future::{BoxFuture, OptionFuture},
+    StreamExt,
+};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -1829,7 +1832,6 @@ impl DerpHandler {
 
     async fn run(mut self) -> Result<()> {
         let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
-
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
@@ -1902,7 +1904,7 @@ impl DerpHandler {
                         }
                     }
                 }
-                _ = self.periodic_re_stun_timer.as_mut().unwrap().tick(), if self.periodic_re_stun_timer.is_some()  => {
+                _ =  OptionFuture::from(self.periodic_re_stun_timer.as_mut().map(|i| i.tick())) => {
                     self.re_stun("periodic").await;
                 }
                 _ = endpoints_update_receiver.changed() => {
