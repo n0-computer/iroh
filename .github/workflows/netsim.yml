@@ -42,7 +42,7 @@ jobs:
       uses: actions/checkout@master
       with:
         submodules: recursive
-        ref: steps.refs.outputs.head_ref
+        ref: ${{ steps.refs.outputs.head_ref }}
 
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
