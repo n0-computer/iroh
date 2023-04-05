@@ -4,7 +4,6 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
-    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
@@ -15,7 +14,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
-use futures::{future::BoxFuture, Future, StreamExt};
+use futures::{future::BoxFuture, StreamExt};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -330,14 +329,11 @@ impl Conn {
             my_derp: AtomicU16::new(0),
         });
 
-        let derp_handler = DerpHandler::new(
-            derp_receiver,
-            derp_sender,
-            derp_recv_ch_sender,
-            inner.clone(),
-        );
-
+        let conn = inner.clone();
         let derp_task = tokio::task::spawn(async move {
+            let derp_handler =
+                DerpHandler::new(derp_receiver, derp_sender, derp_recv_ch_sender, conn);
+
             if let Err(err) = derp_handler.run().await {
                 warn!("derp handler errored: {:?}", err);
             }
@@ -426,15 +422,6 @@ impl Conn {
     /// Returns the discovery public key.
     fn disco_public(&self) -> key::disco::PublicKey {
         self.disco_private.public()
-    }
-
-    /// Starts connecting to our DERP home, if any.
-    async fn start_derp_home_connect(&self) {
-        self.derp_sender
-            .send_async(DerpMessage::Connect {
-                port: self.my_derp(),
-            })
-            .await;
     }
 
     /// Returns the current IPv4 listener's port number.
@@ -1099,10 +1086,10 @@ impl Conn {
                     ))
                     .await;
             }
-            // TODO:
-            // if changes {
-            //     self.log_active_derp(&mut state);
-            // }
+            if changes {
+                // TODO:
+                // self.log_active_derp();
+            }
         }
 
         let this = self.clone();
@@ -1198,12 +1185,6 @@ impl Conn {
         disco_info.retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
     }
 
-    /// Reports the number of active DERP connections.
-    pub async fn derps(&self) -> usize {
-        todo!()
-        // self.state.lock().await.active_derp.len()
-    }
-
     async fn derp_region_code_of_addr(&self, ip_port: &str) -> String {
         let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
         match addr {
@@ -1247,7 +1228,7 @@ impl Conn {
 
         self.closed.store(true, Ordering::SeqCst);
         // c.connCtxCancel()
-        self.derp_sender.send_async(DerpMessage::Shutdown).await;
+        self.derp_sender.send_async(DerpMessage::Shutdown).await?;
         // Ignore errors from c.pconnN.Close.
         // They will frequently have been closed already by a call to connBind.Close.
         if let Some(ref conn) = self.pconn6 {
@@ -1256,7 +1237,7 @@ impl Conn {
         self.pconn4.close().await.ok();
 
         if let Some(task) = state.derp_task.take() {
-            task.await;
+            task.await?;
         }
 
         Ok(())
@@ -1287,7 +1268,9 @@ impl Conn {
     /// It should be followed by a call to ReSTUN.
     pub async fn rebind_all(&self) {
         // TODO: check all calls for responses.
-        self.derp_sender.send_async(DerpMessage::RebindAll).await;
+        let (s, r) = sync::oneshot::channel();
+        self.derp_sender.send_async(DerpMessage::RebindAll(s)).await;
+        r.await;
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -1626,11 +1609,6 @@ struct DerpReadResult {
     buf: Vec<u8>,
 }
 
-struct DerpWriteRequest {
-    pub_key: key::node::PublicKey,
-    content: Vec<u8>,
-}
-
 #[derive(Default)]
 struct SocketEndpointCache(std::sync::Mutex<Option<(SocketAddr, u64, Endpoint)>>);
 
@@ -1774,15 +1752,13 @@ impl From<Transmit> for TransmitCow<'_> {
 
 enum DerpMessage {
     SetPreferredPort(u16),
-    RebindAll,
+    RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
-    MaybeCloseOnRebind(Vec<IpAddr>),
     CloseAll(&'static str),
     Close(u16, &'static str),
+    CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
-    Connect {
-        port: u16,
-    },
+    Connected(ReaderState),
     WriteRequest {
         port: u16,
         pub_key: key::node::PublicKey,
@@ -1854,16 +1830,13 @@ impl DerpHandler {
     async fn run(mut self) -> Result<()> {
         let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
 
-        let mut recvs = futures::stream::FuturesUnordered::new();
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
+        let mut recvs = futures::stream::FuturesUnordered::new();
 
         loop {
             tokio::select! {
                 msg = self.msg_receiver.recv_async() => {
                     match msg? {
-                        DerpMessage::MaybeCloseOnRebind(ifs) => {
-                            self.maybe_close_derps_on_rebind(&ifs).await;
-                        }
                         DerpMessage::Shutdown => {
                             self.close_all_derp("conn-close").await;
                             return Ok(());
@@ -1874,22 +1847,17 @@ impl DerpHandler {
                         DerpMessage::Close(rid, reason) => {
                             self.close_derp(rid, reason).await;
                         }
+                        DerpMessage::CloseOrReconnect(rid, reason) => {
+                            self.close_or_reconnect_derp(rid, reason).await;
+                        }
                         DerpMessage::ReStun(reason) => {
                             self.re_stun(reason).await;
                         }
-                        DerpMessage::Connect { port } => {
-                            let (derp_client, cancel) = self.connect(port, None);
-                            if let Some(cancel) = cancel {
-                                let rs = ReaderState::new(port, cancel, derp_client);
-                                recvs.push(rs.recv());
-                            }
+                        DerpMessage::Connected(rs) => {
+                            recvs.push(rs.recv())
                         }
-
                         DerpMessage::WriteRequest { port, pub_key, content} => {
-                            if let Some((derp_client, Some(cancel))) = self.send(port, pub_key, content).await {
-                                let rs = ReaderState::new(port, cancel, derp_client);
-                                recvs.push(rs.recv());
-                            }
+                            self.send(port, pub_key, content).await;
                         }
                         DerpMessage::EnqueueCallMeMaybe {
                             derp_addr,
@@ -1897,8 +1865,9 @@ impl DerpHandler {
                         } => {
                             self.enqueue_call_me_maybe(derp_addr, endpoint).await;
                         }
-                        DerpMessage::RebindAll => {
+                        DerpMessage::RebindAll(s) => {
                             self.rebind_all().await;
+                            s.send(());
                         }
                         DerpMessage::SetPreferredPort(port) => {
                             self.set_preferred_port(port).await;
@@ -1910,12 +1879,12 @@ impl DerpHandler {
                         ReadAction::None => {},
                         ReadAction::AddPeerRoute { peers, region, derp_client } => {
                             for peer in peers {
-                                self.add_derp_peer_route(peer, region, derp_client.clone());
+                                self.add_derp_peer_route(peer, region, derp_client.clone()).await;
                             }
                         },
                         ReadAction::RemovePeerRoute { peers, region, derp_client } => {
                             for peer in peers {
-                                self.remove_derp_peer_route(peer, region, &derp_client);
+                                self.remove_derp_peer_route(peer, region, &derp_client).await;
                             }
                         }
                     }
@@ -2002,11 +1971,11 @@ impl DerpHandler {
         }
     }
 
-    fn connect(
+    async fn connect(
         &mut self,
         region_id: u16,
         peer: Option<&key::node::PublicKey>,
-    ) -> (derp::http::Client, Option<CancellationToken>) {
+    ) -> derp::http::Client {
         // See if we have a connection open to that DERP node ID
         // first. If so, might as well use it. (It's a little
         // arbitrary whether we use this one vs. the reverse route
@@ -2014,7 +1983,7 @@ impl DerpHandler {
 
         if let Some(ad) = self.active_derp.get_mut(&region_id) {
             ad.last_write = Instant::now();
-            return (ad.c.clone(), None);
+            return ad.c.clone();
         }
 
         // If we don't have an open connection to the peer's home DERP
@@ -2028,7 +1997,7 @@ impl DerpHandler {
                 if let Some(ad) = self.active_derp.get_mut(&r.derp_id) {
                     if ad.c == r.dc {
                         ad.last_write = Instant::now();
-                        return (ad.c.clone(), None);
+                        return ad.c.clone();
                     }
                 }
             }
@@ -2106,21 +2075,18 @@ impl DerpHandler {
             f();
         }
 
-        (dc, Some(cancel))
+        let rs = ReaderState::new(region_id, cancel, dc.clone());
+        self.msg_sender.send_async(DerpMessage::Connected(rs)).await;
+        dc
     }
 
-    async fn send(
-        &mut self,
-        port: u16,
-        peer: key::node::PublicKey,
-        content: Vec<u8>,
-    ) -> Option<(derp::http::Client, Option<CancellationToken>)> {
+    async fn send(&mut self, port: u16, peer: key::node::PublicKey, content: Vec<u8>) {
         let region_id = port;
         {
             let derp_map = self.conn.derp_map.read().await;
             if derp_map.is_none() {
                 warn!("DERP is disabled");
-                return None;
+                return;
             }
             if !derp_map
                 .as_ref()
@@ -2129,11 +2095,11 @@ impl DerpHandler {
                 .contains_key(&usize::from(region_id))
             {
                 warn!("unknown region id {}", region_id);
-                return None;
+                return;
             }
         }
 
-        let (derp_client, cancel) = self.connect(region_id, Some(&peer));
+        let derp_client = self.connect(region_id, Some(&peer)).await;
         match derp_client.send(peer, content).await {
             Ok(_) => {
                 // TODO:
@@ -2145,7 +2111,6 @@ impl DerpHandler {
                 // metricSendDERPError.Add(1)
             }
         }
-        Some((derp_client, cancel))
     }
 
     /// Removes a DERP route entry previously added by add_derp_peer_route.
@@ -2196,16 +2161,16 @@ impl DerpHandler {
 
             let dc = ad.c.clone();
             let region_id = *region_id;
-            // TODO:
-            // tokio::task::spawn(
-            // time::timeout(Duration::from_secs(3), async move {
-            //     if let Err(_err) = dc.ping().await {
-            //         self.close_or_reconnect_derp(region_id, "rebind-ping-fail")
-            //             .await;
-            //         return;
-            //     }
-            //     debug!("post-rebind ping of DERP region {} okay", region_id);
-            // });
+            let msg_sender = self.msg_sender.clone();
+            tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
+                if let Err(_err) = dc.ping().await {
+                    msg_sender
+                        .send_async(DerpMessage::CloseOrReconnect(region_id, "rebind-ping-fail"))
+                        .await;
+                    return;
+                }
+                debug!("post-rebind ping of DERP region {} okay", region_id);
+            }));
         }
         for (region_id, why) in tasks {
             self.close_or_reconnect_derp(region_id, why).await;
@@ -2219,7 +2184,7 @@ impl DerpHandler {
     async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
         self.close_derp(region_id.into(), why).await;
         if self.conn.my_derp.load(Ordering::Relaxed) == region_id {
-            self.connect(region_id, None);
+            self.connect(region_id, None).await;
         }
     }
 
@@ -2481,51 +2446,52 @@ impl DerpHandler {
             }));
             let report = conn.net_checker.get_report(&dm).await?;
             *conn.last_net_check_report.write().await = Some(report.clone());
-            let r = &report;
-            conn.no_v4_send.store(!r.ipv4_can_send, Ordering::Relaxed);
-
-            let mut ni = cfg::NetInfo {
-                derp_latency: Default::default(),
-                mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
-                hair_pinning: r.hair_pinning,
-                upnp: r.upnp,
-                pmp: r.pmp,
-                pcp: r.pcp,
-                have_port_map: conn.port_mapper.have_mapping(),
-                working_ipv6: Some(r.ipv6),
-                os_has_ipv6: Some(r.os_has_ipv6),
-                working_udp: Some(r.udp),
-                working_icm_pv4: Some(r.icmpv4),
-                preferred_derp: r.preferred_derp,
-                link_type: None,
-            };
-            for (rid, d) in &r.region_v4_latency {
-                ni.derp_latency
-                    .insert(format!("{}-v4", rid), d.as_secs_f64());
-            }
-            for (rid, d) in &r.region_v6_latency {
-                ni.derp_latency
-                    .insert(format!("{}-v6", rid), d.as_secs_f64());
-            }
-
-            if ni.preferred_derp == 0 {
-                // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                ni.preferred_derp = self.pick_derp_fallback().await;
-            }
-            if !self.set_nearest_derp(ni.preferred_derp.try_into()?).await {
-                ni.preferred_derp = 0;
-            }
-
-            // TODO: set link type
-            drop(r);
-            self.call_net_info_callback(ni).await;
             Ok::<_, anyhow::Error>(report)
         })
-        .await;
+        .await??;
 
-        // TODO:
-        // self.ignore_stun_packets().await;
-        let report = report??;
+        let r = &report;
+        self.conn
+            .no_v4_send
+            .store(!r.ipv4_can_send, Ordering::Relaxed);
+
+        let mut ni = cfg::NetInfo {
+            derp_latency: Default::default(),
+            mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
+            hair_pinning: r.hair_pinning,
+            upnp: r.upnp,
+            pmp: r.pmp,
+            pcp: r.pcp,
+            have_port_map: self.conn.port_mapper.have_mapping(),
+            working_ipv6: Some(r.ipv6),
+            os_has_ipv6: Some(r.os_has_ipv6),
+            working_udp: Some(r.udp),
+            working_icm_pv4: Some(r.icmpv4),
+            preferred_derp: r.preferred_derp,
+            link_type: None,
+        };
+        for (rid, d) in &r.region_v4_latency {
+            ni.derp_latency
+                .insert(format!("{}-v4", rid), d.as_secs_f64());
+        }
+        for (rid, d) in &r.region_v6_latency {
+            ni.derp_latency
+                .insert(format!("{}-v6", rid), d.as_secs_f64());
+        }
+
+        if ni.preferred_derp == 0 {
+            // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
+            ni.preferred_derp = self.pick_derp_fallback().await;
+        }
+        if !self.set_nearest_derp(ni.preferred_derp.try_into()?).await {
+            ni.preferred_derp = 0;
+        }
+
+        // TODO: set link type
+        drop(r);
+        self.call_net_info_callback(ni).await;
+        self.ignore_stun_packets().await;
+
         Ok(report)
     }
 
@@ -2605,66 +2571,60 @@ impl DerpHandler {
         true
     }
 
-    fn enqueue_call_me_maybe(
-        &mut self,
-        derp_addr: SocketAddr,
-        endpoint: Endpoint,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        Box::pin(async move {
-            if self.last_endpoints_time.is_none()
-                || self.last_endpoints_time.as_ref().unwrap().elapsed()
-                    > ENDPOINTS_FRESH_ENOUGH_DURATION
-            {
-                info!(
-                    "want call-me-maybe but endpoints stale; restunning ({:?})",
-                    self.last_endpoints_time
-                );
+    async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint: Endpoint) {
+        if self.last_endpoints_time.is_none()
+            || self.last_endpoints_time.as_ref().unwrap().elapsed()
+                > ENDPOINTS_FRESH_ENOUGH_DURATION
+        {
+            info!(
+                "want call-me-maybe but endpoints stale; restunning ({:?})",
+                self.last_endpoints_time
+            );
 
-                let msg_sender = self.msg_sender.clone();
-                self.on_endpoint_refreshed.insert(
-                    endpoint.clone(),
-                    Box::new(move || {
-                        let endpoint = endpoint.clone();
-                        let msg_sender = msg_sender.clone();
-                        Box::pin(async move {
-                            info!(
-                                "STUN done; sending call-me-maybe to {:?} {:?}",
-                                endpoint.disco_key(),
-                                endpoint.public_key
-                            );
-                            msg_sender
-                                .send_async(DerpMessage::EnqueueCallMeMaybe {
-                                    derp_addr,
-                                    endpoint,
-                                })
-                                .await;
-                        })
-                    }),
-                );
+            let msg_sender = self.msg_sender.clone();
+            self.on_endpoint_refreshed.insert(
+                endpoint.clone(),
+                Box::new(move || {
+                    let endpoint = endpoint.clone();
+                    let msg_sender = msg_sender.clone();
+                    Box::pin(async move {
+                        info!(
+                            "STUN done; sending call-me-maybe to {:?} {:?}",
+                            endpoint.disco_key(),
+                            endpoint.public_key
+                        );
+                        msg_sender
+                            .send_async(DerpMessage::EnqueueCallMeMaybe {
+                                derp_addr,
+                                endpoint,
+                            })
+                            .await;
+                    })
+                }),
+            );
 
-                self.msg_sender
-                    .send_async(DerpMessage::ReStun("refresh-for-peering"))
-                    .await;
-            } else {
-                let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
-                let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
+            self.msg_sender
+                .send_async(DerpMessage::ReStun("refresh-for-peering"))
+                .await;
+        } else {
+            let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
+            let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
-                tokio::task::spawn(async move {
-                    if let Err(err) = endpoint
-                        .c
-                        .send_disco_message(
-                            derp_addr,
-                            Some(&endpoint.public_key),
-                            &endpoint.disco_key(),
-                            msg,
-                        )
-                        .await
-                    {
-                        warn!("failed to send disco message to {}: {:?}", derp_addr, err);
-                    }
-                });
-            }
-        })
+            tokio::task::spawn(async move {
+                if let Err(err) = endpoint
+                    .c
+                    .send_disco_message(
+                        derp_addr,
+                        Some(&endpoint.public_key),
+                        &endpoint.disco_key(),
+                        msg,
+                    )
+                    .await
+                {
+                    warn!("failed to send disco message to {}: {:?}", derp_addr, err);
+                }
+            });
+        }
     }
 
     async fn rebind_all(&mut self) {
@@ -2768,7 +2728,7 @@ impl DerpHandler {
         }))
         .await;
 
-        self.connect(derp_num, None);
+        self.connect(derp_num, None).await;
         true
     }
 
@@ -2967,7 +2927,7 @@ impl ReaderState {
                         // health.SetDERPRegionHealth(regionID, m.Problem);
                         (self, ReadResult::Continue, ReadAction::None)
                     }
-                    derp::ReceivedMessage::PeerGone(key) => {
+                    derp::ReceivedMessage::PeerGone(_key) => {
                         // self.remove_derp_peer_route(key, region_id, &dc).await;
                         (self, ReadResult::Continue, ReadAction::None)
                     }
