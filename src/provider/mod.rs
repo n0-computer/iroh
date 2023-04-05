@@ -32,7 +32,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
@@ -769,7 +769,7 @@ async fn transfer_collection(
         .enumerate()
         .zip(request.ranges.children.iter(&default))
     {
-        debug!("writing blob {}/{}", i, c.blobs().len());
+        trace!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
         let (status, writer1, size) =
             send_blob(db.clone(), blob.hash, ranges, writer, buffer).await?;
@@ -831,7 +831,7 @@ async fn handle_stream(
     };
 
     let hash = request.name;
-    debug!("got request for ({hash})");
+    debug!(%hash, "received request");
     let _ = events.send(Event::RequestReceived {
         connection_id,
         hash,
@@ -1009,7 +1009,8 @@ fn compute_outboard(
         "can only transfer blob data: {}",
         path.display()
     );
-    tracing::debug!("computing outboard for {}", path.display());
+    let span = trace_span!("outboard.compute", path = %path.display());
+    let _guard = span.enter();
     let file = std::fs::File::open(&path)?;
     // compute outboard size so we can pre-allocate the buffer.
     //
@@ -1035,7 +1036,7 @@ fn compute_outboard(
     let hash =
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
-    tracing::debug!("done. hash for {} is {hash}", path.display());
+    trace!(%hash, "done");
 
     Ok((hash.into(), ob.into_inner()))
 }
@@ -1169,7 +1170,7 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
     write_lp(&mut writer, used).await?;
 
-    debug!("written response of length {}", used.len());
+    trace!(len = used.len(), "wrote response message frame");
     Ok(())
 }
 

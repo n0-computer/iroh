@@ -12,7 +12,7 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::get::{get_range_spec, DataStream, get_data_path};
+use iroh::get::{get_data_path, get_range_spec, DataStream};
 use iroh::protocol::{AuthToken, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -30,6 +30,9 @@ use main_util::Blake3Cid;
 
 use crate::main_util::{iroh_data_root, pathbuf_from_name};
 
+#[cfg(feature = "metrics")]
+use iroh::metrics::init_metrics;
+
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -45,6 +48,10 @@ struct Cli {
     /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
     #[clap(long)]
     keylog: bool,
+    /// Bind address on which to serve Prometheus metrics
+    #[cfg(feature = "metrics")]
+    #[clap(long)]
+    metrics_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +450,25 @@ fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
+#[cfg(feature = "metrics")]
+fn init_metrics_collection(
+    metrics_addr: Option<SocketAddr>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    init_metrics();
+    // doesn't start the server if the address is None
+    if let Some(metrics_addr) = metrics_addr {
+        return Some(tokio::spawn(async move {
+            iroh::metrics::start_metrics_server(metrics_addr)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to start metrics server: {}", e);
+                });
+        }));
+    }
+    tracing::info!("Metrics server not started, no address provided");
+    None
+}
+
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -463,7 +489,10 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
+    #[cfg(feature = "metrics")]
+    let metrics_fut = init_metrics_collection(cli.metrics_addr);
+
+    let r = match cli.command {
         Commands::Get {
             hash,
             peer,
@@ -668,7 +697,14 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
+    };
+
+    #[cfg(feature = "metrics")]
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+        drop(metrics_fut);
     }
+    r
 }
 
 async fn provide(
@@ -815,11 +851,12 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
         async move {
             if let (Some(ref temp_dir), Some(ref out_dir)) = (temp_dir, out_dir) {
                 let path = get_data_path(temp_dir, hash);
-                tokio::fs::create_dir_all(temp_dir).await
+                tokio::fs::create_dir_all(temp_dir)
+                    .await
                     .context("unable to create directory {temp_dir}")?;
                 tokio::fs::create_dir_all(out_dir)
                     .await
-            .       context("Unable to create directory {out_dir}")?;
+                    .context("Unable to create directory {out_dir}")?;
                 tokio::fs::write(path, data).await?;
             };
             progress!("{} Downloading ...", style("[3/3]").bold().dim());
@@ -863,11 +900,11 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                     .await?;
                 tracing::info!("piping data to {:?} and {:?}", data_path, outboard_path);
                 reader
-                    .write_all_ob(&mut data_file, &mut outboard_file,
+                    .write_all_ob(
+                        &mut data_file,
+                        &mut outboard_file,
                         |size| pb.set_length(size),
-                        |offset, _size| {
-                            pb.set_position(offset)
-                        },
+                        |offset, _size| pb.set_position(offset),
                     )
                     .await?;
                 pb.finish();

@@ -34,7 +34,8 @@ use futures::{Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, error};
+use tracing::{debug, debug_span, error};
+use tracing_futures::Instrument;
 
 pub use crate::util::Hash;
 
@@ -171,7 +172,10 @@ impl DataStream {
                     outboard.seek(SeekFrom::Start(0)).await?;
                     outboard.write_all(&size.0.to_le_bytes()).await?;
                 }
-                DecodeResponseItem::Parent { node, pair: (l_hash, r_hash) } => {
+                DecodeResponseItem::Parent {
+                    node,
+                    pair: (l_hash, r_hash),
+                } => {
                     let offset = tree.pre_order_offset(node).unwrap();
                     let byte_offset = offset * 64 + 8;
                     outboard.seek(SeekFrom::Start(byte_offset)).await?;
@@ -244,17 +248,24 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
-    let start = Instant::now();
-    let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
-    run_connection(
-        connection,
-        request,
-        ticket.token(),
-        start,
-        on_connected,
-        on_collection,
-        on_blob,
-    )
+    let span = debug_span!("get", hash=%ticket.hash());
+    async move {
+        let start = Instant::now();
+        let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
+        let span = debug_span!("connection", remote_addr=%connection.remote_address());
+        run_connection(
+            connection,
+            request,
+            ticket.token(),
+            start,
+            on_connected,
+            on_collection,
+            on_blob,
+        )
+        .instrument(span)
+        .await
+    }
+    .instrument(span)
     .await
 }
 
@@ -396,12 +407,8 @@ pub fn get_range_spec(
                 tracing::debug!("Found incomplete file: {:?}", paths.temp);
                 // we got incomplete data
                 let outboard = std::fs::read(&paths.outboard)?;
-                let outboard = PreOrderMemOutboard::new(
-                    blob.hash.into(),
-                    IROH_BLOCK_SIZE,
-                    outboard,
-                    false,
-                );
+                let outboard =
+                    PreOrderMemOutboard::new(blob.hash.into(), IROH_BLOCK_SIZE, outboard, false);
                 match outboard {
                     Ok(outboard) => {
                         // compute set of valid ranges from the outboard and the file
@@ -411,7 +418,8 @@ pub fn get_range_spec(
                         //
                         // Do a quick check of the outboard in case something went wrong when writing.
                         let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
-                        let valid_from_file = RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
+                        let valid_from_file =
+                            RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
                         tracing::debug!("valid_from_file: {:?}", valid_from_file);
                         tracing::debug!("valid_from_outboard: {:?}", valid);
                         valid &= valid_from_file;
@@ -430,9 +438,12 @@ pub fn get_range_spec(
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
-    ranges.iter().zip(collection.blobs()).for_each(|(ranges, blob)| {
-        println!("{} {:?}", blob.name, ranges);
-    });
+    ranges
+        .iter()
+        .zip(collection.blobs())
+        .for_each(|(ranges, blob)| {
+            println!("{} {:?}", blob.name, ranges);
+        });
     Ok(RequestRangeSpec::new(RangeSet2::all(), ranges))
 }
 
@@ -453,17 +464,24 @@ where
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
-    let now = Instant::now();
-    let connection = dial_peer(opts).await?;
-    run_connection(
-        connection,
-        request,
-        auth_token,
-        now,
-        on_connected,
-        on_collection,
-        on_blob,
-    )
+    let span = debug_span!("get", %request.name);
+    async move {
+        let now = Instant::now();
+        let connection = dial_peer(opts).await?;
+        let span = debug_span!("connection", remote_addr=%connection.remote_address());
+        run_connection(
+            connection,
+            request,
+            auth_token,
+            now,
+            on_connected,
+            on_collection,
+            on_blob,
+        )
+        .instrument(span)
+        .await
+    }
+    .instrument(span)
     .await
 }
 
