@@ -1014,18 +1014,17 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     Ok((Database::from(db), hash))
 }
 
-/// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
-/// a public Database.
+/// The actual implementation of create_collection.
+///
+/// Except for the wrapping into arc and mutex to make a public Database.
 async fn create_collection_inner(
-    mut data_sources: Vec<DataSource>,
+    data_sources: Vec<DataSource>,
     progress: Progress<ProvideProgress>,
 ) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
-
-    data_sources.sort();
 
     let outboard_progress = progress.clone();
     // compute outboards in parallel, using tokio's blocking thread pool
