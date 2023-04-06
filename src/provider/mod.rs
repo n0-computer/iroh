@@ -758,14 +758,7 @@ async fn transfer_collection(
 
     // TODO: we should check if the blobs referenced in this container
     // actually exist in this provider before returning `FoundCollection`
-    write_response(
-        &mut writer,
-        buffer,
-        Res::FoundCollection {
-            total_blobs_size: c.total_blobs_size(),
-        },
-    )
-    .await?;
+    write_response(&mut writer, buffer, Res::FoundCollection).await?;
 
     writer.write_all(&encoded).await?;
     for (i, blob) in c.blobs().iter().enumerate() {

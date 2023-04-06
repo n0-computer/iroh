@@ -326,15 +326,15 @@ where
                 let response: Response = postcard::from_bytes(&response_buffer)?;
                 match response.data {
                     // server is sending over a collection of blobs
-                    Res::FoundCollection { total_blobs_size } => {
-                        data_len = total_blobs_size;
-
+                    Res::FoundCollection => {
                         // read entire collection data into buffer
                         let data = read_bao_encoded(&mut reader, hash).await?;
 
                         // decode the collection
                         let collection = Collection::from_bytes(&data)?;
                         on_collection(&collection).await?;
+                        let total_blobs_size = collection.total_blobs_size();
+                        data_len = total_blobs_size;
 
                         // expect to get blob data in the order they appear in the collection
                         let mut remaining_size = total_blobs_size;
@@ -405,7 +405,7 @@ async fn handle_blob_response(
             let response: Response = postcard::from_bytes(&response_buffer)?;
             match response.data {
                 // unexpected message
-                Res::FoundCollection { .. } => Err(anyhow!(
+                Res::FoundCollection => Err(anyhow!(
                     "Unexpected message from provider. Ending transfer early."
                 ))?,
                 // blob data not found
