@@ -9,6 +9,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use crate::blobs::{Blob, Collection};
@@ -30,10 +31,10 @@ use bao_tree::{ByteNum, ChunkNum};
 use bytes::{Bytes, BytesMut};
 use default_net::Interface;
 use futures::stream::FusedStream;
-use futures::{Future, Stream, StreamExt};
+use futures::{ready, Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
-use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, debug_span, error};
 use tracing_futures::Instrument;
 
@@ -156,21 +157,35 @@ impl DataStream {
     }
 
     /// write all the data to a file or buffer
-    pub async fn write_all_ob(
+    ///
+    /// `target` is the main file
+    /// `create_outboard` is a function that creates an optional outboard file
+    /// `on_write` is a callback for writes, e.g. to update a progress bar
+    pub async fn write_all_with_outboard<T, O, OS, OW, Fut>(
         &mut self,
-        mut target: impl AsyncWrite + AsyncSeek + Unpin,
-        mut outboard: impl AsyncWrite + AsyncSeek + Unpin,
-        mut on_size: impl FnMut(u64),
-        mut on_write: impl FnMut(u64, usize),
-    ) -> std::result::Result<(), DecodeError> {
+        target: T,
+        mut create_outboard: OS,
+        mut on_write: OW,
+    ) -> std::result::Result<Option<O>, DecodeError>
+    where
+        T: AsyncWrite + AsyncSeek + Unpin + Debug,
+        O: AsyncWrite + AsyncSeek + Unpin + Debug,
+        OS: FnMut(u64) -> Fut,
+        OW: FnMut(u64, usize),
+        Fut: Future<Output = io::Result<Option<O>>>,
+    {
+        let mut target = OptimizedSeek::new(target);
         let tree = self.0.read_tree().await?;
+        let mut outboard = None;
         while let Some(item) = self.0.next().await {
             match item? {
                 DecodeResponseItem::Header { size } => {
                     // only seek if we have to
-                    on_size(size.0);
-                    outboard.seek(SeekFrom::Start(0)).await?;
-                    outboard.write_all(&size.0.to_le_bytes()).await?;
+                    outboard = create_outboard(size.0).await?.map(OptimizedSeek::new);
+                    if let Some(outboard) = outboard.as_mut() {
+                        outboard.seek(SeekFrom::Start(0)).await?;
+                        outboard.write_all(&size.0.to_le_bytes()).await?;
+                    }
                 }
                 DecodeResponseItem::Parent {
                     node,
@@ -178,19 +193,25 @@ impl DataStream {
                 } => {
                     let offset = tree.pre_order_offset(node).unwrap();
                     let byte_offset = offset * 64 + 8;
-                    outboard.seek(SeekFrom::Start(byte_offset)).await?;
-                    outboard.write_all(l_hash.as_bytes()).await?;
-                    outboard.write_all(r_hash.as_bytes()).await?;
+                    if let Some(outboard) = outboard.as_mut() {
+                        // due to tokio, we need to call flush before seeking, or else
+                        // the call to start_seek will fail with "other file operation is pending".
+                        //
+                        // Just because a tokio write returns Ready(Ok(())) does not mean that the
+                        // underlying write has completed.
+                        outboard.seek(SeekFrom::Start(byte_offset)).await?;
+                        outboard.write_all(l_hash.as_bytes()).await?;
+                        outboard.write_all(r_hash.as_bytes()).await?;
+                    }
                 }
                 DecodeResponseItem::Leaf { offset, data } => {
-                    // only seek if we have to
                     on_write(offset.0, data.len());
                     target.seek(SeekFrom::Start(offset.0)).await?;
                     target.write_all(&data).await?;
                 }
             }
         }
-        Ok(())
+        Ok(outboard.map(|x| x.into_inner()))
     }
 
     /// Read the size of the file this is about
@@ -442,7 +463,13 @@ pub fn get_range_spec(
         .iter()
         .zip(collection.blobs())
         .for_each(|(ranges, blob)| {
-            println!("{} {:?}", blob.name, ranges);
+            if ranges.is_empty() {
+                tracing::debug!("{} is complete", blob.name);
+            } else if ranges.is_all() {
+                tracing::debug!("{} is missing", blob.name);
+            } else {
+                tracing::debug!("{} is partial {:?}", blob.name, ranges);
+            }
         });
     Ok(RequestRangeSpec::new(RangeSet2::all(), ranges))
 }
@@ -552,9 +579,10 @@ where
 
                         // expect to get blob data in the order they appear in the collection
                         let default = RangeSpec::empty();
-                        for (blob, ranges) in collection
+                        for ((index, blob), ranges) in collection
                             .into_inner()
                             .into_iter()
+                            .enumerate()
                             .zip(request.ranges.children.iter(&default))
                         {
                             let blob_reader =
@@ -634,5 +662,149 @@ async fn handle_blob_response(
             }
         }
         None => Err(anyhow!("server disconnected"))?,
+    }
+}
+
+///
+#[derive(Debug)]
+pub struct OptimizedSeek<T> {
+    inner: T,
+    state: OptimizedSeekState,
+}
+
+impl<T> OptimizedSeek<T> {
+    ///
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            state: OptimizedSeekState::Unknown,
+        }
+    }
+
+    ///
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+}
+
+#[derive(Debug)]
+enum OptimizedSeekState {
+    Unknown,
+    Seeking,
+    FakeSeeking(u64),
+    Known(u64),
+}
+
+impl OptimizedSeekState {
+    fn take(&mut self) -> Self {
+        std::mem::replace(self, OptimizedSeekState::Unknown)
+    }
+
+    fn is_seeking(&self) -> bool {
+        match self {
+            OptimizedSeekState::Seeking => true,
+            OptimizedSeekState::FakeSeeking(_) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for OptimizedSeek<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Poll::Ready(if self.state.is_seeking() {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "cannot read while seeking",
+            ))
+        } else {
+            let before = buf.remaining();
+            ready!(Pin::new(&mut self.inner).poll_read(cx, buf))?;
+            let after = buf.remaining();
+            let read = before - after;
+            if let OptimizedSeekState::Known(offset) = &mut self.state {
+                *offset += read as u64;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for OptimizedSeek<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(if self.state.is_seeking() {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "cannot write while seeking",
+            ))
+        } else {
+            let result = ready!(Pin::new(&mut self.inner).poll_write(cx, buf))?;
+            if let OptimizedSeekState::Known(offset) = &mut self.state {
+                *offset += result as u64;
+            }
+            Ok(result)
+        })
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+impl<T: AsyncSeek + Unpin + Debug> AsyncSeek for OptimizedSeek<T> {
+    fn start_seek(mut self: Pin<&mut Self>, seek_from: SeekFrom) -> io::Result<()> {
+        self.state = match (self.state.take(), seek_from) {
+            (OptimizedSeekState::Known(offset), SeekFrom::Current(0)) => {
+                // somebody wants to know the current position
+                OptimizedSeekState::FakeSeeking(offset)
+            }
+            (OptimizedSeekState::Known(offset), SeekFrom::Start(current)) if offset == current => {
+                // seek to the current position
+                OptimizedSeekState::FakeSeeking(offset)
+            }
+            _ => {
+                // if start_seek fails, we go into unknown state
+                Pin::new(&mut self.inner).start_seek(seek_from)?;
+                OptimizedSeekState::Seeking
+            }
+        };
+        Ok(())
+    }
+
+    fn poll_complete(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<u64>> {
+        // if we are in fakeseeking state, intercept the call to the inner
+        if let OptimizedSeekState::FakeSeeking(offset) = self.state {
+            self.state = OptimizedSeekState::Known(offset);
+            return Poll::Ready(Ok(offset));
+        }
+        // in all other cases we have to do the call to the inner
+        //
+        // a tokio file can be busy even when it seems idle, because write ops
+        // are buffered. so we have to poll_complete until it returns Ok.
+        let res = ready!(Pin::new(&mut self.inner).poll_complete(cx))?;
+        if let OptimizedSeekState::Seeking = self.state {
+            self.state = OptimizedSeekState::Known(res);
+        }
+        Poll::Ready(Ok(res))
     }
 }

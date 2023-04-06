@@ -85,7 +85,7 @@ pub struct RequestRangeSpec {
 /// Examples:
 ///
 /// All child ranges: `[(0, [0])]` starting at offset 0, all offsets (see above)
-/// First chunk of all child: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
+/// First chunk of all children: `[(0, [0, 1])]` starting at offset 0, chunk range 0..1
 /// All of child 1234: `[(1234, [0]), [1, []]]`.
 /// First 33 chunks of child 5678: `[(5678, [0, 33]), (1, [])]`.
 /// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.

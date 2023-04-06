@@ -883,6 +883,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                 pathbuf_from_name(&name)
             };
             pb.set_message(format!("Receiving '{}'...", name.display()));
+            pb.reset();
             if let (Some(ref outpath), Some(ref temp_dir)) = (out, temp_dir) {
                 let final_path = outpath.join(name);
                 let tempname = blake3::Hash::from(hash).to_hex();
@@ -893,21 +894,30 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                     .create(true)
                     .open(&data_path)
                     .await?;
-                let mut outboard_file = tokio::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(&outboard_path)
-                    .await?;
                 tracing::info!("piping data to {:?} and {:?}", data_path, outboard_path);
-                reader
-                    .write_all_ob(
-                        &mut data_file,
-                        &mut outboard_file,
-                        |size| pb.set_length(size),
-                        |offset, _size| pb.set_position(offset),
-                    )
+                let create_outboard = |size| {
+                    let outboard_path = &outboard_path;
+                    pb.set_length(size);
+                    async move {
+                        Ok(if size > 0 {
+                            let outboard_file = tokio::fs::OpenOptions::new()
+                                .write(true)
+                                .create(true)
+                                .open(outboard_path)
+                                .await?;
+                            Some(outboard_file)
+                        } else {
+                            None
+                        })
+                    }
+                };
+                let on_write = |offset, _size| {
+                    // println!("offset: {}/{}", offset, pb.length().unwrap());
+                    pb.set_position(offset);
+                };
+                let mut outboard_file = reader
+                    .write_all_with_outboard(&mut data_file, create_outboard, on_write)
                     .await?;
-                pb.finish();
                 tokio::fs::create_dir_all(
                     final_path
                         .parent()
@@ -917,14 +927,15 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                 // Flush the data file first, it is the only thing that matters at this point
                 data_file.shutdown().await?;
                 drop(data_file);
-                // not sure if we have to do this
-                outboard_file.shutdown().await?;
-                drop(outboard_file);
                 // Rename temp file, to target name
                 // once this is done, the file is considered complete
                 tokio::fs::rename(data_path, final_path).await?;
-                // delete the outboard file
-                tokio::fs::remove_file(outboard_path).await?;
+                if let Some(mut outboard_file) = outboard_file.take() {
+                    // not sure if we have to do this
+                    outboard_file.shutdown().await?;
+                    // delete the outboard file
+                    tokio::fs::remove_file(outboard_path).await?;
+                }
             } else {
                 // Write to OUT_WRITER
                 let mut stdout = tokio::io::stdout();
@@ -935,6 +946,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                     }
                 }
             }
+            pb.finish();
 
             Ok(reader)
         }

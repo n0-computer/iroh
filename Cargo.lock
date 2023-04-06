@@ -3175,3 +3175,7 @@ dependencies = [
  "quote",
  "syn 2.0.11",
 ]
+
+[[patch.unused]]
+name = "tokio"
+version = "1.25.0"
