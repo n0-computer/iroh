@@ -749,9 +749,7 @@ async fn transfer_collection(
     write_response(
         &mut writer,
         buffer,
-        Res::FoundCollection {
-            total_blobs_size: c.total_blobs_size(),
-        },
+        Res::FoundCollection,
     )
     .await?;
     // stream the collection data directly to the writer
