@@ -165,7 +165,7 @@ pub type RpcResult<T> = result::Result<T, RpcError>;
 ///
 /// io::Error should be just the fallback when a more specific error is not available.
 #[derive(Debug, Display, Error)]
-pub(crate) enum BaoValidationError {
+pub enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
     IoError(#[from] io::Error),
     /// The data failed to validate
@@ -173,7 +173,7 @@ pub(crate) enum BaoValidationError {
 }
 
 /// Validate that the data matches the outboard.
-pub(crate) fn validate_bao<F: Fn(u64)>(
+pub fn validate_bao<F: Fn(u64)>(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
@@ -239,26 +239,7 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(parts.join("/"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash() {
-        let data = b"hello world";
-        let hash = Hash::new(data);
-
-        let encoded = hash.to_string();
-        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
-    }
-
-    #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
-    }
-}
-
-pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+pub struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
     cb: F,
@@ -289,11 +270,14 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
     }
 }
 
-pub(crate) enum ProgressReaderUpdate {
+pub enum ProgressReaderUpdate {
     Progress(u64),
     Done,
 }
 
+/// A sender for progress messages.
+///
+/// This may optionally be a no-op if the [`Progress::none`] constructor is used.
 pub struct Progress<T>(Option<mpsc::Sender<T>>);
 
 impl<T> Clone for Progress<T> {
@@ -306,18 +290,46 @@ impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
+
     pub fn none() -> Self {
         Self(None)
     }
+
     pub fn try_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.try_send(msg).ok();
         }
     }
+
+    pub fn blocking_send(&self, msg: T) {
+        if let Some(progress) = &self.0 {
+            progress.blocking_send(msg).ok();
+        }
+    }
+
     pub async fn send(&self, msg: T) -> anyhow::Result<()> {
         if let Some(progress) = &self.0 {
             progress.send(msg).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash() {
+        let data = b"hello world";
+        let hash = Hash::new(data);
+
+        let encoded = hash.to_string();
+        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
     }
 }
