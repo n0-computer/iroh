@@ -326,7 +326,7 @@ where
                 let response: Response = postcard::from_bytes(&response_buffer)?;
                 match response.data {
                     // server is sending over a collection of blobs
-                    Res::FoundCollection => {
+                    Res::Found => {
                         // read entire collection data into buffer
                         let data = read_bao_encoded(&mut reader, hash).await?;
 
@@ -356,13 +356,6 @@ where
                             }
                             reader = blob_reader.into_inner();
                         }
-                    }
-
-                    // unexpected message
-                    Res::Found { .. } => {
-                        // we should only receive `Res::FoundCollection` or `Res::NotFound` from the
-                        // provider at this point in the exchange
-                        bail!("Unexpected message from provider. Ending transfer early.");
                     }
 
                     // data associated with the hash is not found
@@ -404,10 +397,6 @@ async fn handle_blob_response(
         Some(response_buffer) => {
             let response: Response = postcard::from_bytes(&response_buffer)?;
             match response.data {
-                // unexpected message
-                Res::FoundCollection => Err(anyhow!(
-                    "Unexpected message from provider. Ending transfer early."
-                ))?,
                 // blob data not found
                 Res::NotFound => Err(anyhow!("data for {} not found", hash))?,
                 // next blob in collection will be sent over
