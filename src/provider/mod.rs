@@ -746,12 +746,7 @@ async fn transfer_collection(
 
     // TODO: we should check if the blobs referenced in this container
     // actually exist in this provider before returning `FoundCollection`
-    write_response(
-        &mut writer,
-        buffer,
-        Res::FoundCollection,
-    )
-    .await?;
+    write_response(&mut writer, buffer, Res::Found).await?;
     // stream the collection data directly to the writer
     encode_ranges_validated(
         Cursor::new(data),
