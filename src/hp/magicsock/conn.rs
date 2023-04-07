@@ -4,6 +4,7 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
@@ -16,7 +17,7 @@ use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
 use futures::{
     future::{BoxFuture, OptionFuture},
-    StreamExt, TryFutureExt,
+    Future, StreamExt, TryFutureExt,
 };
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -116,11 +117,12 @@ impl Default for Options {
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
     derp_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    recv_fut: Arc<std::sync::Mutex<Option<flume::r#async::RecvFut<'static, DerpReadResult>>>>,
 }
 
 impl Deref for Conn {
@@ -128,6 +130,13 @@ impl Deref for Conn {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl Debug for Conn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO:
+        f.debug_struct("Conn").finish()
     }
 }
 
@@ -657,6 +666,7 @@ impl Conn {
         let c = Conn {
             inner,
             derp_task: Arc::new(Mutex::new(Some(derp_task))),
+            recv_fut: Default::default(),
         };
 
         Ok(c)
@@ -1051,24 +1061,38 @@ impl AsyncUdpSocket for Conn {
             bufs.len(),
             self.derp_recv_ch.len()
         );
+
         let mut i = num_msgs_total;
         if num_msgs_total < bufs.len() {
+            let mut recv_fut = self.recv_fut.lock().unwrap();
             while i < bufs.len() {
-                if let Ok(dm) = self.derp_recv_ch.try_recv() {
-                    if self.is_closed() {
+                let mut fut = recv_fut
+                    .take()
+                    .unwrap_or_else(|| self.derp_recv_ch.clone().into_recv_async());
+                match Pin::new(&mut fut).poll(cx) {
+                    Poll::Pending => {
+                        *recv_fut = Some(fut);
                         break;
                     }
+                    Poll::Ready(Ok(dm)) => {
+                        if self.is_closed() {
+                            break;
+                        }
 
-                    let is_internal = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
-                    debug!("received derp message, is internal? {}", is_internal);
-                    if is_internal {
-                        // No read, continue
-                        continue;
+                        let is_internal =
+                            self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
+                        debug!("received derp message, is internal? {}", is_internal);
+                        if is_internal {
+                            // No read, continue
+                            continue;
+                        }
+
+                        i += 1;
                     }
-
-                    i += 1;
-                } else {
-                    break;
+                    Poll::Ready(Err(err)) => {
+                        warn!("failed to receive derp read result: {:?}", err);
+                        break;
+                    }
                 }
             }
             num_msgs_total = i;
@@ -1422,7 +1446,9 @@ impl DerpHandler {
                         }
                     }
                 }
-                tick =  OptionFuture::from(self.periodic_re_stun_timer.as_mut().map(|i| i.tick())) => {
+                tick =  OptionFuture::from(self.periodic_re_stun_timer.as_mut().map(|i| i.tick())),
+                if self.periodic_re_stun_timer.is_some() => {
+                    debug!("tick: re_stun {:?}", tick);
                     if tick.is_some() {
                         self.re_stun("periodic").await;
                     }
@@ -2888,6 +2914,7 @@ impl ReaderState {
     }
 
     async fn recv(mut self) -> (Self, ReadResult, ReadAction) {
+        debug!("recv art");
         let msg = tokio::select! {
             msg = self.derp_client.recv_detail() => {
                 msg
