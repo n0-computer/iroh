@@ -552,25 +552,22 @@ impl Client {
         }
 
         let stun_timer = self.clock.sleep(STUN_PROBE_TIMEOUT);
-        let probes_done = async move {
-            while let Some(t) = task_set.join_next().await {
-                t?;
-            }
-            Ok::<_, Error>(())
-        };
-
         let probes_aborted = rs.stop_probe.clone();
 
         tokio::select! {
             _ = stun_timer => {
                 debug!("STUN timer expired");
             },
-            _ = probes_done => {
-                // All of our probes finished, so if we have >0 responses, we
-                // stop our captive portal check.
-                if rs.any_udp().await {
-                    if let Some(task) = captive_task {
-                        task.abort();
+            Some(t) = task_set.join_next() => {
+                t?;
+                if task_set.is_empty() {
+                    // All of our probes finished, so if we have >0 responses, we
+                    // stop our captive portal check.
+                    if rs.any_udp().await {
+                        if let Some(task) = captive_task {
+                            task.abort();
+                            task.await.ok();
+                        }
                     }
                 }
             }
@@ -581,8 +578,15 @@ impl Client {
                 // got a bunch of STUN responses.
                 if let Some(task) = captive_task {
                     task.abort();
+                    task.await.ok();
                 }
             }
+        }
+
+        if !task_set.is_empty() {
+            debug!("aborting remaining tasks {}", task_set.len());
+            // Cancel out remaining tasks
+            task_set.shutdown().await;
         }
 
         rs.wait_hair_check(last.as_deref()).await;
@@ -1724,7 +1728,11 @@ mod tests {
         }
 
         done.send(()).unwrap();
-        assert!(stun_stats.total().await > 5, "expected at least 5 stun");
+        assert!(
+            stun_stats.total().await >= 5,
+            "expected at least 5 stun, got {}",
+            stun_stats.total().await,
+        );
 
         Ok(())
     }
