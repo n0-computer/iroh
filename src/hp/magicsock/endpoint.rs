@@ -26,9 +26,9 @@ use crate::{
 };
 
 use super::{
-    conn::DiscoInfo, Conn, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer,
-    DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT,
-    SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
+    conn::DiscoInfo, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer, DISCO_PING_INTERVAL,
+    GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT,
+    TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
@@ -81,7 +81,7 @@ impl Deref for Endpoint {
 
 pub struct InnerEndpoint {
     pub num_stop_and_reset_atomic: AtomicU64,
-    pub c: Conn,
+    pub c: Arc<super::conn::Inner>,
     /// Peer public key (for WireGuard + DERP)
     pub public_key: key::node::PublicKey,
     /// The UDP address we tell wireguard-go we're using
@@ -124,7 +124,7 @@ pub struct PendingCliPing {
 }
 
 impl Endpoint {
-    pub fn new(conn: Conn, n: &cfg::Node) -> Self {
+    pub fn new(conn: Arc<super::conn::Inner>, n: &cfg::Node) -> Self {
         let fake_wg_addr = init_fake_udp_addr();
 
         Endpoint(Arc::new(InnerEndpoint {
