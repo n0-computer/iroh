@@ -781,6 +781,84 @@ async fn transfer_collection(
     Ok(SentStatus::Sent)
 }
 
+/// Transfers the collection & blob data.
+///
+/// First, it transfers the collection data & its associated outboard encoding data. Then it sequentially transfers each individual blob data & its associated outboard
+/// encoding data.
+///
+/// Will fail if there is an error writing to the getter or reading from
+/// the database.
+///
+/// If a blob from the collection cannot be found in the database, the transfer will gracefully
+/// close the writer, and return with `Ok(SentStatus::NotFound)`.
+///
+/// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
+#[allow(clippy::too_many_arguments)]
+async fn transfer_collection_2(
+    request: Request,
+    // Database from which to fetch blobs.
+    db: &Database,
+    // Quinn stream.
+    mut writer: quinn::SendStream,
+    // Buffer used when writing to writer.
+    buffer: &mut BytesMut,
+    // the collection to transfer
+    collection: &CollectionData,
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+    request_id: u64,
+) -> Result<SentStatus> {
+    let hash = request.name;
+    let CollectionData { data, outboard } = collection;
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
+
+    let c: Collection = postcard::from_bytes(data)?;
+    let _ = events.send(Event::TransferCollectionStarted {
+        connection_id,
+        request_id,
+        num_blobs: c.blobs().len() as u64,
+        total_blobs_size: c.total_blobs_size(),
+    });
+
+    for (offset, ranges) in request.ranges.non_empty_iter() {
+        if offset == 0 {
+            // send the collection itself
+            encode_ranges_validated(
+                Cursor::new(data),
+                outboard,
+                &ranges.to_chunk_ranges(),
+                &mut writer,
+            )
+            .await?;
+        } else if offset < c.blobs().len() + 1 {
+            tokio::task::yield_now().await;
+            let hash = c.blobs()[offset - 1].hash;
+            trace!("writing ranges {:?} of blob {}", ranges, hash);
+            let (status, writer1, size) =
+                send_blob(db.clone(), hash, ranges, writer, buffer).await?;
+            writer = writer1;
+            if SentStatus::NotFound == status {
+                writer.finish().await?;
+                return Ok(status);
+            }
+
+            let _ = events.send(Event::TransferBlobCompleted {
+                connection_id,
+                request_id,
+                hash,
+                index: (offset - 1) as u64,
+                size,
+            });
+        } else {
+            // nothing more we can send
+            break;
+        }
+    }
+
+    writer.finish().await?;
+    Ok(SentStatus::Sent)
+}
+
 fn notify_transfer_aborted(events: broadcast::Sender<Event>, connection_id: u64, request_id: u64) {
     let _ = events.send(Event::TransferAborted {
         connection_id,

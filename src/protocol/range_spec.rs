@@ -165,7 +165,7 @@ pub struct RequestRangeSpecIter<'a> {
 
 impl<'a> RequestRangeSpecIter<'a> {
     /// True if we are at the end of the iterator
-    /// 
+    ///
     /// This does not mean that the iterator is terminated, it just means that
     /// it will repeat the same value forever.
     pub fn is_at_end(&self) -> bool {
@@ -221,7 +221,7 @@ impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
                 break Some((count, curr));
             } else if self.inner.is_at_end() {
                 // terminate instead of looping until we run out of u64 values
-                break None
+                break None;
             }
         }
     }

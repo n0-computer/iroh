@@ -33,8 +33,9 @@ use default_net::Interface;
 use futures::stream::FusedStream;
 use futures::{ready, Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
+use quinn::RecvStream;
 use range_collections::RangeSet2;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::either::Either;
 use tracing::{debug, debug_span, error};
 use tracing_futures::Instrument;
@@ -588,10 +589,9 @@ where
                         let collection = Collection::from_bytes(&data)?;
                         on_collection(data.clone(), &collection).await?;
 
-                        for ((index, blob), ranges) in collection
+                        for (blob, ranges) in collection
                             .into_inner()
                             .into_iter()
-                            .enumerate()
                             .zip(request.ranges.iter())
                         {
                             let blob_reader =
@@ -636,6 +636,87 @@ where
             }
         }
     }
+}
+
+struct OnBlobData<'a> {
+    // the offset of the current blob. 0 is for the item itself (the collection)
+    // child offsets start with 1
+    offset: usize,
+    // the total size of the blob
+    size: u64,
+    // the ranges we have requested for this blob
+    ranges: &'a RangeSpec,
+    // the reader for the encoded range
+    reader: RecvStream,
+}
+
+/// Gets a collection and all its blobs from a provider on the established connection.
+async fn run_connection_2<A, B, C, FutA, FutB, FutC>(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+    on_connected: A,
+    mut on_blob: C,
+) -> Result<()>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    C: FnMut(&mut OnBlobData) -> FutC,
+    FutC: Future<Output = Result<bool>>,
+{
+    // expect to get blob data in the order they appear in the collection
+    let mut ranges_iter = request.ranges.non_empty_iter();
+    let (mut writer, reader) = connection.open_bi().await?;
+
+    on_connected().await?;
+
+    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+    // 1. Send Handshake
+    {
+        debug!("sending handshake");
+        let handshake = Handshake::new(auth_token);
+        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
+
+    // 2. Send Request
+    {
+        debug!("sending request");
+        let serialized = postcard::to_stdvec(&request)?;
+        write_lp(&mut writer, &serialized).await?;
+    }
+    writer.finish().await?;
+    drop(writer);
+
+    // 3. Read response
+    debug!("reading response");
+    let mut data = OnBlobData {
+        offset: 0,
+        size: 0,
+        ranges: &RangeSpec::EMPTY,
+        reader,
+    };
+    while let Some((offset, query)) = ranges_iter.next() {
+        assert!(!query.is_empty());
+        data.offset = offset;
+        data.size = data.reader.read_u64_le().await?;
+        data.ranges = query;
+        debug!("reading item {} {:?} size {}", offset, query, data.size);
+        let done = !on_blob(&mut data).await?;
+        if done {
+            break;
+        }
+    }
+    let mut reader = data.reader;
+
+    // Shut down the stream
+    if let Some(chunk) = reader.read_chunk(8, false).await? {
+        reader.stop(0u8.into()).ok();
+        error!("Received unexpected data from the provider: {chunk:?}");
+    }
+    drop(reader);
+    Ok(())
 }
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
