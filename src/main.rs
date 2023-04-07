@@ -12,8 +12,8 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::get::{get_data_path, get_range_spec, DataStream};
-use iroh::protocol::{AuthToken, Request};
+use iroh::get::{get_data_path, get_missing_data, DataStream};
+use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -812,16 +812,15 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
     progress!("Fetching: {}", Blake3Cid::new(hash));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
-    use iroh::protocol::RequestRangeSpec;
 
     let temp_dir = if let Some(ref out) = out_dir {
         Some(out.join(".iroh-tmp"))
     } else {
         None
     };
-    let query = match (&out_dir, &temp_dir) {
-        (Some(out), Some(temp_dir)) => get_range_spec(get.hash(), out, temp_dir)?,
-        _ => RequestRangeSpec::all(),
+    let (query, _) = match (&out_dir, &temp_dir) {
+        (Some(out), Some(temp_dir)) => get_missing_data(get.hash(), out, temp_dir)?,
+        _ => (RangeSpecSeq::all(), None),
     };
 
     let pb = ProgressBar::hidden();

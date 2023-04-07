@@ -733,6 +733,7 @@ async fn transfer_collection(
     request_id: u64,
 ) -> Result<SentStatus> {
     let hash = request.name;
+    let mut iter = request.ranges.iter();
     let CollectionData { data, outboard } = collection;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
@@ -748,20 +749,15 @@ async fn transfer_collection(
     // actually exist in this provider before returning `FoundCollection`
     write_response(&mut writer, buffer, Res::Found).await?;
     // stream the collection data directly to the writer
+    let ranges = iter.next().unwrap();
     encode_ranges_validated(
         Cursor::new(data),
         outboard,
-        &request.ranges.blob.to_chunk_ranges(),
+        &ranges.to_chunk_ranges(),
         &mut writer,
     )
     .await?;
-    let default = RangeSpec::empty();
-    for ((i, blob), ranges) in c
-        .blobs()
-        .iter()
-        .enumerate()
-        .zip(request.ranges.children.iter(&default))
-    {
+    for ((i, blob), ranges) in c.blobs().iter().enumerate().zip(iter) {
         trace!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
         let (status, writer1, size) =

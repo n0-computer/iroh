@@ -11,7 +11,7 @@ use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
-pub use range_spec::{RangeSpec, RequestRangeSpec};
+pub use range_spec::{RangeSpec, RangeSpecSeq};
 
 use crate::{
     util::{self, Hash},
@@ -45,12 +45,14 @@ pub struct Request {
     /// blake3 hash
     pub name: Hash,
     /// The range of data to request
-    pub ranges: RequestRangeSpec,
+    ///
+    /// The first element is the parent, all subsequent elements are children.
+    pub ranges: RangeSpecSeq,
 }
 
 impl Request {
     /// Request a blob or collection with specified ranges
-    pub fn new(name: Hash, ranges: RequestRangeSpec) -> Self {
+    pub fn new(name: Hash, ranges: RangeSpecSeq) -> Self {
         Self { name, ranges }
     }
 
@@ -58,7 +60,7 @@ impl Request {
     pub fn all(name: Hash) -> Self {
         Self {
             name,
-            ranges: RequestRangeSpec::all(),
+            ranges: RangeSpecSeq::all(),
         }
     }
 }

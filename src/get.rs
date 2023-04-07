@@ -4,7 +4,7 @@
 //! be invoked when blobs or collections are received. It is up to the caller
 //! to store the received data.
 use std::fmt::Debug;
-use std::io::{self, SeekFrom};
+use std::io::{self, Cursor, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use crate::blobs::{Blob, Collection};
 use crate::protocol::{
-    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, RangeSpec, Request,
-    RequestRangeSpec, Res, Response,
+    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, RangeSpec, RangeSpecSeq, Request,
+    Res, Response,
 };
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
@@ -35,6 +35,7 @@ use futures::{ready, Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio_util::either::Either;
 use tracing::{debug, debug_span, error};
 use tracing_futures::Instrument;
 
@@ -119,10 +120,14 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(DecodeResponseStream<quinn::RecvStream>);
+pub struct DataStream(DecodeResponseStream<Either<quinn::RecvStream, Cursor<Bytes>>>);
 
 impl DataStream {
-    fn new(inner: quinn::RecvStream, hash: Hash, ranges: RangeSet2<ChunkNum>) -> Self {
+    fn new(
+        inner: Either<quinn::RecvStream, Cursor<Bytes>>,
+        hash: Hash,
+        ranges: RangeSet2<ChunkNum>,
+    ) -> Self {
         let decoder = DecodeResponseStream::new(hash.into(), ranges, IROH_BLOCK_SIZE, inner);
         DataStream(decoder)
     }
@@ -229,7 +234,7 @@ impl DataStream {
         Ok(())
     }
 
-    fn into_inner(self) -> quinn::RecvStream {
+    fn into_inner(self) -> Either<quinn::RecvStream, Cursor<Bytes>> {
         self.0.into_inner()
     }
 }
@@ -394,11 +399,11 @@ fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option
 }
 
 /// Given a target directory and a temp directory, get a set of ranges that we are missing
-pub fn get_range_spec(
+pub fn get_missing_data(
     hash: Hash,
     path: impl AsRef<Path>,
     temp: impl AsRef<Path>,
-) -> io::Result<RequestRangeSpec> {
+) -> io::Result<(RangeSpecSeq, Option<Collection>)> {
     let path = path.as_ref();
     let temp = temp.as_ref();
     if path.exists() && !temp.exists() {
@@ -413,9 +418,9 @@ pub fn get_range_spec(
     let collection = load_collection(temp, hash)?;
     let collection = match collection {
         Some(collection) => collection,
-        None => return Ok(RequestRangeSpec::all()),
+        None => return Ok((RangeSpecSeq::all(), None)),
     };
-    let ranges = collection
+    let mut ranges = collection
         .blobs()
         .iter()
         .map(|blob| {
@@ -471,7 +476,10 @@ pub fn get_range_spec(
                 tracing::debug!("{} is partial {:?}", blob.name, ranges);
             }
         });
-    Ok(RequestRangeSpec::new(RangeSet2::all(), ranges))
+    // make room for the collection at offset 0
+    // if we get here, we already have the collection, so we don't need to ask for it again.
+    ranges.insert(0, RangeSet2::empty());
+    Ok((RangeSpecSeq::new(ranges), Some(collection)))
 }
 
 /// Get a collection and all its blobs from a provider
@@ -531,6 +539,8 @@ where
     FutC: Future<Output = Result<DataStream>>,
 {
     let hash = request.name;
+    // expect to get blob data in the order they appear in the collection
+    let mut ranges_iter = request.ranges.iter();
     let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
@@ -568,8 +578,9 @@ where
                 match response.data {
                     // server is sending over a collection of blobs
                     Res::Found => {
+                        let collection_ranges = ranges_iter.next().unwrap();
                         // read entire collection data into buffer
-                        let data: Bytes = read_bao_encoded(&mut reader, hash, &request.ranges.blob)
+                        let data: Bytes = read_bao_encoded(&mut reader, hash, collection_ranges)
                             .await?
                             .into();
 
@@ -577,13 +588,11 @@ where
                         let collection = Collection::from_bytes(&data)?;
                         on_collection(data.clone(), &collection).await?;
 
-                        // expect to get blob data in the order they appear in the collection
-                        let default = RangeSpec::empty();
                         for ((index, blob), ranges) in collection
                             .into_inner()
                             .into_iter()
                             .enumerate()
-                            .zip(request.ranges.children.iter(&default))
+                            .zip(request.ranges.iter())
                         {
                             let blob_reader =
                                 handle_blob_response(blob.hash, reader, ranges, &mut in_buffer)
@@ -596,7 +605,10 @@ where
                             if !blob_reader.is_terminated() {
                                 bail!("`on_blob` callback did not fully read the blob content")
                             }
-                            reader = blob_reader.into_inner();
+                            reader = match blob_reader.into_inner() {
+                                Either::Left(reader) => reader,
+                                Either::Right(_) => unreachable!(),
+                            };
                         }
                     }
 
@@ -645,7 +657,8 @@ async fn handle_blob_response(
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = DataStream::new(reader, hash, ranges.to_chunk_ranges());
+                    let decoder =
+                        DataStream::new(Either::Left(reader), hash, ranges.to_chunk_ranges());
                     Ok(decoder)
                 }
             }

@@ -37,14 +37,22 @@ impl RangeSpec {
         Self(res)
     }
 
-    /// Create an empty range spec
-    pub fn empty() -> Self {
-        Self(SmallVec::new())
-    }
+    /// An empty range spec
+    pub const EMPTY: Self = Self(SmallVec::new_const());
 
     /// Create a range spec that covers the entire range
     pub fn all() -> Self {
         Self(smallvec![0])
+    }
+
+    /// Check if this range spec is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Check if this range spec covers all values
+    pub fn is_all(&self) -> bool {
+        self.0.len() == 1 && self.0[0] == 0
     }
 
     /// Convert a range set from this range spec
@@ -69,17 +77,6 @@ impl RangeSpec {
     }
 }
 
-/// Range specification for a request
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub struct RequestRangeSpec {
-    /// ranges for the document itself
-    pub blob: RangeSpec,
-    /// sub ranges for the items of this collection, empty means nothing
-    ///
-    /// This is also a sequence of spans, but the value after the span is given by the second argument
-    pub children: RangeSpecSeq,
-}
-
 /// A compressed sequence of range specs
 ///
 /// Examples:
@@ -98,14 +95,21 @@ pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
 
 impl RangeSpecSeq {
     #[allow(dead_code)]
+    /// An empty range spec sequence
+    ///
+    /// When iterated, will return an empty range forever
     pub fn empty() -> Self {
         Self(SmallVec::new())
     }
 
+    /// A complete range spec sequence
+    ///
+    /// When iterated, will return a full range forever
     pub fn all() -> Self {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
+    /// Create a new range spec sequence from a sequence of range sets
     pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
         let mut prev = RangeSet2::empty();
         let mut count = 0;
@@ -126,48 +130,24 @@ impl RangeSpecSeq {
     }
 
     /// An infinite iterator of range specs
-    ///
-    /// default is what to use if the children of this RequestRangeSpec are empty.
-    pub fn iter<'a>(&'a self, default: &'a RangeSpec) -> RequestRangeSpecIter<'a> {
+    pub fn iter<'a>(&'a self) -> RequestRangeSpecIter<'a> {
         let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
         RequestRangeSpecIter {
-            current: default,
+            current: &EMPTY_RANGE_SPEC,
             count: before_first,
             remaining: &self.0,
         }
     }
-}
 
-impl RequestRangeSpec {
-    /// Create an empty request range spec
-    #[allow(dead_code)]
-    pub fn empty() -> Self {
-        Self {
-            blob: RangeSpec::empty(),
-            children: RangeSpecSeq::empty(),
-        }
-    }
-
-    /// Create a request range spec that covers the entire collection and all children
-    pub fn all() -> Self {
-        Self {
-            blob: RangeSpec::all(),
-            children: RangeSpecSeq::all(),
-        }
-    }
-
-    /// Create a request range spec from a range set for the blob and a sequence
-    /// of range sets for the children
-    pub fn new(
-        blob: RangeSet2<ChunkNum>,
-        children: impl IntoIterator<Item = RangeSet2<ChunkNum>>,
-    ) -> Self {
-        Self {
-            blob: RangeSpec::new(blob),
-            children: RangeSpecSeq::new(children),
-        }
+    /// An iterator over non empty range specs
+    ///
+    /// This iterator is infinite if the range spec is infinite
+    pub fn non_empty_iter<'a>(&'a self) -> impl Iterator<Item = (usize, &'a RangeSpec)> + 'a {
+        self.iter().enumerate().filter(|(_, r)| !r.is_empty())
     }
 }
+
+static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;
 
 /// An infinite iterator of range specs
 ///
@@ -181,6 +161,16 @@ pub struct RequestRangeSpecIter<'a> {
     count: u64,
     /// remaining ranges
     remaining: &'a [(u64, RangeSpec)],
+}
+
+impl<'a> RequestRangeSpecIter<'a> {
+    /// True if we are at the end of the iterator
+    /// 
+    /// This does not mean that the iterator is terminated, it just means that
+    /// it will repeat the same value forever.
+    pub fn is_at_end(&self) -> bool {
+        self.count == 0 && self.remaining.is_empty()
+    }
 }
 
 impl<'a> Iterator for RequestRangeSpecIter<'a> {
@@ -206,6 +196,37 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     }
 }
 
+/// An infinite iterator of range specs
+///
+/// default is what to use if the children of this RequestRangeSpec are empty.
+#[derive(Debug)]
+pub struct NonEmptyRequestRangeSpecIter<'a> {
+    inner: RequestRangeSpecIter<'a>,
+    count: u64,
+}
+
+impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
+    type Item = (u64, &'a RangeSpec);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // unwrapping is safe because we know that the inner iterator will never terminate
+            let curr = self.inner.next().unwrap();
+            let count = self.count;
+            // increase count in any case until we are at the end of possible u64 values
+            // we are unlikely to ever reach this limit.
+            self.count.checked_add(1)?;
+            // yield only if the current value is non-empty
+            if !curr.is_empty() {
+                break Some((count, curr));
+            } else if self.inner.is_at_end() {
+                // terminate instead of looping until we run out of u64 values
+                break None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Range;
@@ -228,9 +249,8 @@ mod tests {
     }
 
     fn range_spec_seq_roundtrip_impl(ranges: &[RangeSet2<ChunkNum>]) -> Vec<RangeSet2<ChunkNum>> {
-        let spec = RequestRangeSpec::new(RangeSet2::empty(), ranges.iter().cloned());
-        spec.children
-            .iter(&RangeSpec::empty())
+        let spec = RangeSpecSeq::new(ranges.iter().cloned());
+        spec.iter()
             .map(|x| x.to_chunk_ranges())
             .take(ranges.len())
             .collect::<Vec<_>>()
