@@ -972,14 +972,15 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             println!("sending blob {} {}", path.display(), size);
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
             let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::io::tokio::encode_ranges_validated(
+            let res = bao_tree::io::tokio::encode_ranges_validated(
                 file_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer,
             )
-            .await?;
-            println!("done sending blob {}", path.display());
+            .await;
+            println!("done sending blob {} {:?}", path.display(), res);
+            res?;
 
             Ok((SentStatus::Sent, writer, size))
         }

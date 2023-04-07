@@ -33,7 +33,7 @@ use default_net::Interface;
 use futures::stream::FusedStream;
 use futures::{ready, Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
-use quinn::{Chunk, RecvStream};
+use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::either::Either;
@@ -258,27 +258,35 @@ impl FusedStream for DataStream {
 }
 
 /// Gets a collection and all its blobs using a [`Ticket`].
-pub async fn run_ticket<A, C, FutA, FutC>(
+pub async fn run_ticket<A, C, FutA, FutC, U>(
     ticket: &Ticket,
     request: Request,
     keylog: bool,
     max_concurrent: u8,
     on_connected: A,
     on_blob: C,
-) -> Result<Stats>
+    user: U,
+) -> Result<U>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult>>,
+    C: FnMut(OnBlobData<U>) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
     let span = debug_span!("get", hash=%ticket.hash());
     async move {
         let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection_2(connection, request, ticket.token(), on_connected, on_blob)
-            .instrument(span)
-            .await
+        run_connection_2(
+            connection,
+            request,
+            ticket.token(),
+            on_connected,
+            on_blob,
+            user,
+        )
+        .instrument(span)
+        .await
     }
     .instrument(span)
     .await
@@ -472,24 +480,25 @@ pub fn get_missing_data(
 }
 
 /// Get a collection and all its blobs from a provider
-pub async fn run<A, C, FutA, FutC>(
+pub async fn run<A, C, FutA, FutC, U>(
     request: Request,
     auth_token: AuthToken,
     opts: Options,
     on_connected: A,
     on_blob: C,
-) -> Result<Stats>
+    user: U,
+) -> Result<U>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult>>,
+    C: FnMut(OnBlobData<U>) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
     let span = debug_span!("get", %request.name);
     async move {
         let connection = dial_peer(opts).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection_2(connection, request, auth_token, on_connected, on_blob)
+        run_connection_2(connection, request, auth_token, on_connected, on_blob, user)
             .instrument(span)
             .await
     }
@@ -616,22 +625,25 @@ where
 
 ///
 #[derive(Debug)]
-pub struct OnBlobData {
+pub struct OnBlobData<T> {
     offset: usize,
     size: u64,
     ranges: RangeSet2<ChunkNum>,
     /// the reader for the encoded range
     pub reader: RecvStream,
+    /// user data
+    pub user: T,
 }
 
 ///
 #[derive(Debug)]
-pub struct OnBlobResult {
+pub struct OnBlobResult<T> {
     reader: RecvStream,
     done: bool,
+    user: T,
 }
 
-impl OnBlobData {
+impl<U> OnBlobData<U> {
     /// the offset of the current blob. 0 is for the item itself (the collection)
     /// child offsets start with 1
     pub fn offset(&self) -> usize {
@@ -666,6 +678,12 @@ impl OnBlobData {
     }
 
     ///
+    pub async fn drain(&mut self, hash: Hash) -> anyhow::Result<()> {
+        self.read_blob(hash).await?;
+        Ok(())
+    }
+
+    ///
     pub async fn read_collection(&mut self, hash: Hash) -> anyhow::Result<Collection> {
         let data = self.read_blob(hash).await?;
         Ok(Collection::from_bytes(&data)?)
@@ -677,33 +695,29 @@ impl OnBlobData {
     }
 
     ///
-    pub fn more(self) -> anyhow::Result<OnBlobResult> {
+    pub fn more(self) -> anyhow::Result<OnBlobResult<U>> {
         Ok(OnBlobResult {
             reader: self.reader,
+            user: self.user,
             done: false,
         })
     }
     ///
-    pub fn done(self) -> anyhow::Result<OnBlobResult> {
+    pub fn done(self) -> anyhow::Result<OnBlobResult<U>> {
         Ok(OnBlobResult {
             reader: self.reader,
+            user: self.user,
             done: true,
         })
     }
     /// for testing
     #[cfg(test)]
-    pub fn done_unchecked(self) -> anyhow::Result<OnBlobResult> {
+    pub fn more_unchecked(self) -> anyhow::Result<OnBlobResult<U>> {
         Ok(OnBlobResult {
             reader: self.reader,
-            done: true,
+            user: self.user,
+            done: false,
         })
-    }
-}
-
-impl OnBlobData {
-    ///
-    pub async fn drain(&self) -> std::result::Result<(), DecodeError> {
-        Ok(())
     }
 
     /// Shortcut for `write_all_with_outboard` where outboard is None
@@ -715,7 +729,7 @@ impl OnBlobData {
     where
         O: AsyncWrite + AsyncSeek + Unpin,
     {
-        self.write_all_with_outboard::<O, O, _>(hash, target, None, |written, _| {})
+        self.write_all_with_outboard::<O, O, _>(hash, target, None, |_, _| {})
             .await
     }
 
@@ -785,18 +799,19 @@ impl OnBlobData {
 }
 
 /// Gets a collection and all its blobs from a provider on the established connection.
-async fn run_connection_2<A, C, FutA, FutC>(
+async fn run_connection_2<A, C, FutA, FutC, U>(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
     on_connected: A,
     mut on_blob: C,
-) -> Result<Stats>
+    mut user: U,
+) -> Result<U>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult>>,
+    C: FnMut(OnBlobData<U>) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
     // expect to get blob data in the order they appear in the collection
     let mut ranges_iter = request.ranges.non_empty_iter();
@@ -830,6 +845,7 @@ where
         let size = reader.read_u64_le().await?;
         debug!("reading item {} {:?} size {}", offset, query, size);
         let res = on_blob(OnBlobData {
+            user,
             offset,
             size,
             ranges: query.to_chunk_ranges(),
@@ -837,6 +853,7 @@ where
         })
         .await?;
         reader = res.reader;
+        user = res.user;
         if res.done {
             break;
         }
@@ -848,10 +865,7 @@ where
         error!("Received unexpected data from the provider: {chunk:?}");
     }
     drop(reader);
-    Ok(Stats {
-        data_len: 0,
-        elapsed: Duration::from_secs(0),
-    })
+    Ok(user)
 }
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.

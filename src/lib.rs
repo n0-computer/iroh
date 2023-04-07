@@ -28,10 +28,11 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         io::Cursor,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Arc},
+        sync::{atomic::AtomicUsize, Arc, Mutex},
         time::Duration,
     };
 
@@ -162,6 +163,7 @@ mod tests {
                 opts,
                 || async { Ok(()) },
                 |info| async move { info.done() },
+                (),
             )
             .await?;
 
@@ -296,6 +298,7 @@ mod tests {
                     }
                 }
             },
+            (),
         )
         .await?;
 
@@ -396,7 +399,17 @@ mod tests {
                 keylog: true,
             },
             || async move { Ok(()) },
-            move |data| async move { data.more() },
+            move |mut data| async move {
+                if data.is_root() {
+                    data.user = Some(data.read_collection(hash).await?);
+                    data.more()
+                } else {
+                    let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                    data.drain(hash).await.unwrap();
+                    data.done()
+                }
+            },
+            None,
         )
         .await
         .unwrap();
@@ -443,8 +456,9 @@ mod tests {
                 || async move { Ok(()) },
                 |data| async move {
                     // evil: do nothing with the stream!
-                    data.done_unchecked()
+                    data.more_unchecked()
                 },
+                (),
             ),
         )
         .await;
@@ -487,11 +501,17 @@ mod tests {
                     keylog: true,
                 },
                 || async move { Ok(()) },
-                |data| async move {
-                    todo!()
-                    // stream.drain().await?;
-                    // Ok(stream)
+                move |mut data| async move {
+                    if data.is_root() {
+                        data.user = Some(data.read_collection(hash).await?);
+                        data.more()
+                    } else {
+                        let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                        let _ = data.read_blob(hash).await?;
+                        data.done()
+                    }
                 },
+                None,
             ),
         )
         .await
@@ -512,6 +532,7 @@ mod tests {
         let mut on_connected = false;
         let mut on_collection = false;
         let mut on_blob = false;
+        let hash = ticket.hash();
         tokio::time::timeout(
             Duration::from_secs(10),
             get::run_ticket(
@@ -523,18 +544,24 @@ mod tests {
                     on_connected = true;
                     async { Ok(()) }
                 },
-                |data| {
-                    if data.offset() == 0 {
+                |mut data| {
+                    if data.is_root() {
                         on_collection = true;
                     } else {
                         on_blob = true;
                     }
                     async move {
-                        // stream.drain().await?;
-                        // Ok(stream)
-                        todo!()
+                        if data.is_root() {
+                            data.user = Some(data.read_collection(hash).await?);
+                            data.more()
+                        } else {
+                            let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                            let _ = data.read_blob(hash).await?;
+                            data.done()
+                        }
                     }
                 },
+                None,
             ),
         )
         .await

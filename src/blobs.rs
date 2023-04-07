@@ -34,7 +34,7 @@ impl Collection {
     }
 
     /// Blobs in this collection
-    pub(crate) fn blobs(&self) -> &[Blob] {
+    pub fn blobs(&self) -> &[Blob] {
         &self.blobs
     }
 
@@ -54,12 +54,13 @@ impl Collection {
     }
 }
 
+///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Blob {
+pub struct Blob {
     /// The name of this blob of data
-    pub(crate) name: String,
+    pub name: String,
     /// The hash of the blob of data
-    pub(crate) hash: Hash,
+    pub hash: Hash,
 }
 
 #[cfg(test)]
