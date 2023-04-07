@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bao_tree::ChunkNum;
 use range_collections::{RangeSet2, RangeSetRef};
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,7 @@ use smallvec::{smallvec, SmallVec};
 /// Values are bao chunk numbers, not byte offsets.
 ///
 /// This is a SmallVec so we can avoid allocations for the very common case of a single chunk range.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpec(SmallVec<[u64; 2]>);
 
@@ -74,6 +76,24 @@ impl RangeSpec {
             ranges |= RangeSet2::from(current..);
         }
         ranges
+    }
+}
+
+impl fmt::Debug for RangeSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            f.debug_list()
+                .entries(self.to_chunk_ranges().iter())
+                .finish()
+        } else {
+            if self.is_all() {
+                write!(f, "all")
+            } else if self.is_empty() {
+                write!(f, "empty")
+            } else {
+                f.debug_list().entries(self.0.iter()).finish()
+            }
+        }
     }
 }
 

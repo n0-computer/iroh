@@ -760,8 +760,7 @@ async fn transfer_collection(
     for ((i, blob), ranges) in c.blobs().iter().enumerate().zip(iter) {
         trace!("writing blob {}/{}", i, c.blobs().len());
         tokio::task::yield_now().await;
-        let (status, writer1, size) =
-            send_blob(db.clone(), blob.hash, ranges, writer, buffer).await?;
+        let (status, writer1, size) = send_blob(db.clone(), blob.hash, ranges, writer).await?;
         writer = writer1;
         if SentStatus::NotFound == status {
             writer.finish().await?;
@@ -800,8 +799,6 @@ async fn transfer_collection_2(
     db: &Database,
     // Quinn stream.
     mut writer: quinn::SendStream,
-    // Buffer used when writing to writer.
-    buffer: &mut BytesMut,
     // the collection to transfer
     collection: &CollectionData,
     events: broadcast::Sender<Event>,
@@ -822,6 +819,7 @@ async fn transfer_collection_2(
 
     for (offset, ranges) in request.ranges.non_empty_iter() {
         if offset == 0 {
+            debug!("writing ranges {:?} of collection {}", ranges, hash);
             // send the collection itself
             encode_ranges_validated(
                 Cursor::new(data),
@@ -833,9 +831,7 @@ async fn transfer_collection_2(
         } else if offset < c.blobs().len() + 1 {
             tokio::task::yield_now().await;
             let hash = c.blobs()[offset - 1].hash;
-            trace!("writing ranges {:?} of blob {}", ranges, hash);
-            let (status, writer1, size) =
-                send_blob(db.clone(), hash, ranges, writer, buffer).await?;
+            let (status, writer1, size) = send_blob(db.clone(), hash, ranges, writer).await?;
             writer = writer1;
             if SentStatus::NotFound == status {
                 writer.finish().await?;
@@ -910,11 +906,10 @@ async fn handle_stream(
         // Collection request
         Some(BlobOrCollection::Collection(ref collection)) => {
             // 5. Transfer data!
-            match transfer_collection(
+            match transfer_collection_2(
                 request,
                 &db,
                 writer,
-                &mut out_buffer,
                 collection,
                 events.clone(),
                 connection_id,
@@ -967,7 +962,6 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     name: Hash,
     ranges: &RangeSpec,
     mut writer: W,
-    buffer: &mut BytesMut,
 ) -> Result<(SentStatus, W, u64)> {
     match db.get(&name) {
         Some(BlobOrCollection::Blob(BlobData {
@@ -975,8 +969,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             path,
             size,
         })) => {
-            write_response(&mut writer, buffer, Res::Found).await?;
-
+            println!("sending blob {} {}", path.display(), size);
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
             let file_reader = tokio::fs::File::open(&path).await?;
             bao_tree::io::tokio::encode_ranges_validated(
@@ -986,11 +979,12 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 &mut writer,
             )
             .await?;
+            println!("done sending blob {}", path.display());
 
             Ok((SentStatus::Sent, writer, size))
         }
         _ => {
-            write_response(&mut writer, buffer, Res::NotFound).await?;
+            println!("not found blob");
             Ok((SentStatus::NotFound, writer, 0))
         }
     }

@@ -24,16 +24,16 @@ use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, bail, Context, Result};
 use bao_tree::io::error::DecodeError;
-use bao_tree::io::tokio::DecodeResponseStream;
+use bao_tree::io::tokio::{DecodeResponseStream, DecodeResponseStreamRef};
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
-use bao_tree::{ByteNum, ChunkNum};
+use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::{Bytes, BytesMut};
 use default_net::Interface;
 use futures::stream::FusedStream;
 use futures::{ready, Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
-use quinn::RecvStream;
+use quinn::{Chunk, RecvStream};
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::either::Either;
@@ -174,8 +174,8 @@ impl DataStream {
         mut on_write: OW,
     ) -> std::result::Result<Option<O>, DecodeError>
     where
-        T: AsyncWrite + AsyncSeek + Unpin + Debug,
-        O: AsyncWrite + AsyncSeek + Unpin + Debug,
+        T: AsyncWrite + AsyncSeek + Unpin,
+        O: AsyncWrite + AsyncSeek + Unpin,
         OS: FnMut(u64) -> Fut,
         OW: FnMut(u64, usize),
         Fut: Future<Output = io::Result<Option<O>>>,
@@ -258,39 +258,27 @@ impl FusedStream for DataStream {
 }
 
 /// Gets a collection and all its blobs using a [`Ticket`].
-pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
+pub async fn run_ticket<A, C, FutA, FutC>(
     ticket: &Ticket,
     request: Request,
     keylog: bool,
     max_concurrent: u8,
     on_connected: A,
-    on_collection: B,
     on_blob: C,
 ) -> Result<Stats>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnOnce(Bytes, &Collection) -> FutB,
-    FutB: Future<Output = Result<()>>,
-    C: FnMut(Hash, DataStream, String) -> FutC,
-    FutC: Future<Output = Result<DataStream>>,
+    C: FnMut(OnBlobData) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult>>,
 {
     let span = debug_span!("get", hash=%ticket.hash());
     async move {
-        let start = Instant::now();
         let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection(
-            connection,
-            request,
-            ticket.token(),
-            start,
-            on_connected,
-            on_collection,
-            on_blob,
-        )
-        .instrument(span)
-        .await
+        run_connection_2(connection, request, ticket.token(), on_connected, on_blob)
+            .instrument(span)
+            .await
     }
     .instrument(span)
     .await
@@ -484,38 +472,26 @@ pub fn get_missing_data(
 }
 
 /// Get a collection and all its blobs from a provider
-pub async fn run<A, B, C, FutA, FutB, FutC>(
+pub async fn run<A, C, FutA, FutC>(
     request: Request,
     auth_token: AuthToken,
     opts: Options,
     on_connected: A,
-    on_collection: B,
     on_blob: C,
 ) -> Result<Stats>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnOnce(Bytes, &Collection) -> FutB,
-    FutB: Future<Output = Result<()>>,
-    C: FnMut(Hash, DataStream, String) -> FutC,
-    FutC: Future<Output = Result<DataStream>>,
+    C: FnMut(OnBlobData) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult>>,
 {
     let span = debug_span!("get", %request.name);
     async move {
-        let now = Instant::now();
         let connection = dial_peer(opts).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection(
-            connection,
-            request,
-            auth_token,
-            now,
-            on_connected,
-            on_collection,
-            on_blob,
-        )
-        .instrument(span)
-        .await
+        run_connection_2(connection, request, auth_token, on_connected, on_blob)
+            .instrument(span)
+            .await
     }
     .instrument(span)
     .await
@@ -638,35 +614,193 @@ where
     }
 }
 
-struct OnBlobData<'a> {
-    // the offset of the current blob. 0 is for the item itself (the collection)
-    // child offsets start with 1
+///
+#[derive(Debug)]
+pub struct OnBlobData {
     offset: usize,
-    // the total size of the blob
     size: u64,
-    // the ranges we have requested for this blob
-    ranges: &'a RangeSpec,
-    // the reader for the encoded range
+    ranges: RangeSet2<ChunkNum>,
+    /// the reader for the encoded range
+    pub reader: RecvStream,
+}
+
+///
+#[derive(Debug)]
+pub struct OnBlobResult {
     reader: RecvStream,
+    done: bool,
+}
+
+impl OnBlobData {
+    /// the offset of the current blob. 0 is for the item itself (the collection)
+    /// child offsets start with 1
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// the total size of the blob
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// true if this is the root blob
+    pub fn is_root(&self) -> bool {
+        self.offset == 0
+    }
+
+    /// child offset
+    pub fn child_offset(&self) -> Option<usize> {
+        self.offset.checked_sub(1)
+    }
+
+    /// the bao tree for this blob
+    pub fn tree(&self) -> BaoTree {
+        BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE)
+    }
+
+    ///
+    pub async fn read_blob(&mut self, hash: Hash) -> anyhow::Result<Vec<u8>> {
+        let mut target = Vec::new();
+        self.write_all(hash, Cursor::new(&mut target)).await?;
+        Ok(target)
+    }
+
+    ///
+    pub async fn read_collection(&mut self, hash: Hash) -> anyhow::Result<Collection> {
+        let data = self.read_blob(hash).await?;
+        Ok(Collection::from_bytes(&data)?)
+    }
+
+    ///
+    pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+        &self.ranges
+    }
+
+    ///
+    pub fn more(self) -> anyhow::Result<OnBlobResult> {
+        Ok(OnBlobResult {
+            reader: self.reader,
+            done: false,
+        })
+    }
+    ///
+    pub fn done(self) -> anyhow::Result<OnBlobResult> {
+        Ok(OnBlobResult {
+            reader: self.reader,
+            done: true,
+        })
+    }
+    /// for testing
+    #[cfg(test)]
+    pub fn done_unchecked(self) -> anyhow::Result<OnBlobResult> {
+        Ok(OnBlobResult {
+            reader: self.reader,
+            done: true,
+        })
+    }
+}
+
+impl OnBlobData {
+    ///
+    pub async fn drain(&self) -> std::result::Result<(), DecodeError> {
+        Ok(())
+    }
+
+    /// Shortcut for `write_all_with_outboard` where outboard is None
+    pub async fn write_all<O>(
+        &mut self,
+        hash: Hash,
+        target: O,
+    ) -> std::result::Result<(), DecodeError>
+    where
+        O: AsyncWrite + AsyncSeek + Unpin,
+    {
+        self.write_all_with_outboard::<O, O, _>(hash, target, None, |written, _| {})
+            .await
+    }
+
+    /// write all the data to a file or buffer
+    ///
+    /// `target` is the main file
+    /// `create_outboard` is a function that creates an optional outboard file
+    /// `on_write` is a callback for writes, e.g. to update a progress bar
+    pub async fn write_all_with_outboard<T, O, OW>(
+        &mut self,
+        hash: Hash,
+        target: T,
+        outboard: Option<O>,
+        mut on_write: OW,
+    ) -> std::result::Result<(), DecodeError>
+    where
+        T: AsyncWrite + AsyncSeek + Unpin,
+        O: AsyncWrite + AsyncSeek + Unpin,
+        OW: FnMut(u64, usize),
+    {
+        let mut target = OptimizedSeek::new(target);
+        let mut outboard = outboard.map(OptimizedSeek::new);
+        let tree = self.tree();
+        let mut reader = DecodeResponseStreamRef::new_with_tree(
+            hash.into(),
+            tree,
+            &self.ranges,
+            &mut self.reader,
+        );
+        if let Some(outboard) = outboard.as_mut() {
+            outboard.seek(SeekFrom::Start(0)).await?;
+            outboard.write(&self.size.to_le_bytes()).await?;
+        }
+        println!("size = {}", self.size);
+        while let Some(item) = reader.next().await {
+            match item? {
+                DecodeResponseItem::Header { .. } => {
+                    // we already read the header
+                    unreachable!()
+                }
+                DecodeResponseItem::Parent {
+                    node,
+                    pair: (l_hash, r_hash),
+                } => {
+                    let offset = tree.pre_order_offset(node).unwrap();
+                    let byte_offset = offset * 64 + 8;
+                    if let Some(outboard) = outboard.as_mut() {
+                        // due to tokio, we need to call flush before seeking, or else
+                        // the call to start_seek will fail with "other file operation is pending".
+                        //
+                        // Just because a tokio write returns Ready(Ok(())) does not mean that the
+                        // underlying write has completed.
+                        outboard.seek(SeekFrom::Start(byte_offset)).await?;
+                        outboard.write_all(l_hash.as_bytes()).await?;
+                        outboard.write_all(r_hash.as_bytes()).await?;
+                    }
+                }
+                DecodeResponseItem::Leaf { offset, data } => {
+                    on_write(offset.0, data.len());
+                    target.seek(SeekFrom::Start(offset.0)).await?;
+                    target.write_all(&data).await?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Gets a collection and all its blobs from a provider on the established connection.
-async fn run_connection_2<A, B, C, FutA, FutB, FutC>(
+async fn run_connection_2<A, C, FutA, FutC>(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
     on_connected: A,
     mut on_blob: C,
-) -> Result<()>
+) -> Result<Stats>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    C: FnMut(&mut OnBlobData) -> FutC,
-    FutC: Future<Output = Result<bool>>,
+    C: FnMut(OnBlobData) -> FutC,
+    FutC: Future<Output = Result<OnBlobResult>>,
 {
     // expect to get blob data in the order they appear in the collection
     let mut ranges_iter = request.ranges.non_empty_iter();
-    let (mut writer, reader) = connection.open_bi().await?;
+    let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
 
@@ -691,24 +825,22 @@ where
 
     // 3. Read response
     debug!("reading response");
-    let mut data = OnBlobData {
-        offset: 0,
-        size: 0,
-        ranges: &RangeSpec::EMPTY,
-        reader,
-    };
     while let Some((offset, query)) = ranges_iter.next() {
         assert!(!query.is_empty());
-        data.offset = offset;
-        data.size = data.reader.read_u64_le().await?;
-        data.ranges = query;
-        debug!("reading item {} {:?} size {}", offset, query, data.size);
-        let done = !on_blob(&mut data).await?;
-        if done {
+        let size = reader.read_u64_le().await?;
+        debug!("reading item {} {:?} size {}", offset, query, size);
+        let res = on_blob(OnBlobData {
+            offset,
+            size,
+            ranges: query.to_chunk_ranges(),
+            reader,
+        })
+        .await?;
+        reader = res.reader;
+        if res.done {
             break;
         }
     }
-    let mut reader = data.reader;
 
     // Shut down the stream
     if let Some(chunk) = reader.read_chunk(8, false).await? {
@@ -716,7 +848,10 @@ where
         error!("Received unexpected data from the provider: {chunk:?}");
     }
     drop(reader);
-    Ok(())
+    Ok(Stats {
+        data_len: 0,
+        elapsed: Duration::from_secs(0),
+    })
 }
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
@@ -851,7 +986,7 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for OptimizedSeek<T> {
     }
 }
 
-impl<T: AsyncSeek + Unpin + Debug> AsyncSeek for OptimizedSeek<T> {
+impl<T: AsyncSeek + Unpin> AsyncSeek for OptimizedSeek<T> {
     fn start_seek(mut self: Pin<&mut Self>, seek_from: SeekFrom) -> io::Result<()> {
         self.state = match (self.state.take(), seek_from) {
             (OptimizedSeekState::Known(offset), SeekFrom::Current(0)) => {

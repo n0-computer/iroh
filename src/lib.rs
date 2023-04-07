@@ -36,16 +36,22 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use futures::Future;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::{AuthToken, Request};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
+    use crate::{
+        blobs::Collection,
+        get::{OnBlobData, OnBlobResult},
+        protocol::{AuthToken, Request},
+        provider::BlobData,
+    };
 
     use super::*;
 
@@ -155,16 +161,7 @@ mod tests {
                 token,
                 opts,
                 || async { Ok(()) },
-                |_data, _collection| async { Ok(()) },
-                |got_hash, mut reader, got_name| async move {
-                    assert_eq!(file_hash, got_hash);
-                    let mut got = Vec::new();
-                    reader.write_all(Cursor::new(&mut got)).await?;
-                    assert_eq!(content, &got);
-                    assert_eq!(*name, got_name);
-
-                    Ok(reader)
-                },
+                |info| async move { info.done() },
             )
             .await?;
 
@@ -272,7 +269,6 @@ mod tests {
             keylog: true,
         };
 
-        let i = AtomicUsize::new(0);
         let expects = Arc::new(expects);
 
         get::run(
@@ -280,24 +276,24 @@ mod tests {
             provider.auth_token(),
             opts,
             || async { Ok(()) },
-            |_data, collection| {
-                assert_eq!(collection.blobs().len(), num_blobs);
-                async { Ok(()) }
-            },
-            |got_hash, mut reader, got_name| {
-                let i = &i;
+            |mut data| {
+                println!("got data: {:?}", data);
                 let expects = expects.clone();
                 async move {
-                    let iv = i.load(std::sync::atomic::Ordering::SeqCst);
-                    let (expect_name, path, expect_hash) = expects.get(iv).unwrap();
-                    assert_eq!(*expect_hash, got_hash);
-                    let expect = tokio::fs::read(&path).await?;
-                    let mut got = Vec::new();
-                    reader.write_all(Cursor::new(&mut got)).await?;
-                    assert_eq!(expect, got);
-                    assert_eq!(*expect_name, got_name);
-                    i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Ok(reader)
+                    if let Some(offset) = data.child_offset() {
+                        let (_, path, hash) = &expects[offset];
+                        let expect = tokio::fs::read(&path).await?;
+                        let got = data.read_blob(*hash).await?;
+                        assert_eq!(expect, got);
+                        if offset < expects.len() - 1 {
+                            data.more()
+                        } else {
+                            data.done()
+                        }
+                    } else {
+                        let collection = data.read_collection(collection_hash).await?;
+                        data.more()
+                    }
                 }
             },
         )
@@ -400,11 +396,7 @@ mod tests {
                 keylog: true,
             },
             || async move { Ok(()) },
-            |_data, _collection| async move { Ok(()) },
-            |_hash, mut stream, _name| async move {
-                stream.drain().await?;
-                Ok(stream)
-            },
+            move |data| async move { data.more() },
         )
         .await
         .unwrap();
@@ -449,10 +441,9 @@ mod tests {
                     keylog: true,
                 },
                 || async move { Ok(()) },
-                |_data, _collection| async move { Ok(()) },
-                |_hash, stream, _name| async move {
+                |data| async move {
                     // evil: do nothing with the stream!
-                    Ok(stream)
+                    data.done_unchecked()
                 },
             ),
         )
@@ -496,10 +487,10 @@ mod tests {
                     keylog: true,
                 },
                 || async move { Ok(()) },
-                |_data, _collection| async move { Ok(()) },
-                |_hash, mut stream, _name| async move {
-                    stream.drain().await?;
-                    Ok(stream)
+                |data| async move {
+                    todo!()
+                    // stream.drain().await?;
+                    // Ok(stream)
                 },
             ),
         )
@@ -532,15 +523,16 @@ mod tests {
                     on_connected = true;
                     async { Ok(()) }
                 },
-                |_, _| {
-                    on_collection = true;
-                    async { Ok(()) }
-                },
-                |_hash, mut stream, _name| {
-                    on_blob = true;
+                |data| {
+                    if data.offset() == 0 {
+                        on_collection = true;
+                    } else {
+                        on_blob = true;
+                    }
                     async move {
-                        stream.drain().await?;
-                        Ok(stream)
+                        // stream.drain().await?;
+                        // Ok(stream)
+                        todo!()
                     }
                 },
             ),
