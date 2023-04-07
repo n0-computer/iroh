@@ -19,7 +19,7 @@ use ssh_key::LineEnding;
 
 use crate::util;
 
-pub(crate) const P2P_ALPN: [u8; 9] = *b"n0/iroh/2";
+pub(crate) const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
 
 /// A keypair.
 #[derive(Debug)]

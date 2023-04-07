@@ -21,7 +21,7 @@ use crate::{
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
