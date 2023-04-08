@@ -18,7 +18,7 @@ use crate::util::{self, Hash};
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
@@ -59,18 +59,6 @@ impl Request {
             ranges: RangeSpecSeq::all(),
         }
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) struct Response {
-    pub data: Res,
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) enum Res {
-    NotFound,
-    // If found, a stream of bao data is sent as next message.
-    Found,
 }
 
 /// Write the given data to the provider sink, with a unsigned varint length prefix.

@@ -23,7 +23,6 @@ use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use postcard::experimental::max_size::MaxSize;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -32,15 +31,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, trace, warn};
+use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, Handshake, RangeSpec, Request, Res, Response, VERSION,
-};
+use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -730,7 +727,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
-async fn transfer_collection_2(
+async fn transfer_collection(
     request: Request,
     // Database from which to fetch blobs.
     db: &Database,
@@ -746,13 +743,20 @@ async fn transfer_collection_2(
     let CollectionData { data, outboard } = collection;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
-    let c: Collection = postcard::from_bytes(data)?;
-    let _ = events.send(Event::TransferCollectionStarted {
-        connection_id,
-        request_id,
-        num_blobs: c.blobs().len() as u64,
-        total_blobs_size: c.total_blobs_size(),
-    });
+    // if the request is just for the root, we don't need to deserialize the collection
+    let just_root = matches!(request.ranges.single(), Some((0, _)));
+    let c = if !just_root {
+        let c: Collection = postcard::from_bytes(data)?;
+        let _ = events.send(Event::TransferCollectionStarted {
+            connection_id,
+            request_id,
+            num_blobs: c.blobs().len() as u64,
+            total_blobs_size: c.total_blobs_size(),
+        });
+        Some(c)
+    } else {
+        None
+    };
 
     for (offset, ranges) in request.ranges.non_empty_iter() {
         if offset == 0 {
@@ -765,26 +769,29 @@ async fn transfer_collection_2(
                 &mut writer,
             )
             .await?;
-        } else if offset < c.blobs().len() + 1 {
-            tokio::task::yield_now().await;
-            let hash = c.blobs()[offset - 1].hash;
-            let (status, writer1, size) = send_blob(db.clone(), hash, ranges, writer).await?;
-            writer = writer1;
-            if SentStatus::NotFound == status {
-                writer.finish().await?;
-                return Ok(status);
-            }
-
-            let _ = events.send(Event::TransferBlobCompleted {
-                connection_id,
-                request_id,
-                hash,
-                index: (offset - 1) as u64,
-                size,
-            });
         } else {
-            // nothing more we can send
-            break;
+            let c = c.as_ref().unwrap();
+            if offset < c.blobs().len() + 1 {
+                tokio::task::yield_now().await;
+                let hash = c.blobs()[offset - 1].hash;
+                let (status, writer1, size) = send_blob(&db, hash, ranges, writer).await?;
+                writer = writer1;
+                if SentStatus::NotFound == status {
+                    writer.finish().await?;
+                    return Ok(status);
+                }
+
+                let _ = events.send(Event::TransferBlobCompleted {
+                    connection_id,
+                    request_id,
+                    hash,
+                    index: (offset - 1) as u64,
+                    size,
+                });
+            } else {
+                // nothing more we can send
+                break;
+            }
         }
     }
 
@@ -806,7 +813,6 @@ async fn handle_stream(
     (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
     events: broadcast::Sender<Event>,
 ) -> Result<()> {
-    let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
 
     // The stream ID index is used to identify this request.  Requests only arrive in
@@ -843,7 +849,7 @@ async fn handle_stream(
         // Collection request
         Some(BlobOrCollection::Collection { outboard, data }) => {
             // 5. Transfer data!
-            match transfer_collection_2(
+            match transfer_collection(
                 request,
                 &db,
                 writer,
@@ -874,13 +880,11 @@ async fn handle_stream(
         Some(BlobOrCollection::Blob { .. }) => {
             debug!("not found {}", hash);
             notify_transfer_aborted(events, connection_id, request_id);
-            write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
             writer.finish().await?;
         }
         None => {
             debug!("not found {}", hash);
             notify_transfer_aborted(events, connection_id, request_id);
-            write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
             writer.finish().await?;
         }
     };
@@ -895,7 +899,7 @@ enum SentStatus {
 }
 
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
-    db: Database,
+    db: &Database,
     name: Hash,
     ranges: &RangeSpec,
     mut writer: W,
@@ -1014,25 +1018,6 @@ impl From<&std::path::Path> for DataSource {
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
-}
-
-async fn write_response<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    buffer: &mut BytesMut,
-    res: Res,
-) -> Result<()> {
-    let response = Response { data: res };
-
-    // TODO: do not transfer blob data as part of the responses
-    if buffer.len() < Response::POSTCARD_MAX_SIZE {
-        buffer.resize(Response::POSTCARD_MAX_SIZE, 0u8);
-    }
-    let used = postcard::to_slice(&response, buffer)?;
-
-    write_lp(&mut writer, used).await?;
-
-    trace!(len = used.len(), "wrote response message frame");
-    Ok(())
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
