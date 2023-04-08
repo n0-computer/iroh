@@ -38,11 +38,6 @@ impl Collection {
         &self.blobs
     }
 
-    /// Take ownership of the blobs in this collection
-    pub(crate) fn into_inner(self) -> Vec<Blob> {
-        self.blobs
-    }
-
     /// Total size of the raw data referred to by all blobs in this collection
     pub fn total_blobs_size(&self) -> u64 {
         self.total_blobs_size

@@ -813,11 +813,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
-    let temp_dir = if let Some(ref out) = out_dir {
-        Some(out.join(".iroh-tmp"))
-    } else {
-        None
-    };
+    let temp_dir = out_dir.as_ref().map(|out| out.join(".iroh-tmp"));
     let (query, _) = match (&out_dir, &temp_dir) {
         (Some(out), Some(temp_dir)) => get_missing_data(get.hash(), out, temp_dir)?,
         _ => (RangeSpecSeq::all(), None),
@@ -881,7 +877,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                 let name = if name.is_empty() {
                     PathBuf::from(hash.to_string())
                 } else {
-                    pathbuf_from_name(&name)
+                    pathbuf_from_name(name)
                 };
                 pb.set_message(format!("Receiving '{}'...", name.display()));
                 pb.reset();

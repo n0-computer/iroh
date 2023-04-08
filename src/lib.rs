@@ -125,8 +125,8 @@ mod tests {
 
         tokio::fs::write(&path, content).await?;
         // hash of the transfer file
-        let data = tokio::fs::read(&path).await?;
-        let expect_hash = blake3::hash(&data);
+        let expect_data = tokio::fs::read(&path).await?;
+        let expect_hash = blake3::hash(&expect_data);
         let expect_name = filename.to_string();
 
         let (db, hash) =
@@ -147,14 +147,25 @@ mod tests {
                 peer_id: Some(peer_id),
                 keylog: true,
             };
-            let content = &content;
-            let name = &name;
+            let expected_data = &content;
+            let expected_name = &name;
             get::run(
                 Request::all(hash),
                 token,
                 opts,
                 || async { Ok(()) },
-                |info| async move { info.end() },
+                |mut info| async move {
+                    if info.is_root() {
+                        let collection = info.read_collection(hash).await?;
+                        let actual_name = &collection.blobs()[0].name;
+                        info.set_limit(collection.blobs().len() + 1);
+                        assert_eq!(expected_name, actual_name);
+                    } else {
+                        let actual_data = info.read_blob(file_hash).await?;
+                        assert_eq!(expected_data, &actual_data);
+                    }
+                    info.end()
+                },
                 (),
             )
             .await?;

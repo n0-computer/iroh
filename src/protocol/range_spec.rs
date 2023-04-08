@@ -85,14 +85,12 @@ impl fmt::Debug for RangeSpec {
             f.debug_list()
                 .entries(self.to_chunk_ranges().iter())
                 .finish()
+        } else if self.is_all() {
+            write!(f, "all")
+        } else if self.is_empty() {
+            write!(f, "empty")
         } else {
-            if self.is_all() {
-                write!(f, "all")
-            } else if self.is_empty() {
-                write!(f, "empty")
-            } else {
-                f.debug_list().entries(self.0.iter()).finish()
-            }
+            f.debug_list().entries(self.0.iter()).finish()
         }
     }
 }
@@ -260,8 +258,8 @@ mod tests {
         prop::collection::vec((value_range.clone(), value_range), 0..16).prop_map(|v| {
             let mut res = RangeSet2::empty();
             for (a, b) in v {
-                let start = a.min(b) as u64;
-                let end = a.max(b) as u64;
+                let start = a.min(b);
+                let end = a.max(b);
                 res |= RangeSet2::from(ChunkNum(start)..ChunkNum(end));
             }
             res

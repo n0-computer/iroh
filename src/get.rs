@@ -277,7 +277,7 @@ pub fn get_missing_data(
         .blobs()
         .iter()
         .map(|blob| {
-            let paths = FilePaths::new(blob, &temp, &path);
+            let paths = FilePaths::new(blob, temp, path);
             io::Result::Ok(if paths.is_final() {
                 tracing::debug!("Found final file: {:?}", paths.target);
                 // we assume that the file is correct
@@ -433,7 +433,7 @@ impl<U> OnBlobData<U> {
     /// Read the entire blob into a Vec<u8> and then decode it as a Collection
     pub async fn read_collection(&mut self, hash: Hash) -> anyhow::Result<Collection> {
         let data = self.read_blob(hash).await?;
-        Ok(Collection::from_bytes(&data)?)
+        Collection::from_bytes(&data)
     }
 
     /// The ranges we requested
@@ -617,7 +617,7 @@ where
 {
     let start = Instant::now();
     // expect to get blob data in the order they appear in the collection
-    let mut ranges_iter = request.ranges.non_empty_iter();
+    let ranges_iter = request.ranges.non_empty_iter();
     let (writer, reader) = connection.open_bi().await?;
     let mut reader = TrackingReader::new(reader);
     let mut writer = TrackingWriter::new(writer);
@@ -648,7 +648,7 @@ where
     // 3. Read response
     debug!("reading response");
     let mut limit = None;
-    while let Some((offset, query)) = ranges_iter.next() {
+    for (offset, query) in ranges_iter {
         assert!(!query.is_empty());
         if let Some(limit) = limit {
             if offset >= limit {
