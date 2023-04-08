@@ -53,7 +53,7 @@ walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"
-bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false, path = "../bao-tree" }
+bao-tree = { version = "0.2.0", features = ["tokio_io"], default-features = false }
 range-collections = "0.4.0"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 
