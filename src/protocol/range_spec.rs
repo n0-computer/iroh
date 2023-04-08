@@ -148,7 +148,7 @@ impl RangeSpecSeq {
     }
 
     /// An infinite iterator of range specs
-    pub fn iter<'a>(&'a self) -> RequestRangeSpecIter<'a> {
+    pub fn iter(&self) -> RequestRangeSpecIter<'_> {
         let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
         RequestRangeSpecIter {
             current: &EMPTY_RANGE_SPEC,
@@ -160,7 +160,7 @@ impl RangeSpecSeq {
     /// An iterator over non empty range specs
     ///
     /// This iterator is infinite if the range spec is infinite
-    pub fn non_empty_iter<'a>(&'a self) -> impl Iterator<Item = (usize, &'a RangeSpec)> + 'a {
+    pub fn non_empty_iter(&self) -> impl Iterator<Item = (usize, &RangeSpec)> {
         self.iter().enumerate().filter(|(_, r)| !r.is_empty())
     }
 }
