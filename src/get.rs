@@ -262,6 +262,16 @@ pub fn get_missing_range(
     temp_dir: impl AsRef<Path>,
     target_dir: impl AsRef<Path>,
 ) -> io::Result<RangeSpecSeq> {
+    let target_dir = target_dir.as_ref();
+    let temp_dir = temp_dir.as_ref();
+    if target_dir.exists() && !temp_dir.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Target directory exists but does not contain temp directory",
+        ));
+    }
     let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
     let spec = RangeSpecSeq::new(vec![range]);
     Ok(spec)
@@ -316,12 +326,12 @@ fn get_missing_range_impl(
 /// Given a target directory and a temp directory, get a set of ranges that we are missing
 pub fn get_missing_ranges(
     hash: Hash,
-    path: impl AsRef<Path>,
-    temp: impl AsRef<Path>,
+    target_dir: impl AsRef<Path>,
+    temp_dir: impl AsRef<Path>,
 ) -> io::Result<(RangeSpecSeq, Option<Collection>)> {
-    let path = path.as_ref();
-    let temp = temp.as_ref();
-    if path.exists() && !temp.exists() {
+    let target_dir = target_dir.as_ref();
+    let temp_dir = temp_dir.as_ref();
+    if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
         return Err(io::Error::new(
@@ -330,7 +340,7 @@ pub fn get_missing_ranges(
         ));
     }
     // try to load the collection from the temp directory
-    let collection = load_collection(temp, hash)?;
+    let collection = load_collection(temp_dir, hash)?;
     let collection = match collection {
         Some(collection) => collection,
         None => return Ok((RangeSpecSeq::all(), None)),
@@ -338,7 +348,7 @@ pub fn get_missing_ranges(
     let mut ranges = collection
         .blobs()
         .iter()
-        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp, path))
+        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
         .collect::<io::Result<Vec<_>>>()?;
     ranges
         .iter()

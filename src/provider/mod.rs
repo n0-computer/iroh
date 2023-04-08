@@ -798,7 +798,7 @@ async fn transfer_collection(
                     connection_id,
                     request_id,
                     hash,
-                    index: (offset - 1) as u64,
+                    index: offset - 1,
                     size,
                 });
             } else {
