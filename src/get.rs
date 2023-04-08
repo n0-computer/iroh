@@ -15,7 +15,7 @@ use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
-use crate::tokio_util::{TrackingReader, SeekOptimized, TrackingWriter};
+use crate::tokio_util::{SeekOptimized, TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, Context, Result};

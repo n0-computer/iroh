@@ -1,4 +1,4 @@
-use super::{BlobData, BlobOrCollection, CollectionData};
+use super::BlobOrCollection;
 use crate::{
     rpc_protocol::ValidateProgress,
     util::{validate_bao, BaoValidationError},
@@ -254,12 +254,11 @@ impl Database {
             if let (Some(path), Some(outboard)) = (path, outboards.get(&hash)) {
                 db.insert(
                     hash,
-                    BlobData {
+                    BlobOrCollection::Blob {
                         outboard: outboard.clone(),
                         path,
                         size,
-                    }
-                    .into(),
+                    },
                 );
             }
         }
@@ -267,11 +266,10 @@ impl Database {
             if let Some(outboard) = outboards.get(&hash) {
                 db.insert(
                     hash,
-                    CollectionData {
+                    BlobOrCollection::Collection {
                         outboard: outboard.clone(),
                         data,
-                    }
-                    .into(),
+                    },
                 );
             }
         }
@@ -291,7 +289,7 @@ impl Database {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-        data.sort_by_key(|(k, e)| (e.is_blob(), e.blob_data().map(|x| x.path.clone()), *k));
+        data.sort_by_key(|(k, e)| (e.is_blob(), e.blob_path().map(ToOwned::to_owned), *k));
         tx.send(ValidateProgress::Starting {
             total: data.len() as u64,
         })
@@ -300,7 +298,7 @@ impl Database {
             .enumerate()
             .map(|(id, (hash, boc))| {
                 let id = id as u64;
-                let path = if let BlobOrCollection::Blob(BlobData { path, .. }) = &boc {
+                let path = if let BlobOrCollection::Blob { path, .. } = &boc {
                     Some(path.clone())
                 } else {
                     None
@@ -325,7 +323,7 @@ impl Database {
                                 .ok();
                         };
                         let res = match boc {
-                            BlobOrCollection::Blob(BlobData { outboard, path, .. }) => {
+                            BlobOrCollection::Blob { outboard, path, .. } => {
                                 match std::fs::File::open(&path) {
                                     Ok(data) => {
                                         tracing::info!("validating {}", path.display());
@@ -336,7 +334,7 @@ impl Database {
                                     Err(cause) => Err(BaoValidationError::from(cause)),
                                 }
                             }
-                            BlobOrCollection::Collection(CollectionData { outboard, data }) => {
+                            BlobOrCollection::Collection { outboard, data } => {
                                 let data = std::io::Cursor::new(data);
                                 validate_bao(hash, data, outboard, progress)
                             }
@@ -366,28 +364,25 @@ impl Database {
         let this = self.0.read().unwrap();
         let outboards = this
             .iter()
-            .map(|(k, v)| (*k, v.outboard().clone()))
+            .map(|(k, v)| match v {
+                BlobOrCollection::Blob { outboard, .. } => (*k, outboard.clone()),
+                BlobOrCollection::Collection { outboard, .. } => (*k, outboard.clone()),
+            })
             .collect::<Vec<_>>();
 
         let collections = this
             .iter()
             .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob(_) => None,
-                BlobOrCollection::Collection(CollectionData { data, .. }) => {
-                    Some((*k, data.clone()))
-                }
+                BlobOrCollection::Blob { .. } => None,
+                BlobOrCollection::Collection { data, .. } => Some((*k, data.clone())),
             })
             .collect::<Vec<_>>();
 
         let paths = this
             .iter()
             .map(|(k, v)| match v {
-                BlobOrCollection::Blob(BlobData { path, size, .. }) => {
-                    (*k, *size, Some(path.clone()))
-                }
-                BlobOrCollection::Collection(CollectionData { data, .. }) => {
-                    (*k, data.len() as u64, None)
-                }
+                BlobOrCollection::Blob { path, size, .. } => (*k, *size, Some(path.clone())),
+                BlobOrCollection::Collection { data, .. } => (*k, data.len() as u64, None),
             })
             .collect::<Vec<_>>();
 
@@ -417,10 +412,9 @@ impl Database {
             .unwrap()
             .iter()
             .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob(data) => Some((k, data)),
+                BlobOrCollection::Blob { path, size, .. } => Some((*k, path.clone(), *size)),
                 BlobOrCollection::Collection { .. } => None,
             })
-            .map(|(k, data)| (*k, data.path.clone(), data.size))
             .collect::<Vec<_>>();
         // todo: make this a proper lazy iterator at some point
         // e.g. by using an immutable map or a real database that supports snapshots.

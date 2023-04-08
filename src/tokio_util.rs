@@ -1,7 +1,11 @@
-use std::{task::Poll, io::{self, SeekFrom}, pin::Pin};
+use std::{
+    io::{self, SeekFrom},
+    pin::Pin,
+    task::Poll,
+};
 
 use futures::ready;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 #[derive(Debug)]
 pub(crate) struct TrackingReader<R> {
@@ -128,7 +132,10 @@ impl SeekOptimizedState {
     }
 
     fn is_seeking(&self) -> bool {
-        matches!(self, SeekOptimizedState::Seeking | SeekOptimizedState::FakeSeeking(_))
+        matches!(
+            self,
+            SeekOptimizedState::Seeking | SeekOptimizedState::FakeSeeking(_)
+        )
     }
 }
 

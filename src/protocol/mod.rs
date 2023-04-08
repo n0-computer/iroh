@@ -15,7 +15,7 @@ pub use range_spec::{RangeSpec, RangeSpecSeq};
 use crate::util::{self, Hash};
 
 /// Maximum message size is limited to 100MiB for now.
-const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
+pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
 pub const VERSION: u64 = 1;

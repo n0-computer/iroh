@@ -13,8 +13,8 @@ pub mod rpc_protocol;
 
 mod subnet;
 mod tls;
-mod util;
 mod tokio_util;
+mod util;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::Hash;
