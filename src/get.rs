@@ -420,7 +420,7 @@ impl<U> OnBlobData<U> {
         BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE)
     }
 
-    /// Read the entire blob into a Vec<u8>
+    /// Read the entire blob into a `Vec<u8>`
     ///
     /// Make sure to check the size of the blob before calling this.
     pub async fn read_blob(&mut self, hash: Hash) -> anyhow::Result<Vec<u8>> {
@@ -429,7 +429,7 @@ impl<U> OnBlobData<U> {
         Ok(target)
     }
 
-    /// Read the entire blob into a Vec<u8> and then decode it as a Collection
+    /// Read the entire blob into a `Vec<u8>` and then decode it as a Collection
     pub async fn read_collection(&mut self, hash: Hash) -> anyhow::Result<Collection> {
         let data = self.read_blob(hash).await?;
         Collection::from_bytes(&data)

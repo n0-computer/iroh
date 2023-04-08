@@ -774,7 +774,7 @@ async fn transfer_collection(
             if offset < c.blobs().len() + 1 {
                 tokio::task::yield_now().await;
                 let hash = c.blobs()[offset - 1].hash;
-                let (status, writer1, size) = send_blob(&db, hash, ranges, writer).await?;
+                let (status, writer1, size) = send_blob(db, hash, ranges, writer).await?;
                 writer = writer1;
                 if SentStatus::NotFound == status {
                     writer.finish().await?;

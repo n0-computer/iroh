@@ -10,10 +10,10 @@ use smallvec::{smallvec, SmallVec};
 /// this is a sequence of spans, where the first span is considered false, and each subsequent span is alternating.
 ///
 /// Examples:
-/// The range 10..33 would be encoded as [10, 23]
-/// The empty range would be encoded as the empty array []
-/// A full interval .. would be encoded as [0]
-/// A half open interval 15.. would be encoded as [15]
+/// The range 10..33 would be encoded as `[10, 23]`
+/// The empty range would be encoded as the empty array `[]`
+/// A full interval .. would be encoded as `[0]`
+/// A half open interval 15.. would be encoded as `[15]`
 ///
 /// All values except for the first one must be non-zero. The first value may be zero.
 /// Values are bao chunk numbers, not byte offsets.
