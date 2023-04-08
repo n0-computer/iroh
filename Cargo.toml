@@ -86,5 +86,5 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
-[patch.crates-io]
-bao-tree = { path="../bao-tree" }
+# [patch.crates-io]
+# bao-tree = { path="../bao-tree" }

@@ -1,3 +1,4 @@
+//! Utilities for working with tokio io
 use std::{
     io::{self, SeekFrom},
     pin::Pin,
@@ -7,6 +8,7 @@ use std::{
 use futures::ready;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
+/// A reader that tracks the number of bytes read
 #[derive(Debug)]
 pub(crate) struct TrackingReader<R> {
     inner: R,
@@ -18,12 +20,13 @@ impl<R> TrackingReader<R> {
         Self { inner, read: 0 }
     }
 
+    #[allow(dead_code)]
     pub fn bytes_read(&self) -> u64 {
         self.read
     }
 
-    pub fn into_inner(self) -> R {
-        self.inner
+    pub fn into_parts(self) -> (R, u64) {
+        (self.inner, self.read)
     }
 }
 
@@ -47,6 +50,7 @@ where
     }
 }
 
+/// A writer that tracks the number of bytes written
 pub(crate) struct TrackingWriter<W> {
     inner: W,
     written: u64,
@@ -57,12 +61,13 @@ impl<W> TrackingWriter<W> {
         Self { inner, written: 0 }
     }
 
+    #[allow(dead_code)]
     pub fn bytes_written(&self) -> u64 {
         self.written
     }
 
-    pub fn into_inner(self) -> W {
-        self.inner
+    pub fn into_parts(self) -> (W, u64) {
+        (self.inner, self.written)
     }
 }
 
@@ -95,7 +100,14 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for TrackingWriter<W> {
     }
 }
 
+/// A wrapper that tracks the current position of the underlying reader or writer
+/// and avoids noop seeks.
 ///
+/// This is needed because while in sync io a noop seek is extremely cheap, in
+/// current async io it involves spawning a blocking task, and therefore is
+/// expensive.
+///
+/// The chunk downloader uses this to avoid noop seeks when writing to a file.
 #[derive(Debug)]
 pub(crate) struct SeekOptimized<T> {
     inner: T,

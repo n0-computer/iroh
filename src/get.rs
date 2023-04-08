@@ -639,8 +639,7 @@ where
         let serialized = postcard::to_stdvec(&request)?;
         write_lp(&mut writer, &serialized).await?;
     }
-    let bytes_written = writer.bytes_written();
-    let mut writer = writer.into_inner();
+    let (mut writer, bytes_written) = writer.into_parts();
     writer.finish().await?;
     drop(writer);
 
@@ -672,8 +671,7 @@ where
     }
 
     // Shut down the stream
-    let bytes_read = reader.bytes_read();
-    let mut reader = reader.into_inner();
+    let (mut reader, bytes_read) = reader.into_parts();
     if let Some(chunk) = reader.read_chunk(8, false).await? {
         reader.stop(0u8.into()).ok();
         error!("Received unexpected data from the provider: {chunk:?}");

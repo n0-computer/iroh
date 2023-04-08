@@ -282,10 +282,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     let home = testdir!();
     let mut provider = make_provider(&path, &input, home, None, None)?;
-    // std::io::copy(
-    //     &mut provider.child.stderr.take().unwrap(),
-    //     &mut std::io::stderr(),
-    // )?;
+    // std::io::copy(&mut provider.child.stderr.take().unwrap(), &mut std::io::stderr())?;
 
     let stdout = provider.child.stdout.take().unwrap();
     let stdout = BufReader::new(stdout);
