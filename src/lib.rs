@@ -28,31 +28,23 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::RefCell,
-        io::Cursor,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Arc, Mutex},
+        sync::Arc,
         time::Duration,
     };
 
     use anyhow::{anyhow, Context, Result};
-    use futures::Future;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
+    use crate::protocol::{AuthToken, Request};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
-    use crate::{
-        blobs::Collection,
-        get::{OnBlobData, OnBlobResult},
-        protocol::{AuthToken, Request},
-        provider::BlobData,
-    };
 
     use super::*;
 
@@ -162,7 +154,7 @@ mod tests {
                 token,
                 opts,
                 || async { Ok(()) },
-                |info| async move { info.done() },
+                |info| async move { info.end() },
                 (),
             )
             .await?;
@@ -287,14 +279,11 @@ mod tests {
                         let expect = tokio::fs::read(&path).await?;
                         let got = data.read_blob(*hash).await?;
                         assert_eq!(expect, got);
-                        if offset < expects.len() - 1 {
-                            data.more()
-                        } else {
-                            data.done()
-                        }
+                        data.end()
                     } else {
                         let collection = data.read_collection(collection_hash).await?;
-                        data.more()
+                        data.set_limit(collection.blobs().len() + 1);
+                        data.end()
                     }
                 }
             },
@@ -401,13 +390,14 @@ mod tests {
             || async move { Ok(()) },
             move |mut data| async move {
                 if data.is_root() {
-                    data.user = Some(data.read_collection(hash).await?);
-                    data.more()
+                    let collection = data.read_collection(hash).await?;
+                    data.set_limit(collection.blobs().len() + 1);
+                    data.user = Some(collection);
                 } else {
                     let hash = data.user.as_ref().unwrap().blobs()[0].hash;
-                    data.drain(hash).await.unwrap();
-                    data.done()
+                    data.drain(hash).await?;
                 }
+                data.end()
             },
             None,
         )
@@ -456,7 +446,7 @@ mod tests {
                 || async move { Ok(()) },
                 |data| async move {
                     // evil: do nothing with the stream!
-                    data.more_unchecked()
+                    data.end_unchecked()
                 },
                 (),
             ),
@@ -503,13 +493,14 @@ mod tests {
                 || async move { Ok(()) },
                 move |mut data| async move {
                     if data.is_root() {
-                        data.user = Some(data.read_collection(hash).await?);
-                        data.more()
+                        let collection = data.read_collection(hash).await?;
+                        data.set_limit(collection.blobs().len() + 1);
+                        data.user = Some(collection);
                     } else {
                         let hash = data.user.as_ref().unwrap().blobs()[0].hash;
-                        let _ = data.read_blob(hash).await?;
-                        data.done()
+                        data.drain(hash).await?;
                     }
+                    data.end()
                 },
                 None,
             ),
@@ -552,13 +543,14 @@ mod tests {
                     }
                     async move {
                         if data.is_root() {
-                            data.user = Some(data.read_collection(hash).await?);
-                            data.more()
+                            let collection = data.read_collection(hash).await?;
+                            data.set_limit(collection.blobs().len() + 1);
+                            data.user = Some(collection);
                         } else {
                             let hash = data.user.as_ref().unwrap().blobs()[0].hash;
-                            let _ = data.read_blob(hash).await?;
-                            data.done()
+                            data.drain(hash).await?;
                         }
+                        data.end()
                     }
                 },
                 None,

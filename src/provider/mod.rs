@@ -718,81 +718,6 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
-async fn transfer_collection(
-    request: Request,
-    // Database from which to fetch blobs.
-    db: &Database,
-    // Quinn stream.
-    mut writer: quinn::SendStream,
-    // Buffer used when writing to writer.
-    buffer: &mut BytesMut,
-    // the collection to transfer
-    collection: &CollectionData,
-    events: broadcast::Sender<Event>,
-    connection_id: u64,
-    request_id: u64,
-) -> Result<SentStatus> {
-    let hash = request.name;
-    let mut iter = request.ranges.iter();
-    let CollectionData { data, outboard } = collection;
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
-
-    let c: Collection = postcard::from_bytes(data)?;
-    let _ = events.send(Event::TransferCollectionStarted {
-        connection_id,
-        request_id,
-        num_blobs: c.blobs().len() as u64,
-        total_blobs_size: c.total_blobs_size(),
-    });
-
-    // TODO: we should check if the blobs referenced in this container
-    // actually exist in this provider before returning `FoundCollection`
-    write_response(&mut writer, buffer, Res::Found).await?;
-    // stream the collection data directly to the writer
-    let ranges = iter.next().unwrap();
-    encode_ranges_validated(
-        Cursor::new(data),
-        outboard,
-        &ranges.to_chunk_ranges(),
-        &mut writer,
-    )
-    .await?;
-    for ((i, blob), ranges) in c.blobs().iter().enumerate().zip(iter) {
-        trace!("writing blob {}/{}", i, c.blobs().len());
-        tokio::task::yield_now().await;
-        let (status, writer1, size) = send_blob(db.clone(), blob.hash, ranges, writer).await?;
-        writer = writer1;
-        if SentStatus::NotFound == status {
-            writer.finish().await?;
-            return Ok(status);
-        }
-
-        let _ = events.send(Event::TransferBlobCompleted {
-            connection_id,
-            request_id,
-            hash: blob.hash,
-            index: i as u64,
-            size,
-        });
-    }
-
-    writer.finish().await?;
-    Ok(SentStatus::Sent)
-}
-
-/// Transfers the collection & blob data.
-///
-/// First, it transfers the collection data & its associated outboard encoding data. Then it sequentially transfers each individual blob data & its associated outboard
-/// encoding data.
-///
-/// Will fail if there is an error writing to the getter or reading from
-/// the database.
-///
-/// If a blob from the collection cannot be found in the database, the transfer will gracefully
-/// close the writer, and return with `Ok(SentStatus::NotFound)`.
-///
-/// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-#[allow(clippy::too_many_arguments)]
 async fn transfer_collection_2(
     request: Request,
     // Database from which to fetch blobs.
@@ -969,7 +894,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             path,
             size,
         })) => {
-            println!("sending blob {} {}", path.display(), size);
+            debug!("sending blob {} {} {}", name, path.display(), size);
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
             let file_reader = tokio::fs::File::open(&path).await?;
             let res = bao_tree::io::tokio::encode_ranges_validated(
@@ -979,13 +904,13 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 &mut writer,
             )
             .await;
-            println!("done sending blob {} {:?}", path.display(), res);
+            debug!("done sending blob {} {:?}", name, res);
             res?;
 
             Ok((SentStatus::Sent, writer, size))
         }
         _ => {
-            println!("not found blob");
+            debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, writer, 0))
         }
     }

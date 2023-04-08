@@ -4,7 +4,6 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::io::tokio::AsyncResponseDecoder;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -13,10 +12,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
 pub use range_spec::{RangeSpec, RangeSpecSeq};
 
-use crate::{
-    util::{self, Hash},
-    IROH_BLOCK_SIZE,
-};
+use crate::util::{self, Hash};
 
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -121,27 +117,6 @@ pub(crate) async fn read_lp(
         }
     }
     Ok(Some(buffer.split_to(size).freeze()))
-}
-
-/// Read and decode the given bao encoded data from the provided source.
-///
-/// After the data is read successfully, the reader will be at the end of the data.
-/// If there is an error, the reader can be anywhere, so it is recommended to discard it.
-pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
-    reader: R,
-    hash: Hash,
-    ranges: &RangeSpec,
-) -> Result<Vec<u8>> {
-    let mut decoder = AsyncResponseDecoder::new(
-        hash.into(),
-        ranges.to_chunk_ranges(),
-        IROH_BLOCK_SIZE,
-        reader,
-    );
-    // we don't know the size yet, so we just allocate a reasonable amount
-    let mut decoded = Vec::with_capacity(4096);
-    decoder.read_to_end(&mut decoded).await?;
-    Ok(decoded)
 }
 
 /// A token used to authenticate a handshake.

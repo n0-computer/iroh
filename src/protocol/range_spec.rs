@@ -118,8 +118,8 @@ impl RangeSpecSeq {
     /// An empty range spec sequence
     ///
     /// When iterated, will return an empty range forever
-    pub fn empty() -> Self {
-        Self(SmallVec::new())
+    pub const fn empty() -> Self {
+        Self(SmallVec::new_const())
     }
 
     /// A complete range spec sequence

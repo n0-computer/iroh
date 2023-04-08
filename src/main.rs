@@ -4,7 +4,6 @@ use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
-use bao_tree::io::DecodeResponseItem;
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
@@ -13,7 +12,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::Collection;
-use iroh::get::{get_data_path, get_missing_data, DataStream, OnBlobData, Stats};
+use iroh::get::{get_data_path, get_missing_data, OnBlobData};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -871,13 +870,11 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                 pb.set_length(collection.total_blobs_size());
                 pb.reset();
                 pb.set_draw_target(ProgressDrawTarget::stderr());
-                println!("read collection! {}", collection.total_entries());
+                data.set_limit(collection.blobs().len() + 1);
                 data.user = Some(collection);
-                data.more()
             } else {
                 let offset = data.child_offset().unwrap();
                 let collection = data.user.as_ref().unwrap();
-                let done = offset >= collection.blobs().len() - 1;
                 let blob = collection.blobs().get(offset).unwrap();
                 let hash = blob.hash;
                 let name = &blob.name;
@@ -941,33 +938,18 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                     }
                 } else {
                     // Write to OUT_WRITER
-                    let mut stdout = tokio::io::stdout();
-                    let query = data.ranges().clone();
-                    let mut stream = bao_tree::io::tokio::DecodeResponseStreamRef::new_with_tree(
-                        hash.into(),
-                        data.tree(),
-                        &query,
-                        &mut data.reader,
-                    );
-                    while let Some(chunk) = stream.next().await {
-                        if let DecodeResponseItem::Leaf { data, .. } = chunk? {
-                            pb.inc(data.len() as u64);
-                            stdout.write_all(&data).await?;
-                        }
-                    }
+                    data.concatenate(hash, tokio::io::stdout(), |_offset, size| {
+                        pb.inc(size as u64);
+                    })
+                    .await?;
                 }
                 pb.finish();
-                if !done {
-                    data.more()
-                } else {
-                    data.done()
-                }
             }
+            data.end()
         }
     };
     let request = Request::new(get.hash(), query);
-    println!("{:?}", request);
-    match get {
+    let (_, stats) = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(
                 &ticket,
@@ -989,15 +971,11 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
         tokio::fs::remove_dir_all(temp_dir).await?;
     }
     pb.finish_and_clear();
-    let stats = Stats {
-        data_len: 0,
-        elapsed: Duration::from_secs(0),
-    };
     progress!(
         "Transferred {} in {}, {}/s",
-        HumanBytes(stats.data_len),
+        HumanBytes(stats.bytes_read),
         HumanDuration(stats.elapsed),
-        HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64)
+        HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
     );
 
     Ok(())
