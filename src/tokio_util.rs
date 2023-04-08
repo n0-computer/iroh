@@ -1,12 +1,17 @@
 //! Utilities for working with tokio io
 use std::{
-    io::{self, SeekFrom},
+    io::{self, Cursor, SeekFrom},
     pin::Pin,
     task::Poll,
 };
 
+use bytes::Bytes;
 use futures::ready;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite},
+};
+use tokio_util::either::Either;
 
 /// A reader that tracks the number of bytes read
 #[derive(Debug)]
@@ -248,5 +253,16 @@ impl<T: AsyncSeek + Unpin> AsyncSeek for SeekOptimized<T> {
             self.state = SeekOptimizedState::Known(res);
         }
         Poll::Ready(Ok(res))
+    }
+}
+
+pub async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> io::Result<Bytes> {
+    match reader {
+        Either::Left(cursor) => Ok(cursor.get_ref().clone()),
+        Either::Right(file) => {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).await?;
+            Ok(buf.into())
+        }
     }
 }

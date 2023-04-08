@@ -11,8 +11,8 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::blobs::Collection;
-use iroh::get::{get_data_path, get_missing_data, OnBlobData};
+use iroh::blobs::{Blob, Collection};
+use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, OnBlobData};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -166,6 +166,8 @@ enum Commands {
         /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
         #[clap(long, short)]
         out: Option<PathBuf>,
+        #[clap(long, default_value_t = false)]
+        single: bool,
     },
     /// Fetches some data from a ticket,
     ///
@@ -499,6 +501,7 @@ async fn main_impl() -> Result<()> {
             auth_token,
             addr,
             out,
+            single,
         } => {
             let mut opts = get::Options {
                 peer_id: Some(peer),
@@ -514,6 +517,7 @@ async fn main_impl() -> Result<()> {
                 hash: *hash.as_hash(),
                 opts,
                 token,
+                single,
             };
             tokio::select! {
                 biased;
@@ -795,6 +799,7 @@ enum GetInteractive {
         hash: Hash,
         opts: get::Options,
         token: AuthToken,
+        single: bool,
     },
 }
 
@@ -805,18 +810,43 @@ impl GetInteractive {
             GetInteractive::Hash { hash, .. } => *hash,
         }
     }
+
+    fn single(&self) -> bool {
+        match self {
+            GetInteractive::Ticket { .. } => false,
+            GetInteractive::Hash { single, .. } => *single,
+        }
+    }
 }
 
 async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Result<()> {
     let hash = get.hash();
+    let single = get.single();
     progress!("Fetching: {}", Blake3Cid::new(hash));
 
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
     let temp_dir = out_dir.as_ref().map(|out| out.join(".iroh-tmp"));
-    let (query, _) = match (&out_dir, &temp_dir) {
-        (Some(out), Some(temp_dir)) => get_missing_data(get.hash(), out, temp_dir)?,
-        _ => (RangeSpecSeq::all(), None),
+    let (query, collection) = if single {
+        match (&out_dir, &temp_dir) {
+            (Some(out), Some(temp_dir)) => {
+                let name = Blake3Cid::new(hash).to_string();
+                let query = get_missing_range(&get.hash(), name.as_str(), temp_dir, out)?;
+                (query, vec![Blob { hash, name }])
+            }
+            _ => (RangeSpecSeq::all(), vec![]),
+        }
+    } else {
+        match (&out_dir, &temp_dir) {
+            (Some(out), Some(temp_dir)) => {
+                let (query, collection) = get_missing_ranges(get.hash(), out, temp_dir)?;
+                (
+                    query,
+                    collection.map(|x| x.into_inner()).unwrap_or_default(),
+                )
+            }
+            _ => (RangeSpecSeq::all(), vec![]),
+        }
     };
 
     let pb = ProgressBar::hidden();
@@ -838,109 +868,119 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
         Ok(())
     };
 
-    let on_blob = |mut data: OnBlobData<Option<Collection>>| {
+    let on_blob = |mut data: OnBlobData<Vec<Blob>>| {
         let out = &out_dir;
         let temp_dir = &temp_dir;
         let out_dir = &out_dir;
         let pb = &pb;
         async move {
             if data.is_root() {
-                let collection_data = data.read_blob(hash).await?;
-                let collection = Collection::from_bytes(&collection_data)?;
+                // create temp and out directories in any case if out is set
                 if let (Some(ref temp_dir), Some(ref out_dir)) = (temp_dir, out_dir) {
-                    let path = get_data_path(temp_dir, hash);
                     tokio::fs::create_dir_all(temp_dir)
                         .await
                         .context("unable to create directory {temp_dir}")?;
                     tokio::fs::create_dir_all(out_dir)
                         .await
                         .context("Unable to create directory {out_dir}")?;
-                    tokio::fs::write(path, collection_data).await?;
                 };
-                progress!("{} Downloading ...", style("[3/3]").bold().dim());
-                progress!(
-                    "  {} file(s) with total transfer size {}",
-                    collection.total_entries(),
-                    HumanBytes(collection.total_blobs_size())
-                );
-                pb.set_length(collection.total_blobs_size());
-                pb.reset();
-                pb.set_draw_target(ProgressDrawTarget::stderr());
-                data.set_limit(collection.blobs().len() + 1);
-                data.user = Some(collection);
-            } else {
-                let offset = data.child_offset().unwrap();
-                let collection = data.user.as_ref().unwrap();
-                let blob = collection.blobs().get(offset).unwrap();
-                let hash = blob.hash;
-                let name = &blob.name;
-                let name = if name.is_empty() {
-                    PathBuf::from(hash.to_string())
+                if single {
+                    progress!("{} Downloading ...", style("[3/3]").bold().dim());
+                    pb.set_length(data.size());
+                    pb.reset();
+                    pb.set_draw_target(ProgressDrawTarget::stderr());
                 } else {
-                    pathbuf_from_name(name)
-                };
-                pb.set_message(format!("Receiving '{}'...", name.display()));
-                pb.reset();
-                if let (Some(ref outpath), Some(ref temp_dir)) = (out, temp_dir) {
-                    let final_path = outpath.join(name);
-                    let tempname = blake3::Hash::from(hash).to_hex();
-                    let data_path = temp_dir.join(format!("{}.data.part", tempname));
-                    let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
-                    let mut data_file = tokio::fs::OpenOptions::new()
+                    // setup for when we are not in single file mode
+                    let collection_data = data.read_blob(hash).await?;
+                    let collection = Collection::from_bytes(&collection_data)?;
+                    if let Some(ref temp_dir) = temp_dir {
+                        tokio::fs::write(get_data_path(temp_dir, hash), collection_data).await?;
+                    };
+                    progress!("{} Downloading ...", style("[3/3]").bold().dim());
+                    progress!(
+                        "  {} file(s) with total transfer size {}",
+                        collection.total_entries(),
+                        HumanBytes(collection.total_blobs_size())
+                    );
+                    pb.set_length(collection.total_blobs_size());
+                    pb.reset();
+                    pb.set_draw_target(ProgressDrawTarget::stderr());
+                    data.set_limit(collection.total_entries() + 1);
+                    data.user = collection.into_inner();
+                    return data.end();
+                }
+            }
+            let offset = data.offset() - ((!single) as u64);
+            let collection = &data.user;
+            let blob = collection.get(offset as usize).unwrap();
+            let hash = blob.hash;
+            let name = &blob.name;
+            let name = if name.is_empty() {
+                PathBuf::from(hash.to_string())
+            } else {
+                pathbuf_from_name(name)
+            };
+            pb.set_message(format!("Receiving '{}'...", name.display()));
+            pb.reset();
+            if let (Some(ref outpath), Some(ref temp_dir)) = (out, temp_dir) {
+                let final_path = outpath.join(name);
+                let tempname = blake3::Hash::from(hash).to_hex();
+                let data_path = temp_dir.join(format!("{}.data.part", tempname));
+                let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+                let mut data_file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&data_path)
+                    .await?;
+                tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+                pb.set_length(data.size());
+                let mut outboard_file = if data.size() > 0 {
+                    let outboard_file = tokio::fs::OpenOptions::new()
                         .write(true)
                         .create(true)
-                        .open(&data_path)
+                        .open(&outboard_path)
                         .await?;
-                    tracing::info!("piping data to {:?} and {:?}", data_path, outboard_path);
-                    pb.set_length(data.size());
-                    let mut outboard_file = if data.size() > 0 {
-                        let outboard_file = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .open(&outboard_path)
-                            .await?;
-                        Some(outboard_file)
-                    } else {
-                        None
-                    };
-                    let on_write = |offset, _size| {
-                        // println!("offset: {}/{}", offset, pb.length().unwrap());
-                        pb.set_position(offset);
-                    };
-                    data.write_all_with_outboard(
-                        hash,
-                        &mut data_file,
-                        outboard_file.as_mut(),
-                        on_write,
-                    )
-                    .await?;
-                    tokio::fs::create_dir_all(
-                        final_path
-                            .parent()
-                            .context("final path should have parent")?,
-                    )
-                    .await?;
-                    // Flush the data file first, it is the only thing that matters at this point
-                    data_file.shutdown().await?;
-                    drop(data_file);
-                    // Rename temp file, to target name
-                    // once this is done, the file is considered complete
-                    tokio::fs::rename(data_path, final_path).await?;
-                    if let Some(mut outboard_file) = outboard_file.take() {
-                        // not sure if we have to do this
-                        outboard_file.shutdown().await?;
-                        // delete the outboard file
-                        tokio::fs::remove_file(outboard_path).await?;
-                    }
+                    Some(outboard_file)
                 } else {
-                    // Write to OUT_WRITER
-                    data.concatenate(hash, tokio::io::stdout(), |_offset, size| {
-                        pb.inc(size as u64);
-                    })
-                    .await?;
+                    None
+                };
+                let on_write = |offset, _size| {
+                    // println!("offset: {}/{}", offset, pb.length().unwrap());
+                    pb.set_position(offset);
+                };
+                data.write_all_with_outboard(
+                    hash,
+                    &mut data_file,
+                    outboard_file.as_mut(),
+                    on_write,
+                )
+                .await?;
+                tokio::fs::create_dir_all(
+                    final_path
+                        .parent()
+                        .context("final path should have parent")?,
+                )
+                .await?;
+                // Flush the data file first, it is the only thing that matters at this point
+                data_file.shutdown().await?;
+                drop(data_file);
+                // Rename temp file, to target name
+                // once this is done, the file is considered complete
+                tokio::fs::rename(data_path, final_path).await?;
+                if let Some(mut outboard_file) = outboard_file.take() {
+                    // not sure if we have to do this
+                    outboard_file.shutdown().await?;
+                    // delete the outboard file
+                    tokio::fs::remove_file(outboard_path).await?;
                 }
-                pb.finish();
+            } else {
+                // Write to OUT_WRITER
+                data.concatenate(hash, tokio::io::stdout(), |_offset, size| {
+                    pb.inc(size as u64);
+                })
+                .await?;
             }
+            pb.finish();
             data.end()
         }
     };
@@ -954,12 +994,12 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                 MAX_CONCURRENT_DIALS,
                 on_connected,
                 on_blob,
-                None,
+                collection,
             )
             .await?
         }
         GetInteractive::Hash { opts, token, .. } => {
-            get::run(request, token, opts, on_connected, on_blob, None).await?
+            get::run(request, token, opts, on_connected, on_blob, collection).await?
         }
     };
 

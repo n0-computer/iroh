@@ -159,7 +159,7 @@ mod tests {
                     if info.is_root() {
                         let collection = info.read_collection(hash).await?;
                         let actual_name = &collection.blobs()[0].name;
-                        info.set_limit(collection.blobs().len() + 1);
+                        info.set_limit(collection.total_entries() + 1);
                         assert_eq!(expected_name, actual_name);
                     } else {
                         let actual_data = info.read_blob(file_hash).await?;
@@ -287,14 +287,14 @@ mod tests {
                 let expects = expects.clone();
                 async move {
                     if let Some(offset) = data.child_offset() {
-                        let (_, path, hash) = &expects[offset];
+                        let (_, path, hash) = &expects[offset as usize];
                         let expect = tokio::fs::read(&path).await?;
                         let got = data.read_blob(*hash).await?;
                         assert_eq!(expect, got);
                         data.end()
                     } else {
                         let collection = data.read_collection(collection_hash).await?;
-                        data.set_limit(collection.blobs().len() + 1);
+                        data.set_limit(collection.total_entries() + 1);
                         data.end()
                     }
                 }
@@ -403,7 +403,7 @@ mod tests {
             move |mut data| async move {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
-                    data.set_limit(collection.blobs().len() + 1);
+                    data.set_limit(collection.total_entries() + 1);
                     data.user = Some(collection);
                 } else {
                     let hash = data.user.as_ref().unwrap().blobs()[0].hash;
@@ -506,7 +506,7 @@ mod tests {
                 move |mut data| async move {
                     if data.is_root() {
                         let collection = data.read_collection(hash).await?;
-                        data.set_limit(collection.blobs().len() + 1);
+                        data.set_limit(collection.total_entries() + 1);
                         data.user = Some(collection);
                     } else {
                         let hash = data.user.as_ref().unwrap().blobs()[0].hash;
@@ -556,7 +556,7 @@ mod tests {
                     async move {
                         if data.is_root() {
                             let collection = data.read_collection(hash).await?;
-                            data.set_limit(collection.blobs().len() + 1);
+                            data.set_limit(collection.total_entries() + 1);
                             data.user = Some(collection);
                         } else {
                             let hash = data.user.as_ref().unwrap().blobs()[0].hash;

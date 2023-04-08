@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::blobs::{Blob, Collection};
+use crate::blobs::Collection;
 use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
@@ -209,11 +209,16 @@ struct FilePaths {
 }
 
 impl FilePaths {
-    fn new(entry: &Blob, tempdir: impl AsRef<Path>, target_dir: impl AsRef<Path>) -> Self {
-        let target = target_dir.as_ref().join(pathbuf_from_name(&entry.name));
-        let hash = blake3::Hash::from(entry.hash).to_hex();
-        let temp = tempdir.as_ref().join(format!("{}.data.part", hash));
-        let outboard = tempdir.as_ref().join(format!("{}.outboard.part", hash));
+    fn new(
+        hash: &Hash,
+        name: &str,
+        temp_dir: impl AsRef<Path>,
+        target_dir: impl AsRef<Path>,
+    ) -> Self {
+        let target = target_dir.as_ref().join(pathbuf_from_name(name));
+        let hash = blake3::Hash::from(*hash).to_hex();
+        let temp = temp_dir.as_ref().join(format!("{}.data.part", hash));
+        let outboard = temp_dir.as_ref().join(format!("{}.outboard.part", hash));
         Self {
             target,
             temp,
@@ -250,8 +255,66 @@ fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option
     })
 }
 
+///
+pub fn get_missing_range(
+    hash: &Hash,
+    name: &str,
+    temp_dir: impl AsRef<Path>,
+    target_dir: impl AsRef<Path>,
+) -> io::Result<RangeSpecSeq> {
+    let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
+    let spec = RangeSpecSeq::new(vec![range]);
+    Ok(spec)
+}
+
+/// Get missing range for a single file
+fn get_missing_range_impl(
+    hash: &Hash,
+    name: &str,
+    temp_dir: impl AsRef<Path>,
+    target_dir: impl AsRef<Path>,
+) -> io::Result<RangeSet2<ChunkNum>> {
+    let paths = FilePaths::new(hash, name, temp_dir, target_dir);
+    Ok(if paths.is_final() {
+        tracing::debug!("Found final file: {:?}", paths.target);
+        // we assume that the file is correct
+        RangeSet2::empty()
+    } else if paths.is_incomplete() {
+        tracing::debug!("Found incomplete file: {:?}", paths.temp);
+        // we got incomplete data
+        let outboard = std::fs::read(&paths.outboard)?;
+        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard, false);
+        match outboard {
+            Ok(outboard) => {
+                // compute set of valid ranges from the outboard and the file
+                //
+                // We assume that the file is correct and does not contain holes.
+                // Otherwise, we would have to rehash the file.
+                //
+                // Do a quick check of the outboard in case something went wrong when writing.
+                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                let valid_from_file =
+                    RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
+                tracing::debug!("valid_from_file: {:?}", valid_from_file);
+                tracing::debug!("valid_from_outboard: {:?}", valid);
+                valid &= valid_from_file;
+                RangeSet2::all().difference(&valid)
+            }
+            Err(cause) => {
+                tracing::debug!("Outboard damaged, assuming missing {cause:?}");
+                // the outboard is invalid, so we assume that the file is missing
+                RangeSet2::all()
+            }
+        }
+    } else {
+        tracing::debug!("Found missing file: {:?}", paths.target);
+        // we don't know anything about this file, so we assume it's missing
+        RangeSet2::all()
+    })
+}
+
 /// Given a target directory and a temp directory, get a set of ranges that we are missing
-pub fn get_missing_data(
+pub fn get_missing_ranges(
     hash: Hash,
     path: impl AsRef<Path>,
     temp: impl AsRef<Path>,
@@ -275,46 +338,7 @@ pub fn get_missing_data(
     let mut ranges = collection
         .blobs()
         .iter()
-        .map(|blob| {
-            let paths = FilePaths::new(blob, temp, path);
-            io::Result::Ok(if paths.is_final() {
-                tracing::debug!("Found final file: {:?}", paths.target);
-                // we assume that the file is correct
-                RangeSet2::empty()
-            } else if paths.is_incomplete() {
-                tracing::debug!("Found incomplete file: {:?}", paths.temp);
-                // we got incomplete data
-                let outboard = std::fs::read(&paths.outboard)?;
-                let outboard =
-                    PreOrderMemOutboard::new(blob.hash.into(), IROH_BLOCK_SIZE, outboard, false);
-                match outboard {
-                    Ok(outboard) => {
-                        // compute set of valid ranges from the outboard and the file
-                        //
-                        // We assume that the file is correct and does not contain holes.
-                        // Otherwise, we would have to rehash the file.
-                        //
-                        // Do a quick check of the outboard in case something went wrong when writing.
-                        let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
-                        let valid_from_file =
-                            RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
-                        tracing::debug!("valid_from_file: {:?}", valid_from_file);
-                        tracing::debug!("valid_from_outboard: {:?}", valid);
-                        valid &= valid_from_file;
-                        RangeSet2::all().difference(&valid)
-                    }
-                    Err(cause) => {
-                        tracing::debug!("Outboard damaged, assuming missing {cause:?}");
-                        // the outboard is invalid, so we assume that the file is missing
-                        RangeSet2::all()
-                    }
-                }
-            } else {
-                tracing::debug!("Found missing file: {:?}", paths.target);
-                // we don't know anything about this file, so we assume it's missing
-                RangeSet2::all()
-            })
-        })
+        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp, path))
         .collect::<io::Result<Vec<_>>>()?;
     ranges
         .iter()
@@ -365,13 +389,13 @@ where
 #[derive(Debug)]
 pub struct OnBlobData<T> {
     /// the offset of the current blob. 0 is for the item itself (the collection)
-    offset: usize,
+    offset: u64,
     /// the total size of the blob
     size: u64,
     /// the ranges we requested
     ranges: RangeSet2<ChunkNum>,
     /// out: limit on the collection
-    limit: Option<usize>,
+    limit: Option<u64>,
     /// check if the blob was consumed
     completed: bool,
     /// the reader for the encoded range
@@ -385,13 +409,13 @@ pub struct OnBlobData<T> {
 pub struct OnBlobResult<T> {
     reader: TrackingReader<RecvStream>,
     user: T,
-    limit: Option<usize>,
+    limit: Option<u64>,
 }
 
 impl<U> OnBlobData<U> {
     /// the offset of the current blob. 0 is for the item itself (the collection)
     /// child offsets start with 1
-    pub fn offset(&self) -> usize {
+    pub fn offset(&self) -> u64 {
         self.offset
     }
 
@@ -406,12 +430,12 @@ impl<U> OnBlobData<U> {
     }
 
     ///
-    pub fn set_limit(&mut self, limit: usize) {
+    pub fn set_limit(&mut self, limit: u64) {
         self.limit = Some(limit)
     }
 
     /// child offset
-    pub fn child_offset(&self) -> Option<usize> {
+    pub fn child_offset(&self) -> Option<u64> {
         self.offset.checked_sub(1)
     }
 
@@ -647,7 +671,6 @@ where
     debug!("reading response");
     let mut limit = None;
     for (offset, query) in ranges_iter {
-        assert!(!query.is_empty());
         if let Some(limit) = limit {
             if offset >= limit {
                 break;

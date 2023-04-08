@@ -9,7 +9,7 @@
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::borrow::Cow;
 use std::future::Future;
-use std::io::Cursor;
+use std::io::{self, Cursor};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -30,6 +30,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
@@ -45,6 +46,7 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
+use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress};
 use crate::IROH_BLOCK_SIZE;
 
@@ -122,6 +124,16 @@ impl BlobOrCollection {
             BlobOrCollection::Blob { outboard, .. } => outboard,
             BlobOrCollection::Collection { outboard, .. } => outboard,
         }
+    }
+
+    /// A reader for the data
+    async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
+        Ok(match self {
+            BlobOrCollection::Blob { path, .. } => {
+                Either::Right(tokio::fs::File::open(path).await?)
+            }
+            BlobOrCollection::Collection { data, .. } => Either::Left(Cursor::new(data.clone())),
+        })
     }
 
     /// Returns the size of the blob or collection.
@@ -734,19 +746,20 @@ async fn transfer_collection(
     // Quinn stream.
     mut writer: quinn::SendStream,
     // the collection to transfer
-    collection: &CollectionData,
+    outboard: &Bytes,
+    mut data: Either<Cursor<Bytes>, tokio::fs::File>,
     events: broadcast::Sender<Event>,
     connection_id: u64,
     request_id: u64,
 ) -> Result<SentStatus> {
     let hash = request.name;
-    let CollectionData { data, outboard } = collection;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
     let c = if !just_root {
-        let c: Collection = postcard::from_bytes(data)?;
+        let bytes = read_as_bytes(&mut data).await?;
+        let c: Collection = postcard::from_bytes(&bytes)?;
         let _ = events.send(Event::TransferCollectionStarted {
             connection_id,
             request_id,
@@ -760,20 +773,20 @@ async fn transfer_collection(
 
     for (offset, ranges) in request.ranges.non_empty_iter() {
         if offset == 0 {
-            debug!("writing ranges {:?} of collection {}", ranges, hash);
-            // send the collection itself
-            encode_ranges_validated(
-                Cursor::new(data),
-                outboard,
-                &ranges.to_chunk_ranges(),
-                &mut writer,
-            )
-            .await?;
+            debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            // send the root
+            encode_ranges_validated(&mut data, outboard, &ranges.to_chunk_ranges(), &mut writer)
+                .await?;
+            debug!(
+                "finished writing ranges '{:?}' of collection {}",
+                ranges, hash
+            );
         } else {
+            debug!("wrtiting ranges '{:?}' of child {}", ranges, offset);
             let c = c.as_ref().unwrap();
-            if offset < c.blobs().len() + 1 {
+            if offset < c.total_entries() + 1 {
                 tokio::task::yield_now().await;
-                let hash = c.blobs()[offset - 1].hash;
+                let hash = c.blobs()[(offset - 1) as usize].hash;
                 let (status, writer1, size) = send_blob(db, hash, ranges, writer).await?;
                 writer = writer1;
                 if SentStatus::NotFound == status {
@@ -795,6 +808,7 @@ async fn transfer_collection(
         }
     }
 
+    debug!("done writing");
     writer.finish().await?;
     Ok(SentStatus::Sent)
 }
@@ -847,13 +861,14 @@ async fn handle_stream(
     // 4. Attempt to find hash
     match db.get(&hash) {
         // Collection request
-        Some(BlobOrCollection::Collection { outboard, data }) => {
+        Some(entry) => {
             // 5. Transfer data!
             match transfer_collection(
                 request,
                 &db,
                 writer,
-                &CollectionData { outboard, data },
+                entry.outboard(),
+                entry.data_reader().await?,
                 events.clone(),
                 connection_id,
                 request_id,
@@ -876,11 +891,6 @@ async fn handle_stream(
             }
 
             debug!("finished response");
-        }
-        Some(BlobOrCollection::Blob { .. }) => {
-            debug!("not found {}", hash);
-            notify_transfer_aborted(events, connection_id, request_id);
-            writer.finish().await?;
         }
         None => {
             debug!("not found {}", hash);
@@ -943,14 +953,6 @@ pub(crate) struct BlobData {
     path: PathBuf,
     /// Size of the original data.
     size: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CollectionData {
-    /// Outboard for the collection
-    outboard: Bytes,
-    /// Serialized collection
-    data: Bytes,
 }
 
 /// A data source

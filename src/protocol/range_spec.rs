@@ -178,9 +178,13 @@ impl RangeSpecSeq {
     /// An iterator over non empty range specs
     ///
     /// This iterator is infinite if the range spec is infinite
-    pub fn non_empty_iter(&self) -> impl Iterator<Item = (usize, &RangeSpec)> {
-        self.iter().enumerate().filter(|(_, r)| !r.is_empty())
+    pub fn non_empty_iter(&self) -> NonEmptyRequestRangeSpecIter<'_> {
+        NonEmptyRequestRangeSpecIter::new(self.iter())
     }
+
+    // pub fn non_empty_iter(&self) -> impl Iterator<Item = (usize, &RangeSpec)> {
+    //     self.iter().enumerate().filter(|(_, r)| !r.is_empty())
+    // }
 }
 
 static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;
@@ -200,6 +204,15 @@ pub struct RequestRangeSpecIter<'a> {
 }
 
 impl<'a> RequestRangeSpecIter<'a> {
+    pub fn new(ranges: &'a [(u64, RangeSpec)]) -> Self {
+        let before_first = ranges.get(0).map(|(c, _)| *c).unwrap_or_default();
+        RequestRangeSpecIter {
+            current: &EMPTY_RANGE_SPEC,
+            count: before_first,
+            remaining: ranges,
+        }
+    }
+
     /// True if we are at the end of the iterator
     ///
     /// This does not mean that the iterator is terminated, it just means that
@@ -241,6 +254,12 @@ pub struct NonEmptyRequestRangeSpecIter<'a> {
     count: u64,
 }
 
+impl<'a> NonEmptyRequestRangeSpecIter<'a> {
+    fn new(inner: RequestRangeSpecIter<'a>) -> Self {
+        Self { inner, count: 0 }
+    }
+}
+
 impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
     type Item = (u64, &'a RangeSpec);
 
@@ -251,7 +270,7 @@ impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
             let count = self.count;
             // increase count in any case until we are at the end of possible u64 values
             // we are unlikely to ever reach this limit.
-            self.count.checked_add(1)?;
+            self.count = self.count.checked_add(1)?;
             // yield only if the current value is non-empty
             if !curr.is_empty() {
                 break Some((count, curr));
