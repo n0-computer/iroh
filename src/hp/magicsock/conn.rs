@@ -341,20 +341,24 @@ impl Inner {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn handle_disco_message(
         &self,
         msg: Vec<u8>,
         src: SocketAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
-        let (s, r) = flume::bounded(1);
+        let (s, r) = sync::oneshot::channel();
         self.derp_sender.send(DerpMessage::HandleDiscoMessage {
             msg,
             src,
             derp_node_src,
             s,
         });
-        r.recv().expect("dropped sender")
+        debug!("waiting for disco message handling from {} start", src);
+        let res = tokio::task::block_in_place(|| r.blocking_recv()).expect("dropped sender");
+        debug!("waiting for disco message handling from {} done", src);
+        res
     }
 
     /// Sends packet b to addr, which is either a real UDP address
@@ -1289,7 +1293,7 @@ enum DerpMessage {
         msg: Vec<u8>, // TOOD: Bytes?
         src: SocketAddr,
         derp_node_src: Option<key::node::PublicKey>,
-        s: flume::Sender<bool>,
+        s: sync::oneshot::Sender<bool>,
     },
 }
 
@@ -1355,6 +1359,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
         let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
@@ -1413,7 +1418,7 @@ impl DerpHandler {
                         }
                         DerpMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
                             let res = self.handle_disco_message(&msg, src, derp_node_src.as_ref()).await;
-                            s.send_async(res).await;
+                            s.send(res);
                         }
                     }
                 }
@@ -1423,12 +1428,12 @@ impl DerpHandler {
                         ReadAction::None => {},
                         ReadAction::AddPeerRoute { peers, region, derp_client } => {
                             for peer in peers {
-                                self.add_derp_peer_route(peer, region, derp_client.clone()).await;
+                                self.add_derp_peer_route(peer, region, derp_client.clone());
                             }
                         },
                         ReadAction::RemovePeerRoute { peers, region, derp_client } => {
                             for peer in peers {
-                                self.remove_derp_peer_route(peer, region, &derp_client).await;
+                                self.remove_derp_peer_route(peer, region, &derp_client);
                             }
                         }
                     }
@@ -1441,8 +1446,10 @@ impl DerpHandler {
                             recvs.push(rs.recv())
                         }
                         ReadResult::Yield(read_result) => {
-                            self.derp_recv_sender.send_async(read_result).await;
+                            debug!("yielding read_result start");
+                            self.derp_recv_sender.send_async(read_result).await.expect("missing recv sender");
                             recvs.push(rs.recv());
+                            debug!("yielding read_result done");
                         }
                     }
                 }
@@ -1672,7 +1679,7 @@ impl DerpHandler {
     }
 
     /// Removes a DERP route entry previously added by add_derp_peer_route.
-    async fn remove_derp_peer_route(
+    fn remove_derp_peer_route(
         &mut self,
         peer: key::node::PublicKey,
         derp_id: u16,
@@ -1690,7 +1697,7 @@ impl DerpHandler {
 
     /// Adds a DERP route entry, noting that peer was seen on DERP node `derp_id`, at least on the
     /// connection identified by `dc`.
-    async fn add_derp_peer_route(
+    fn add_derp_peer_route(
         &mut self,
         peer: key::node::PublicKey,
         derp_id: u16,
@@ -2416,6 +2423,7 @@ impl DerpHandler {
         src: SocketAddr,
         derp_node_src: Option<&key::node::PublicKey>,
     ) -> bool {
+        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         let conn = self.conn.clone();
         let source = disco::source_and_box(msg);
         if source.is_none() {
@@ -2491,6 +2499,7 @@ impl DerpHandler {
         //     metricRecvDiscoUDP.Add(1)
         // };
 
+        debug!("got disco message: {:?}", dm);
         match dm {
             disco::Message::Ping(ping) => {
                 // metricRecvDiscoPing.Add(1)
@@ -2509,7 +2518,10 @@ impl DerpHandler {
                     .cloned()
                     .collect();
                 for ep in eps {
-                    if ep.handle_pong_conn(&mut *peer_map, &conn.disco_public(), &pong, di, src) {
+                    if ep
+                        .handle_pong_conn(&mut *peer_map, &conn.disco_public(), &pong, di, src)
+                        .await
+                    {
                         break;
                     }
                 }

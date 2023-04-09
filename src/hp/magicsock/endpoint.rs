@@ -547,7 +547,7 @@ impl Endpoint {
     ///
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
     #[instrument(skip_all, fields(self.name = %self.name()))]
-    pub(super) fn handle_pong_conn(
+    pub(super) async fn handle_pong_conn(
         &self,
         peer_map: &mut PeerMap,
         conn_disco_public: &key::disco::PublicKey,
@@ -555,7 +555,7 @@ impl Endpoint {
         di: &mut DiscoInfo,
         src: SocketAddr,
     ) -> bool {
-        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+        let mut state = self.state.lock().await;
 
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
@@ -575,10 +575,8 @@ impl Endpoint {
             Some(sp) => {
                 let known_tx_id = true;
                 let txid = m.tx_id;
-                tokio::task::spawn(async move {
-                    sp.timer.stop().await;
-                    info!("disco: timer aborted for {}", txid);
-                });
+                sp.timer.stop().await;
+                info!("disco: timer aborted for {}", txid);
                 di.set_node_key(self.public_key.clone());
 
                 let now = Instant::now();
