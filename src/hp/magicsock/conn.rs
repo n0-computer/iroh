@@ -3566,7 +3566,7 @@ mod tests {
                 drop(send_bi);
 
                 // make sure the right values arrived
-                println!("waiting for channel");
+                println!("[{}] waiting for channel", a_name);
                 let val = b_task.await??;
                 anyhow::ensure!(
                     val == $msg,
