@@ -572,7 +572,7 @@ impl RpcHandler {
         // create the collection
         // todo: provide feedback for progress
         let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
-        self.inner.db.union_with(db);
+        self.inner.db.union_with(db)?;
 
         Ok(())
     }
@@ -1016,7 +1016,7 @@ impl From<&std::path::Path> for DataSource {
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
-    Ok((Database::from_blobs(db), hash))
+    Ok((Database::from_blobs(db)?, hash))
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
@@ -1050,7 +1050,6 @@ mod tests {
     use tokio::io::AsyncReadExt;
 
     use crate::blobs::Blob;
-    use crate::provider::database::SnapshotOld;
 
     use super::*;
 
@@ -1098,7 +1097,7 @@ mod tests {
                 map.insert(hash, BlobOrCollection::Collection { outboard, data });
             }
             let db = Database::new(".".into());
-            db.union_with(map);
+            db.union_with(map).unwrap();
             db
         })
     }

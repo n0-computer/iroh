@@ -28,7 +28,7 @@ use tokio_util::either::Either;
 ///
 /// Blob data can either be inline (tiny data, stored in the db) or in a file.
 /// The file can be in the default location or a custom location.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BlobData {
     /// Data is stored inline in the db and exists in memory.
     Inline(Bytes),
@@ -36,7 +36,80 @@ pub enum BlobData {
     File(Option<PathBuf>),
 }
 
+impl fmt::Debug for BlobData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Inline(data) => f.debug_tuple("Inline").field(&data.len()).finish(),
+            Self::File(path) => f.debug_tuple("File").field(path).finish(),
+        }
+    }
+}
+
 impl BlobData {
+    fn len(&self, default_path: impl Fn() -> PathBuf) -> io::Result<u64> {
+        Ok(match self {
+            Self::Inline(data) => data.len() as u64,
+            Self::File(custom_path) => {
+                let path = custom_path.as_ref().cloned().unwrap_or_else(default_path);
+                std::fs::metadata(path)?.len()
+            }
+        })
+    }
+
+    async fn len_async(&self, default_path: impl Fn() -> PathBuf) -> io::Result<u64> {
+        Ok(match self {
+            Self::Inline(data) => data.len() as u64,
+            Self::File(custom_path) => {
+                let path = custom_path.as_ref().cloned().unwrap_or_else(default_path);
+                tokio::fs::metadata(path).await?.len()
+            }
+        })
+    }
+
+    fn read_as_bytes(&self, default_path: impl Fn() -> PathBuf) -> io::Result<Bytes> {
+        match self {
+            Self::Inline(data) => Ok(data.clone()),
+            Self::File(custom_path) => {
+                let path = custom_path.as_ref().cloned().unwrap_or_else(default_path);
+                let mut file = std::fs::File::open(path)?;
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf)?;
+                Ok(Bytes::from(buf))
+            }
+        }
+    }
+
+    /// Canonicalize whether data is stored inline or in a file, given a maximum inline size.
+    ///
+    /// For files which are already in the right format (inline or file), this is a no-op.
+    fn canonicalize(
+        &mut self,
+        default_path: impl Fn() -> PathBuf + Clone,
+        max_inline: u64,
+    ) -> io::Result<()> {
+        match self {
+            BlobData::Inline(bytes) => {
+                if bytes.len() as u64 > max_inline {
+                    // too big, store externally
+                    let path = default_path();
+                    tracing::debug!("storing inline data externally in {}", path.display());
+                    std::fs::write(path, bytes)?;
+                    *self = BlobData::File(None)
+                }
+            }
+            BlobData::File(path) => {
+                let path = path.as_ref().cloned();
+                let size = self.len(default_path.clone())?;
+                if size <= max_inline {
+                    // too small, store inline
+                    tracing::debug!("storing file data from {:?} inline", path);
+                    *self = BlobData::Inline(self.read_as_bytes(default_path)?)
+                }
+            }
+        };
+        Ok(())
+    }
+
     fn path(&self) -> BlobDataPath {
         match self {
             Self::Inline(_) => BlobDataPath::Inline,
@@ -271,12 +344,12 @@ const fn iroh_header(version: u32) -> [u8; 8] {
 }
 
 impl DatabaseInner {
-    fn new(data_dir: PathBuf) -> Self {
-        let content_dir = data_dir.join("data");
+    fn new(home_dir: PathBuf) -> Self {
+        let content_dir = home_dir.join("data");
         Self {
             hashes: BTreeMap::new(),
             outboard_cache: BTreeMap::new(),
-            home_dir: data_dir.to_path_buf(),
+            home_dir,
             content_dir: Arc::new(content_dir),
         }
     }
@@ -285,18 +358,28 @@ impl DatabaseInner {
         let data_dir = data_dir.as_ref();
         let db_file = data_dir.join("db.bin");
         let db_file_tmp = data_dir.join("db.bin.tmp");
+        tracing::debug!("storing database in {}", db_file_tmp.display());
         let mut db = postcard::to_stdvec(&self.hashes)
             .map_err(|cause| io::Error::new(io::ErrorKind::Other, cause))?;
         db.splice(0..0, iroh_header(0));
         // write into temp file
         std::fs::write(&db_file_tmp, db)?;
         // rename to final file somewhat atomically
+        tracing::debug!(
+            "replacing original db file {} with {}",
+            db_file.display(),
+            db_file_tmp.display()
+        );
         std::fs::rename(&db_file_tmp, &db_file)?;
         Ok(())
     }
 
     fn load(home_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
-        let content_dir = Arc::new(home_dir.join("data"));
+        tracing::debug!("loading database from {}", home_dir.display());
+        let content_dir = home_dir.join("data");
+        // make sure the content dir exists
+        std::fs::create_dir_all(&content_dir)?;
+        let content_dir = Arc::new(content_dir);
         let db_file = Database::db_path(&home_dir);
         let db_bytes = std::fs::read(db_file)?;
         const HEADER: [u8; 8] = iroh_header(0);
@@ -306,7 +389,7 @@ impl DatabaseInner {
                 "database file is too short",
             ));
         }
-        if &db_bytes[0..HEADER.len()] != HEADER {
+        if db_bytes[0..HEADER.len()] != HEADER {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "database file has invalid header",
@@ -489,7 +572,7 @@ impl DatabaseInner {
                 .reader(default_outboard_path(&self.content_dir, hash))?;
             let mut buf = [0u8; 8];
             outboard.read_exact(&mut buf)?;
-            let size = u64::from_le_bytes(buf.try_into().unwrap());
+            let size = u64::from_le_bytes(buf);
             Ok(complete
                 .content
                 .iter()
@@ -594,17 +677,19 @@ impl Database {
         data_dir.as_ref().join("data")
     }
 
-    pub(crate) fn from_blobs(blobs: HashMap<Hash, BlobOrCollection>) -> Self {
+    pub(crate) fn from_blobs(blobs: HashMap<Hash, BlobOrCollection>) -> io::Result<Self> {
         let home = PathBuf::from(".");
         let db = Database::new(home);
-        db.union_with(blobs);
-        db
+        db.union_with(blobs)?;
+        Ok(db)
     }
 
     // todo: remove
-    pub(crate) fn union_with(&self, collection: HashMap<Hash, BlobOrCollection>) {
-        collection.into_iter().for_each(|(hash, blob)| {
-            let (outboard, content) = match blob {
+    pub(crate) fn union_with(&self, collection: HashMap<Hash, BlobOrCollection>) -> io::Result<()> {
+        println!("unioning with {} blobs", collection.len());
+        let content_dir = self.0.read().unwrap().content_dir.clone();
+        for (hash, blob) in collection.into_iter() {
+            let (mut outboard, mut content) = match blob {
                 BlobOrCollection::Blob { outboard, path, .. } => {
                     (BlobData::Inline(outboard), BlobData::File(Some(path)))
                 }
@@ -612,8 +697,13 @@ impl Database {
                     (BlobData::Inline(outboard), BlobData::Inline(data))
                 }
             };
+            outboard.canonicalize(default_outboard_path(&content_dir, hash), 1024)?;
+            content.canonicalize(default_content_path(&content_dir, hash), 1024)?;
+            println!("unioning with blob {:?} {:?} {:?}", hash, outboard, content);
             self.insert(hash, outboard, content)
-        });
+        }
+        println!("{:?}", self);
+        Ok(())
     }
 
     ///
@@ -646,7 +736,7 @@ impl Database {
                 baofile
                     .content
                     .into_iter()
-                    .map(move |content| (hash, baofile.outboard.clone(), content.clone()))
+                    .map(move |content| (hash, baofile.outboard.clone(), content))
             })
             .collect::<Vec<_>>();
         // sort by path to make the sequence useful to humans
@@ -729,14 +819,14 @@ impl Database {
 
     ///
     pub async fn load(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
-        Ok(tokio::task::spawn_blocking(|| Self::load_internal(data_dir, validate)).await??)
+        tokio::task::spawn_blocking(|| Self::load_internal(data_dir, validate)).await?
     }
 
     ///
     pub async fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         let this = self.clone();
         let data_dir = data_dir.as_ref().to_owned();
-        Ok(tokio::task::spawn_blocking(move || this.save_internal(data_dir)).await??)
+        tokio::task::spawn_blocking(move || this.save_internal(data_dir)).await?
     }
 
     /// Load a database from disk for testing. Synchronous.
