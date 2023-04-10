@@ -5,7 +5,6 @@ use crate::{
     Hash,
 };
 use anyhow::{Context, Result};
-use bao_tree::outboard;
 use bytes::Bytes;
 use futures::{Future, FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -298,7 +297,7 @@ impl DatabaseInner {
 
     fn load(home_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
         let content_dir = Arc::new(home_dir.join("data"));
-        let db_file = home_dir.join("db.bin");
+        let db_file = Database::db_path(&home_dir);
         let db_bytes = std::fs::read(db_file)?;
         const HEADER: [u8; 8] = iroh_header(0);
         if db_bytes.len() < HEADER.len() {
@@ -480,19 +479,40 @@ impl DatabaseInner {
         }
     }
 
-    fn blobs(&self) -> Vec<(Hash, PathBuf, u64)> {
+    // todo: remove
+    fn blobs(&self) -> Vec<io::Result<(Hash, PathBuf, u64)>> {
         let mut res = Vec::new();
-        for (hash, data) in &self.hashes {
-            if let Some(complete) = &data.complete {
-                let content_path = default_content_path(&self.content_dir, *hash);
-                for content in &complete.content {
+        let read_data = |hash: Hash, complete: BaoFile| -> io::Result<Vec<(Hash, PathBuf, u64)>> {
+            let content_path = default_content_path(&self.content_dir, hash);
+            let mut outboard = complete
+                .outboard
+                .reader(default_outboard_path(&self.content_dir, hash))?;
+            let mut buf = [0u8; 8];
+            outboard.read_exact(&mut buf)?;
+            let size = u64::from_le_bytes(buf.try_into().unwrap());
+            Ok(complete
+                .content
+                .iter()
+                .filter_map(|content| {
                     let path = match content.path() {
-                        BlobDataPath::Inline => continue,
+                        BlobDataPath::Inline => return None,
                         BlobDataPath::Default => content_path(),
                         BlobDataPath::Custom(path) => path.clone(),
                     };
                     // todo: read size from outboard
-                    res.push((*hash, path, 0));
+                    Some((hash, path, size))
+                })
+                .collect())
+        };
+        for (hash, data) in &self.hashes {
+            if let Some(complete) = &data.complete {
+                match read_data(*hash, complete.clone()) {
+                    Ok(elems) => {
+                        for elem in elems {
+                            res.push(Ok(elem));
+                        }
+                    }
+                    Err(cause) => res.push(Err(cause)),
                 }
             }
         }
@@ -564,6 +584,16 @@ fn default_outboard_path(
 pub struct Database(Arc<RwLock<DatabaseInner>>);
 
 impl Database {
+    /// get the path of the databse file from the home dir
+    pub fn db_path(data_dir: impl AsRef<Path>) -> PathBuf {
+        data_dir.as_ref().join("db.bin")
+    }
+
+    /// get the path of the content dir from the home dir
+    pub fn content_path(data_dir: impl AsRef<Path>) -> PathBuf {
+        data_dir.as_ref().join("data")
+    }
+
     pub(crate) fn from_blobs(blobs: HashMap<Hash, BlobOrCollection>) -> Self {
         let home = PathBuf::from(".");
         let db = Database::new(home);
@@ -589,7 +619,12 @@ impl Database {
     ///
     // todo: remove
     pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> {
-        self.0.read().unwrap().blobs().into_iter()
+        self.0
+            .read()
+            .unwrap()
+            .blobs()
+            .into_iter()
+            .filter_map(|x| x.ok())
     }
 
     fn snapshot(&self) -> (BTreeMap<Hash, HashData>, Arc<PathBuf>) {
@@ -764,7 +799,7 @@ impl From<HashMap<Hash, BlobOrCollection>> for DatabaseOld {
 ///
 /// `E` can be `Infallible` if we take a snapshot from an in memory database,
 /// or `io::Error` if we read a database from disk.
-pub(crate) struct Snapshot<E> {
+pub(crate) struct SnapshotOld<E> {
     /// list of paths we have, hash is the hash of the blob or collection
     paths: Box<dyn Iterator<Item = (Hash, u64, Option<PathBuf>)>>,
     /// map of hash to outboard, hash is the hash of the outboard and is unique
@@ -773,7 +808,7 @@ pub(crate) struct Snapshot<E> {
     collections: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
 }
 
-impl<E> fmt::Debug for Snapshot<E> {
+impl<E> fmt::Debug for SnapshotOld<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Snapshot").finish()
     }
@@ -821,7 +856,7 @@ fn parse_hash(hash: &str) -> Result<Hash> {
     Ok(Hash::from(hash))
 }
 
-impl Snapshot<io::Error> {
+impl SnapshotOld<io::Error> {
     /// Load a snapshot from disk.
     pub fn load(data_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         use std::fs;
@@ -890,7 +925,7 @@ impl Snapshot<io::Error> {
     }
 }
 
-impl<E> Snapshot<E>
+impl<E> SnapshotOld<E>
 where
     io::Error: From<E>,
 {
@@ -941,7 +976,7 @@ impl DatabaseOld {
 
     fn load_internal(dir: PathBuf) -> anyhow::Result<Self> {
         tracing::info!("Loading snapshot from {}...", dir.display());
-        let snapshot = Snapshot::load(dir)?;
+        let snapshot = SnapshotOld::load(dir)?;
         let db = Self::from_snapshot(snapshot)?;
         tracing::info!("Database loaded");
         anyhow::Ok(db)
@@ -971,8 +1006,8 @@ impl DatabaseOld {
     }
 
     /// Load a database from disk.
-    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
-        let Snapshot {
+    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: SnapshotOld<E>) -> io::Result<Self> {
+        let SnapshotOld {
             outboards,
             collections,
             paths,
@@ -1094,7 +1129,7 @@ impl DatabaseOld {
     }
 
     /// take a snapshot of the database
-    pub(crate) fn snapshot(&self) -> Snapshot<NoError> {
+    pub(crate) fn snapshot(&self) -> SnapshotOld<NoError> {
         let this = self.0.read().unwrap();
         let outboards = this
             .iter()
@@ -1120,7 +1155,7 @@ impl DatabaseOld {
             })
             .collect::<Vec<_>>();
 
-        Snapshot {
+        SnapshotOld {
             outboards: Box::new(outboards.into_iter().map(Ok)),
             collections: Box::new(collections.into_iter().map(Ok)),
             paths: Box::new(paths.into_iter()),

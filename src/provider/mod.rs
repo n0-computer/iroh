@@ -55,7 +55,7 @@ mod database;
 mod ticket;
 
 #[cfg(cli)]
-pub use database::Snapshot;
+pub use database::SnapshotOld;
 pub use database::{Database, ValidateMode};
 pub use ticket::Ticket;
 
@@ -1050,7 +1050,7 @@ mod tests {
     use tokio::io::AsyncReadExt;
 
     use crate::blobs::Blob;
-    use crate::provider::database::Snapshot;
+    use crate::provider::database::SnapshotOld;
 
     use super::*;
 

@@ -550,7 +550,10 @@ async fn main_impl() -> Result<()> {
         } => {
             let iroh_data_root = iroh_data_root()?;
             let db = {
-                if iroh_data_root.is_dir() {
+                if !iroh_data_root.is_dir() {
+                    std::fs::create_dir_all(&iroh_data_root)?;
+                }
+                if Database::db_path(&iroh_data_root).exists() {
                     // try to load db
                     Database::load(iroh_data_root.clone(), ValidateMode::None).await?
                 } else {
