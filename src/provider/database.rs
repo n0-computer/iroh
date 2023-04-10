@@ -5,6 +5,7 @@ use crate::{
     Hash,
 };
 use anyhow::{Context, Result};
+use bao_tree::outboard;
 use bytes::Bytes;
 use futures::{Future, FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ use tokio_util::either::Either;
 ///
 /// Blob data can either be inline (tiny data, stored in the db) or in a file.
 /// The file can be in the default location or a custom location.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BlobData {
     /// Data is stored inline in the db and exists in memory.
     Inline(Bytes),
@@ -60,7 +61,10 @@ enum BlobDataPath<'a> {
 /// This is identical to BlobData, except that there is no default location
 /// for incomplete files. There can be multiple incomplete files for the same
 /// hash.
-#[derive(Debug, Serialize, Deserialize)]
+///
+/// This is cheap to clone, since it either contains a cheaply cloneable Bytes
+/// or just a reference to a file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum MutableBlobData {
     Inline(Bytes),
     File(PathBuf),
@@ -121,6 +125,17 @@ impl AsyncDataReader {
             Either::Left(data) => Some(data.into_inner()),
             Either::Right(_) => None,
         }
+    }
+
+    pub async fn read_bytes(self) -> io::Result<Bytes> {
+        Ok(match self.0 {
+            Either::Left(data) => data.get_ref().clone(),
+            Either::Right(mut file) => {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data).await?;
+                Bytes::from(data)
+            }
+        })
     }
 
     pub fn into_inner(self) -> Either<std::io::Cursor<Bytes>, tokio::fs::File> {
@@ -199,7 +214,7 @@ impl BlobData {
 ///
 /// Under some circumstances, we can have multiple content files. We will
 /// however not keep track of multiple outboard files.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BaoFile {
     outboard: BlobData,
     content: Vec<BlobData>,
@@ -208,14 +223,14 @@ struct BaoFile {
 /// An incomplete bao file consists of outboard and content.
 ///
 /// They are related to each other.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct IncompleteBaoFile {
     outboard: MutableBlobData,
     content: MutableBlobData,
 }
 
 /// The data we retain for each hash
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HashData {
     /// complete files (usually just 1)
     complete: Option<BaoFile>,
@@ -232,11 +247,14 @@ pub enum ValidateMode {
     Exists,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DatabaseInner {
     /// the persisted data
     hashes: BTreeMap<Hash, HashData>,
     /// the outboard cache, not persisted
+    ///
+    /// Each cache cell has its own lock, so we only have to lock one cell
+    /// while loading an item into the cache.
     outboard_cache: BTreeMap<Hash, Arc<tokio::sync::RwLock<Option<Bytes>>>>,
     /// the path we come from
     home_dir: PathBuf,
@@ -524,13 +542,19 @@ async fn update_cache_cell(
 }
 
 /// Creates a function that returns the default path to a content file
-fn default_content_path(content_dir: &Arc<PathBuf>, hash: Hash) -> impl Fn() -> PathBuf + 'static {
+fn default_content_path(
+    content_dir: &Arc<PathBuf>,
+    hash: Hash,
+) -> impl Fn() -> PathBuf + Clone + 'static {
     let content_dir = content_dir.clone();
     move || content_dir.join(format!("{}.data", hex::encode(hash)))
 }
 
 /// Creates a function that returns the default path to an outboard file
-fn default_outboard_path(content_dir: &Arc<PathBuf>, hash: Hash) -> impl Fn() -> PathBuf + 'static {
+fn default_outboard_path(
+    content_dir: &Arc<PathBuf>,
+    hash: Hash,
+) -> impl Fn() -> PathBuf + Clone + 'static {
     let content_dir = content_dir.clone();
     move || content_dir.join(format!("{}.obao", hex::encode(hash)))
 }
@@ -568,8 +592,98 @@ impl Database {
         self.0.read().unwrap().blobs().into_iter()
     }
 
+    fn snapshot(&self) -> (BTreeMap<Hash, HashData>, Arc<PathBuf>) {
+        let reader = self.0.read().unwrap();
+        (reader.hashes.clone(), reader.content_dir.clone())
+    }
+
     pub(crate) async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
-        todo!()
+        // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
+        let (hashes, content_dir) = self.snapshot();
+        // flatten to a list
+        let mut data = hashes
+            .into_iter()
+            .flat_map(|(hash, data)| {
+                let complete = data.complete?;
+                Some((hash, complete))
+            })
+            .flat_map(|(hash, baofile)| {
+                baofile
+                    .content
+                    .into_iter()
+                    .map(move |content| (hash, baofile.outboard.clone(), content.clone()))
+            })
+            .collect::<Vec<_>>();
+        // sort by path to make the sequence useful to humans
+        let compare_data_path =
+            |a: &(_, _, BlobData), b: &(_, _, BlobData)| a.2.path().cmp(&b.2.path());
+        data.sort_by(compare_data_path);
+        tx.send(ValidateProgress::Starting {
+            total: data.len() as u64,
+        })
+        .await?;
+        futures::stream::iter(data)
+            .enumerate()
+            .map(|(id, (hash, outboard, data))| {
+                let id = id as u64;
+                let entry_tx = tx.clone();
+                let done_tx = tx.clone();
+                let content_dir = content_dir.clone();
+                async move {
+                    let default_outboard_path = default_outboard_path(&content_dir, hash);
+                    let default_content_path = default_content_path(&content_dir, hash);
+                    let outboard_reader = outboard.async_reader(default_outboard_path).await?;
+                    // read outboard from disk even if we have it in the cache
+                    // this is validate, so we want to be sure the data on disk is correct
+                    let outboard = outboard_reader.read_bytes().await?;
+                    // todo: check size
+                    let size = u64::from_le_bytes(outboard[0..8].try_into().unwrap());
+                    let data_reader = data.reader(default_content_path.clone())?;
+                    let data_text = format!("{:?}", data);
+                    let path = match data {
+                        BlobData::File(Some(path)) => Some(path),
+                        BlobData::File(None) => Some(default_content_path()),
+                        BlobData::Inline(_) => None,
+                    };
+                    entry_tx
+                        .send(ValidateProgress::Entry {
+                            id,
+                            hash,
+                            path,
+                            size,
+                        })
+                        .await?;
+                    let error = tokio::task::spawn_blocking(move || {
+                        let progress_tx = entry_tx.clone();
+                        let progress = |offset| {
+                            progress_tx
+                                .try_send(ValidateProgress::Progress { id, offset })
+                                .ok();
+                        };
+                        let res = {
+                            tracing::info!("validating {}", data_text);
+                            let res = validate_bao(hash, data_reader, outboard, progress);
+                            tracing::info!("done validating {}", data_text);
+                            res
+                        };
+                        res.err()
+                    })
+                    .await?;
+                    let error = error.map(|x| x.to_string());
+                    done_tx.send(ValidateProgress::Done { id, error }).await?;
+                    anyhow::Ok(())
+                }
+            })
+            .buffer_unordered(num_cpus::get())
+            .map(|item| {
+                // unwrapping is fine here, because it will only happen if the task panicked
+                // basically we are just moving the panic on this task.
+                item.expect("task panicked");
+                Ok(())
+            })
+            .forward(futures::sink::drain())
+            .await?;
+        Ok(())
     }
 
     ///
