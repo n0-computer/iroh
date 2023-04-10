@@ -583,6 +583,13 @@ impl Database {
         Ok(tokio::task::spawn_blocking(|| Self::load_internal(data_dir, validate)).await??)
     }
 
+    ///
+    pub async fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
+        let this = self.clone();
+        let data_dir = data_dir.as_ref().to_owned();
+        Ok(tokio::task::spawn_blocking(move || this.save_internal(data_dir)).await??)
+    }
+
     /// Load a database from disk for testing. Synchronous.
     #[cfg(feature = "cli")]
     pub fn load_test(dir: impl AsRef<Path>) -> io::Result<Self> {
@@ -597,7 +604,7 @@ impl Database {
     }
 
     ///
-    pub fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
+    fn save_internal(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         let inner = self.0.read().unwrap();
         inner.save(data_dir)
     }

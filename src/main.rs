@@ -612,7 +612,7 @@ async fn main_impl() -> Result<()> {
                 }
             }
             // persist the db to disk.
-            db.save(&iroh_data_root)?;
+            db.save(&iroh_data_root).await?;
 
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)
