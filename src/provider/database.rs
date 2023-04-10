@@ -75,7 +75,8 @@ impl MutableBlobData {
     }
 }
 
-///
+/// A synchronous reader from either a file or memory
+#[derive(Debug)]
 pub enum DataReader {
     Memory(std::io::Cursor<Bytes>),
     File(std::fs::File),
@@ -99,6 +100,7 @@ impl std::io::Seek for DataReader {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncDataReader(Either<std::io::Cursor<Bytes>, tokio::fs::File>);
 
 impl AsyncDataReader {
@@ -106,8 +108,23 @@ impl AsyncDataReader {
         Self(Either::Left(std::io::Cursor::new(data)))
     }
 
-    fn is_file(&self) -> bool {
+    pub fn is_file(&self) -> bool {
         matches!(self.0, Either::Right(_))
+    }
+
+    pub fn is_memory(&self) -> bool {
+        matches!(self.0, Either::Left(_))
+    }
+
+    pub fn into_bytes(self) -> Option<Bytes> {
+        match self.0 {
+            Either::Left(data) => Some(data.into_inner()),
+            Either::Right(_) => None,
+        }
+    }
+
+    pub fn into_inner(self) -> Either<std::io::Cursor<Bytes>, tokio::fs::File> {
+        self.0
     }
 }
 
@@ -135,14 +152,6 @@ impl tokio::io::AsyncSeek for AsyncDataReader {
 }
 
 impl BlobData {
-    fn new_inline(data: Bytes) -> Self {
-        Self::Inline(data)
-    }
-
-    fn new_from_path(custom_path: Option<PathBuf>) -> Self {
-        Self::File(custom_path)
-    }
-
     fn reader(&self, default_path: impl Fn() -> PathBuf) -> io::Result<DataReader> {
         Ok(match self {
             Self::Inline(data) => DataReader::Memory(std::io::Cursor::new(data.clone())),
@@ -184,16 +193,6 @@ impl BlobData {
     }
 }
 
-impl MutableBlobData {
-    fn new_inline(data: Bytes) -> Self {
-        Self::Inline(data)
-    }
-
-    fn new_from_file(path: PathBuf) -> io::Result<Self> {
-        Ok(Self::File(path))
-    }
-}
-
 /// A bao file consists of outboard and content.
 ///
 /// Either of them can stored inline or in a file in the file system.
@@ -227,10 +226,13 @@ struct HashData {
 ///
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ValidateMode {
+    /// No validation at all
     None,
+    /// Validate that all files exist
     Exists,
 }
 
+#[derive(Debug)]
 struct DatabaseInner {
     /// the persisted data
     hashes: BTreeMap<Hash, HashData>,
@@ -252,6 +254,16 @@ const fn iroh_header(version: u32) -> [u8; 8] {
 }
 
 impl DatabaseInner {
+    fn new(data_dir: PathBuf) -> Self {
+        let content_dir = data_dir.join("data");
+        Self {
+            hashes: BTreeMap::new(),
+            outboard_cache: BTreeMap::new(),
+            home_dir: data_dir.to_path_buf(),
+            content_dir: Arc::new(content_dir),
+        }
+    }
+
     fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         let data_dir = data_dir.as_ref();
         let db_file = data_dir.join("db.bin");
@@ -354,7 +366,7 @@ impl DatabaseInner {
         })
     }
 
-    fn get(&mut self, hash: Hash) -> io::Result<Option<(DataReader, DataReader)>> {
+    fn get(&mut self, hash: Hash) -> io::Result<Option<(Bytes, DataReader)>> {
         let content_path = default_content_path(&self.content_dir, hash);
         let outboard_path = default_outboard_path(&self.content_dir, hash);
         // do we have something for the hash
@@ -394,15 +406,13 @@ impl DatabaseInner {
                 outboard
             }
         };
-        let outboard_reader = DataReader::Memory(io::Cursor::new(outboard_data));
-        Ok(Some((outboard_reader, content_reader)))
+        Ok(Some((outboard_data, content_reader)))
     }
 
     fn get_async(
         &mut self,
         hash: Hash,
-    ) -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> + 'static
-    {
+    ) -> impl Future<Output = io::Result<Option<(Bytes, AsyncDataReader)>>> + 'static {
         let nope = || nope().boxed();
         let content_path = default_content_path(&self.content_dir, hash);
         let outboard_path = default_outboard_path(&self.content_dir, hash);
@@ -451,19 +461,37 @@ impl DatabaseInner {
             complete.content.sort();
         }
     }
+
+    fn blobs(&self) -> Vec<(Hash, PathBuf, u64)> {
+        let mut res = Vec::new();
+        for (hash, data) in &self.hashes {
+            if let Some(complete) = &data.complete {
+                let content_path = default_content_path(&self.content_dir, *hash);
+                for content in &complete.content {
+                    let path = match content.path() {
+                        BlobDataPath::Inline => continue,
+                        BlobDataPath::Default => content_path(),
+                        BlobDataPath::Custom(path) => path.clone(),
+                    };
+                    // todo: read size from outboard
+                    res.push((*hash, path, 0));
+                }
+            }
+        }
+        res
+    }
 }
 
-fn nope() -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> {
+fn nope() -> impl Future<Output = io::Result<Option<(Bytes, AsyncDataReader)>>> {
     futures::future::ready(Ok(None))
 }
 
 async fn pair_from_bytes(
     outboard: Bytes,
     content: impl Future<Output = io::Result<AsyncDataReader>>,
-) -> io::Result<Option<(AsyncDataReader, AsyncDataReader)>> {
-    let outboard_reader = AsyncDataReader::memory(outboard);
+) -> io::Result<Option<(Bytes, AsyncDataReader)>> {
     let content_reader = content.await?;
-    Ok(Some((outboard_reader, content_reader)))
+    Ok(Some((outboard, content_reader)))
 }
 
 /// Given a cache cell for the outboard, the outboard data, the outboard path and the content reader,
@@ -473,7 +501,7 @@ async fn update_cache_cell(
     outboard: BlobData,
     outboard_path: impl Fn() -> PathBuf,
     content: impl Future<Output = io::Result<AsyncDataReader>>,
-) -> io::Result<Option<(AsyncDataReader, AsyncDataReader)>> {
+) -> io::Result<Option<(Bytes, AsyncDataReader)>> {
     let mut lock = cache_cell.write().await;
     let outboard = if let Some(outboard) = lock.as_ref() {
         // we got it in the cache already and can release the lock immediately
@@ -507,23 +535,78 @@ fn default_outboard_path(content_dir: &Arc<PathBuf>, hash: Hash) -> impl Fn() ->
     move || content_dir.join(format!("{}.obao", hex::encode(hash)))
 }
 
-pub struct Database2(Arc<RwLock<DatabaseInner>>);
+///
+#[derive(Debug, Clone)]
+pub struct Database(Arc<RwLock<DatabaseInner>>);
 
-impl Database2 {
-    pub fn load(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
+impl Database {
+    pub(crate) fn from_blobs(blobs: HashMap<Hash, BlobOrCollection>) -> Self {
+        let home = PathBuf::from(".");
+        let db = Database::new(home);
+        db.union_with(blobs);
+        db
+    }
+
+    // todo: remove
+    pub(crate) fn union_with(&self, collection: HashMap<Hash, BlobOrCollection>) {
+        collection.into_iter().for_each(|(hash, blob)| {
+            let (outboard, content) = match blob {
+                BlobOrCollection::Blob { outboard, path, .. } => {
+                    (BlobData::Inline(outboard), BlobData::File(Some(path)))
+                }
+                BlobOrCollection::Collection { outboard, data } => {
+                    (BlobData::Inline(outboard), BlobData::Inline(data))
+                }
+            };
+            self.insert(hash, outboard, content)
+        });
+    }
+
+    ///
+    // todo: remove
+    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> {
+        self.0.read().unwrap().blobs().into_iter()
+    }
+
+    pub(crate) async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    ///
+    pub fn new(data_dir: PathBuf) -> Self {
+        let inner = DatabaseInner::new(data_dir);
+        Self(Arc::new(RwLock::new(inner)))
+    }
+
+    ///
+    pub async fn load(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
+        Ok(tokio::task::spawn_blocking(|| Self::load_internal(data_dir, validate)).await??)
+    }
+
+    /// Load a database from disk for testing. Synchronous.
+    #[cfg(feature = "cli")]
+    pub fn load_test(dir: impl AsRef<Path>) -> io::Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        Self::load_internal(dir, ValidateMode::None)
+    }
+
+    ///
+    fn load_internal(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
         let inner = DatabaseInner::load(data_dir, validate)?;
         Ok(Self(Arc::new(RwLock::new(inner))))
     }
 
+    ///
     pub fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
         let inner = self.0.read().unwrap();
         inner.save(data_dir)
     }
 
-    pub fn get(&self, hash: Hash) -> io::Result<Option<(DataReader, DataReader)>> {
+    ///
+    pub fn get(&self, hash: &Hash) -> io::Result<Option<(Bytes, DataReader)>> {
         // we need write access to the database to cache the outboard
         let mut inner = self.0.write().unwrap();
-        inner.get(hash)
+        inner.get(*hash)
     }
 
     /// Get complete data asynchronously.
@@ -532,11 +615,11 @@ impl Database2 {
     /// the cache cell until the outboard is loaded.
     pub fn get_async(
         &self,
-        hash: Hash,
-    ) -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> {
+        hash: &Hash,
+    ) -> impl Future<Output = io::Result<Option<(Bytes, AsyncDataReader)>>> {
         // we need write access to the database to cache the outboard
         let mut inner = self.0.write().unwrap();
-        inner.get_async(hash)
+        inner.get_async(*hash)
     }
 
     /// Insert complete data. This does not do any checks about the validity of the data.
@@ -548,9 +631,9 @@ impl Database2 {
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
-pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
+pub struct DatabaseOld(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 
-impl From<HashMap<Hash, BlobOrCollection>> for Database {
+impl From<HashMap<Hash, BlobOrCollection>> for DatabaseOld {
     fn from(map: HashMap<Hash, BlobOrCollection>) -> Self {
         Self(Arc::new(RwLock::new(map)))
     }
@@ -720,7 +803,7 @@ where
     }
 }
 
-impl Database {
+impl DatabaseOld {
     /// Load a database from disk for testing. Synchronous.
     #[cfg(feature = "cli")]
     pub fn load_test(dir: impl AsRef<Path>) -> anyhow::Result<Self> {

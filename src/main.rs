@@ -14,7 +14,7 @@ use indicatif::{
 use iroh::blobs::{Blob, Collection};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, OnBlobData};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
-use iroh::provider::{Database, Provider, Ticket};
+use iroh::provider::{Database, Provider, Ticket, ValidateMode};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
     ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
@@ -552,10 +552,10 @@ async fn main_impl() -> Result<()> {
             let db = {
                 if iroh_data_root.is_dir() {
                     // try to load db
-                    Database::load(&iroh_data_root).await?
+                    Database::load(iroh_data_root.clone(), ValidateMode::None).await?
                 } else {
                     // directory does not exist, create an empty db
-                    Database::default()
+                    Database::new(iroh_data_root.clone())
                 }
             };
             let key = Some(iroh_data_root.join("keypair"));
@@ -612,7 +612,7 @@ async fn main_impl() -> Result<()> {
                 }
             }
             // persist the db to disk.
-            db.save(&iroh_data_root).await?;
+            db.save(&iroh_data_root)?;
 
             // the future holds a reference to the temp file, so we need to
             // keep it for as long as the provider is running. The drop(fut)

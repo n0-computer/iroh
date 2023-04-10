@@ -55,6 +55,22 @@ where
     }
 }
 
+impl<R> AsyncSeek for TrackingReader<R>
+where
+    R: AsyncSeek + Unpin,
+{
+    fn start_seek(mut self: Pin<&mut Self>, pos: SeekFrom) -> io::Result<()> {
+        Pin::new(&mut self.inner).start_seek(pos)
+    }
+
+    fn poll_complete(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<u64>> {
+        Pin::new(&mut self.inner).poll_complete(cx)
+    }
+}
+
 /// A writer that tracks the number of bytes written
 pub(crate) struct TrackingWriter<W> {
     inner: W,
