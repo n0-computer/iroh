@@ -6,50 +6,63 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{Future, FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    fmt, io,
+    fmt,
+    io::{self, Read},
     path::{Path, PathBuf},
+    pin::Pin,
     result,
     sync::{Arc, RwLock},
 };
-use tokio::sync::mpsc;
+use tokio::{io::AsyncReadExt, sync::mpsc};
+use tokio_util::either::Either;
 
 /// Data for a (possibly very large) blob
 ///
 /// This can be used for both outboards and content. Be careful, this could
 /// point to a file that is a terabyte in size. So loading it into memory
 /// could be a problem.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-enum BlobData {
+///
+/// Blob data can either be inline (tiny data, stored in the db) or in a file.
+/// The file can be in the default location or a custom location.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub enum BlobData {
     /// Data is stored inline in the db and exists in memory.
     Inline(Bytes),
     /// Data is stored in a file can be optionally cached in memory.
-    File {
-        /// Path to the file. We assume that this file does not change.
-        ///
-        /// None means the file is in the default location.
-        custom_path: Option<PathBuf>,
-        /// Possibly cached file data in memory.
-        cached: Option<Bytes>,
-    },
+    File(Option<PathBuf>),
 }
 
 impl BlobData {
-    fn path(&self) -> Option<Option<&PathBuf>> {
+    fn path(&self) -> BlobDataPath {
         match self {
-            Self::Inline(_) => None,
-            Self::File { custom_path, .. } => Some(custom_path.as_ref()),
+            Self::Inline(_) => BlobDataPath::Inline,
+            Self::File(custom_path) => custom_path
+                .as_ref()
+                .map(BlobDataPath::Custom)
+                .unwrap_or(BlobDataPath::Default),
         }
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum BlobDataPath<'a> {
+    Inline,
+    Default,
+    Custom(&'a PathBuf),
+}
+
 /// Data for a (possibly very large) mutable blob
+///
+/// This is identical to BlobData, except that there is no default location
+/// for incomplete files. There can be multiple incomplete files for the same
+/// hash.
 #[derive(Debug, Serialize, Deserialize)]
 enum MutableBlobData {
-    Inline(Vec<u8>),
+    Inline(Bytes),
     File(PathBuf),
 }
 
@@ -62,7 +75,8 @@ impl MutableBlobData {
     }
 }
 
-enum DataReader {
+///
+pub enum DataReader {
     Memory(std::io::Cursor<Bytes>),
     File(std::fs::File),
 }
@@ -70,7 +84,7 @@ enum DataReader {
 impl std::io::Read for DataReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
-            Self::Memory(data) => data.read(buf),
+            Self::Memory(data) => std::io::Read::read(data, buf),
             Self::File(file) => file.read(buf),
         }
     }
@@ -85,42 +99,38 @@ impl std::io::Seek for DataReader {
     }
 }
 
-enum DataWriter<'a> {
-    Memory(std::io::Cursor<&'a mut Vec<u8>>),
-    File(std::fs::File),
-}
+pub struct AsyncDataReader(Either<std::io::Cursor<Bytes>, tokio::fs::File>);
 
-impl<'a> std::io::Read for DataWriter<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            Self::Memory(data) => data.read(buf),
-            Self::File(file) => file.read(buf),
-        }
+impl AsyncDataReader {
+    fn memory(data: Bytes) -> Self {
+        Self(Either::Left(std::io::Cursor::new(data)))
+    }
+
+    fn is_file(&self) -> bool {
+        matches!(self.0, Either::Right(_))
     }
 }
 
-impl<'a> std::io::Write for DataWriter<'a> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Memory(data) => data.write(buf),
-            Self::File(file) => file.write(buf),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            Self::Memory(data) => Ok(()),
-            Self::File(file) => file.flush(),
-        }
+impl tokio::io::AsyncRead for AsyncDataReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<tokio::io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
     }
 }
 
-impl<'a> std::io::Seek for DataWriter<'a> {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> io::Result<u64> {
-        match self {
-            Self::Memory(data) => data.seek(pos),
-            Self::File(file) => file.seek(pos),
-        }
+impl tokio::io::AsyncSeek for AsyncDataReader {
+    fn start_seek(mut self: std::pin::Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+        Pin::new(&mut self.0).start_seek(position)
+    }
+
+    fn poll_complete(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<u64>> {
+        Pin::new(&mut self.0).poll_complete(cx)
     }
 }
 
@@ -130,94 +140,57 @@ impl BlobData {
     }
 
     fn new_from_path(custom_path: Option<PathBuf>) -> Self {
-        Self::File {
-            custom_path,
-            cached: None,
-        }
+        Self::File(custom_path)
     }
 
     fn reader(&self, default_path: impl Fn() -> PathBuf) -> io::Result<DataReader> {
         Ok(match self {
             Self::Inline(data) => DataReader::Memory(std::io::Cursor::new(data.clone())),
-            Self::File {
-                custom_path,
-                cached,
-                ..
-            } => {
-                if let Some(cached) = cached {
-                    DataReader::Memory(std::io::Cursor::new(cached.clone()))
-                } else {
-                    DataReader::File(match custom_path {
-                        Some(path) => std::fs::File::open(path)?,
-                        None => std::fs::File::open(default_path())?,
-                    })
-                }
-            }
+            Self::File(custom_path) => DataReader::File(match custom_path {
+                Some(path) => std::fs::File::open(path)?,
+                None => std::fs::File::open(default_path())?,
+            }),
         })
     }
 
-    fn cached_memory_reader(
-        &mut self,
+    fn async_reader(
+        &self,
         default_path: impl Fn() -> PathBuf,
-    ) -> io::Result<DataReader> {
-        Ok(match self {
-            Self::Inline(data) => DataReader::Memory(std::io::Cursor::new(data.clone())),
-            Self::File {
-                cached: Some(cached),
-                ..
-            } => DataReader::Memory(std::io::Cursor::new(cached.clone())),
-            Self::File {
-                custom_path,
-                cached,
-                ..
-            } => {
-                let data = if let Some(path) = custom_path {
-                    std::fs::read(path)?
-                } else {
-                    std::fs::read(default_path())?
-                };
-                let bytes = Bytes::from(data);
-                *cached = Some(bytes.clone());
-                DataReader::Memory(std::io::Cursor::new(bytes))
+    ) -> impl Future<Output = io::Result<AsyncDataReader>> + 'static {
+        match self {
+            Self::Inline(data) => {
+                futures::future::ready(Ok(AsyncDataReader::memory(data.clone()))).left_future()
             }
-        })
+            Self::File(custom_path) => {
+                let path = match custom_path {
+                    Some(path) => path.clone(),
+                    None => default_path(),
+                };
+                async move {
+                    let file = tokio::fs::File::open(path).await?;
+                    Ok(AsyncDataReader(Either::Right(file)))
+                }
+                .right_future()
+            }
+        }
     }
 
     fn exists(&self, default_path: impl Fn() -> PathBuf) -> bool {
         match self {
             Self::Inline(_) => true,
-            Self::File {
-                custom_path: Some(path),
-                ..
-            } => path.exists(),
-            Self::File {
-                custom_path: None, ..
-            } => default_path().exists(),
+            Self::File(Some(path)) => path.exists(),
+            Self::File(None) => default_path().exists(),
         }
     }
 }
 
 impl MutableBlobData {
-    fn new_inline(data: Vec<u8>) -> Self {
+    fn new_inline(data: Bytes) -> Self {
         Self::Inline(data)
     }
 
     fn new_from_file(path: PathBuf) -> io::Result<Self> {
         Ok(Self::File(path))
-    }
-
-    fn open(&mut self) -> io::Result<DataWriter> {
-        Ok(match self {
-            Self::Inline(data) => DataWriter::Memory(std::io::Cursor::new(data)),
-            Self::File(path) => {
-                let file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open(path)?;
-                DataWriter::File(file)
-            }
-        })
     }
 }
 
@@ -251,15 +224,31 @@ struct HashData {
     incomplete: Vec<IncompleteBaoFile>,
 }
 
+///
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum ValidateMode {
+pub enum ValidateMode {
     None,
     Exists,
 }
 
 struct DatabaseInner {
+    /// the persisted data
     hashes: BTreeMap<Hash, HashData>,
-    data_dir: PathBuf,
+    /// the outboard cache, not persisted
+    outboard_cache: BTreeMap<Hash, Arc<tokio::sync::RwLock<Option<Bytes>>>>,
+    /// the path we come from
+    home_dir: PathBuf,
+    /// the content dir, wrapped in an Arc to make it cheap to clone
+    content_dir: Arc<PathBuf>,
+}
+
+const fn iroh_header(version: u32) -> [u8; 8] {
+    let mut res = [b'i', b'r', b'o', b'h', 0, 0, 0, 0];
+    res[4] = (version >> 24) as u8;
+    res[5] = (version >> 16) as u8;
+    res[6] = (version >> 8) as u8;
+    res[7] = version as u8;
+    res
 }
 
 impl DatabaseInner {
@@ -267,19 +256,35 @@ impl DatabaseInner {
         let data_dir = data_dir.as_ref();
         let db_file = data_dir.join("db.bin");
         let db_file_tmp = data_dir.join("db.bin.tmp");
-        let db = postcard::to_stdvec(&self.hashes)
+        let mut db = postcard::to_stdvec(&self.hashes)
             .map_err(|cause| io::Error::new(io::ErrorKind::Other, cause))?;
+        db.splice(0..0, iroh_header(0));
+        // write into temp file
         std::fs::write(&db_file_tmp, db)?;
+        // rename to final file somewhat atomically
         std::fs::rename(&db_file_tmp, &db_file)?;
         Ok(())
     }
 
-    fn load(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
-        let complete_dir = data_dir.join("data");
-        let db_file = data_dir.join("db.bin");
+    fn load(home_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
+        let content_dir = Arc::new(home_dir.join("data"));
+        let db_file = home_dir.join("db.bin");
         let db_bytes = std::fs::read(db_file)?;
+        const HEADER: [u8; 8] = iroh_header(0);
+        if db_bytes.len() < HEADER.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "database file is too short",
+            ));
+        }
+        if &db_bytes[0..HEADER.len()] != HEADER {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "database file has invalid header",
+            ));
+        }
         let mut hashes =
-            postcard::from_bytes::<BTreeMap<Hash, HashData>>(&db_bytes).map_err(|e| {
+            postcard::from_bytes::<BTreeMap<Hash, HashData>>(&db_bytes[8..]).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("failed to deserialize database: {}", e),
@@ -292,8 +297,8 @@ impl DatabaseInner {
         };
         // only keep hashes for which we have either complete or incomplete data
         hashes.retain(|hash, hash_data| {
-            let content_name = || complete_dir.join(format!("{}.data", hex::encode(hash)));
-            let outboard_name = || complete_dir.join(format!("{}.obao", hex::encode(hash)));
+            let content_name = || content_dir.join(format!("{}.data", hex::encode(hash)));
+            let outboard_name = || content_dir.join(format!("{}.obao", hex::encode(hash)));
             hash_data.incomplete.retain_mut(|x| {
                 let data_exists = x.content.exists();
                 let outboard_exists = x.outboard.exists();
@@ -341,20 +346,17 @@ impl DatabaseInner {
                 format!("{} errors", errors.len()),
             ));
         }
-        Ok(Self { hashes, data_dir })
+        Ok(Self {
+            hashes,
+            home_dir,
+            content_dir,
+            outboard_cache: BTreeMap::new(),
+        })
     }
 
-    fn get_complete(&mut self, hash: Hash) -> io::Result<Option<(DataReader, DataReader)>> {
-        let content_name = || {
-            self.data_dir
-                .join("data")
-                .join(format!("{}.data", hex::encode(hash)))
-        };
-        let outboard_name = || {
-            self.data_dir
-                .join("data")
-                .join(format!("{}.obao", hex::encode(hash)))
-        };
+    fn get(&mut self, hash: Hash) -> io::Result<Option<(DataReader, DataReader)>> {
+        let content_path = default_content_path(&self.content_dir, hash);
+        let outboard_path = default_outboard_path(&self.content_dir, hash);
         // do we have something for the hash
         let data = match self.hashes.get_mut(&hash) {
             Some(data) => data,
@@ -370,11 +372,67 @@ impl DatabaseInner {
             Some(content) => content,
             None => return Ok(None),
         };
-        // grab the outboard and cache it
-        let outboard = complete.outboard.cached_memory_reader(outboard_name)?;
-        // grab the content and do not! cache it
-        let content = content.reader(content_name)?;
-        Ok(Some((outboard, content)))
+        let outboard = self.outboard_cache.entry(hash).or_default();
+        // we never cache the content
+        let content_reader = content.reader(content_path)?;
+        let outboard_data = if let BlobData::Inline(bytes) = content {
+            // just use the inline data without cloning
+            bytes.clone()
+        } else {
+            // block the cache cell for a possible cache write
+            let mut lock = outboard.blocking_write();
+            if let Some(outboard) = lock.as_ref() {
+                // we got it in the cache already
+                outboard.clone()
+            } else {
+                // keep the lock until we have the data
+                let mut outboard_reader = complete.outboard.reader(outboard_path)?;
+                let mut outboard = Vec::new();
+                outboard_reader.read_to_end(&mut outboard)?;
+                let outboard = Bytes::from(outboard);
+                *lock = Some(outboard.clone());
+                outboard
+            }
+        };
+        let outboard_reader = DataReader::Memory(io::Cursor::new(outboard_data));
+        Ok(Some((outboard_reader, content_reader)))
+    }
+
+    fn get_async(
+        &mut self,
+        hash: Hash,
+    ) -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> + 'static
+    {
+        let nope = || nope().boxed();
+        let content_path = default_content_path(&self.content_dir, hash);
+        let outboard_path = default_outboard_path(&self.content_dir, hash);
+        // do we have something for the hash
+        let data = match self.hashes.get(&hash) {
+            Some(data) => data,
+            None => return nope(),
+        };
+        // do we have a complete file
+        let complete = match data.complete {
+            Some(ref complete) => complete,
+            None => return nope(),
+        };
+        // do we have any content (we should have at least one)
+        let content = match complete.content.get(0) {
+            Some(content) => content,
+            None => return nope(),
+        };
+        // we never cache the content
+        let content = content.async_reader(content_path);
+        // get the outboard from inline or lazy load it from the cache
+        if let BlobData::Inline(outboard) = &complete.outboard {
+            // got inline data
+            pair_from_bytes(outboard.clone(), content).boxed()
+        } else {
+            // grab the cache cell and clone the outboard
+            let cache_cell = self.outboard_cache.entry(hash).or_default().clone();
+            let outboard = complete.outboard.clone();
+            update_cache_cell(cache_cell, outboard, outboard_path, content).boxed()
+        }
     }
 
     /// Insert a complete file (outboard and content)
@@ -395,7 +453,98 @@ impl DatabaseInner {
     }
 }
 
+fn nope() -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> {
+    futures::future::ready(Ok(None))
+}
+
+async fn pair_from_bytes(
+    outboard: Bytes,
+    content: impl Future<Output = io::Result<AsyncDataReader>>,
+) -> io::Result<Option<(AsyncDataReader, AsyncDataReader)>> {
+    let outboard_reader = AsyncDataReader::memory(outboard);
+    let content_reader = content.await?;
+    Ok(Some((outboard_reader, content_reader)))
+}
+
+/// Given a cache cell for the outboard, the outboard data, the outboard path and the content reader,
+/// update the cache cell and then return the outboard and content readers.
+async fn update_cache_cell(
+    cache_cell: Arc<tokio::sync::RwLock<Option<Bytes>>>,
+    outboard: BlobData,
+    outboard_path: impl Fn() -> PathBuf,
+    content: impl Future<Output = io::Result<AsyncDataReader>>,
+) -> io::Result<Option<(AsyncDataReader, AsyncDataReader)>> {
+    let mut lock = cache_cell.write().await;
+    let outboard = if let Some(outboard) = lock.as_ref() {
+        // we got it in the cache already and can release the lock immediately
+        outboard.clone()
+    } else {
+        // keep the lock until we have the data
+        // create the outboard reader
+        let mut outboard_reader = outboard.async_reader(outboard_path).await?;
+        // read the outboard data into a Bytes
+        let mut outboard = Vec::new();
+        outboard_reader.read_to_end(&mut outboard).await?;
+        let outboard = Bytes::from(outboard);
+        // store in cache
+        *lock = Some(outboard.clone());
+        outboard
+    };
+    // done with the lock
+    drop(lock);
+    pair_from_bytes(outboard, content).await
+}
+
+/// Creates a function that returns the default path to a content file
+fn default_content_path(content_dir: &Arc<PathBuf>, hash: Hash) -> impl Fn() -> PathBuf + 'static {
+    let content_dir = content_dir.clone();
+    move || content_dir.join(format!("{}.data", hex::encode(hash)))
+}
+
+/// Creates a function that returns the default path to an outboard file
+fn default_outboard_path(content_dir: &Arc<PathBuf>, hash: Hash) -> impl Fn() -> PathBuf + 'static {
+    let content_dir = content_dir.clone();
+    move || content_dir.join(format!("{}.obao", hex::encode(hash)))
+}
+
 pub struct Database2(Arc<RwLock<DatabaseInner>>);
+
+impl Database2 {
+    pub fn load(data_dir: PathBuf, validate: ValidateMode) -> io::Result<Self> {
+        let inner = DatabaseInner::load(data_dir, validate)?;
+        Ok(Self(Arc::new(RwLock::new(inner))))
+    }
+
+    pub fn save(&self, data_dir: impl AsRef<Path>) -> io::Result<()> {
+        let inner = self.0.read().unwrap();
+        inner.save(data_dir)
+    }
+
+    pub fn get(&self, hash: Hash) -> io::Result<Option<(DataReader, DataReader)>> {
+        // we need write access to the database to cache the outboard
+        let mut inner = self.0.write().unwrap();
+        inner.get(hash)
+    }
+
+    /// Get complete data asynchronously.
+    ///
+    /// For outboards that are not inline and not already cached, this will block
+    /// the cache cell until the outboard is loaded.
+    pub fn get_async(
+        &self,
+        hash: Hash,
+    ) -> impl Future<Output = io::Result<Option<(AsyncDataReader, AsyncDataReader)>>> {
+        // we need write access to the database to cache the outboard
+        let mut inner = self.0.write().unwrap();
+        inner.get_async(hash)
+    }
+
+    /// Insert complete data. This does not do any checks about the validity of the data.
+    pub fn insert(&self, hash: Hash, outboard: BlobData, content: BlobData) {
+        let mut inner = self.0.write().unwrap();
+        inner.insert_complete(hash, outboard, content)
+    }
+}
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
