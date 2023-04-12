@@ -1,0 +1,22 @@
+[package]
+name = "irohc"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip = "symbols"
+
+[lib]
+name="irohc"
+crate-type = ["cdylib"]
+
+[target.x86_64-apple-darwin]
+rustflags=["-C", "link-arg=-mmacosx-version-min=10.7"]
+strip = "symbols"
+
+[dependencies]
+anyhow = "1.0.69"
+iroh = { path = "../" }
+libc = "0.2.141"
+tempfile = "3.4"
+tokio = "1.25.0"
