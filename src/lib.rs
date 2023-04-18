@@ -572,8 +572,9 @@ mod tests {
             async move {
                 let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("CHANGELOG.md");
                 let sources = vec![DataSource::File(readme)];
-                let (new_db, _) = create_collection(sources).await?;
-                let new_db = new_db.to_inner();
+                let (new_db, c_hash) = create_collection(sources).await?;
+                let mut new_db = new_db.to_inner();
+                new_db.remove(&c_hash);
                 let file_hash = *new_db.iter().next().unwrap().0;
                 database.union_with(new_db);
                 let request = GetRequest::just(file_hash);
@@ -660,6 +661,7 @@ mod tests {
                         let hash = data.root_hash();
                         println!("{}", hash);
                         let text = data.read_blob(hash).await?;
+                        println!("{}", text.len());
                         println!("{}", std::str::from_utf8(&text).unwrap());
                         data.set_limit(0);
                     } else {
