@@ -44,11 +44,9 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
+    use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
-    use crate::{
-        provider::{create_collection, Event, Provider},
-    };
     use crate::{
         protocol::{AuthToken, GetRequest},
         provider::{CustomHandler, DataSource, Database},
@@ -411,14 +409,18 @@ mod tests {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
                     data.set_limit(collection.total_entries() + 1);
-                    data.user = Some(collection);
+                    data.user = collection
+                        .blobs()
+                        .iter()
+                        .map(|b| b.hash)
+                        .collect::<Vec<_>>();
                 } else {
-                    let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                    let hash = data.user[0];
                     data.drain(hash).await?;
                 }
                 data.end()
             },
-            None,
+            vec![],
         )
         .await
         .unwrap();
@@ -514,14 +516,18 @@ mod tests {
                     if data.is_root() {
                         let collection = data.read_collection(hash).await?;
                         data.set_limit(collection.total_entries() + 1);
-                        data.user = Some(collection);
+                        data.user = collection
+                            .blobs()
+                            .iter()
+                            .map(|b| b.hash)
+                            .collect::<Vec<_>>();
                     } else {
-                        let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                        let hash = data.user[0];
                         data.drain(hash).await?;
                     }
                     data.end()
                 },
-                None,
+                vec![],
             ),
         )
         .await
@@ -606,15 +612,19 @@ mod tests {
                         let hash = data.root_hash();
                         let collection = data.read_collection(hash).await?;
                         data.set_limit(collection.total_entries() + 1);
-                        data.user = Some(collection);
+                        data.user = collection
+                            .blobs()
+                            .iter()
+                            .map(|b| b.hash)
+                            .collect::<Vec<_>>();
                     } else {
-                        let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                        let hash = data.user[0];
                         let text = data.read_blob(hash).await?;
                         println!("{}", std::str::from_utf8(&text).unwrap());
                     }
                     data.end()
                 },
-                None,
+                vec![],
             ),
         )
         .await
@@ -700,15 +710,19 @@ mod tests {
                         if data.is_root() {
                             let collection = data.read_collection(hash).await?;
                             data.set_limit(collection.total_entries() + 1);
-                            data.user = Some(collection);
+                            data.user = collection
+                                .blobs()
+                                .iter()
+                                .map(|b| b.hash)
+                                .collect::<Vec<_>>();
                         } else {
-                            let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                            let hash = data.user[0];
                             data.drain(hash).await?;
                         }
                         data.end()
                     }
                 },
-                None,
+                vec![],
             ),
         )
         .await
