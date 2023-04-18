@@ -829,7 +829,7 @@ async fn handle_stream(
         }
     };
 
-    let hash = request.name;
+    let hash = request.hash;
     debug!(%hash, "received request");
     let _ = events.send(Event::RequestReceived {
         connection_id,
