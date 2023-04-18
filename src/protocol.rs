@@ -41,7 +41,7 @@ impl Handshake {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Request {
     /// blake3 hash
-    pub name: Hash,
+    pub hash: Hash,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
