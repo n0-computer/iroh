@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
+use crate::protocol::{read_lp, write_lp, AuthToken, GetRequest, Handshake, RangeSpecSeq, Request};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
@@ -398,6 +398,7 @@ where
 ///
 #[derive(Debug)]
 pub struct OnBlobData<T> {
+    request: GetRequest,
     /// the offset of the current blob. 0 is for the item itself (the collection)
     offset: u64,
     /// the total size of the blob
@@ -427,6 +428,10 @@ impl<U> OnBlobData<U> {
     /// child offsets start with 1
     pub fn offset(&self) -> u64 {
         self.offset
+    }
+
+    pub fn request(&self) -> &GetRequest {
+        &self.request
     }
 
     /// the total size of the blob
@@ -649,13 +654,6 @@ where
     FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
     let start = Instant::now();
-    let get_request = if let Request::Get(request) = &request {
-        request
-    } else {
-        todo!()
-    };
-    // expect to get blob data in the order they appear in the collection
-    let ranges_iter = get_request.ranges.non_empty_iter();
     let (writer, reader) = connection.open_bi().await?;
     let mut reader = TrackingReader::new(reader);
     let mut writer = TrackingWriter::new(writer);
@@ -683,6 +681,20 @@ where
     drop(writer);
 
     // 3. Read response
+    // expect to get blob data in the order they appear in the collection
+    let get_request: GetRequest = match request {
+        Request::Get(get) => get,
+        Request::Custom(_) => {
+            out_buffer.clear();
+            let response_header_bytes = read_lp(&mut reader, &mut out_buffer)
+                .await?
+                .context("unexpected eof")?;
+            let response_header: GetRequest = postcard::from_bytes(&response_header_bytes)?;
+            response_header
+        }
+    };
+    let ranges_iter = get_request.ranges.non_empty_iter();
+
     debug!("reading response");
     let mut limit = None;
     for (offset, query) in ranges_iter {
@@ -694,6 +706,7 @@ where
         let size = reader.read_u64_le().await?;
         debug!("reading item {} {:?} size {}", offset, query, size);
         let res = on_blob(OnBlobData {
+            request: get_request.clone(),
             user,
             offset,
             size,

@@ -26,7 +26,7 @@ use super::{BlobOrCollection, DataSource};
 ///
 /// Returns the hashmap with all blobs, including the created collection blob itself, as
 /// well as the [`Hash`] of the collection blob.
-pub(super) async fn create_collection(
+pub(crate) async fn create_collection(
     data_sources: Vec<DataSource>,
     progress: Progress<ProvideProgress>,
 ) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
