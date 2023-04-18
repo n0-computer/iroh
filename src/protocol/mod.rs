@@ -8,6 +8,7 @@ use bytes::{Bytes, BytesMut};
 use derive_more::From;
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
@@ -64,6 +65,13 @@ impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(name: Hash, ranges: RangeSpecSeq) -> Self {
         Self { name, ranges }
+    }
+
+    pub fn just(name: Hash) -> Self {
+        Self {
+            name,
+            ranges: RangeSpecSeq::new([RangeSet2::all()]),
+        }
     }
 
     /// Request a collection and all its children

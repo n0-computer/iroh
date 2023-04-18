@@ -44,9 +44,11 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
+    use crate::{
+        provider::{create_collection, Event, Provider},
+    };
     use crate::{
         protocol::{AuthToken, GetRequest},
         provider::{CustomHandler, DataSource, Database},
@@ -528,9 +530,9 @@ mod tests {
     }
 
     #[derive(Clone, Debug)]
-    struct TestCustomHandler;
+    struct CollectionCustomHandler;
 
-    impl CustomHandler for TestCustomHandler {
+    impl CustomHandler for CollectionCustomHandler {
         fn handle(
             &self,
             _data: Bytes,
@@ -551,10 +553,35 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct BlobCustomHandler;
+
+    impl CustomHandler for BlobCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: &Database,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<GetRequest>> {
+            let database = database.clone();
+            async move {
+                let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("CHANGELOG.md");
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, _) = create_collection(sources).await?;
+                let new_db = new_db.to_inner();
+                let file_hash = *new_db.iter().next().unwrap().0;
+                database.union_with(new_db);
+                let request = GetRequest::just(file_hash);
+                println!("{:?}", request);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
     #[tokio::test]
-    async fn test_custom_request() {
+    async fn test_custom_request_collection() {
         let db = Database::default();
-        let custom_handler = TestCustomHandler;
+        let custom_handler = CollectionCustomHandler;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .custom_handler(custom_handler)
@@ -588,6 +615,49 @@ mod tests {
                     data.end()
                 },
                 None,
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_blob() {
+        let db = Database::default();
+        let custom_handler = BlobCustomHandler;
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_handler(custom_handler)
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run(
+                Bytes::from(&b"hello"[..]).into(),
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+                || async move { Ok(()) },
+                move |mut data| async move {
+                    if data.is_root() {
+                        let hash = data.root_hash();
+                        println!("{}", hash);
+                        let text = data.read_blob(hash).await?;
+                        println!("{}", std::str::from_utf8(&text).unwrap());
+                        data.set_limit(0);
+                    } else {
+                        panic!()
+                    }
+                    data.end()
+                },
+                (),
             ),
         )
         .await
