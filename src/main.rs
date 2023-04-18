@@ -426,7 +426,7 @@ where
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            let _hash = hash.context(format!("Missing hash for {name}"))?;
             Ok(ProvideResponseEntry { name, size })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -458,7 +458,7 @@ fn init_metrics_collection(
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
-                    eprintln!("Failed to start metrics server: {}", e);
+                    eprintln!("Failed to start metrics server: {e}");
                 });
         }));
     }

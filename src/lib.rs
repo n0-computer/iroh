@@ -321,8 +321,7 @@ mod tests {
         assert_eq!(
             events.len(),
             num_total_events,
-            "missing events, only got {:#?}",
-            events
+            "missing events, only got {events:#?}"
         );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
         assert!(matches!(events[1], Event::RequestReceived { .. }));
@@ -332,7 +331,7 @@ mod tests {
                 Event::TransferBlobCompleted { index, .. } => {
                     assert_eq!(*index, i as u64);
                 }
-                _ => panic!("unexpected event {:?}", event),
+                _ => panic!("unexpected event {event:?}"),
             }
         }
         assert!(matches!(
