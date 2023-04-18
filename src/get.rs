@@ -383,7 +383,7 @@ where
     C: FnMut(OnBlobData<U>) -> FutC,
     FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
-    let span = debug_span!("get", %request.name);
+    let span = debug_span!("get");
     async move {
         let connection = dial_peer(opts).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
@@ -649,8 +649,13 @@ where
     FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
     let start = Instant::now();
+    let get_request = if let Request::Get(request) = &request {
+        request
+    } else {
+        todo!()
+    };
     // expect to get blob data in the order they appear in the collection
-    let ranges_iter = request.ranges.non_empty_iter();
+    let ranges_iter = get_request.ranges.non_empty_iter();
     let (writer, reader) = connection.open_bi().await?;
     let mut reader = TrackingReader::new(reader);
     let mut writer = TrackingWriter::new(writer);

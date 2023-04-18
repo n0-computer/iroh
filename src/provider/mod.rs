@@ -38,7 +38,9 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -740,7 +742,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    request: Request,
+    request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
@@ -848,6 +850,12 @@ async fn handle_stream(
             notify_transfer_aborted(events, connection_id, request_id);
             return Err(e);
         }
+    };
+
+    let request = if let Request::Get(request) = request {
+        request
+    } else {
+        todo!()
     };
 
     let hash = request.name;

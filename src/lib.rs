@@ -42,7 +42,7 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::{AuthToken, Request};
+    use crate::protocol::{AuthToken, GetRequest};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
@@ -151,7 +151,7 @@ mod tests {
             let expected_data = &content;
             let expected_name = &name;
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 token,
                 opts,
                 || async { Ok(()) },
@@ -278,7 +278,7 @@ mod tests {
         let expects = Arc::new(expects);
 
         get::run(
-            Request::all(collection_hash),
+            GetRequest::all(collection_hash).into(),
             provider.auth_token(),
             opts,
             || async { Ok(()) },
@@ -392,7 +392,7 @@ mod tests {
         });
 
         get::run(
-            Request::all(hash),
+            GetRequest::all(hash).into(),
             auth_token,
             get::Options {
                 addr: provider_addr,
@@ -448,7 +448,7 @@ mod tests {
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
@@ -495,7 +495,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(10),
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr,
@@ -540,7 +540,7 @@ mod tests {
             Duration::from_secs(10),
             get::run_ticket(
                 &ticket,
-                Request::all(ticket.hash()),
+                GetRequest::all(ticket.hash()).into(),
                 true,
                 16,
                 || {

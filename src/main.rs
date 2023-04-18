@@ -13,7 +13,7 @@ use indicatif::{
 };
 use iroh::blobs::{Blob, Collection};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, OnBlobData};
-use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
+use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -984,7 +984,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
             data.end()
         }
     };
-    let request = Request::new(get.hash(), query);
+    let request = GetRequest::new(get.hash(), query).into();
     let (_, stats) = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(
