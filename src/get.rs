@@ -398,7 +398,7 @@ where
 ///
 #[derive(Debug)]
 pub struct OnBlobData<T> {
-    request: GetRequest,
+    root_hash: Hash,
     /// the offset of the current blob. 0 is for the item itself (the collection)
     offset: u64,
     /// the total size of the blob
@@ -430,8 +430,8 @@ impl<U> OnBlobData<U> {
         self.offset
     }
 
-    pub fn request(&self) -> &GetRequest {
-        &self.request
+    pub fn root_hash(&self) -> Hash {
+        self.root_hash
     }
 
     /// the total size of the blob
@@ -706,7 +706,7 @@ where
         let size = reader.read_u64_le().await?;
         debug!("reading item {} {:?} size {}", offset, query, size);
         let res = on_blob(OnBlobData {
-            request: get_request.clone(),
+            root_hash: get_request.name,
             user,
             offset,
             size,

@@ -49,8 +49,7 @@ mod tests {
     use crate::util::Hash;
     use crate::{
         protocol::{AuthToken, GetRequest},
-        provider::{CustomHandler, DataSource, Database, DefaultCustomHandler},
-        util::Progress,
+        provider::{CustomHandler, DataSource, Database},
     };
 
     use super::*;
@@ -577,7 +576,7 @@ mod tests {
                 || async move { Ok(()) },
                 move |mut data| async move {
                     if data.is_root() {
-                        let hash = data.request().name;
+                        let hash = data.root_hash();
                         let collection = data.read_collection(hash).await?;
                         data.set_limit(collection.total_entries() + 1);
                         data.user = Some(collection);
