@@ -239,6 +239,7 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(parts.join("/"))
 }
 
+/// Wraps a reader to support reporting progress.
 pub struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
@@ -246,6 +247,10 @@ pub struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
 }
 
 impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    /// Wrap a given reader to create a ProgressReader.
+    ///
+    /// The callback given can be used to report progress e.g.
+    /// by sending it to a `Progress<ProgressReaderUpdate>`.
     pub fn new(inner: R, cb: F) -> Self {
         Self {
             inner,
@@ -270,8 +275,11 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
     }
 }
 
+/// An update of reading progress.
 pub enum ProgressReaderUpdate {
+    /// Given number of bytes were read
     Progress(u64),
+    /// Done
     Done,
 }
 
@@ -287,26 +295,31 @@ impl<T> Clone for Progress<T> {
 }
 
 impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
+    /// TODO(matheus23) docs
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
 
+    /// TODO(matheus23) docs
     pub fn none() -> Self {
         Self(None)
     }
 
+    /// TODO(matheus23) docs
     pub fn try_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.try_send(msg).ok();
         }
     }
 
+    /// TODO(matheus23) docs
     pub fn blocking_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.blocking_send(msg).ok();
         }
     }
 
+    /// TODO(matheus23) docs
     pub async fn send(&self, msg: T) -> anyhow::Result<()> {
         if let Some(progress) = &self.0 {
             progress.send(msg).await?;
