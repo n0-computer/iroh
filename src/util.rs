@@ -20,12 +20,12 @@ use tokio::sync::mpsc;
 use crate::IROH_BLOCK_SIZE;
 
 /// Encode the given buffer into Base64 URL SAFE without padding.
-pub fn encode(buf: impl AsRef<[u8]>) -> String {
+pub(crate) fn encode(buf: impl AsRef<[u8]>) -> String {
     general_purpose::URL_SAFE_NO_PAD.encode(buf.as_ref())
 }
 
 /// Decode the given buffer from Base64 URL SAFE without padding.
-pub fn decode(buf: impl AsRef<str>) -> Result<Vec<u8>, base64::DecodeError> {
+pub(crate) fn decode(buf: impl AsRef<str>) -> Result<Vec<u8>, base64::DecodeError> {
     general_purpose::URL_SAFE_NO_PAD.decode(buf.as_ref())
 }
 
@@ -143,7 +143,7 @@ impl MaxSize for Hash {
 
 /// A serializable error type for use in RPC responses.
 #[derive(Serialize, Deserialize, Debug, Error)]
-pub struct RpcError(serde_error::Error);
+pub(crate) struct RpcError(serde_error::Error);
 
 impl fmt::Display for RpcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -159,13 +159,13 @@ impl From<anyhow::Error> for RpcError {
 
 /// A serializable result type for use in RPC responses.
 #[allow(dead_code)]
-pub type RpcResult<T> = result::Result<T, RpcError>;
+pub(crate) type RpcResult<T> = result::Result<T, RpcError>;
 
 /// Todo: gather more information about validation errors. E.g. offset
 ///
 /// io::Error should be just the fallback when a more specific error is not available.
 #[derive(Debug, Display, Error)]
-pub enum BaoValidationError {
+pub(crate) enum BaoValidationError {
     /// Generic io error. We were unable to read the data.
     IoError(#[from] io::Error),
     /// The data failed to validate
@@ -173,7 +173,7 @@ pub enum BaoValidationError {
 }
 
 /// Validate that the data matches the outboard.
-pub fn validate_bao<F: Fn(u64)>(
+pub(crate) fn validate_bao<F: Fn(u64)>(
     hash: Hash,
     data_reader: impl Read + Seek,
     outboard: Bytes,
@@ -218,7 +218,7 @@ impl<F: Fn(u64)> Write for DevNull<F> {
 ///
 /// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
 /// or if the path components contain any windows or unix path separators
-pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
+pub(crate) fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     let parts = path
         .as_ref()
         .components()
@@ -240,7 +240,7 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
 }
 
 /// Wraps a reader to support reporting progress.
-pub struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
     cb: F,
@@ -276,17 +276,16 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
 }
 
 /// An update of reading progress.
-pub enum ProgressReaderUpdate {
-    /// Given number of bytes were read
+pub(crate) enum ProgressReaderUpdate {
+    /// Number of bytes of progress
     Progress(u64),
-    /// Done
     Done,
 }
 
 /// A sender for progress messages.
 ///
 /// This may optionally be a no-op if the [`Progress::none`] constructor is used.
-pub struct Progress<T>(Option<mpsc::Sender<T>>);
+pub(crate) struct Progress<T>(Option<mpsc::Sender<T>>);
 
 impl<T> Clone for Progress<T> {
     fn clone(&self) -> Self {
@@ -295,31 +294,26 @@ impl<T> Clone for Progress<T> {
 }
 
 impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
-    /// TODO(matheus23) docs
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
 
-    /// TODO(matheus23) docs
     pub fn none() -> Self {
         Self(None)
     }
 
-    /// TODO(matheus23) docs
     pub fn try_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.try_send(msg).ok();
         }
     }
 
-    /// TODO(matheus23) docs
     pub fn blocking_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.blocking_send(msg).ok();
         }
     }
 
-    /// TODO(matheus23) docs
     pub async fn send(&self, msg: T) -> anyhow::Result<()> {
         if let Some(progress) = &self.0 {
             progress.send(msg).await?;
