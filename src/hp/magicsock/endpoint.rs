@@ -15,7 +15,7 @@ use std::{
 
 use futures::future::BoxFuture;
 use tokio::{sync::Mutex, time::Instant};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     hp::{
@@ -167,18 +167,20 @@ impl Endpoint {
         now: &Instant,
     ) -> (Option<SocketAddr>, Option<SocketAddr>) {
         let udp_addr = state.best_addr.as_ref().map(|a| a.addr);
-        let derp_addr = if udp_addr.is_none() || !state.is_best_addr_valid(*now) {
+        let mut derp_addr = None;
+        if udp_addr.is_none() || !state.is_best_addr_valid(*now) {
+            error!(
+                "no good udp addr {:?} {:?} - {:?}",
+                now, udp_addr, state.trust_best_addr_until
+            );
             // We had a best_addr but it expired so send both to it and DERP.
-            state.derp_addr
-        } else {
-            None
-        };
+            derp_addr = state.derp_addr;
+        }
 
         (udp_addr, derp_addr)
     }
 
     /// Reports whether we should ping to all our peers looking for a better path.
-    // TODO: figure out when to call this, now that the heartbeat timer is gone
     #[instrument(skip_all, fields(self.name = %self.name()))]
     fn want_full_ping(&self, state: &InnerMutEndpoint, now: &Instant) -> bool {
         if state.last_full_ping.is_none() {
@@ -191,7 +193,7 @@ impl Endpoint {
             return false;
         }
 
-        if state.last_full_ping.as_ref().unwrap().duration_since(*now) >= UPGRADE_INTERVAL {
+        if *now - *state.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL {
             return true;
         }
         false
@@ -247,6 +249,9 @@ impl Endpoint {
                     "disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
                     txid, sp.to, self.public_key, state.disco_key
                 );
+            }
+            if let Some(ep_state) = state.endpoint_state.get_mut(&sp.to) {
+                ep_state.last_ping = None;
             }
         }
     }
@@ -319,7 +324,7 @@ impl Endpoint {
 
         let txid = stun::TransactionId::default();
         let this = self.clone();
-        info!("disco: sent ping [{}]", txid);
+        error!("disco: sent ping [{}]", txid);
         state.sent_ping.insert(
             txid,
             SentPing {
@@ -360,8 +365,12 @@ impl Endpoint {
             .iter()
             .filter_map(|(ep, st)| {
                 if st.last_ping.is_some()
-                    && st.last_ping.as_ref().unwrap().duration_since(now) < DISCO_PING_INTERVAL
+                    && now - *st.last_ping.as_ref().unwrap() < DISCO_PING_INTERVAL
                 {
+                    info!(
+                        "disco: [{:?}] skipping ping, too new {:?} {:?}",
+                        ep, now, st.last_ping
+                    );
                     return None;
                 }
                 Some(ep.clone())
@@ -574,17 +583,16 @@ impl Endpoint {
             }
             Some(sp) => {
                 let known_tx_id = true;
-                let txid = m.tx_id;
                 sp.timer.stop().await;
-                info!("disco: timer aborted for {}", txid);
                 di.set_node_key(self.public_key.clone());
 
                 let now = Instant::now();
-                let latency = sp.at.duration_since(now);
+                let latency = now - sp.at;
 
                 if !is_derp {
                     match state.endpoint_state.get_mut(&sp.to) {
                         None => {
+                            info!("disco: ignoring pong: {}", sp.to);
                             // This is no longer an endpoint we care about.
                             return known_tx_id;
                         }
@@ -762,7 +770,29 @@ impl Endpoint {
             "available addrs: UDP({:?}), DERP({:?})",
             udp_addr, derp_addr
         );
-        if udp_addr.is_none() || !state.is_best_addr_valid(now) {
+
+        // Send heartbeat ping to keep the current addr going as long as we need it.
+        if let Some(udp_addr) = udp_addr {
+            if let Some(ep_state) = state.endpoint_state.get(&udp_addr) {
+                let needs_ping = ep_state
+                    .last_ping
+                    .map(|l| now - l > Duration::from_secs(2))
+                    .unwrap_or(true);
+
+                error!(
+                    "needs ping {}: {:?} {:?}",
+                    needs_ping,
+                    ep_state.last_ping.map(|l| now - l),
+                    now
+                );
+                if needs_ping {
+                    self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Heartbeat);
+                }
+            }
+        }
+
+        // If we do not have an optimal addr, send pings to all known places.
+        if udp_addr.is_none() || self.want_full_ping(&mut state, &now) {
             self.send_pings(&mut state, now, true);
         }
         drop(state);
@@ -773,6 +803,12 @@ impl Endpoint {
                 "no UDP or DERP addr",
             )));
         }
+
+        error!(
+            "sending UDP: {}, DERP: {}",
+            udp_addr.is_some(),
+            derp_addr.is_some()
+        );
 
         let res = if let Some(udp_addr) = udp_addr {
             debug!("sending UDP: {}", udp_addr);
@@ -813,7 +849,7 @@ impl InnerMutEndpoint {
         match self.best_addr {
             None => false,
             Some(_) => match self.trust_best_addr_until {
-                Some(expiry) => expiry < instant,
+                Some(expiry) => instant < expiry,
                 None => false,
             },
         }

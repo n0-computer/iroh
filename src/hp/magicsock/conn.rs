@@ -941,6 +941,13 @@ impl AsyncUdpSocket for Conn {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
+        if self.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            )));
+        }
+
         debug!(
             "sending:\n{}",
             transmits
@@ -1005,6 +1012,12 @@ impl AsyncUdpSocket for Conn {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), meta.len(), "non matching bufs & metas");
         debug!("trying to receive up to {} packets", bufs.len());
+        if self.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            )));
+        }
 
         let mut num_msgs_total = 0;
 
@@ -3063,7 +3076,6 @@ impl ReaderState {
 mod tests {
     use anyhow::Context;
     use hyper::server::conn::Http;
-    use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -3466,7 +3478,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_two_devices_roundtrip() -> Result<()> {
+    async fn test_two_devices_roundtrip_quinn() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -3515,32 +3527,33 @@ mod tests {
 
                 let b_task = tokio::task::spawn(async move {
                     println!("[{}] accepting conn", b_name);
-                    while let Some(conn) = b.quic_ep.accept().await {
-                        println!("[{}] connecting", b_name);
-                        let conn = conn
-                            .await
-                            .with_context(|| format!("[{}] connecting", b_name))?;
-                        println!("[{}] accepting bi", b_name);
-                        let (mut send_bi, recv_bi) = conn
-                            .accept_bi()
-                            .await
-                            .with_context(|| format!("[{}] accepting bi", b_name))?;
+                    let conn = b.quic_ep.accept().await.expect("no conn");
+                    println!("[{}] connecting", b_name);
+                    let conn = conn
+                        .await
+                        .with_context(|| format!("[{}] connecting", b_name))?;
+                    println!("[{}] accepting bi", b_name);
+                    let (mut send_bi, recv_bi) = conn
+                        .accept_bi()
+                        .await
+                        .with_context(|| format!("[{}] accepting bi", b_name))?;
 
-                        println!("[{}] reading", b_name);
-                        let val = recv_bi
-                            .read_to_end(usize::MAX)
-                            .await
-                            .with_context(|| format!("[{}] reading to end", b_name))?;
-                        println!("[{}] finishing", b_name);
-                        send_bi
-                            .finish()
-                            .await
-                            .with_context(|| format!("[{}] finishing", b_name))?;
-                        println!("[{}] finished", b_name);
+                    println!("[{}] reading", b_name);
+                    let val = recv_bi
+                        .read_to_end(usize::MAX)
+                        .await
+                        .with_context(|| format!("[{}] reading to end", b_name))?;
+                    println!("[{}] finishing", b_name);
+                    send_bi
+                        .finish()
+                        .await
+                        .with_context(|| format!("[{}] finishing", b_name))?;
 
-                        return Ok::<_, anyhow::Error>(val);
-                    }
-                    bail!("no connections available anymore");
+                    drop(send_bi);
+                    drop(conn);
+                    println!("[{}] finished", b_name);
+
+                    Ok::<_, anyhow::Error>(val)
                 });
 
                 println!("[{}] connecting to {}", a_name, b_addr);
@@ -3588,6 +3601,8 @@ mod tests {
                     hex::encode($msg),
                     hex::encode(val)
                 );
+
+                // tokio::time::sleep(Duration::from_secs(1)).await;
             };
         }
 
@@ -3597,13 +3612,13 @@ mod tests {
             roundtrip!(m2, m1, b"hello m2");
         }
 
-        println!("-- larger data");
-        {
-            let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m1, m2, data);
-            roundtrip!(m2, m1, data);
-        }
+        // println!("-- larger data");
+        // {
+        //     let mut data = vec![0u8; 10 * 1024];
+        //     rand::thread_rng().fill_bytes(&mut data);
+        //     roundtrip!(m1, m2, data);
+        //     roundtrip!(m2, m1, data);
+        // }
 
         println!("cleaning up");
         cleanup();

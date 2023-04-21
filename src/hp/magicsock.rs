@@ -101,6 +101,8 @@ pub enum DiscoPingPurpose {
     Discovery,
     /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
     Cli,
+    /// Ping to ensure the current route is still valid.
+    Heartbeat,
 }
 
 // TODO: metrics

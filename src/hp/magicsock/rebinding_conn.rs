@@ -14,7 +14,7 @@ use tokio::{
     io::Interest,
     sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
 };
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -250,6 +250,7 @@ impl AsyncUdpSocket for UdpSocket {
                 .map(|t| format!("dest: {:?}, bytes: {}", t.destination, t.contents.len()))
                 .collect::<Vec<_>>()
         );
+
         let inner = &mut self.inner;
         let io = &self.io;
         loop {
@@ -257,7 +258,10 @@ impl AsyncUdpSocket for UdpSocket {
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
                 inner.send(io.into(), state, transmits)
             }) {
-                debug!("sent {:?}", res);
+                for t in transmits.iter().take(res) {
+                    error!("[UDP] -> {} ({}b)", t.destination, t.contents.len());
+                }
+
                 return Poll::Ready(Ok(res));
             }
         }
@@ -276,7 +280,10 @@ impl AsyncUdpSocket for UdpSocket {
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
-                debug!("received {:?}", res);
+                for meta in meta.iter().take(res) {
+                    error!("[UDP] <- {} ({}b)", meta.addr, meta.len);
+                }
+
                 return Poll::Ready(Ok(res));
             }
         }
