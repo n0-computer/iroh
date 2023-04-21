@@ -3076,6 +3076,7 @@ impl ReaderState {
 mod tests {
     use anyhow::Context;
     use hyper::server::conn::Http;
+    use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -3478,7 +3479,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_two_devices_roundtrip_quinn() -> Result<()> {
+    async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -3549,9 +3550,9 @@ mod tests {
                         .await
                         .with_context(|| format!("[{}] finishing", b_name))?;
 
-                    drop(send_bi);
-                    drop(conn);
-                    println!("[{}] finished", b_name);
+                    println!("[{}] close", b_name);
+                    conn.close(0u32.into(), b"done");
+                    println!("[{}] closed", b_name);
 
                     Ok::<_, anyhow::Error>(val)
                 });
@@ -3610,19 +3611,171 @@ mod tests {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
             roundtrip!(m2, m1, b"hello m2");
-        }
 
-        // println!("-- larger data");
-        // {
-        //     let mut data = vec![0u8; 10 * 1024];
-        //     rand::thread_rng().fill_bytes(&mut data);
-        //     roundtrip!(m1, m2, data);
-        //     roundtrip!(m2, m1, data);
-        // }
+            println!("-- larger data");
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
+        }
 
         println!("cleaning up");
         cleanup();
         cleanup_mesh();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
+            let key = key::node::SecretKey::generate();
+            let conn = std::net::UdpSocket::bind(addr)?;
+
+            let tls_server_config =
+                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            server_config.transport_config(Arc::new(transport_config));
+            let mut quic_ep = quinn::Endpoint::new(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                conn,
+                quinn::TokioRuntime,
+            )?;
+
+            let tls_client_config = tls::make_client_config(
+                &key.clone().into(),
+                None,
+                vec![tls::P2P_ALPN.to_vec()],
+                false,
+            )?;
+            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+            client_config.transport_config(Arc::new(transport_config));
+            quic_ep.set_default_client_config(client_config);
+
+            Ok(quic_ep)
+        };
+
+        let m1 = make_conn("127.0.0.1:7770".parse().unwrap())?;
+        let m2 = make_conn("127.0.0.1:7771".parse().unwrap())?;
+
+        // msg from  a -> b
+        macro_rules! roundtrip {
+            ($a:expr, $b:expr, $msg:expr) => {
+                let a = $a.clone();
+                let b = $b.clone();
+                let a_name = stringify!($a);
+                let b_name = stringify!($b);
+                println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
+
+                let a_addr = a.local_addr()?;
+                let b_addr = b.local_addr()?;
+
+                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
+
+                let b_task = tokio::task::spawn(async move {
+                    println!("[{}] accepting conn", b_name);
+                    let conn = b.accept().await.expect("no conn");
+                    println!("[{}] connecting", b_name);
+                    let conn = conn
+                        .await
+                        .with_context(|| format!("[{}] connecting", b_name))?;
+                    println!("[{}] accepting bi", b_name);
+                    let (mut send_bi, recv_bi) = conn
+                        .accept_bi()
+                        .await
+                        .with_context(|| format!("[{}] accepting bi", b_name))?;
+
+                    println!("[{}] reading", b_name);
+                    let val = recv_bi
+                        .read_to_end(usize::MAX)
+                        .await
+                        .with_context(|| format!("[{}] reading to end", b_name))?;
+                    println!("[{}] finishing", b_name);
+                    send_bi
+                        .finish()
+                        .await
+                        .with_context(|| format!("[{}] finishing", b_name))?;
+
+                    println!("[{}] close", b_name);
+                    conn.close(0u32.into(), b"done");
+                    println!("[{}] closed", b_name);
+
+                    Ok::<_, anyhow::Error>(val)
+                });
+
+                println!("[{}] connecting to {}", a_name, b_addr);
+                let conn = a
+                    .connect(b_addr, "localhost")?
+                    .await
+                    .with_context(|| format!("[{}] connect", a_name))?;
+
+                println!("[{}] opening bi", a_name);
+                let (mut send_bi, recv_bi) = conn
+                    .open_bi()
+                    .await
+                    .with_context(|| format!("[{}] open bi", a_name))?;
+                println!("[{}] writing message", a_name);
+                send_bi
+                    .write_all(&$msg[..])
+                    .await
+                    .with_context(|| format!("[{}] write all", a_name))?;
+
+                println!("[{}] finishing", a_name);
+                send_bi
+                    .finish()
+                    .await
+                    .with_context(|| format!("[{}] finish", a_name))?;
+
+                println!("[{}] reading_to_end", a_name);
+                let _ = recv_bi
+                    .read_to_end(usize::MAX)
+                    .await
+                    .with_context(|| format!("[{}]", a_name))?;
+                println!("[{}] close", a_name);
+                conn.close(0u32.into(), b"done");
+                println!("[{}] wait idle", a_name);
+                a.wait_idle().await;
+
+                drop(send_bi);
+
+                // make sure the right values arrived
+                println!("[{}] waiting for channel", a_name);
+                let val = b_task.await??;
+                anyhow::ensure!(
+                    val == $msg,
+                    "expected {}, got {}",
+                    hex::encode($msg),
+                    hex::encode(val)
+                );
+
+                // tokio::time::sleep(Duration::from_secs(1)).await;
+            };
+        }
+
+        for i in 0..10 {
+            println!("-- round {}", i + 1);
+            roundtrip!(m1, m2, b"hello m1");
+            roundtrip!(m2, m1, b"hello m2");
+
+            println!("-- larger data");
+
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
+        }
+
         Ok(())
     }
 }
