@@ -120,7 +120,7 @@ impl Default for Options {
 pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
-    derp_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    actor_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl Deref for Conn {
@@ -146,7 +146,7 @@ impl Debug for Inner {
 }
 
 pub struct Inner {
-    derp_sender: flume::Sender<DerpMessage>,
+    derp_sender: flume::Sender<ActorMessage>,
     pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
@@ -227,7 +227,7 @@ impl Inner {
         let (s, r) = sync::oneshot::channel();
 
         self.derp_sender
-            .send_async(DerpMessage::SendDiscoMessage {
+            .send_async(ActorMessage::SendDiscoMessage {
                 dst,
                 dst_key: dst_key.cloned(),
                 dst_disco: dst_disco.clone(),
@@ -352,7 +352,7 @@ impl Inner {
     ) -> bool {
         let (s, r) = sync::oneshot::channel();
         self.derp_sender
-            .send(DerpMessage::HandleDiscoMessage {
+            .send(ActorMessage::HandleDiscoMessage {
                 msg,
                 src,
                 derp_node_src,
@@ -396,7 +396,7 @@ impl Inner {
             Some(pub_key) => {
                 // TODO: avoid clone
                 let contents = transmits.iter().map(|t| t.contents.clone()).collect();
-                let res = self.derp_sender.try_send(DerpMessage::WriteRequest {
+                let res = self.derp_sender.try_send(ActorMessage::WriteRequest {
                     port: addr.port(),
                     pub_key: pub_key.clone(),
                     contents,
@@ -429,7 +429,7 @@ impl Inner {
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint: Endpoint) {
         self.derp_sender
-            .send_async(DerpMessage::EnqueueCallMeMaybe {
+            .send_async(ActorMessage::EnqueueCallMeMaybe {
                 derp_addr,
                 endpoint,
             })
@@ -644,8 +644,7 @@ impl Conn {
 
         let conn = inner.clone();
         let derp_task = tokio::task::spawn(async move {
-            let derp_handler =
-                DerpHandler::new(derp_receiver, derp_sender, derp_recv_ch_sender, conn);
+            let derp_handler = Actor::new(derp_receiver, derp_sender, derp_recv_ch_sender, conn);
 
             if let Err(err) = derp_handler.run().await {
                 warn!("derp handler errored: {:?}", err);
@@ -654,7 +653,7 @@ impl Conn {
 
         let c = Conn {
             inner,
-            derp_task: Arc::new(Mutex::new(Some(derp_task))),
+            actor_task: Arc::new(Mutex::new(Some(derp_task))),
         };
 
         Ok(c)
@@ -664,7 +663,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn re_stun(&self, why: &'static str) {
         self.derp_sender
-            .send_async(DerpMessage::ReStun(why))
+            .send_async(ActorMessage::ReStun(why))
             .await
             .unwrap();
     }
@@ -721,7 +720,7 @@ impl Conn {
     pub async fn set_preferred_port(&self, port: u16) {
         let (s, r) = sync::oneshot::channel();
         self.derp_sender
-            .send_async(DerpMessage::SetPreferredPort(port, s))
+            .send_async(ActorMessage::SetPreferredPort(port, s))
             .await
             .unwrap();
         r.await.unwrap();
@@ -740,7 +739,7 @@ impl Conn {
         drop(derp_map_locked); // clone and unlock
         if derp_map.is_none() {
             self.derp_sender
-                .send_async(DerpMessage::CloseAll("derp-disabled"))
+                .send_async(ActorMessage::CloseAll("derp-disabled"))
                 .await
                 .unwrap();
             return;
@@ -760,7 +759,7 @@ impl Conn {
                     self.my_derp.store(0, Ordering::Relaxed);
                 }
                 self.derp_sender
-                    .send_async(DerpMessage::Close(
+                    .send_async(ActorMessage::Close(
                         rid.try_into().expect("region too large"),
                         "derp-region-redefined",
                     ))
@@ -783,7 +782,7 @@ impl Conn {
     pub async fn set_network_map(&self, nm: netmap::NetworkMap) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.derp_sender
-            .send_async(DerpMessage::SetNetworkMap(nm, s))
+            .send_async(ActorMessage::SetNetworkMap(nm, s))
             .await?;
         r.await?;
         Ok(())
@@ -810,7 +809,7 @@ impl Conn {
 
         self.closed.store(true, Ordering::SeqCst);
         // c.connCtxCancel()
-        self.derp_sender.send_async(DerpMessage::Shutdown).await?;
+        self.derp_sender.send_async(ActorMessage::Shutdown).await?;
         // Ignore errors from c.pconnN.Close.
         // They will frequently have been closed already by a call to connBind.Close.
         if let Some(ref conn) = self.pconn6 {
@@ -818,7 +817,7 @@ impl Conn {
         }
         self.pconn4.close().await.ok();
 
-        if let Some(task) = self.derp_task.lock().await.take() {
+        if let Some(task) = self.actor_task.lock().await.take() {
             task.await?;
         }
 
@@ -837,7 +836,7 @@ impl Conn {
         // TODO: check all calls for responses.
         let (s, r) = sync::oneshot::channel();
         self.derp_sender
-            .send_async(DerpMessage::RebindAll(s))
+            .send_async(ActorMessage::RebindAll(s))
             .await
             .unwrap();
         r.await.unwrap();
@@ -1224,7 +1223,7 @@ where
 }
 
 #[derive(Debug)]
-enum DerpMessage {
+enum ActorMessage {
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
@@ -1258,11 +1257,11 @@ enum DerpMessage {
     },
 }
 
-struct DerpHandler {
+struct Actor {
     conn: Arc<Inner>,
     net_map: Option<netmap::NetworkMap>,
-    msg_receiver: flume::Receiver<DerpMessage>,
-    msg_sender: flume::Sender<DerpMessage>,
+    msg_receiver: flume::Receiver<ActorMessage>,
+    msg_sender: flume::Sender<ActorMessage>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<DerpReadResult>,
     /// DERP regionID -> connection to a node in that region
@@ -1294,14 +1293,14 @@ struct DerpHandler {
     disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
 }
 
-impl DerpHandler {
+impl Actor {
     fn new(
-        msg_receiver: flume::Receiver<DerpMessage>,
-        msg_sender: flume::Sender<DerpMessage>,
+        msg_receiver: flume::Receiver<ActorMessage>,
+        msg_sender: flume::Sender<ActorMessage>,
         derp_recv_sender: flume::Sender<DerpReadResult>,
         conn: Arc<Inner>,
     ) -> Self {
-        DerpHandler {
+        Actor {
             msg_receiver,
             msg_sender,
             conn,
@@ -1331,53 +1330,53 @@ impl DerpHandler {
                 msg = self.msg_receiver.recv_async() => {
                     debug!("tick: msg: {:?}", msg);
                     match msg? {
-                        DerpMessage::Shutdown => {
+                        ActorMessage::Shutdown => {
                             self.close_all_derp("conn-close").await;
                             return Ok(());
                         }
-                        DerpMessage::CloseAll(reason) => {
+                        ActorMessage::CloseAll(reason) => {
                             self.close_all_derp(reason).await;
                         }
-                        DerpMessage::Close(rid, reason) => {
+                        ActorMessage::Close(rid, reason) => {
                             self.close_derp(rid, reason).await;
                         }
-                        DerpMessage::CloseOrReconnect(rid, reason) => {
+                        ActorMessage::CloseOrReconnect(rid, reason) => {
                             self.close_or_reconnect_derp(rid, reason).await;
                         }
-                        DerpMessage::ReStun(reason) => {
+                        ActorMessage::ReStun(reason) => {
                             self.re_stun(reason).await;
                         }
-                        DerpMessage::Connected(rs) => {
+                        ActorMessage::Connected(rs) => {
                             recvs.push(rs.recv())
                         }
-                        DerpMessage::WriteRequest { port, pub_key, contents } => {
+                        ActorMessage::WriteRequest { port, pub_key, contents } => {
                             self.send(port, pub_key, contents).await;
                         }
-                        DerpMessage::EnqueueCallMeMaybe {
+                        ActorMessage::EnqueueCallMeMaybe {
                             derp_addr,
                             endpoint,
                         } => {
                             self.enqueue_call_me_maybe(derp_addr, endpoint).await;
                         }
-                        DerpMessage::RebindAll(s) => {
+                        ActorMessage::RebindAll(s) => {
                             self.rebind_all().await;
                             let _ = s.send(());
                         }
-                        DerpMessage::SetPreferredPort(port, s) => {
+                        ActorMessage::SetPreferredPort(port, s) => {
                             self.set_preferred_port(port).await;
                             let _ = s.send(());
                         }
-                        DerpMessage::SendDiscoMessage {
+                        ActorMessage::SendDiscoMessage {
                             dst, dst_key, dst_disco, msg, s
                         } => {
                             let res = self.send_disco_message(dst, dst_key, dst_disco, msg).await;
                             let _ = s.send(res);
                         }
-                        DerpMessage::SetNetworkMap(nm, s) => {
+                        ActorMessage::SetNetworkMap(nm, s) => {
                             self.set_network_map(nm).await;
                             s.send(()).unwrap();
                         }
-                        DerpMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
+                        ActorMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
                             let res = self.handle_disco_message(&msg, src, derp_node_src.as_ref()).await;
                             let _ = s.send(res);
                         }
@@ -1612,7 +1611,7 @@ impl DerpHandler {
 
         let rs = ReaderState::new(region_id, cancel, dc.clone());
         self.msg_sender
-            .send_async(DerpMessage::Connected(rs))
+            .send_async(ActorMessage::Connected(rs))
             .await
             .unwrap();
         dc
@@ -1709,7 +1708,10 @@ impl DerpHandler {
             tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
                 if let Err(_err) = dc.ping().await {
                     msg_sender
-                        .send_async(DerpMessage::CloseOrReconnect(region_id, "rebind-ping-fail"))
+                        .send_async(ActorMessage::CloseOrReconnect(
+                            region_id,
+                            "rebind-ping-fail",
+                        ))
                         .await
                         .unwrap();
                     return;
@@ -2152,7 +2154,7 @@ impl DerpHandler {
                             endpoint.public_key
                         );
                         msg_sender
-                            .send_async(DerpMessage::EnqueueCallMeMaybe {
+                            .send_async(ActorMessage::EnqueueCallMeMaybe {
                                 derp_addr,
                                 endpoint,
                             })
@@ -2163,7 +2165,7 @@ impl DerpHandler {
             );
 
             self.msg_sender
-                .send_async(DerpMessage::ReStun("refresh-for-peering"))
+                .send_async(ActorMessage::ReStun("refresh-for-peering"))
                 .await
                 .unwrap();
         } else {
@@ -2175,7 +2177,7 @@ impl DerpHandler {
                 let (s, r) = sync::oneshot::channel();
 
                 if let Err(err) = msg_sender
-                    .send_async(DerpMessage::SendDiscoMessage {
+                    .send_async(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
                         dst_key: Some(endpoint.public_key.clone()),
                         dst_disco: endpoint.disco_key(),
