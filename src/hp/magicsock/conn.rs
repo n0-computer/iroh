@@ -1,15 +1,14 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
-    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -17,7 +16,7 @@ use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
 use futures::{
     future::{BoxFuture, OptionFuture},
-    Future, StreamExt, TryFutureExt,
+    StreamExt, TryFutureExt,
 };
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -122,7 +121,6 @@ pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
     derp_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    recv_fut: Arc<std::sync::Mutex<Option<flume::r#async::RecvFut<'static, DerpReadResult>>>>,
 }
 
 impl Deref for Conn {
@@ -173,6 +171,8 @@ pub struct Inner {
 
     /// Used for receiving DERP messages.
     derp_recv_ch: flume::Receiver<DerpReadResult>,
+    /// Stores wakers, to be called when derp_recv_ch receives new data.
+    derp_recv_wakers: std::sync::Mutex<VecDeque<Waker>>,
 
     // Used by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
     socket_endpoint4: SocketEndpointCache,
@@ -633,6 +633,7 @@ impl Conn {
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             derp_recv_ch: derp_recv_ch_receiver,
+            derp_recv_wakers: std::sync::Mutex::new(VecDeque::new()),
             derp_map: Default::default(),
             peer_map: Default::default(),
             disco_private,
@@ -654,7 +655,6 @@ impl Conn {
         let c = Conn {
             inner,
             derp_task: Arc::new(Mutex::new(Some(derp_task))),
-            recv_fut: Default::default(),
         };
 
         Ok(c)
@@ -1075,17 +1075,20 @@ impl AsyncUdpSocket for Conn {
 
         let mut i = num_msgs_total;
         if num_msgs_total < bufs.len() {
-            let mut recv_fut = self.recv_fut.lock().unwrap();
             while i < bufs.len() {
-                let mut fut = recv_fut
-                    .take()
-                    .unwrap_or_else(|| self.derp_recv_ch.clone().into_recv_async());
-                match Pin::new(&mut fut).poll(cx) {
-                    Poll::Pending => {
-                        *recv_fut = Some(fut);
+                match self.derp_recv_ch.try_recv() {
+                    Err(flume::TryRecvError::Empty) => {
+                        self.derp_recv_wakers
+                            .lock()
+                            .unwrap()
+                            .push_back(cx.waker().clone());
                         break;
                     }
-                    Poll::Ready(Ok(dm)) => {
+                    Err(flume::TryRecvError::Disconnected) => {
+                        warn!("failed to receive derp read result: no channel available");
+                        break;
+                    }
+                    Ok(dm) => {
                         if self.is_closed() {
                             break;
                         }
@@ -1099,10 +1102,6 @@ impl AsyncUdpSocket for Conn {
                         }
 
                         i += 1;
-                    }
-                    Poll::Ready(Err(err)) => {
-                        warn!("failed to receive derp read result: {:?}", err);
-                        break;
                     }
                 }
             }
@@ -1410,6 +1409,11 @@ impl DerpHandler {
                         ReadResult::Yield(read_result) => {
                             debug!("yielding read_result start");
                             self.derp_recv_sender.send_async(read_result).await.expect("missing recv sender");
+                            let mut wakers = self.conn.derp_recv_wakers.lock().unwrap();
+                            while let Some(waker) = wakers.pop_front() {
+                                waker.wake();
+                            }
+
                             recvs.push(rs.recv());
                             debug!("yielding read_result done");
                         }
