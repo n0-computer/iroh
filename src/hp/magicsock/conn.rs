@@ -395,7 +395,8 @@ impl Inner {
             }
             Some(pub_key) => {
                 // TODO: avoid clone
-                let contents = transmits.iter().map(|t| t.contents.clone()).collect();
+                let contents: Vec<_> = transmits.iter().map(|t| t.contents.clone()).collect();
+                let len = contents.len();
                 let res = self.derp_sender.try_send(ActorMessage::WriteRequest {
                     port: addr.port(),
                     pub_key: pub_key.clone(),
@@ -405,14 +406,18 @@ impl Inner {
                 match res {
                     Ok(_) => {
                         // metricSendDERPQueued.Add(1)
-                        return Poll::Ready(Ok(1));
+                        return Poll::Ready(Ok(len));
                     }
-                    Err(_) => {
+                    Err(flume::TrySendError::Full(_)) => {
+                        // TODO: wakers?
+                        return Poll::Pending;
+                    }
+                    Err(flume::TrySendError::Disconnected(_)) => {
                         // metricSendDERPErrorQueue.Add(1)
                         // Too many writes queued. Drop packet.
                         return Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::Other,
-                            "packet dropped",
+                            "disconnected",
                         )));
                     }
                 }
