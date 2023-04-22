@@ -15,7 +15,7 @@ use std::{
 
 use futures::future::BoxFuture;
 use tokio::{sync::Mutex, time::Instant};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     hp::{
@@ -169,7 +169,7 @@ impl Endpoint {
         let udp_addr = state.best_addr.as_ref().map(|a| a.addr);
         let mut derp_addr = None;
         if udp_addr.is_none() || !state.is_best_addr_valid(*now) {
-            error!(
+            debug!(
                 "no good udp addr {:?} {:?} - {:?}",
                 now, udp_addr, state.trust_best_addr_until
             );
@@ -324,7 +324,7 @@ impl Endpoint {
 
         let txid = stun::TransactionId::default();
         let this = self.clone();
-        error!("disco: sent ping [{}]", txid);
+        debug!("disco: sent ping [{}]", txid);
         state.sent_ping.insert(
             txid,
             SentPing {
@@ -779,7 +779,7 @@ impl Endpoint {
                     .map(|l| now - l > Duration::from_secs(2))
                     .unwrap_or(true);
 
-                error!(
+                debug!(
                     "needs ping {}: {:?} {:?}",
                     needs_ping,
                     ep_state.last_ping.map(|l| now - l),
@@ -804,7 +804,7 @@ impl Endpoint {
             )));
         }
 
-        error!(
+        debug!(
             "sending UDP: {}, DERP: {}",
             udp_addr.is_some(),
             derp_addr.is_some()
@@ -817,26 +817,19 @@ impl Endpoint {
             Poll::Pending
         };
         if let Some(derp_addr) = derp_addr {
-            let mut sent = 0;
-            for t in transmits.chunks_exact(1) {
-                match self.c.poll_send_addr(
-                    udp_state,
-                    cx,
-                    derp_addr,
-                    Some(&self.public_key),
-                    <&[quinn_proto::Transmit; 1]>::try_from(t).unwrap().into(),
-                ) {
-                    Poll::Pending => {}
-                    Poll::Ready(Ok(n)) => {
-                        sent += n;
-                    }
-                    Poll::Ready(Err(err)) => {
-                        warn!("failed to send {:?}", err);
+            match self
+                .c
+                .poll_send_addr(udp_state, cx, derp_addr, Some(&self.public_key), transmits)
+            {
+                Poll::Pending => {}
+                Poll::Ready(Ok(sent)) => {
+                    if sent == transmits.len() {
+                        return Poll::Ready(Ok(sent));
                     }
                 }
-            }
-            if sent == transmits.len() {
-                return Poll::Ready(Ok(sent));
+                Poll::Ready(Err(err)) => {
+                    warn!("failed to send {:?}", err);
+                }
             }
         }
 

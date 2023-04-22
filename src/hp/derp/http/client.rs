@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::hp::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
@@ -566,7 +566,7 @@ impl Client {
             match client.recv().await {
                 Ok(msg) => {
                     let region = self.current_region().await?;
-                    error!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
+                    debug!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
 
                     if let ReceivedMessage::Pong(ping) = msg {
                         if let Some(chan) = self.unregister_ping(ping).await {

@@ -14,7 +14,7 @@ use tokio::{
     io::Interest,
     sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -259,7 +259,7 @@ impl AsyncUdpSocket for UdpSocket {
                 inner.send(io.into(), state, transmits)
             }) {
                 for t in transmits.iter().take(res) {
-                    error!("[UDP] -> {} ({}b)", t.destination, t.contents.len());
+                    debug!("[UDP] -> {} ({}b)", t.destination, t.contents.len());
                 }
 
                 return Poll::Ready(Ok(res));
@@ -281,7 +281,7 @@ impl AsyncUdpSocket for UdpSocket {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
-                    error!("[UDP] <- {} ({}b)", meta.addr, meta.len);
+                    debug!("[UDP] <- {} ({}b)", meta.addr, meta.len);
                 }
 
                 return Poll::Ready(Ok(res));

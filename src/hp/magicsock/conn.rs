@@ -242,6 +242,7 @@ impl Inner {
 
     /// Handles deciding if a received UDP packet should be reported to the above layer or not.
     /// Returns `false` if this is an internal packet and it should not be reported.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn receive_ip(
         &self,
         b: &mut io::IoSliceMut<'_>,
@@ -291,6 +292,7 @@ impl Inner {
     }
 
     /// Returns `true` if the message was internal, `false` otherwise.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn process_derp_read_result(
         &self,
         dm: DerpReadResult,
@@ -371,16 +373,17 @@ impl Inner {
     /// The returned sent is whether a packet went out at all. An example of when they might
     /// be different: sending to an IPv6 address when the local machine doesn't have IPv6 support
     /// returns Ok(false); it's not an error, but nothing was sent.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn poll_send_addr(
         &self,
         udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
         addr: SocketAddr,
         pub_key: Option<&key::node::PublicKey>,
-        transmit: TransmitCow<'_>,
+        transmits: &[Transmit],
     ) -> Poll<io::Result<usize>> {
         if addr.ip() != DERP_MAGIC_IP {
-            return self.poll_send_udp(udp_state, cx, addr, transmit);
+            return self.poll_send_raw(udp_state, cx, addr, transmits);
         }
 
         match pub_key {
@@ -391,14 +394,12 @@ impl Inner {
                 )));
             }
             Some(pub_key) => {
-                let content = match transmit {
-                    TransmitCow::Borrowed(t) => t[0].contents.clone(),
-                    TransmitCow::Owned([t]) => t.contents,
-                };
+                // TODO: avoid clone
+                let contents = transmits.iter().map(|t| t.contents.clone()).collect();
                 let res = self.derp_sender.try_send(DerpMessage::WriteRequest {
                     port: addr.port(),
                     pub_key: pub_key.clone(),
-                    content,
+                    contents,
                 });
 
                 match res {
@@ -419,36 +420,13 @@ impl Inner {
         }
     }
 
-    fn poll_send_udp(
-        &self,
-        udp_state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        addr: SocketAddr,
-        transmit: TransmitCow<'_>,
-    ) -> Poll<io::Result<usize>> {
-        let mut transmit = transmit.to_owned();
-        transmit[0].destination = addr;
-        match addr {
-            SocketAddr::V4(_) => self.pconn4.poll_send(udp_state, cx, &transmit),
-            SocketAddr::V6(_) => {
-                if let Some(ref conn) = self.pconn6 {
-                    conn.poll_send(udp_state, cx, &transmit)
-                } else {
-                    Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "no IPv6 connection",
-                    )))
-                }
-            }
-        }
-    }
-
     /// Schedules a send of disco.CallMeMaybe to de via derpAddr
     /// once we know that our STUN endpoint is fresh.
     ///
     /// derp_addr is Endpoint.derp_addr at the time of send. It's assumed the peer won't be
     /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint: Endpoint) {
         self.derp_sender
             .send_async(DerpMessage::EnqueueCallMeMaybe {
@@ -459,6 +437,7 @@ impl Inner {
             .unwrap();
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn populate_cli_ping_response(
         &self,
         res: &mut cfg::PingResult,
@@ -475,6 +454,7 @@ impl Inner {
         res.derp_region_code = self.derp_region_code(region_id);
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     fn derp_region_code(&self, region_id: usize) -> String {
         match &*tokio::task::block_in_place(|| self.derp_map.blocking_read()) {
             Some(ref dm) => match dm.regions.get(&region_id) {
@@ -603,6 +583,7 @@ impl EndpointUpdateState {
 impl Conn {
     /// Creates a magic `Conn` listening on `opts.port`.
     /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
+    #[instrument(skip_all, fields(name))]
     pub async fn new(name: String, opts: Options) -> Result<Self> {
         let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
         let mut net_checker = netcheck::Client::default();
@@ -680,6 +661,7 @@ impl Conn {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn re_stun(&self, why: &'static str) {
         self.derp_sender
             .send_async(DerpMessage::ReStun(why))
@@ -687,6 +669,7 @@ impl Conn {
             .unwrap();
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let peer_map = self.peer_map.read().await;
         peer_map
@@ -842,12 +825,14 @@ impl Conn {
         Ok(())
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     async fn on_port_map_changed(&self) {
         self.re_stun("portmap-changed").await;
     }
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
     /// It should be followed by a call to ReSTUN.
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn rebind_all(&self) {
         // TODO: check all calls for responses.
         let (s, r) = sync::oneshot::channel();
@@ -1239,51 +1224,6 @@ where
     g(&transmits[start..end])
 }
 
-/// Hack around the usage of `&[Transmit]` in AsyncUdpSocket methods, to avoid copies.
-#[derive(Debug)]
-pub(super) enum TransmitCow<'a> {
-    Borrowed(&'a [Transmit; 1]),
-    Owned([Transmit; 1]),
-}
-
-impl TransmitCow<'_> {
-    fn to_owned(self) -> [Transmit; 1] {
-        match self {
-            Self::Borrowed([t]) => [Transmit {
-                destination: t.destination,
-                ecn: t.ecn,
-                contents: t.contents.clone(),
-                segment_size: t.segment_size,
-                src_ip: t.src_ip,
-            }],
-            Self::Owned(t) => t,
-        }
-    }
-}
-
-impl Deref for TransmitCow<'_> {
-    type Target = [Transmit];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            TransmitCow::Borrowed(t) => &t[..],
-            TransmitCow::Owned(t) => &t[..],
-        }
-    }
-}
-
-impl<'a> From<&'a [Transmit; 1]> for TransmitCow<'a> {
-    fn from(value: &'a [Transmit; 1]) -> Self {
-        TransmitCow::Borrowed(value)
-    }
-}
-
-impl From<Transmit> for TransmitCow<'_> {
-    fn from(value: Transmit) -> Self {
-        TransmitCow::Owned([value])
-    }
-}
-
 #[derive(Debug)]
 enum DerpMessage {
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
@@ -1297,7 +1237,7 @@ enum DerpMessage {
     WriteRequest {
         port: u16,
         pub_key: key::node::PublicKey,
-        content: Vec<u8>,
+        contents: Vec<Vec<u8>>,
     },
     EnqueueCallMeMaybe {
         derp_addr: SocketAddr,
@@ -1411,8 +1351,8 @@ impl DerpHandler {
                         DerpMessage::Connected(rs) => {
                             recvs.push(rs.recv())
                         }
-                        DerpMessage::WriteRequest { port, pub_key, content} => {
-                            self.send(port, pub_key, content).await;
+                        DerpMessage::WriteRequest { port, pub_key, contents } => {
+                            self.send(port, pub_key, contents).await;
                         }
                         DerpMessage::EnqueueCallMeMaybe {
                             derp_addr,
@@ -1422,17 +1362,17 @@ impl DerpHandler {
                         }
                         DerpMessage::RebindAll(s) => {
                             self.rebind_all().await;
-                            s.send(()).unwrap();
+                            let _ = s.send(());
                         }
                         DerpMessage::SetPreferredPort(port, s) => {
                             self.set_preferred_port(port).await;
-                            s.send(()).unwrap();
+                            let _ = s.send(());
                         }
                         DerpMessage::SendDiscoMessage {
                             dst, dst_key, dst_disco, msg, s
                         } => {
                             let res = self.send_disco_message(dst, dst_key, dst_disco, msg).await;
-                            s.send(res).unwrap();
+                            let _ = s.send(res);
                         }
                         DerpMessage::SetNetworkMap(nm, s) => {
                             self.set_network_map(nm).await;
@@ -1440,7 +1380,7 @@ impl DerpHandler {
                         }
                         DerpMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
                             let res = self.handle_disco_message(&msg, src, derp_node_src.as_ref()).await;
-                            s.send(res).unwrap();
+                            let _ = s.send(res);
                         }
                     }
                 }
@@ -1500,6 +1440,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn clean_stale_derp(&mut self) {
         debug!("cleanup {} derps", self.active_derp.len());
         let now = Instant::now();
@@ -1528,6 +1469,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn close_all_derp(&mut self, why: &'static str) {
         if self.active_derp.is_empty() {
             return;
@@ -1540,6 +1482,7 @@ impl DerpHandler {
         self.log_active_derp();
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn close_derp(&mut self, region_id: u16, why: &'static str) {
         if let Some(ad) = self.active_derp.remove(&region_id) {
             debug!(
@@ -1558,6 +1501,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn connect(
         &mut self,
         region_id: u16,
@@ -1670,7 +1614,8 @@ impl DerpHandler {
         dc
     }
 
-    async fn send(&mut self, port: u16, peer: key::node::PublicKey, content: Vec<u8>) {
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    async fn send(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
         let region_id = port;
         {
             let derp_map = self.conn.derp_map.read().await;
@@ -1690,20 +1635,23 @@ impl DerpHandler {
         }
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
-        match derp_client.send(peer, content).await {
-            Ok(_) => {
-                // TODO:
-                // metricSendDERP.Add(1)
-            }
-            Err(err) => {
-                warn!("derp.send: failed {:?}", err);
-                // TODO:
-                // metricSendDERPError.Add(1)
+        for content in contents {
+            match derp_client.send(peer.clone(), content).await {
+                Ok(_) => {
+                    // TODO:
+                    // metricSendDERP.Add(1)
+                }
+                Err(err) => {
+                    warn!("derp.send: failed {:?}", err);
+                    // TODO:
+                    // metricSendDERPError.Add(1)
+                }
             }
         }
     }
 
     /// Removes a DERP route entry previously added by add_derp_peer_route.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn remove_derp_peer_route(
         &mut self,
         peer: key::node::PublicKey,
@@ -1722,6 +1670,7 @@ impl DerpHandler {
 
     /// Adds a DERP route entry, noting that peer was seen on DERP node `derp_id`, at least on the
     /// connection identified by `dc`.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn add_derp_peer_route(
         &mut self,
         peer: key::node::PublicKey,
@@ -1733,6 +1682,7 @@ impl DerpHandler {
 
     /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
     /// and pings all those that do.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn maybe_close_derps_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
         let mut tasks = Vec::new();
         for (region_id, ad) in &self.active_derp {
@@ -1772,6 +1722,7 @@ impl DerpHandler {
 
     /// Closes the DERP connection to the provided `region_id` and starts reconnecting it if it's
     /// our current home DERP.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
         self.close_derp(region_id.into(), why).await;
         if self.conn.my_derp.load(Ordering::Relaxed) == region_id {
@@ -1780,6 +1731,7 @@ impl DerpHandler {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn re_stun(&mut self, why: &'static str) {
         // TODO:
         // metricReSTUNCalls.Add(1)
@@ -1801,6 +1753,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn update_endpoints(&mut self, why: &'static str) {
         // TODO:
         // metricUpdateEndpoints.Add(1)
@@ -1857,6 +1810,7 @@ impl DerpHandler {
         debug!("endpoint update done ({})", why);
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn should_do_periodic_re_stun(&self) -> bool {
         if let Some(ref f) = self.conn.idle_for {
             let idle_for = f();
@@ -1870,12 +1824,14 @@ impl DerpHandler {
         true
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn stop_periodic_re_stun_timer(&mut self) {
         self.periodic_re_stun_timer.take();
     }
 
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
         let mut portmap_ext = self
             .conn
@@ -1981,6 +1937,7 @@ impl DerpHandler {
     }
 
     /// Updates `NetInfo.HavePortMap` to true.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn set_net_info_have_port_map(&mut self) {
         if let Some(ref mut net_info_last) = self.net_info_last {
             if net_info_last.have_port_map {
@@ -1998,6 +1955,7 @@ impl DerpHandler {
     /// since the last state.
     ///
     /// callNetInfoCallback takes ownership of ni.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn call_net_info_callback(&mut self, ni: cfg::NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
@@ -2008,6 +1966,7 @@ impl DerpHandler {
         self.call_net_info_callback_locked(ni);
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn call_net_info_callback_locked(&mut self, ni: cfg::NetInfo) {
         self.net_info_last = Some(ni.clone());
         if let Some(ref on_net_info) = self.conn.on_net_info {
@@ -2016,6 +1975,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
         let dm = self.conn.derp_map.read().await.clone();
         if dm.is_none() {
@@ -2088,6 +2048,7 @@ impl DerpHandler {
     /// Returns a non-zero but deterministic DERP node to
     /// connect to. This is only used if netcheck couldn't find the nearest one
     /// For instance, if UDP is blocked and thus STUN latency checks aren't working
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn pick_derp_fallback(&self) -> usize {
         let derp_map = self.conn.derp_map.read().await;
         if derp_map.is_none() {
@@ -2122,11 +2083,13 @@ impl DerpHandler {
     }
 
     /// Sets a STUN packet processing func that does nothing.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn ignore_stun_packets(&self) {
         *self.conn.on_stun_receive.write().await = None;
     }
 
     /// Records the new endpoints, reporting whether they're changed.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn set_endpoints(&mut self, endpoints: &[cfg::Endpoint]) -> bool {
         let any_stun = endpoints.iter().any(|ep| ep.typ == cfg::EndpointType::Stun);
 
@@ -2161,6 +2124,7 @@ impl DerpHandler {
         true
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint: Endpoint) {
         if self.last_endpoints_time.is_none()
             || self.last_endpoints_time.as_ref().unwrap().elapsed()
@@ -2227,6 +2191,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind_all(&mut self) {
         // TODO:
         // metricRebindCalls.Add(1)
@@ -2242,6 +2207,7 @@ impl DerpHandler {
 
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn reset_endpoint_states(&self) {
         let peer_map = self.conn.peer_map.read().await;
         for ep in peer_map.endpoints() {
@@ -2251,6 +2217,7 @@ impl DerpHandler {
 
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind(&self, cur_port_fate: CurrentPortFate) -> Result<()> {
         let port = self.conn.local_port().await;
         if let Some(ref conn) = self.conn.pconn6 {
@@ -2272,6 +2239,7 @@ impl DerpHandler {
         Ok(())
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     pub async fn set_preferred_port(&self, port: u16) {
         let existing_port = self.conn.port.swap(port, Ordering::Relaxed);
         if existing_port == port {
@@ -2285,6 +2253,7 @@ impl DerpHandler {
         self.reset_endpoint_states().await;
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         if self.conn.derp_map.read().await.is_none() {
             self.conn.my_derp.store(0, Ordering::Relaxed);
@@ -2332,6 +2301,7 @@ impl DerpHandler {
         true
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_disco_message(
         &mut self,
         dst: SocketAddr,
@@ -2369,14 +2339,13 @@ impl DerpHandler {
                 cx,
                 dst,
                 dst_key.as_ref(),
-                quinn_proto::Transmit {
+                &[quinn_proto::Transmit {
                     destination: dst,
                     contents: pkt.clone(), // TODO: avoid
                     ecn: None,
                     segment_size: None, // TODO: make sure this is correct
                     src_ip: None,       // TODO
-                }
-                .into(),
+                }],
             )
         })
         .await;
@@ -2410,6 +2379,7 @@ impl DerpHandler {
     }
 
     /// Returns the previous or new DiscoInfo for `k`.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn get_disco_info<'a>(
         &'a mut self,
         disco_private: &key::disco::SecretKey,
@@ -2444,6 +2414,7 @@ impl DerpHandler {
     ///
     /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
     /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn handle_disco_message(
         &mut self,
         msg: &[u8],
@@ -2606,6 +2577,7 @@ impl DerpHandler {
 
     /// di is the DiscoInfo of the source of the ping.
     /// derp_node_src is non-zero if the ping arrived via DERP.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn handle_ping(
         &mut self,
         dm: disco::Ping,
@@ -2743,6 +2715,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn set_network_map(&mut self, nm: netmap::NetworkMap) {
         if self.conn.is_closed() {
             return;
@@ -2821,6 +2794,7 @@ impl DerpHandler {
             .retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn derp_region_code_of_addr(&self, ip_port: &str) -> String {
         let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
         match addr {
@@ -2832,6 +2806,7 @@ impl DerpHandler {
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn derp_region_code_of_id(&self, region_id: usize) -> String {
         if let Some(ref dm) = &*self.conn.derp_map.read().await {
             if let Some(r) = dm.regions.get(&region_id) {
@@ -3078,6 +3053,7 @@ mod tests {
     use hyper::server::conn::Http;
     use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
+    use tracing::{debug_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
@@ -3526,84 +3502,98 @@ mod tests {
 
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
-                let b_task = tokio::task::spawn(async move {
-                    println!("[{}] accepting conn", b_name);
-                    let conn = b.quic_ep.accept().await.expect("no conn");
-                    println!("[{}] connecting", b_name);
-                    let conn = conn
-                        .await
-                        .with_context(|| format!("[{}] connecting", b_name))?;
-                    println!("[{}] accepting bi", b_name);
-                    let (mut send_bi, recv_bi) = conn
-                        .accept_bi()
-                        .await
-                        .with_context(|| format!("[{}] accepting bi", b_name))?;
+                let b_span = debug_span!("receiver", b_name, %b_addr);
+                let b_task = tokio::task::spawn(
+                    async move {
+                        println!("[{}] accepting conn", b_name);
+                        let conn = b.quic_ep.accept().await.expect("no conn");
+                        println!("[{}] connecting", b_name);
+                        let conn = conn
+                            .await
+                            .with_context(|| format!("[{}] connecting", b_name))?;
+                        println!("[{}] accepting bi", b_name);
+                        let (mut send_bi, recv_bi) = conn
+                            .accept_bi()
+                            .await
+                            .with_context(|| format!("[{}] accepting bi", b_name))?;
 
-                    println!("[{}] reading", b_name);
-                    let val = recv_bi
-                        .read_to_end(usize::MAX)
+                        println!("[{}] reading", b_name);
+                        let val = recv_bi
+                            .read_to_end(usize::MAX)
+                            .await
+                            .with_context(|| format!("[{}] reading to end", b_name))?;
+
+                        println!("[{}] replying", b_name);
+                        for chunk in val.chunks(12) {
+                            send_bi
+                                .write_all(chunk)
+                                .await
+                                .with_context(|| format!("[{}] sending chunk", b_name))?;
+                        }
+
+                        println!("[{}] finishing", b_name);
+                        send_bi
+                            .finish()
+                            .await
+                            .with_context(|| format!("[{}] finishing", b_name))?;
+
+                        println!("[{}] close", b_name);
+                        conn.close(0u32.into(), b"done");
+                        println!("[{}] closed", b_name);
+
+                        Ok::<_, anyhow::Error>(())
+                    }
+                    .instrument(b_span),
+                );
+
+                let a_span = debug_span!("sender", a_name, %a_addr);
+                async move {
+                    println!("[{}] connecting to {}", a_name, b_addr);
+                    let conn = a
+                        .quic_ep
+                        .connect(b_addr, "localhost")?
                         .await
-                        .with_context(|| format!("[{}] reading to end", b_name))?;
-                    println!("[{}] finishing", b_name);
+                        .with_context(|| format!("[{}] connect", a_name))?;
+
+                    println!("[{}] opening bi", a_name);
+                    let (mut send_bi, recv_bi) = conn
+                        .open_bi()
+                        .await
+                        .with_context(|| format!("[{}] open bi", a_name))?;
+                    println!("[{}] writing message", a_name);
+                    send_bi
+                        .write_all(&$msg[..])
+                        .await
+                        .with_context(|| format!("[{}] write all", a_name))?;
+
+                    println!("[{}] finishing", a_name);
                     send_bi
                         .finish()
                         .await
-                        .with_context(|| format!("[{}] finishing", b_name))?;
+                        .with_context(|| format!("[{}] finish", a_name))?;
 
-                    println!("[{}] close", b_name);
+                    println!("[{}] reading_to_end", a_name);
+                    let val = recv_bi
+                        .read_to_end(usize::MAX)
+                        .await
+                        .with_context(|| format!("[{}]", a_name))?;
+                    anyhow::ensure!(
+                        val == $msg,
+                        "expected {}, got {}",
+                        hex::encode($msg),
+                        hex::encode(val)
+                    );
+
+                    println!("[{}] close", a_name);
                     conn.close(0u32.into(), b"done");
-                    println!("[{}] closed", b_name);
-
-                    Ok::<_, anyhow::Error>(val)
-                });
-
-                println!("[{}] connecting to {}", a_name, b_addr);
-                let conn = a
-                    .quic_ep
-                    .connect(b_addr, "localhost")?
-                    .await
-                    .with_context(|| format!("[{}] connect", a_name))?;
-
-                println!("[{}] opening bi", a_name);
-                let (mut send_bi, recv_bi) = conn
-                    .open_bi()
-                    .await
-                    .with_context(|| format!("[{}] open bi", a_name))?;
-                println!("[{}] writing message", a_name);
-                send_bi
-                    .write_all(&$msg[..])
-                    .await
-                    .with_context(|| format!("[{}] write all", a_name))?;
-
-                println!("[{}] finishing", a_name);
-                send_bi
-                    .finish()
-                    .await
-                    .with_context(|| format!("[{}] finish", a_name))?;
-
-                println!("[{}] reading_to_end", a_name);
-                let _ = recv_bi
-                    .read_to_end(usize::MAX)
-                    .await
-                    .with_context(|| format!("[{}]", a_name))?;
-                println!("[{}] close", a_name);
-                conn.close(0u32.into(), b"done");
-                println!("[{}] wait idle", a_name);
-                a.quic_ep.wait_idle().await;
-
-                drop(send_bi);
-
-                // make sure the right values arrived
-                println!("[{}] waiting for channel", a_name);
-                let val = b_task.await??;
-                anyhow::ensure!(
-                    val == $msg,
-                    "expected {}, got {}",
-                    hex::encode($msg),
-                    hex::encode(val)
-                );
-
-                // tokio::time::sleep(Duration::from_secs(1)).await;
+                    println!("[{}] wait idle", a_name);
+                    a.quic_ep.wait_idle().await;
+                    println!("[{}] waiting for channel", a_name);
+                    b_task.await??;
+                    Ok(())
+                }
+                .instrument(a_span)
+                .await?;
             };
         }
 
@@ -3616,12 +3606,65 @@ mod tests {
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
             roundtrip!(m1, m2, data);
+
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
             roundtrip!(m2, m1, data);
         }
 
         println!("cleaning up");
         cleanup();
         cleanup_mesh();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_devices_setup_teardown() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        let devices = Devices {
+            stun_ip: "127.0.0.1".parse()?,
+        };
+
+        for _ in 0..10 {
+            let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+
+            let m1 = MagicStack::new(derp_map.clone()).await?;
+            let m2 = MagicStack::new(derp_map.clone()).await?;
+
+            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+
+            // Wait for magicsock to be told about peers from mesh_stacks.
+            let m1t = m1.clone();
+            let m2t = m2.clone();
+            time::timeout(Duration::from_secs(10), async move {
+                loop {
+                    let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                    let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                    if ab && ba {
+                        break;
+                    }
+                }
+            })
+            .await
+            .context("failed to connect peers")?;
+
+            m1.quic_ep.close(0u32.into(), b"done");
+            m2.quic_ep.close(0u32.into(), b"done");
+
+            m1.conn.close().await?;
+            m2.conn.close().await?;
+            assert!(m1.conn.is_closed());
+            assert!(m2.conn.is_closed());
+
+            println!("cleaning up");
+            cleanup();
+            cleanup_mesh();
+        }
         Ok(())
     }
 
@@ -3758,8 +3801,6 @@ mod tests {
                     hex::encode($msg),
                     hex::encode(val)
                 );
-
-                // tokio::time::sleep(Duration::from_secs(1)).await;
             };
         }
 

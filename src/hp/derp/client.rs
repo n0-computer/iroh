@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
@@ -73,7 +73,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Vec<u8>) -> Result<()> {
-        error!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
+        debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
 
         self.inner
             .writer_channel
