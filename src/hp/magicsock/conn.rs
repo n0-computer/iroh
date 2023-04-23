@@ -151,13 +151,10 @@ pub struct Inner {
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
 
+    enable_stun_packets: AtomicBool,
+
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
-
-    /// Holds the current STUN packet processing func.
-    on_stun_receive: RwLock<
-        Option<Box<dyn Fn(&[u8], SocketAddr) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
-    >,
 
     /// Used for receiving DERP messages.
     derp_recv_ch: flume::Receiver<DerpReadResult>,
@@ -244,11 +241,7 @@ impl Inner {
         let b = &b[..meta.len];
         if stun::is(b) {
             debug!("received STUN message {}", b.len());
-            if let Some(ref f) =
-                &*tokio::task::block_in_place(|| self.on_stun_receive.blocking_read())
-            {
-                f(b, meta.addr);
-            }
+            self.on_stun_receive(b, meta.addr);
             return false;
         }
         if self.handle_disco_message(b.to_vec(), meta.addr, None) {
@@ -279,6 +272,16 @@ impl Inner {
         debug!("received passthrough message {}", b.len());
 
         true
+    }
+
+    fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
+        if self.enable_stun_packets.load(Ordering::Relaxed) {
+            let packet = packet.to_vec();
+            let net_checker = self.net_checker.clone();
+            tokio::task::spawn(async move {
+                net_checker.receive_stun_packet(&packet, addr).await;
+            });
+        }
     }
 
     /// Returns `true` if the message was internal, `false` otherwise.
@@ -612,6 +615,7 @@ impl Conn {
             port: AtomicU16::new(port),
             port_mapper,
             net_checker,
+            enable_stun_packets: AtomicBool::new(false),
             public_key: private_key.public_key().into(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
@@ -619,7 +623,6 @@ impl Conn {
             pconn6,
             socket_endpoint4: SocketEndpointCache::default(),
             socket_endpoint6: SocketEndpointCache::default(),
-            on_stun_receive: Default::default(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             derp_recv_ch: derp_recv_ch_receiver,
@@ -1948,14 +1951,7 @@ impl Actor {
 
         let report = time::timeout(Duration::from_secs(4), async move {
             let dm = dm.unwrap();
-            let net_checker = conn.net_checker.clone();
-            *conn.on_stun_receive.write().await = Some(Box::new(move |a, b| {
-                let a = a.to_vec(); // :(
-                let net_checker = net_checker.clone();
-                Box::pin(async move {
-                    net_checker.receive_stun_packet(&a, b).await;
-                })
-            }));
+            conn.enable_stun_packets.store(true, Ordering::Relaxed);
             let report = conn.net_checker.get_report(&dm).await?;
             *conn.last_net_check_report.write().await = Some(report.clone());
             Ok::<_, anyhow::Error>(report)
@@ -2047,7 +2043,9 @@ impl Actor {
     /// Sets a STUN packet processing func that does nothing.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn ignore_stun_packets(&self) {
-        *self.conn.on_stun_receive.write().await = None;
+        self.conn
+            .enable_stun_packets
+            .store(false, Ordering::Relaxed);
     }
 
     /// Records the new endpoints, reporting whether they're changed.
@@ -2754,21 +2752,6 @@ impl Actor {
         // discokeys might have changed in the above. Discard unused info.
         self.disco_info
             .retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn derp_region_code_of_addr(&self, ip_port: &str) -> Option<String> {
-        let addr: SocketAddr = ip_port.parse().ok()?;
-        let region_id = usize::from(addr.port());
-        self.derp_region_code_of_id(region_id).await
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn derp_region_code_of_id(&self, region_id: usize) -> Option<String> {
-        let dm = &*self.conn.derp_map.read().await;
-        let dm = dm.as_ref()?;
-        let r = dm.regions.get(&region_id)?;
-        Some(r.region_code.clone())
     }
 
     fn log_active_derp(&self) {
