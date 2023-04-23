@@ -2101,7 +2101,7 @@ impl Actor {
                     Box::pin(async move {
                         info!(
                             "STUN done; sending call-me-maybe to {:?} {:?}",
-                            endpoint.disco_key(),
+                            endpoint.disco_key().await,
                             endpoint.public_key
                         );
                         msg_sender
@@ -2131,7 +2131,7 @@ impl Actor {
                     .send_async(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
                         dst_key: Some(endpoint.public_key.clone()),
-                        dst_disco: endpoint.disco_key(),
+                        dst_disco: endpoint.disco_key().await,
                         msg,
                         s,
                     })
@@ -2504,7 +2504,7 @@ impl Actor {
                     return true;
                 }
                 let ep = ep.unwrap().clone();
-                let ep_disco_key = ep.disco_key();
+                let ep_disco_key = ep.disco_key().await;
                 if ep_disco_key != di_disco_key {
                     // metricRecvDiscoCallMeMaybeBadDisco.Add(1)
                     debug!("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source");
@@ -2608,14 +2608,14 @@ impl Actor {
         let mut dup = false;
         if let Some(ref dst_key) = dst_key {
             if let Some(ep) = peer_map.endpoint_for_node_key(dst_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id) {
+                if ep.add_candidate_endpoint(src, dm.tx_id).await {
                     return;
                 }
                 num_nodes = 1;
             }
         } else {
             for ep in peer_map.endpoints_with_disco_key(&di.disco_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id) {
+                if ep.add_candidate_endpoint(src, dm.tx_id).await {
                     dup = true;
                     break;
                 }
@@ -2705,7 +2705,7 @@ impl Actor {
         let mut peer_map = self.conn.peer_map.write().await;
         for n in &self.net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
-                let old_disco_key = ep.disco_key();
+                let old_disco_key = ep.disco_key().await;
                 ep.update_from_node(n).await;
                 peer_map.upsert_endpoint(ep, Some(&old_disco_key)).await; // maybe update discokey mappings in peerMap
                 continue;

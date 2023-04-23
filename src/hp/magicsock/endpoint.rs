@@ -13,8 +13,9 @@ use std::{
     time::Duration,
 };
 
+use async_lock::Mutex;
 use futures::future::BoxFuture;
-use tokio::{sync::Mutex, time::Instant};
+use tokio::time::Instant;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -42,7 +43,7 @@ impl Debug for Endpoint {
             f,
             "MagicsockEndpoint({}, {})",
             crate::util::encode(&self.public_key),
-            crate::util::encode(self.disco_key())
+            crate::util::encode(&self.state.lock_blocking().disco_key),
         )
     }
 }
@@ -53,7 +54,7 @@ impl Display for Endpoint {
             f,
             "MagicsockEndpoint({}, {})",
             crate::util::encode(&self.public_key),
-            crate::util::encode(self.disco_key())
+            crate::util::encode(&self.state.lock_blocking().disco_key),
         )
     }
 }
@@ -66,7 +67,8 @@ impl Hash for Endpoint {
 
 impl PartialEq for Endpoint {
     fn eq(&self, other: &Self) -> bool {
-        self.public_key == other.public_key && self.disco_key() == other.disco_key()
+        self.public_key == other.public_key
+            && self.state.lock_blocking().disco_key == other.state.lock_blocking().disco_key
     }
 }
 
@@ -153,10 +155,8 @@ impl Endpoint {
         format!("ep-{}-{}", self.c.name, &hex::encode(&self.public_key)[..8])
     }
 
-    pub fn disco_key(&self) -> key::disco::PublicKey {
-        tokio::task::block_in_place(|| self.state.blocking_lock())
-            .disco_key
-            .clone()
+    pub async fn disco_key(&self) -> key::disco::PublicKey {
+        self.state.lock().await.disco_key.clone()
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
@@ -339,7 +339,7 @@ impl Endpoint {
 
         let this = self.clone();
         tokio::task::spawn(async move {
-            let disco_key = this.disco_key();
+            let disco_key = this.disco_key().await;
             this.send_disco_ping(ep, &disco_key, txid).await;
         });
     }
@@ -472,12 +472,12 @@ impl Endpoint {
     ///
     /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
     #[instrument(skip_all, fields(self.name = %self.name()))]
-    pub fn add_candidate_endpoint(
+    pub async fn add_candidate_endpoint(
         &self,
         ep: SocketAddr,
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
-        let state = &mut *tokio::task::block_in_place(|| self.state.blocking_lock());
+        let state = &mut *self.state.lock().await;
 
         if let Some(st) = state.endpoint_state.get_mut(&ep) {
             let duplicate_ping = for_rx_ping_tx_id == st.last_got_ping_tx_id;
@@ -754,7 +754,7 @@ impl Endpoint {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+        let mut state = self.state.lock_blocking();
 
         if state.expired {
             return Poll::Ready(Err(io::Error::new(
