@@ -171,7 +171,9 @@ pub struct Inner {
     no_v4_send: AtomicBool,
 
     pub(super) public_key: key::node::PublicKey,
-    last_net_check_report: RwLock<Option<Arc<netcheck::Report>>>,
+
+    /// If the last netcheck report, reports IPv6 to be available.
+    ipv6_reported: AtomicBool,
 
     /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
@@ -617,7 +619,7 @@ impl Conn {
             net_checker,
             enable_stun_packets: AtomicBool::new(false),
             public_key: private_key.public_key().into(),
-            last_net_check_report: Default::default(),
+            ipv6_reported: AtomicBool::new(false),
             no_v4_send: AtomicBool::new(false),
             pconn4,
             pconn6,
@@ -1544,13 +1546,7 @@ impl Actor {
         let dc = derp::http::ClientBuilder::new()
             .address_family_selector(move || {
                 let conn = conn0.clone();
-                Box::pin(async move {
-                    // TODO: use atomic read?
-                    if let Some(r) = &*conn.last_net_check_report.read().await {
-                        return r.ipv6;
-                    }
-                    false
-                })
+                Box::pin(async move { conn.ipv6_reported.load(Ordering::Relaxed) })
             })
             .can_ack_pings(true)
             .is_preferred(my_derp == region_id)
@@ -1953,7 +1949,7 @@ impl Actor {
             let dm = dm.unwrap();
             conn.enable_stun_packets.store(true, Ordering::Relaxed);
             let report = conn.net_checker.get_report(&dm).await?;
-            *conn.last_net_check_report.write().await = Some(report.clone());
+            conn.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
             Ok::<_, anyhow::Error>(report)
         })
         .await??;
