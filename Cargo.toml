@@ -21,14 +21,14 @@ blake3 = "1.3.3"
 bytes = "1.4"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
-crypto_box = { version = "0.8", features = ["serde"] }
-curve25519-dalek = "=4.0.0-rc.1"
+crypto_box = { version = "0.9.0-pre", features = ["serde"] }
+curve25519-dalek = "=4.0.0-rc.2"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.14.1"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = "0.99.17"
 dirs-next = "2.0.0"
-ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
+ed25519-dalek = { version = "=2.0.0-rc.2", features = ["serde", "rand_core"] }
 flume = "0.10.14"
 futures = "0.3.25"
 governor = "0.5.1"
@@ -126,3 +126,7 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
+[patch.crates-io]
+crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
+ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
+#curve25519-dalek = { git = "https://github.com/dalek-cryptography/curve25519-dalek", branch = "main" }
