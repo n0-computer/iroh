@@ -138,7 +138,7 @@ impl Debug for Inner {
 }
 
 pub struct Inner {
-    derp_sender: flume::Sender<ActorMessage>,
+    actor_sender: flume::Sender<ActorMessage>,
     pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
@@ -216,7 +216,7 @@ impl Inner {
     ) -> Result<bool> {
         let (s, r) = sync::oneshot::channel();
 
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::SendDiscoMessage {
                 dst,
                 dst_key: dst_key.cloned(),
@@ -347,7 +347,7 @@ impl Inner {
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         let (s, r) = sync::oneshot::channel();
-        self.derp_sender
+        self.actor_sender
             .send(ActorMessage::HandleDiscoMessage {
                 msg,
                 src,
@@ -393,7 +393,7 @@ impl Inner {
                 // TODO: avoid clone
                 let contents: Vec<_> = transmits.iter().map(|t| t.contents.clone()).collect();
                 let len = contents.len();
-                let res = self.derp_sender.try_send(ActorMessage::WriteRequest {
+                let res = self.actor_sender.try_send(ActorMessage::DerpWriteRequest {
                     port: addr.port(),
                     pub_key: pub_key.clone(),
                     contents,
@@ -429,7 +429,7 @@ impl Inner {
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint: Endpoint) {
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::EnqueueCallMeMaybe {
                 derp_addr,
                 endpoint,
@@ -634,7 +634,7 @@ impl Conn {
             peer_map: Default::default(),
             disco_private,
             private_key,
-            derp_sender: derp_sender.clone(),
+            actor_sender: derp_sender.clone(),
             my_derp: AtomicU16::new(0),
         });
 
@@ -658,7 +658,7 @@ impl Conn {
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn re_stun(&self, why: &'static str) {
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::ReStun(why))
             .await
             .unwrap();
@@ -715,7 +715,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_preferred_port(&self, port: u16) {
         let (s, r) = sync::oneshot::channel();
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::SetPreferredPort(port, s))
             .await
             .unwrap();
@@ -734,7 +734,7 @@ impl Conn {
         let derp_map = derp_map_locked.clone();
         drop(derp_map_locked); // clone and unlock
         if derp_map.is_none() {
-            self.derp_sender
+            self.actor_sender
                 .send_async(ActorMessage::CloseAll("derp-disabled"))
                 .await
                 .unwrap();
@@ -754,7 +754,7 @@ impl Conn {
                 if u16::try_from(rid).expect("region too large") == self.my_derp() {
                     self.my_derp.store(0, Ordering::Relaxed);
                 }
-                self.derp_sender
+                self.actor_sender
                     .send_async(ActorMessage::Close(
                         rid.try_into().expect("region too large"),
                         "derp-region-redefined",
@@ -777,7 +777,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn set_network_map(&self, nm: netmap::NetworkMap) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::SetNetworkMap(nm, s))
             .await?;
         r.await?;
@@ -805,7 +805,7 @@ impl Conn {
 
         self.closed.store(true, Ordering::SeqCst);
         // c.connCtxCancel()
-        self.derp_sender.send_async(ActorMessage::Shutdown).await?;
+        self.actor_sender.send_async(ActorMessage::Shutdown).await?;
         // Ignore errors from c.pconnN.Close.
         // They will frequently have been closed already by a call to connBind.Close.
         if let Some(ref conn) = self.pconn6 {
@@ -831,7 +831,7 @@ impl Conn {
     pub async fn rebind_all(&self) {
         // TODO: check all calls for responses.
         let (s, r) = sync::oneshot::channel();
-        self.derp_sender
+        self.actor_sender
             .send_async(ActorMessage::RebindAll(s))
             .await
             .unwrap();
@@ -1228,7 +1228,7 @@ enum ActorMessage {
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     Connected(ReaderState),
-    WriteRequest {
+    DerpWriteRequest {
         port: u16,
         pub_key: key::node::PublicKey,
         contents: Vec<Vec<u8>>,
@@ -1345,8 +1345,8 @@ impl Actor {
                         ActorMessage::Connected(rs) => {
                             recvs.push(rs.recv())
                         }
-                        ActorMessage::WriteRequest { port, pub_key, contents } => {
-                            self.send(port, pub_key, contents).await;
+                        ActorMessage::DerpWriteRequest { port, pub_key, contents } => {
+                            self.send_derp(port, pub_key, contents).await;
                         }
                         ActorMessage::EnqueueCallMeMaybe {
                             derp_addr,
@@ -1605,7 +1605,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn send(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
+    async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
         let region_id = port;
         {
             let derp_map = self.conn.derp_map.read().await;
@@ -2289,23 +2289,7 @@ impl Actor {
         // }
 
         let pkt = disco::encode_message(&self.conn.disco_public(), seal);
-        let udp_state = quinn_udp::UdpState::default(); // TODO: store
-        let sent = futures::future::poll_fn(move |cx| {
-            self.conn.poll_send_addr(
-                &udp_state,
-                cx,
-                dst,
-                dst_key.as_ref(),
-                &[quinn_proto::Transmit {
-                    destination: dst,
-                    contents: pkt.clone(), // TODO: avoid
-                    ecn: None,
-                    segment_size: None, // TODO: make sure this is correct
-                    src_ip: None,       // TODO
-                }],
-            )
-        })
-        .await;
+        let sent = self.send_addr(dst, dst_key.as_ref(), pkt).await;
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
@@ -2331,6 +2315,43 @@ impl Actor {
             Err(err) => {
                 warn!("disco: failed to send {:?} to {}: {:?}", msg, dst, err);
                 Err(err.into())
+            }
+        }
+    }
+
+    /// Sends either to UDP or DERP, depending on the IP.
+    async fn send_addr(
+        &mut self,
+        addr: SocketAddr,
+        pub_key: Option<&key::node::PublicKey>,
+        pkt: Vec<u8>,
+    ) -> io::Result<usize> {
+        if addr.ip() != DERP_MAGIC_IP {
+            let udp_state = quinn_udp::UdpState::default(); // TODO: store
+            let transmits = [Transmit {
+                destination: addr,
+                contents: pkt,
+                ecn: None,
+                segment_size: None, // TODO: make sure this is correct
+                src_ip: None,       // TODO
+            }];
+            return futures::future::poll_fn(move |cx| {
+                self.conn.poll_send_raw(&udp_state, cx, addr, &transmits)
+            })
+            .await;
+        }
+
+        match pub_key {
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "missing pub key for derp route",
+                ));
+            }
+            Some(pub_key) => {
+                self.send_derp(addr.port(), pub_key.clone(), vec![pkt])
+                    .await;
+                Ok(1)
             }
         }
     }
