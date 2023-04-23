@@ -13,12 +13,13 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
+use async_lock::RwLock;
 use backoff::backoff::Backoff;
 use futures::{future::BoxFuture, StreamExt, TryFutureExt};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
-    sync::{self, Mutex, RwLock},
+    sync::{self, Mutex},
     task::JoinHandle,
     time,
 };
@@ -253,7 +254,7 @@ impl Inner {
         if let Some(de) = cache.get(&meta.addr) {
             meta.addr = de.fake_wg_addr;
         } else {
-            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            let peer_map = self.peer_map.read_blocking();
             match peer_map.endpoint_for_ip_port(&meta.addr) {
                 None => {
                     debug!("no peer_map state found for {}", meta.addr);
@@ -311,7 +312,7 @@ impl Inner {
         }
 
         let ep_fake_wg_addr = {
-            let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+            let peer_map = self.peer_map.read_blocking();
             peer_map
                 .endpoint_for_node_key(&dm.src)
                 .map(|ep| ep.fake_wg_addr)
@@ -456,7 +457,7 @@ impl Inner {
 
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn derp_region_code(&self, region_id: usize) -> Option<String> {
-        let dm = tokio::task::block_in_place(|| self.derp_map.blocking_read());
+        let dm = self.derp_map.read_blocking();
         let dm: &DerpMap = dm.as_ref()?;
         let dr = dm.regions.get(&region_id)?;
         Some(dr.region_code.clone())
@@ -946,7 +947,7 @@ impl AsyncUdpSocket for Conn {
             |a, b| a.destination == b.destination,
             |group| {
                 let dest = &group[0].destination;
-                let peer_map = tokio::task::block_in_place(|| self.peer_map.blocking_read());
+                let peer_map = self.peer_map.read_blocking();
                 match peer_map.endpoint_for_ip_port(dest) {
                     Some(ep) => match ep.poll_send(udp_state, cx, &group) {
                         Poll::Pending => None,
@@ -3574,13 +3575,14 @@ mod tests {
 
         for _ in 0..10 {
             let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
-
+            println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
             let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
             // Wait for magicsock to be told about peers from mesh_stacks.
+            println!("waiting for connection");
             let m1t = m1.clone();
             let m2t = m2.clone();
             time::timeout(Duration::from_secs(10), async move {
@@ -3595,9 +3597,11 @@ mod tests {
             .await
             .context("failed to connect peers")?;
 
+            println!("closing endpoints");
             m1.quic_ep.close(0u32.into(), b"done");
             m2.quic_ep.close(0u32.into(), b"done");
 
+            println!("closing connection");
             m1.conn.close().await?;
             m2.conn.close().await?;
             assert!(m1.conn.is_closed());
@@ -3610,7 +3614,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
