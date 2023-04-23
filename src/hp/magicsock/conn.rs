@@ -14,10 +14,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
-use futures::{
-    future::{BoxFuture, OptionFuture},
-    StreamExt, TryFutureExt,
-};
+use futures::{future::BoxFuture, StreamExt, TryFutureExt};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -32,9 +29,7 @@ use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
         derp::{self, DerpMap},
-        disco, key,
-        magicsock::SESSION_ACTIVE_TIMEOUT,
-        netcheck, netmap, portmapper, stun,
+        disco, key, netcheck, netmap, portmapper, stun,
     },
     net::ip::LocalAddresses,
 };
@@ -92,9 +87,6 @@ pub struct Options {
     /// Optionally provides a func to be called when a connection is made to a DERP server.
     pub on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 
-    /// Optionally provides a func to return how long it's been since a TUN packet was sent or received.
-    pub idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
@@ -108,7 +100,6 @@ impl Default for Options {
             port: 0,
             on_endpoints: None,
             on_derp_active: None,
-            idle_for: None,
             on_net_info: None,
             private_key: key::node::SecretKey::generate(),
         }
@@ -150,7 +141,6 @@ pub struct Inner {
     pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
@@ -460,14 +450,11 @@ impl Inner {
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
-    fn derp_region_code(&self, region_id: usize) -> String {
-        match &*tokio::task::block_in_place(|| self.derp_map.blocking_read()) {
-            Some(ref dm) => match dm.regions.get(&region_id) {
-                Some(dr) => dr.region_code.clone(),
-                None => "".to_string(),
-            },
-            None => "".to_string(),
-        }
+    fn derp_region_code(&self, region_id: usize) -> Option<String> {
+        let dm = tokio::task::block_in_place(|| self.derp_map.blocking_read());
+        let dm: &DerpMap = dm.as_ref()?;
+        let dr = dm.regions.get(&region_id)?;
+        Some(dr.region_code.clone())
     }
 
     pub(super) fn is_closing(&self) -> bool {
@@ -598,7 +585,6 @@ impl Conn {
             port,
             on_endpoints,
             on_derp_active,
-            idle_for,
             on_net_info,
             private_key,
         } = opts;
@@ -622,7 +608,6 @@ impl Conn {
             name,
             on_endpoints,
             on_derp_active,
-            idle_for,
             on_net_info,
             port: AtomicU16::new(port),
             port_mapper,
@@ -1291,7 +1276,7 @@ struct Actor {
     on_endpoint_refreshed:
         HashMap<Endpoint, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
     /// When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
-    periodic_re_stun_timer: Option<time::Interval>,
+    periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<cfg::NetInfo>,
     /// The state for an active DiscoKey.
@@ -1318,7 +1303,7 @@ impl Actor {
             last_endpoints: Vec::new(),
             last_endpoints_time: None,
             on_endpoint_refreshed: HashMap::new(),
-            periodic_re_stun_timer: None,
+            periodic_re_stun_timer: new_re_stun_timer(),
             net_info_last: None,
             disco_info: HashMap::new(),
         }
@@ -1423,12 +1408,9 @@ impl Actor {
                         }
                     }
                 }
-                tick =  OptionFuture::from(self.periodic_re_stun_timer.as_mut().map(|i| i.tick())),
-                if self.periodic_re_stun_timer.is_some() => {
+                tick = self.periodic_re_stun_timer.tick() => {
                     debug!("tick: re_stun {:?}", tick);
-                    if tick.is_some() {
-                        self.re_stun("periodic").await;
-                    }
+                    self.re_stun("periodic").await;
                 }
                 _ = endpoints_update_receiver.changed() => {
                     let reason = endpoints_update_receiver.borrow().clone();
@@ -1803,41 +1785,10 @@ impl Actor {
                     .expect("sender not go away");
                 return;
             }
-            if self.should_do_periodic_re_stun() {
-                // Pick a random duration between 20 and 26 seconds (just under 30s,
-                // a common UDP NAT timeout on Linux,etc)
-                let d: Duration = {
-                    let mut rng = rand::thread_rng();
-                    rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26))
-                };
-                debug!("scheduling periodic_stun to run in {}s", d.as_secs());
-                self.periodic_re_stun_timer.replace(time::interval(d));
-            } else {
-                debug!("periodic STUN idle");
-                self.stop_periodic_re_stun_timer();
-            }
+            self.periodic_re_stun_timer = new_re_stun_timer();
         }
 
         debug!("endpoint update done ({})", why);
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    fn should_do_periodic_re_stun(&self) -> bool {
-        if let Some(ref f) = self.conn.idle_for {
-            let idle_for = f();
-            debug!("periodic_re_stun: idle for {}s", idle_for.as_secs());
-
-            if idle_for > SESSION_ACTIVE_TIMEOUT {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    fn stop_periodic_re_stun_timer(&mut self) {
-        self.periodic_re_stun_timer.take();
     }
 
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
@@ -2806,26 +2757,18 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn derp_region_code_of_addr(&self, ip_port: &str) -> String {
-        let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
-        match addr {
-            Ok(addr) => {
-                let region_id = usize::from(addr.port());
-                self.derp_region_code_of_id(region_id).await
-            }
-            Err(_) => String::new(),
-        }
+    async fn derp_region_code_of_addr(&self, ip_port: &str) -> Option<String> {
+        let addr: SocketAddr = ip_port.parse().ok()?;
+        let region_id = usize::from(addr.port());
+        self.derp_region_code_of_id(region_id).await
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn derp_region_code_of_id(&self, region_id: usize) -> String {
-        if let Some(ref dm) = &*self.conn.derp_map.read().await {
-            if let Some(r) = dm.regions.get(&region_id) {
-                return r.region_code.clone();
-            }
-        }
-
-        String::new()
+    async fn derp_region_code_of_id(&self, region_id: usize) -> Option<String> {
+        let dm = &*self.conn.derp_map.read().await;
+        let dm = dm.as_ref()?;
+        let r = dm.regions.get(&region_id)?;
+        Some(r.region_code.clone())
     }
 
     fn log_active_derp(&self) {
@@ -2854,6 +2797,15 @@ impl Actor {
         ids.into_iter()
             .map(|id| (id, self.active_derp.get(&id).unwrap()))
     }
+}
+
+fn new_re_stun_timer() -> time::Interval {
+    // Pick a random duration between 20 and 26 seconds (just under 30s,
+    // a common UDP NAT timeout on Linux,etc)
+    let mut rng = rand::thread_rng();
+    let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
+    debug!("scheduling periodic_stun to run in {}s", d.as_secs());
+    time::interval(d)
 }
 
 /// Initial connection setup.

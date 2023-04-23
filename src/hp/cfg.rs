@@ -140,7 +140,7 @@ pub struct PingResult {
     /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
     pub derp_region_id: Option<usize>,
     /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
-    pub derp_region_code: String,
+    pub derp_region_code: Option<String>,
     /// Whether the ping request error is due to it being a ping to the local node.
     pub is_local_ip: Option<bool>,
 
