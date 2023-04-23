@@ -356,9 +356,16 @@ impl Inner {
             })
             .unwrap();
         debug!("waiting for disco message handling from {} start", src);
-        let res = tokio::task::block_in_place(|| r.blocking_recv()).expect("dropped sender");
-        debug!("waiting for disco message handling from {} done", src);
-        res
+        match tokio::task::block_in_place(|| r.blocking_recv()) {
+            Ok(res) => {
+                debug!("waiting for disco message handling from {} done", src);
+                res
+            }
+            Err(err) => {
+                warn!("disco message processing failed: {:?}", err);
+                false
+            }
+        }
     }
 
     /// Sends packet b to addr, which is either a real UDP address
@@ -1440,7 +1447,6 @@ impl Actor {
     async fn clean_stale_derp(&mut self) {
         debug!("cleanup {} derps", self.active_derp.len());
         let now = Instant::now();
-        let mut dirty = false;
 
         let mut to_close = Vec::new();
         for (i, ad) in &self.active_derp {
@@ -1449,9 +1455,10 @@ impl Actor {
             }
             if ad.last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
                 to_close.push(*i);
-                dirty = true;
             }
         }
+
+        let dirty = !to_close.is_empty();
         debug!(
             "closing {}/{} derps",
             to_close.len(),
@@ -1889,10 +1896,7 @@ impl Actor {
         // Local interface addresses might have lower latency, but not be
         // globally addressable.
         //
-        // The STUN address(es) are always first so that legacy wireguard
-        // can use eps[0] as its only known endpoint address (although that's
-        // obviously non-ideal).
-        //
+        // The STUN address(es) are always first.
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
         Ok(eps)
@@ -2267,13 +2271,6 @@ impl Actor {
         msg: disco::Message,
     ) -> Result<bool> {
         debug!("sending disco message to {}: {:?}", dst, msg);
-        let is_derp = dst.ip() == DERP_MAGIC_IP;
-        let is_pong = matches!(msg, disco::Message::Pong(_));
-        if is_pong && !is_derp && dst.ip().is_ipv4() {
-            // TODO: figure oute the right value for this (debugIPv4DiscoPingPenalty())
-            time::sleep(Duration::from_millis(10)).await;
-        }
-
         if self.conn.is_closed() {
             bail!("connection closed");
         }
@@ -2281,6 +2278,7 @@ impl Actor {
         let di = self.get_disco_info(&conn.disco_private, &dst_disco);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
+        // let is_derp = dst.ip() == DERP_MAGIC_IP;
         // TODO
         // if is_derp {
         // 	metricSendDiscoDERP.Add(1)
@@ -2630,6 +2628,7 @@ impl Actor {
         if let Some(ref dst_key) = dst_key {
             if let Some(ep) = peer_map.endpoint_for_node_key(dst_key) {
                 if ep.add_candidate_endpoint(src, dm.tx_id).await {
+                    debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                     return;
                 }
                 num_nodes = 1;
@@ -2646,6 +2645,7 @@ impl Actor {
                 }
             }
             if dup {
+                debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                 return;
             }
             if num_nodes > 1 {
@@ -2892,7 +2892,6 @@ impl ReaderState {
     }
 
     async fn recv(mut self) -> (Self, ReadResult, ReadAction) {
-        debug!("recv art");
         let msg = tokio::select! {
             msg = self.derp_client.recv_detail() => {
                 msg
