@@ -40,7 +40,7 @@ pub struct SecretKey(crypto_box::SecretKey);
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
+        write!(f, "SecretKey({})", hex::encode(&self.to_bytes()))
     }
 }
 
@@ -68,7 +68,7 @@ impl SecretKey {
     }
 
     pub fn to_bytes(&self) -> [u8; SECRET_RAW_LEN] {
-        *self.0.as_bytes()
+        self.0.to_bytes()
     }
 }
 

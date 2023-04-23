@@ -51,23 +51,37 @@ impl Default for Options {
 }
 
 /// Create a quinn client endpoint
-pub fn make_client_endpoint(
+pub async fn make_client_endpoint(
     bind_addr: SocketAddr,
     peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
-) -> Result<quinn::Endpoint> {
+) -> Result<(quinn::Endpoint, crate::hp::magicsock::Conn)> {
     let keypair = Keypair::generate();
 
     let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+
+    let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+        port: bind_addr.port(),
+        private_key: keypair.secret().clone().into(),
+        ..Default::default()
+    })
+    .await?;
+
+    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        None,
+        conn.clone(),
+        quinn::TokioRuntime,
+    )?;
+
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     client_config.transport_config(Arc::new(transport_config));
 
     endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+    Ok((endpoint, conn))
 }
 
 /// Establishes a QUIC connection to the provided peer.
@@ -76,11 +90,17 @@ async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
     };
-    let endpoint =
-        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false)?;
+    let (endpoint, magicsock) =
+        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false).await?;
 
+    // TODO: insert endpoint configs
+    let addr = magicsock
+        .get_mapping_addr(&opts.peer_id.unwrap().clone().into())
+        .await
+        .expect("unable to provide mapping");
+    // TODO: pass along optional opts.addr
     debug!("connecting to {}", opts.addr);
-    let connect = endpoint.connect(opts.addr, "localhost")?;
+    let connect = endpoint.connect(addr, "localhost")?;
     let connection = connect.await.context("failed connecting to provider")?;
 
     Ok(connection)

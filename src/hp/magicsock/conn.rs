@@ -589,7 +589,11 @@ impl Conn {
     /// Creates a magic `Conn` listening on `opts.port`.
     /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
     #[instrument(skip_all, fields(name))]
-    pub async fn new(name: String, opts: Options) -> Result<Self> {
+    pub async fn new(opts: Options) -> Result<Self> {
+        let name = format!(
+            "magic-{}",
+            hex::encode(&opts.private_key.public_key().as_ref()[..8])
+        );
         let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
         let mut net_checker = netcheck::Client::default();
         net_checker.port_mapper = Some(port_mapper.clone());
@@ -3107,13 +3111,10 @@ mod tests {
     /// Returns a new Conn.
     async fn new_test_conn() -> Conn {
         let port = pick_port().await;
-        Conn::new(
-            format!("test-{port}"),
-            Options {
-                port,
-                ..Default::default()
-            },
-        )
+        Conn::new(Options {
+            port,
+            ..Default::default()
+        })
         .await
         .unwrap()
     }
@@ -3269,11 +3270,7 @@ mod tests {
                 ..Default::default()
             };
             let key = opts.private_key.clone();
-            let conn = Conn::new(
-                format!("magic-{}", hex::encode(&key.public_key().as_ref()[..8])),
-                opts,
-            )
-            .await?;
+            let conn = Conn::new(opts).await?;
             conn.set_derp_map(Some(derp_map)).await;
 
             // TODO: alternative check?

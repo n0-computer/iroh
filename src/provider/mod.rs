@@ -174,7 +174,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
-    pub fn spawn(self) -> Result<Provider> {
+    pub async fn spawn(self) -> Result<Provider> {
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -190,7 +190,19 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             .transport_config(Arc::new(transport_config))
             .concurrent_connections(MAX_CONNECTIONS);
 
-        let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
+        let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+            port: self.bind_addr.port(),
+            private_key: self.keypair.secret().clone().into(),
+            ..Default::default()
+        })
+        .await?;
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            conn,
+            quinn::TokioRuntime,
+        )?;
         let listen_addr = endpoint.local_addr().unwrap();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
@@ -1298,6 +1310,7 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();

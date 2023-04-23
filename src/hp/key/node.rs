@@ -12,6 +12,13 @@ pub(crate) const SECRET_KEY_LENGTH: usize = KEY_SIZE;
 #[derive(Clone, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
 
+impl From<crate::PeerId> for PublicKey {
+    fn from(value: crate::PeerId) -> Self {
+        let key: ed25519_dalek::VerifyingKey = value.into();
+        PublicKey(crypto_box::PublicKey::from(key.to_montgomery()))
+    }
+}
+
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PublicKey({})", hex::encode(self.0.as_bytes()))
@@ -76,12 +83,18 @@ impl PublicKey {
 #[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
 
+impl From<crate::SecretKey> for SecretKey {
+    fn from(key: crate::SecretKey) -> Self {
+        SecretKey(crypto_box::SecretKey::from(key.to_scalar()))
+    }
+}
+
 impl Serialize for SecretKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
-        serdect::array::serialize_hex_upper_or_bin(self.0.as_bytes(), serializer)
+        serdect::array::serialize_hex_upper_or_bin(&self.0.to_bytes(), serializer)
     }
 }
 
@@ -106,7 +119,7 @@ impl SecretKey {
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
-        *self.0.as_bytes()
+        self.0.to_bytes()
     }
 
     fn shared_secret(&self, other: &PublicKey) -> crypto_box::ChaChaBox {
@@ -149,13 +162,13 @@ impl SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(self.0.as_bytes()))
+        write!(f, "SecretKey({})", hex::encode(&self.0.to_bytes()))
     }
 }
 
 impl Hash for SecretKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.as_bytes().hash(state)
+        self.0.to_bytes().hash(state)
     }
 }
 
@@ -173,7 +186,7 @@ impl From<[u8; SECRET_KEY_LENGTH]> for SecretKey {
 
 impl From<SecretKey> for disco::SecretKey {
     fn from(value: SecretKey) -> Self {
-        disco::SecretKey::from(*value.0.as_bytes())
+        disco::SecretKey::from(value.0.to_bytes())
     }
 }
 

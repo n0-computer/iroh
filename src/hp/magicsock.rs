@@ -12,7 +12,7 @@ mod endpoint;
 mod rebinding_conn;
 mod timer;
 
-pub use self::conn::Conn;
+pub use self::conn::{Conn, Options};
 pub use self::timer::Timer;
 
 use self::endpoint::Endpoint;

@@ -130,7 +130,10 @@ mod tests {
 
         let (db, hash) =
             provider::create_collection(vec![provider::DataSource::File(path)]).await?;
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
 
         async fn run_client(
             hash: Hash,
@@ -237,7 +240,10 @@ mod tests {
         let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
@@ -359,6 +365,7 @@ mod tests {
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
+            .await
             .unwrap();
         let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
@@ -432,7 +439,8 @@ mod tests {
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .spawn()?;
+            .spawn()
+            .await?;
         let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
 
@@ -472,6 +480,7 @@ mod tests {
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
             .spawn()
+            .await
         {
             Ok(provider) => provider,
             Err(_) => {
@@ -513,6 +522,7 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();

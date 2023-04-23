@@ -197,8 +197,8 @@ async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint =
-        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
+    let (endpoint, _) =
+        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false).await?; // TODO: don't use magicsock
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
@@ -691,9 +691,10 @@ async fn provide(
         builder
             .rpc_endpoint(rpc_endpoint)
             .keypair(keypair)
-            .spawn()?
+            .spawn()
+            .await?
     } else {
-        builder.keypair(keypair).spawn()?
+        builder.keypair(keypair).spawn().await?
     };
 
     println!("Listening address: {}", provider.local_address());
