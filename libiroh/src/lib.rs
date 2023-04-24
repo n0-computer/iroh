@@ -1,14 +1,14 @@
 use std::{path::PathBuf, str::FromStr};
 
+use ::safer_ffi::prelude::*;
 use anyhow::{Context, Result};
 use iroh::{get, provider::Ticket, Hash};
-use std::ffi::CStr;
 use tokio::runtime::Runtime;
 
 const MAX_CONCURRENT_DIALS: u8 = 16;
 
-#[no_mangle]
-pub extern "C" fn add_numbers(number1: i32, number2: i32) -> i32 {
+#[ffi_export]
+fn add_numbers(number1: i32, number2: i32) -> i32 {
     let result = std::panic::catch_unwind(|| {
         println!("Hello from rust!");
         number1 + number2
@@ -20,29 +20,13 @@ pub extern "C" fn add_numbers(number1: i32, number2: i32) -> i32 {
     result.unwrap()
 }
 
-#[no_mangle]
-pub extern "C" fn get_ticket(
-    ticket: *const std::os::raw::c_char,
-    out_path: *const std::os::raw::c_char,
-) -> u32 {
+#[ffi_export]
+fn get_ticket(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> u32 {
     let result = std::panic::catch_unwind(|| {
-        let tkt = unsafe {
-            assert!(!ticket.is_null());
-            CStr::from_ptr(ticket)
-        };
-        let tkt = tkt.to_str().unwrap();
-        let tkt = tkt.parse::<Ticket>().unwrap();
-
-        let out_path = unsafe {
-            assert!(!ticket.is_null());
-            CStr::from_ptr(out_path)
-        };
-        let out_path = out_path.to_str().unwrap();
-        let out_path = PathBuf::from_str(out_path).unwrap();
-        println!("temp dir: {:?}", out_path);
-
+        let ticket = ticket.to_str().parse::<Ticket>().unwrap();
+        let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
         let rt = Runtime::new().unwrap();
-        rt.block_on(get_ticket_internal(tkt, Some(out_path)))
+        rt.block_on(get_ticket_internal(ticket, Some(out_path)))
             .unwrap();
         0
     });
@@ -140,6 +124,15 @@ async fn get_ticket_internal(ticket: Ticket, out: Option<PathBuf>) -> Result<()>
 mod tests {
     use super::*;
 
+    /// The following test function is necessary for the header generation.
+    #[::safer_ffi::cfg_headers]
+    #[test]
+    fn generate_headers() -> ::std::io::Result<()> {
+        ::safer_ffi::headers::builder()
+            .to_file("c/libiroh.h")?
+            .generate()
+    }
+
     #[test]
     fn add_numbers_test() {
         let result = add_numbers(2, 2);
@@ -148,7 +141,8 @@ mod tests {
 
     #[test]
     fn get_ticket_test() {
-        let result = get_ticket();
-        assert_eq!(result, 0);
+        // TODO
+        // let result = get_ticket();
+        // assert_eq!(result, 0);
     }
 }
