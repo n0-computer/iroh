@@ -1,5 +1,5 @@
 [package]
-name = "irohc"
+name = "libiroh"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,14 +7,18 @@ edition = "2021"
 strip = "symbols"
 
 [lib]
-name="irohc"
+name="libiroh"
 crate-type = ["cdylib"]
+
+[features]
+c-headers = ["safer-ffi/headers"]
 
 [target.x86_64-apple-darwin]
 rustflags=["-C", "link-arg=-mmacosx-version-min=10.7"]
 strip = "symbols"
 
 [dependencies]
+safer-ffi = { version = "0.0.10", features = ["proc_macros"] }
 anyhow = "1.0.69"
 iroh = { path = "../" }
 libc = "0.2.141"
