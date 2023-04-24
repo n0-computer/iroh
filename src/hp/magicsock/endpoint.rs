@@ -528,19 +528,6 @@ impl Endpoint {
         state.trust_best_addr_until = None;
     }
 
-    pub(super) fn maybe_add_best_addr_blocking(&self, addr: SocketAddr) {
-        let mut state = self.state.lock_blocking();
-        if state.best_addr.is_none() {
-            state.best_addr = Some(AddrLatency {
-                addr,
-                latency: Duration::from_secs(1), // assume bad latency for now
-            });
-
-            // Update paths
-            state.trust_best_addr_until = None;
-        }
-    }
-
     /// Note that we have a potential best addr.
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn maybe_add_best_addr(&self, addr: SocketAddr) {
@@ -912,8 +899,8 @@ impl PeerMap {
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
     /// tailcfg.Node for ep.publicKey.
-    pub fn upsert_endpoint(&mut self, ep: Endpoint) {
-        let public_key = ep.state.lock_blocking().public_key.clone();
+    pub async fn upsert_endpoint(&mut self, ep: Endpoint) {
+        let public_key = ep.state.lock().await.public_key.clone();
         if let Some(public_key) = public_key {
             if !self.by_node_key.contains_key(&public_key) {
                 let fake_wg_addr = ep.fake_wg_addr;

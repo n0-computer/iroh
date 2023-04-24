@@ -227,7 +227,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
                     let (source, data) = parse_recv_frame(&frame_payload)?;
                     let packet = ReceivedMessage::ReceivedPacket {
                         source,
-                        data: data.to_vec(),
+                        data: BytesMut::from(data),
                     };
                     return Ok(packet);
                 }
@@ -552,7 +552,7 @@ pub enum ReceivedMessage {
     ReceivedPacket {
         source: PublicKey,
         /// The received packet bytes. It aliases the memory passed to Client.Recv.
-        data: Vec<u8>, // TODO: ref
+        data: BytesMut, // TODO: ref
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.

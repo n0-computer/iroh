@@ -1,9 +1,11 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
-    io,
+    io::{self, IoSliceMut},
+    mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
@@ -15,7 +17,8 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use async_lock::RwLock;
 use backoff::backoff::Backoff;
-use futures::{future::BoxFuture, StreamExt, TryFutureExt};
+use bytes::BytesMut;
+use futures::{future::BoxFuture, Stream, StreamExt, TryFutureExt};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -54,15 +57,15 @@ pub(super) enum CurrentPortFate {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(super) enum Network {
-    Ip4,
-    Ip6,
+    Ipv4,
+    Ipv6,
 }
 
 impl Network {
     pub(super) fn default_addr(&self) -> IpAddr {
         match self {
-            Self::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
-            Self::Ip6 => Ipv6Addr::UNSPECIFIED.into(),
+            Self::Ipv4 => Ipv4Addr::UNSPECIFIED.into(),
+            Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
         }
     }
 }
@@ -70,8 +73,8 @@ impl Network {
 impl From<Network> for socket2::Domain {
     fn from(value: Network) -> Self {
         match value {
-            Network::Ip4 => socket2::Domain::IPV4,
-            Network::Ip6 => socket2::Domain::IPV6,
+            Network::Ipv4 => socket2::Domain::IPV4,
+            Network::Ipv6 => socket2::Domain::IPV6,
         }
     }
 }
@@ -158,7 +161,7 @@ pub struct Inner {
     port_mapper: portmapper::Client,
 
     /// Used for receiving DERP messages.
-    derp_recv_ch: flume::Receiver<DerpReadResult>,
+    derp_recv_ch: flume::Receiver<NetworkReadResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
     derp_recv_wakers: std::sync::Mutex<VecDeque<Waker>>,
 
@@ -236,90 +239,6 @@ impl Inner {
             tokio::task::spawn(async move {
                 net_checker.receive_stun_packet(&packet, addr).await;
             });
-        }
-    }
-
-    /// Returns `true` if the message was internal, `false` otherwise.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    fn process_derp_read_result(
-        &self,
-        dm: DerpReadResult,
-        b: &mut io::IoSliceMut<'_>,
-        meta: &mut quinn_udp::RecvMeta,
-    ) -> bool {
-        debug!("process_derp_read {} bytes", dm.buf.len());
-        if dm.buf.is_empty() {
-            return true;
-        }
-        let region_id = dm.region_id;
-
-        let ipp = SocketAddr::new(
-            DERP_MAGIC_IP,
-            u16::try_from(region_id).expect("invalid region id"),
-        );
-
-        if self.handle_disco_message(dm.buf.clone(), ipp, Some(dm.src.clone())) {
-            // Message was internal, do not bubble up.
-            return true;
-        }
-
-        let ep_fake_wg_addr = {
-            let peer_map = self.peer_map.read_blocking();
-            peer_map
-                .endpoint_for_node_key(&dm.src)
-                .map(|ep| ep.fake_wg_addr)
-        };
-
-        match ep_fake_wg_addr {
-            Some(ep_fake_wg_addr) => {
-                b[..dm.buf.len()].copy_from_slice(&dm.buf);
-
-                // Update RecvMeta structure accordingly.
-                meta.len = dm.buf.len();
-                meta.stride = dm.buf.len();
-                meta.addr = ep_fake_wg_addr;
-
-                // if stats := c.stats.Load(); stats != nil {
-                // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
-                // }
-                false
-            }
-            None => {
-                // We don't know anything about this node key, nothing to record or process.
-                true
-            }
-        }
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    fn handle_disco_message(
-        &self,
-        msg: Vec<u8>,
-        src: SocketAddr,
-        derp_node_src: Option<key::node::PublicKey>,
-    ) -> bool {
-        let (s, r) = sync::oneshot::channel();
-        self.actor_sender
-            .send(ActorMessage::HandleDiscoMessage {
-                msg,
-                src,
-                derp_node_src,
-                s,
-            })
-            .unwrap();
-        debug!("waiting for disco message handling from {} start", src);
-        match tokio::task::block_in_place(|| r.blocking_recv()) {
-            Ok(res) => {
-                debug!(
-                    "waiting for disco message handling from {} done: {:?}",
-                    src, res
-                );
-                res
-            }
-            Err(err) => {
-                warn!("disco message processing failed: {:?}", err);
-                false
-            }
         }
     }
 
@@ -786,74 +705,12 @@ impl Conn {
     /// It should be followed by a call to ReSTUN.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn rebind_all(&self) {
-        // TODO: check all calls for responses.
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
             .send_async(ActorMessage::RebindAll(s))
             .await
             .unwrap();
         r.await.unwrap();
-    }
-
-    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
-    /// Returns `false` if this is an internal packet and it should not be reported.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    fn receive_ip(
-        &self,
-        b: &mut io::IoSliceMut<'_>,
-        meta: &mut quinn_udp::RecvMeta,
-        cache: &SocketEndpointCache,
-    ) -> bool {
-        debug!("received data {} from {}", meta.len, meta.addr);
-        // Trunacte the slice, to the actual message length.
-        let b = &b[..meta.len];
-        if stun::is(b) {
-            debug!("received STUN message {}", b.len());
-            self.on_stun_receive(b, meta.addr);
-            return false;
-        }
-        if self.handle_disco_message(b.to_vec(), meta.addr, None) {
-            debug!("received DISCO message {}", b.len());
-            return false;
-        }
-        if let Some(de) = cache.get(&meta.addr) {
-            meta.addr = de.fake_wg_addr;
-        } else {
-            let peer_map = self.peer_map.read_blocking();
-            match peer_map.endpoint_for_ip_port(&meta.addr) {
-                None => {
-                    debug!(
-                        "no peer_map state found for {} in {:#?}",
-                        meta.addr, peer_map
-                    );
-                    drop(peer_map);
-                    let mut peer_map = self.peer_map.write_blocking();
-
-                    let ep = Endpoint::new(self.inner.clone(), None);
-                    ep.maybe_add_best_addr_blocking(meta.addr);
-                    peer_map.upsert_endpoint(ep.clone());
-                    peer_map.set_endpoint_for_ip_port(&meta.addr, ep.clone());
-
-                    cache.update(meta.addr, ep.clone());
-                    meta.addr = ep.fake_wg_addr;
-                }
-                Some(de) => {
-                    debug!("peer_map state found for {} in {:#?}", meta.addr, peer_map);
-
-                    cache.update(meta.addr, de.clone());
-                    meta.addr = de.fake_wg_addr;
-                }
-            }
-        }
-
-        // ep.noteRecvActivity();
-        // if stats := c.stats.Load(); stats != nil {
-        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-        // }
-
-        debug!("received passthrough message {}", b.len());
-
-        true
     }
 }
 
@@ -985,10 +842,10 @@ impl AsyncUdpSocket for Conn {
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
+        metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
-        debug_assert_eq!(bufs.len(), meta.len(), "non matching bufs & metas");
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         debug!("trying to receive up to {} packets", bufs.len());
         if self.is_closed() {
             return Poll::Ready(Err(io::Error::new(
@@ -997,119 +854,65 @@ impl AsyncUdpSocket for Conn {
             )));
         }
 
-        let mut num_msgs_total = 0;
-
-        // IPv4
-        match self.pconn4.poll_recv(cx, bufs, meta) {
-            Poll::Pending => {}
-            Poll::Ready(Err(err)) => {
-                return Poll::Ready(Err(err));
-            }
-            Poll::Ready(Ok(mut num_msgs)) => {
-                debug!("received {} msgs on IPv4", num_msgs);
-                debug_assert!(num_msgs <= bufs.len(), "{} > {}", num_msgs, bufs.len());
-                let mut i = 0;
-                while i < num_msgs {
-                    if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint4) {
-                        // move all following over
-                        for k in i..num_msgs - 1 {
-                            bufs.swap(k, k + 1);
-                            meta.swap(k, k + 1);
-                        }
-
-                        // reduce num_msgs
-                        num_msgs -= 1;
-                    }
-
-                    i += 1;
+        let mut num_msgs = 0;
+        for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+            match self.derp_recv_ch.try_recv() {
+                Err(flume::TryRecvError::Empty) => {
+                    self.derp_recv_wakers
+                        .lock()
+                        .unwrap()
+                        .push_back(cx.waker().clone());
+                    break;
                 }
-                num_msgs_total += num_msgs;
-            }
-        }
-        // IPv6
-        if num_msgs_total < bufs.len() {
-            if let Some(ref conn) = self.pconn6 {
-                match conn.poll_recv(cx, &mut bufs[num_msgs_total..], &mut meta[num_msgs_total..]) {
-                    Poll::Pending => {}
-                    Poll::Ready(Err(err)) => {
-                        return Poll::Ready(Err(err));
+                Err(flume::TryRecvError::Disconnected) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "connection closed",
+                    )));
+                }
+                Ok(dm) => {
+                    if self.is_closed() {
+                        break;
                     }
-                    Poll::Ready(Ok(mut num_msgs)) => {
-                        debug!("received {} msgs on IPv6", num_msgs);
-                        debug_assert!(num_msgs + num_msgs_total <= bufs.len());
-                        let mut i = num_msgs_total;
-                        while i < num_msgs + num_msgs_total {
-                            if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint6)
-                            {
-                                // move all following over
-                                for k in i..num_msgs + num_msgs_total - 1 {
-                                    bufs.swap(k, k + 1);
-                                    meta.swap(k, k + 1);
-                                }
 
-                                // reduce num_msgs
-                                num_msgs -= 1;
-                            }
-
-                            i += 1;
+                    debug!("got read result: {:#?}", dm);
+                    match dm {
+                        NetworkReadResult::Error(err) => {
+                            return Poll::Ready(Err(err));
                         }
-                        num_msgs_total += num_msgs;
+                        NetworkReadResult::Ipv4 { bytes, meta }
+                        | NetworkReadResult::Ipv6 { bytes, meta }
+                        | NetworkReadResult::Derp { bytes, meta } => {
+                            buf_out[..bytes.len()].copy_from_slice(&bytes);
+                            *meta_out = meta;
+                        }
                     }
+
+                    num_msgs += 1;
                 }
             }
         }
-        // Derp
         debug!(
-            "poll_recv: received: {} - requested: {} - derp_buffer: {}",
-            num_msgs_total,
+            "poll_recv: received: {} - requested: {} - msg_buffer: {}\n{:#?}",
+            num_msgs,
             bufs.len(),
-            self.derp_recv_ch.len()
+            self.derp_recv_ch.len(),
+            metas,
         );
 
-        let mut i = num_msgs_total;
-        if num_msgs_total < bufs.len() {
-            while i < bufs.len() {
-                match self.derp_recv_ch.try_recv() {
-                    Err(flume::TryRecvError::Empty) => {
-                        self.derp_recv_wakers
-                            .lock()
-                            .unwrap()
-                            .push_back(cx.waker().clone());
-                        break;
-                    }
-                    Err(flume::TryRecvError::Disconnected) => {
-                        warn!("failed to receive derp read result: no channel available");
-                        break;
-                    }
-                    Ok(dm) => {
-                        if self.is_closed() {
-                            break;
-                        }
-
-                        let is_internal =
-                            self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
-                        debug!("received derp message, is internal? {}", is_internal);
-                        if is_internal {
-                            // No read, continue
-                            continue;
-                        }
-
-                        i += 1;
-                    }
-                }
-            }
-            num_msgs_total = i;
-        }
-
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
-        if num_msgs_total > 0 {
+        if num_msgs > 0 {
             info!(
                 "received {:?} msgs {}",
-                meta.iter().map(|m| m.addr).collect::<Vec<_>>(),
-                num_msgs_total
+                metas
+                    .iter()
+                    .take(num_msgs)
+                    .map(|m| m.addr)
+                    .collect::<Vec<_>>(),
+                num_msgs
             );
 
-            return Poll::Ready(Ok(num_msgs_total));
+            return Poll::Ready(Ok(num_msgs));
         }
 
         Poll::Pending
@@ -1126,22 +929,29 @@ impl AsyncUdpSocket for Conn {
     }
 }
 
-/// The type sent by run_derp_client to receive_ipv4 when a DERP packet is available.
+#[derive(Debug)]
+enum NetworkReadResult {
+    Error(io::Error),
+    Ipv4 {
+        bytes: BytesMut,
+        meta: quinn_udp::RecvMeta,
+    },
+    Ipv6 {
+        bytes: BytesMut,
+        meta: quinn_udp::RecvMeta,
+    },
+    Derp {
+        bytes: BytesMut,
+        meta: quinn_udp::RecvMeta,
+    },
+}
+
+#[derive(Debug)]
 struct DerpReadResult {
     region_id: u16,
     src: key::node::PublicKey,
     /// packet data
-    buf: Vec<u8>,
-}
-
-impl Debug for DerpReadResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DerpReadResult")
-            .field("region_id", &self.region_id)
-            .field("src", &self.src)
-            .field("buf", &format!("Vec<{}; u8>", self.buf.len()))
-            .finish()
-    }
+    buf: BytesMut,
 }
 
 #[derive(Default)]
@@ -1242,12 +1052,6 @@ enum ActorMessage {
         s: sync::oneshot::Sender<Result<bool>>,
     },
     SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
-    HandleDiscoMessage {
-        msg: Vec<u8>, // TOOD: Bytes?
-        src: SocketAddr,
-        derp_node_src: Option<key::node::PublicKey>,
-        s: sync::oneshot::Sender<bool>,
-    },
 }
 
 struct Actor {
@@ -1256,7 +1060,7 @@ struct Actor {
     msg_receiver: flume::Receiver<ActorMessage>,
     msg_sender: flume::Sender<ActorMessage>,
     /// Channel to send received derp messages on, for processing.
-    derp_recv_sender: flume::Sender<DerpReadResult>,
+    derp_recv_sender: flume::Sender<NetworkReadResult>,
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<u16, ActiveDerp>,
     prev_derp: HashMap<u16, wg::AsyncWaitGroup>,
@@ -1290,7 +1094,7 @@ impl Actor {
     fn new(
         msg_receiver: flume::Receiver<ActorMessage>,
         msg_sender: flume::Sender<ActorMessage>,
-        derp_recv_sender: flume::Sender<DerpReadResult>,
+        derp_recv_sender: flume::Sender<NetworkReadResult>,
         conn: Arc<Inner>,
     ) -> Self {
         Actor {
@@ -1318,6 +1122,7 @@ impl Actor {
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
+        let mut ip_stream = IpStream::new(self.conn.clone());
         loop {
             tokio::select! {
                 msg = self.msg_receiver.recv_async() => {
@@ -1369,10 +1174,6 @@ impl Actor {
                             self.set_network_map(nm).await;
                             s.send(()).unwrap();
                         }
-                        ActorMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
-                            let res = self.handle_disco_message(&msg, src, derp_node_src).await;
-                            let _ = s.send(res);
-                        }
                     }
                 }
                 Some((rs, result, action)) = recvs.next() => {
@@ -1399,15 +1200,50 @@ impl Actor {
                             recvs.push(rs.recv())
                         }
                         ReadResult::Yield(read_result) => {
-                            debug!("yielding read_result start");
-                            self.derp_recv_sender.send_async(read_result).await.expect("missing recv sender");
+                            if let Some(passthrough) = self.process_derp_read_result(read_result).await {
+                                self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
+                                let mut wakers = self.conn.derp_recv_wakers.lock().unwrap();
+                                while let Some(waker) = wakers.pop_front() {
+                                    waker.wake();
+                                }
+                            }
+                            recvs.push(rs.recv());
+
+                        }
+                    }
+                }
+                Some(ip_msgs) = ip_stream.next() => {
+                    match ip_msgs {
+                        Ok(ip_msgs) => {
+                            for (bytes, network, mut meta) in ip_msgs.into_iter() {
+                                if self.receive_ip(&bytes, &mut meta, network).await {
+                                    match network {
+                                        Network::Ipv4 => {
+                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv4 {
+                                                bytes,
+                                                meta,
+                                            }).await;
+                                        }
+                                        Network::Ipv6 => {
+                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv4 {
+                                                bytes,
+                                                meta,
+                                            }).await;
+                                        }
+                                    }
+                                    let mut wakers = self.conn.derp_recv_wakers.lock().unwrap();
+                                    while let Some(waker) = wakers.pop_front() {
+                                        waker.wake();
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Error(err)).await;
                             let mut wakers = self.conn.derp_recv_wakers.lock().unwrap();
                             while let Some(waker) = wakers.pop_front() {
                                 waker.wake();
                             }
-
-                            recvs.push(rs.recv());
-                            debug!("yielding read_result done");
                         }
                     }
                 }
@@ -1431,6 +1267,116 @@ impl Actor {
                 }
             }
         }
+    }
+
+    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
+    /// Returns `false` if this is an internal packet and it should not be reported.
+    async fn receive_ip(
+        &mut self,
+        bytes: &BytesMut,
+        meta: &mut quinn_udp::RecvMeta,
+        network: Network,
+    ) -> bool {
+        debug!("received data {} from {}", meta.len, meta.addr);
+
+        if stun::is(bytes) {
+            debug!("received STUN message {}", bytes.len());
+            self.conn.on_stun_receive(bytes, meta.addr);
+            return false;
+        }
+        if self.handle_disco_message(&bytes, meta.addr, None).await {
+            debug!("received DISCO message {}", bytes.len());
+            return false;
+        }
+        let cache = match network {
+            Network::Ipv4 => &self.conn.socket_endpoint4,
+            Network::Ipv6 => &self.conn.socket_endpoint6,
+        };
+
+        if let Some(de) = cache.get(&meta.addr) {
+            meta.addr = de.fake_wg_addr;
+        } else {
+            let peer_map = self.conn.peer_map.read().await;
+            match peer_map.endpoint_for_ip_port(&meta.addr) {
+                None => {
+                    debug!(
+                        "no peer_map state found for {} in {:#?}",
+                        meta.addr, peer_map
+                    );
+                    drop(peer_map);
+                    let mut peer_map = self.conn.peer_map.write().await;
+
+                    let ep = Endpoint::new(self.conn.clone(), None);
+                    ep.maybe_add_best_addr(meta.addr).await;
+                    peer_map.upsert_endpoint(ep.clone()).await;
+                    peer_map.set_endpoint_for_ip_port(&meta.addr, ep.clone());
+
+                    cache.update(meta.addr, ep.clone());
+                    meta.addr = ep.fake_wg_addr;
+                }
+                Some(de) => {
+                    debug!("peer_map state found for {} in {:#?}", meta.addr, peer_map);
+
+                    cache.update(meta.addr, de.clone());
+                    meta.addr = de.fake_wg_addr;
+                }
+            }
+        }
+
+        // ep.noteRecvActivity();
+        // if stats := c.stats.Load(); stats != nil {
+        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
+        // }
+
+        debug!("received passthrough message {}", bytes.len());
+
+        true
+    }
+
+    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Option<NetworkReadResult> {
+        debug!("process_derp_read {} bytes", dm.buf.len());
+        if dm.buf.is_empty() {
+            return None;
+        }
+        let region_id = dm.region_id;
+
+        let ipp = SocketAddr::new(
+            DERP_MAGIC_IP,
+            u16::try_from(region_id).expect("invalid region id"),
+        );
+
+        if self
+            .handle_disco_message(&dm.buf, ipp, Some(dm.src.clone()))
+            .await
+        {
+            // Message was internal, do not bubble up.
+            return None;
+        }
+
+        let ep_fake_wg_addr = {
+            let peer_map = self.conn.peer_map.read().await;
+            peer_map
+                .endpoint_for_node_key(&dm.src)
+                .map(|ep| ep.fake_wg_addr)
+        };
+
+        let ep_fake_wg_addr = ep_fake_wg_addr?;
+
+        let meta = quinn_udp::RecvMeta {
+            len: dm.buf.len(),
+            stride: dm.buf.len(),
+            addr: ep_fake_wg_addr,
+            dst_ip: None,
+            ecn: None,
+        };
+
+        // if stats := c.stats.Load(); stats != nil {
+        // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
+        // }
+        Some(NetworkReadResult::Derp {
+            bytes: dm.buf,
+            meta,
+        })
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
@@ -2171,13 +2117,13 @@ impl Actor {
         let port = self.conn.local_port().await;
         if let Some(ref conn) = self.conn.pconn6 {
             // If we were not able to bind ipv6 at program start, dont retry
-            if let Err(err) = conn.rebind(port, Network::Ip6, cur_port_fate).await {
+            if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
             }
         }
         self.conn
             .pconn4
-            .rebind(port, Network::Ip4, cur_port_fate)
+            .rebind(port, Network::Ipv4, cur_port_fate)
             .await
             .context("rebind IPv4 failed")?;
 
@@ -2411,7 +2357,7 @@ impl Actor {
                     debug!("disco: inserting {:?} - {}", sender, src);
                     ep.set_public_key(sender.clone()).await;
                     let ep = ep.clone();
-                    peer_map.upsert_endpoint(ep);
+                    peer_map.upsert_endpoint(ep).await;
                     abort = false;
                 }
             }
@@ -2688,12 +2634,12 @@ impl Actor {
         for n in &self.net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
                 ep.update_from_node(n).await;
-                peer_map.upsert_endpoint(ep); // maybe update discokey mappings in peerMap
+                peer_map.upsert_endpoint(ep).await; // maybe update discokey mappings in peerMap
                 continue;
             }
             let ep = Endpoint::new(self.conn.clone(), Some(n.key.clone()));
             ep.update_from_node(n).await;
-            peer_map.upsert_endpoint(ep);
+            peer_map.upsert_endpoint(ep).await;
         }
 
         // If the set of nodes changed since the last set_network_map, the
@@ -2754,6 +2700,96 @@ impl Actor {
     }
 }
 
+struct IpStream {
+    conn: Arc<Inner>,
+    recv_buf: BytesMut,
+    udp_state: quinn_udp::UdpState,
+    target_recv_buf_len: usize,
+}
+
+impl IpStream {
+    fn new(conn: Arc<Inner>) -> Self {
+        // Init UDP receving state
+        let udp_state = quinn_udp::UdpState::new();
+
+        // 1480 MTU size based on default from quinn
+        let target_recv_buf_len = 1480 * udp_state.gro_segments() * quinn_udp::BATCH_SIZE;
+        let recv_buf = BytesMut::zeroed(target_recv_buf_len);
+
+        Self {
+            udp_state,
+            recv_buf,
+            conn,
+            target_recv_buf_len,
+        }
+    }
+}
+
+impl Stream for IpStream {
+    type Item = io::Result<Vec<(BytesMut, Network, quinn_udp::RecvMeta)>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.conn.is_closed() {
+            return Poll::Ready(None);
+        }
+
+        // Resize the recv buffer so we have enough for the next round
+        let target_len = self.target_recv_buf_len;
+        self.recv_buf.resize(target_len, 0u8);
+
+        let mut metas = [quinn_udp::RecvMeta::default(); quinn_udp::BATCH_SIZE];
+        let mut iovs = MaybeUninit::<[IoSliceMut; quinn_udp::BATCH_SIZE]>::uninit();
+        let chunk_size = self.recv_buf.len() / quinn_udp::BATCH_SIZE;
+        self.recv_buf
+            .chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(i, buf)| unsafe {
+                iovs.as_mut_ptr()
+                    .cast::<IoSliceMut>()
+                    .add(i)
+                    .write(IoSliceMut::new(buf));
+            });
+        let mut iovs = unsafe { iovs.assume_init() };
+
+        if let Some(ref pconn6) = self.conn.pconn6 {
+            match pconn6.poll_recv(cx, &mut iovs, &mut metas) {
+                Poll::Pending => {}
+                Poll::Ready(Ok(msgs)) => {
+                    // Take out the read data
+                    let mut out = Vec::with_capacity(msgs);
+                    for meta in metas.into_iter().take(msgs) {
+                        let bytes = self.recv_buf.split_to(meta.len);
+                        out.push((bytes, Network::Ipv6, meta));
+                    }
+
+                    return Poll::Ready(Some(Ok(out)));
+                }
+                Poll::Ready(Err(err)) => {
+                    return Poll::Ready(Some(Err(err)));
+                }
+            }
+        }
+
+        match self.conn.pconn4.poll_recv(cx, &mut iovs, &mut metas) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(msgs)) => {
+                // Take out the read data
+                let mut out = Vec::with_capacity(msgs);
+                for meta in metas.into_iter().take(msgs) {
+                    let bytes = self.recv_buf.split_to(meta.len);
+                    out.push((bytes, Network::Ipv4, meta));
+                }
+                return Poll::Ready(Some(Ok(out)));
+            }
+            Poll::Ready(Err(err)) => {
+                return Poll::Ready(Some(Err(err)));
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
 fn new_re_stun_timer() -> time::Interval {
     // Pick a random duration between 20 and 26 seconds (just under 30s,
     // a common UDP NAT timeout on Linux,etc)
@@ -2765,7 +2801,7 @@ fn new_re_stun_timer() -> time::Interval {
 
 /// Initial connection setup.
 async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let pconn6 = match RebindingUdpConn::bind(port, Network::Ip6).await {
+    let pconn6 = match RebindingUdpConn::bind(port, Network::Ipv6).await {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("rebind ignoring IPv6 bind failure: {:?}", err);
@@ -2773,7 +2809,7 @@ async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)>
         }
     };
 
-    let pconn4 = RebindingUdpConn::bind(port, Network::Ip4)
+    let pconn4 = RebindingUdpConn::bind(port, Network::Ipv4)
         .await
         .context("rebind IPv4 failed")?;
 

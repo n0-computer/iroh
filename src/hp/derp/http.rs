@@ -14,6 +14,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use anyhow::Result;
+    use bytes::BytesMut;
     use hyper::server::conn::Http;
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::TcpListener;
@@ -157,7 +158,7 @@ mod tests {
         region: DerpRegion,
     ) -> (
         PublicKey,
-        mpsc::Receiver<(PublicKey, Vec<u8>)>,
+        mpsc::Receiver<(PublicKey, BytesMut)>,
         JoinHandle<()>,
         Client,
     ) {
