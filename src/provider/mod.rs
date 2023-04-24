@@ -27,6 +27,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use quinn::AsyncUdpSocket;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
@@ -200,10 +201,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             Some(server_config),
-            conn,
+            conn.clone(),
             quinn::TokioRuntime,
         )?;
-        let listen_addr = endpoint.local_addr().unwrap();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
@@ -211,7 +211,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(ProviderInner {
             db: self.db,
-            listen_addr,
+            conn,
             keypair: self.keypair,
             auth_token: self.auth_token,
             events,
@@ -321,7 +321,7 @@ pub struct Provider {
 #[derive(Debug)]
 struct ProviderInner {
     db: Database,
-    listen_addr: SocketAddr,
+    conn: crate::hp::magicsock::Conn,
     keypair: Keypair,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
@@ -399,15 +399,15 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> SocketAddr {
-        self.inner.listen_addr
+    pub fn local_address(&self) -> std::io::Result<SocketAddr> {
+        self.inner.conn.local_addr()
     }
 
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
     pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.inner.listen_addr)
+        find_local_addresses(self.local_address()?)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -561,13 +561,13 @@ impl RpcHandler {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
             auth_token: Box::new(self.inner.auth_token),
-            listen_addr: Box::new(self.inner.listen_addr),
+            listen_addr: Box::new(self.inner.conn.local_addr().unwrap()),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
+            addrs: find_local_addresses(self.inner.conn.local_addr().unwrap()).unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {

@@ -1,6 +1,5 @@
 use std::{fmt::Debug, hash::Hash};
 
-use super::{disco, disco::NONCE_LEN};
 use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +7,7 @@ pub use crypto_box::KEY_SIZE;
 
 pub(crate) const PUBLIC_KEY_LENGTH: usize = KEY_SIZE;
 pub(crate) const SECRET_KEY_LENGTH: usize = KEY_SIZE;
+pub(crate) const NONCE_LEN: usize = 24;
 
 #[derive(Clone, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
@@ -64,12 +64,6 @@ impl TryFrom<&[u8]> for PublicKey {
     }
 }
 
-impl From<PublicKey> for disco::PublicKey {
-    fn from(value: PublicKey) -> Self {
-        disco::PublicKey::from(*value.0.as_bytes())
-    }
-}
-
 impl PublicKey {
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_LENGTH] {
         self.0.as_bytes()
@@ -120,6 +114,12 @@ impl SecretKey {
 
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
+    }
+
+    /// Returns the shared key for communication between this key and `other`.
+    pub fn shared(&self, other: &PublicKey) -> SharedSecret {
+        let boxx = self.shared_secret(other);
+        SharedSecret(boxx)
     }
 
     fn shared_secret(&self, other: &PublicKey) -> crypto_box::ChaChaBox {
@@ -184,15 +184,51 @@ impl From<[u8; SECRET_KEY_LENGTH]> for SecretKey {
     }
 }
 
-impl From<SecretKey> for disco::SecretKey {
-    fn from(value: SecretKey) -> Self {
-        disco::SecretKey::from(value.0.to_bytes())
-    }
-}
-
 impl From<SecretKey> for crate::tls::Keypair {
     fn from(value: SecretKey) -> Self {
         ed25519_dalek::SigningKey::from_bytes(&value.to_bytes()).into()
+    }
+}
+
+/// Shared Secret.
+#[derive(Clone)]
+pub struct SharedSecret(crypto_box::ChaChaBox);
+
+impl Debug for SharedSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedSecret(crypto_box::ChaChaBox)")
+    }
+}
+
+impl SharedSecret {
+    /// Seals the provided cleartext.
+    pub fn seal(&self, cleartext: &[u8]) -> Vec<u8> {
+        use crypto_box::aead::{Aead, AeadCore, OsRng};
+
+        let nonce = crypto_box::ChaChaBox::generate_nonce(&mut OsRng);
+        let ciphertext = self
+            .0
+            .encrypt(&nonce, cleartext)
+            .expect("encryption failed");
+
+        let mut res = nonce.to_vec();
+        res.extend(ciphertext);
+        res
+    }
+
+    /// Opens the ciphertext, which must have been created using `Self::seal`, and returns the cleartext.
+    pub fn open(&self, seal: &[u8]) -> Result<Vec<u8>> {
+        use crypto_box::aead::Aead;
+        ensure!(seal.len() > NONCE_LEN, "too short");
+
+        let (nonce, ciphertext) = seal.split_at(NONCE_LEN);
+        let nonce: [u8; NONCE_LEN] = nonce.try_into().unwrap();
+        let plaintext = self
+            .0
+            .decrypt(&nonce.into(), ciphertext)
+            .map_err(|e| anyhow!("decryption failed: {:?}", e))?;
+
+        Ok(plaintext)
     }
 }
 

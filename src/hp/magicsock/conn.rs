@@ -172,6 +172,8 @@ pub struct Inner {
     no_v4_send: AtomicBool,
 
     pub(super) public_key: key::node::PublicKey,
+    /// Private key for this node
+    private_key: key::node::SecretKey,
 
     /// If the last netcheck report, reports IPv6 to be available.
     ipv6_reported: AtomicBool,
@@ -190,11 +192,6 @@ pub struct Inner {
 
     /// Tracks the networkmap node entity for each peer discovery key.
     pub(super) peer_map: RwLock<PeerMap>,
-    /// The private naclbox key used for active discovery traffic. It's created once near
-    /// (but not during) construction.
-    disco_private: key::disco::SecretKey,
-    /// Private key for this node
-    private_key: key::node::SecretKey,
 
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
@@ -210,8 +207,7 @@ impl Inner {
     pub(super) async fn send_disco_message(
         &self,
         dst: SocketAddr,
-        dst_key: Option<&key::node::PublicKey>,
-        dst_disco: &key::disco::PublicKey,
+        dst_key: key::node::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
         let (s, r) = sync::oneshot::channel();
@@ -219,8 +215,7 @@ impl Inner {
         self.actor_sender
             .send_async(ActorMessage::SendDiscoMessage {
                 dst,
-                dst_key: dst_key.cloned(),
-                dst_disco: dst_disco.clone(),
+                dst_key,
                 msg,
                 s,
             })
@@ -230,51 +225,8 @@ impl Inner {
         Ok(res)
     }
 
-    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
-    /// Returns `false` if this is an internal packet and it should not be reported.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    fn receive_ip(
-        &self,
-        b: &mut io::IoSliceMut<'_>,
-        meta: &mut quinn_udp::RecvMeta,
-        cache: &SocketEndpointCache,
-    ) -> bool {
-        debug!("received data {} from {}", meta.len, meta.addr);
-        // Trunacte the slice, to the actual message length.
-        let b = &b[..meta.len];
-        if stun::is(b) {
-            debug!("received STUN message {}", b.len());
-            self.on_stun_receive(b, meta.addr);
-            return false;
-        }
-        if self.handle_disco_message(b.to_vec(), meta.addr, None) {
-            debug!("received DISCO message {}", b.len());
-            return false;
-        }
-        if let Some(de) = cache.get(&meta.addr) {
-            meta.addr = de.fake_wg_addr;
-        } else {
-            let peer_map = self.peer_map.read_blocking();
-            match peer_map.endpoint_for_ip_port(&meta.addr) {
-                None => {
-                    debug!("no peer_map state found for {}", meta.addr);
-                    return false;
-                }
-                Some(de) => {
-                    cache.update(meta.addr, de.clone());
-                    meta.addr = de.fake_wg_addr;
-                }
-            }
-        }
-
-        // ep.noteRecvActivity();
-        // if stats := c.stats.Load(); stats != nil {
-        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-        // }
-
-        debug!("received passthrough message {}", b.len());
-
-        true
+    pub fn public_key(&self) -> &key::node::PublicKey {
+        &self.public_key
     }
 
     fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
@@ -358,7 +310,10 @@ impl Inner {
         debug!("waiting for disco message handling from {} start", src);
         match tokio::task::block_in_place(|| r.blocking_recv()) {
             Ok(res) => {
-                debug!("waiting for disco message handling from {} done", src);
+                debug!(
+                    "waiting for disco message handling from {} done: {:?}",
+                    src, res
+                );
                 res
             }
             Err(err) => {
@@ -487,11 +442,6 @@ impl Inner {
         self.pconn4.port().await
     }
 
-    /// Returns the discovery public key.
-    fn disco_public(&self) -> key::disco::PublicKey {
-        self.disco_private.public()
-    }
-
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub(super) fn poll_send_raw(
         &self,
@@ -617,8 +567,6 @@ impl Conn {
         if let Some(conn6) = pconn6.clone() {
             net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
         }
-        let disco_private = key::disco::SecretKey::generate();
-
         let (derp_sender, derp_receiver) = flume::bounded(64);
 
         let inner = Arc::new(Inner {
@@ -630,7 +578,7 @@ impl Conn {
             port_mapper,
             net_checker,
             enable_stun_packets: AtomicBool::new(false),
-            public_key: private_key.public_key().into(),
+            public_key: private_key.public_key(),
             ipv6_reported: AtomicBool::new(false),
             no_v4_send: AtomicBool::new(false),
             pconn4,
@@ -643,7 +591,6 @@ impl Conn {
             derp_recv_wakers: std::sync::Mutex::new(VecDeque::new()),
             derp_map: Default::default(),
             peer_map: Default::default(),
-            disco_private,
             private_key,
             actor_sender: derp_sender.clone(),
             my_derp: AtomicU16::new(0),
@@ -675,7 +622,6 @@ impl Conn {
             .unwrap();
     }
 
-    #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let peer_map = self.peer_map.read().await;
         peer_map
@@ -848,6 +794,67 @@ impl Conn {
             .unwrap();
         r.await.unwrap();
     }
+
+    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
+    /// Returns `false` if this is an internal packet and it should not be reported.
+    #[instrument(skip_all, fields(self.name = %self.name))]
+    fn receive_ip(
+        &self,
+        b: &mut io::IoSliceMut<'_>,
+        meta: &mut quinn_udp::RecvMeta,
+        cache: &SocketEndpointCache,
+    ) -> bool {
+        debug!("received data {} from {}", meta.len, meta.addr);
+        // Trunacte the slice, to the actual message length.
+        let b = &b[..meta.len];
+        if stun::is(b) {
+            debug!("received STUN message {}", b.len());
+            self.on_stun_receive(b, meta.addr);
+            return false;
+        }
+        if self.handle_disco_message(b.to_vec(), meta.addr, None) {
+            debug!("received DISCO message {}", b.len());
+            return false;
+        }
+        if let Some(de) = cache.get(&meta.addr) {
+            meta.addr = de.fake_wg_addr;
+        } else {
+            let peer_map = self.peer_map.read_blocking();
+            match peer_map.endpoint_for_ip_port(&meta.addr) {
+                None => {
+                    debug!(
+                        "no peer_map state found for {} in {:#?}",
+                        meta.addr, peer_map
+                    );
+                    drop(peer_map);
+                    let mut peer_map = self.peer_map.write_blocking();
+
+                    let ep = Endpoint::new(self.inner.clone(), None);
+                    ep.maybe_add_best_addr_blocking(meta.addr);
+                    peer_map.upsert_endpoint(ep.clone());
+                    peer_map.set_endpoint_for_ip_port(&meta.addr, ep.clone());
+
+                    cache.update(meta.addr, ep.clone());
+                    meta.addr = ep.fake_wg_addr;
+                }
+                Some(de) => {
+                    debug!("peer_map state found for {} in {:#?}", meta.addr, peer_map);
+
+                    cache.update(meta.addr, de.clone());
+                    meta.addr = de.fake_wg_addr;
+                }
+            }
+        }
+
+        // ep.noteRecvActivity();
+        // if stats := c.stats.Load(); stats != nil {
+        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
+        // }
+
+        debug!("received passthrough message {}", b.len());
+
+        true
+    }
 }
 
 /// A route entry for a public key, saying that a certain peer should be available at DERP
@@ -866,37 +873,17 @@ struct DerpRoute {
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
 pub(super) struct DiscoInfo {
-    /// The same as the Conn.discoInfo map key, just so you can pass around a `DiscoInfo` alone.
-    /// Not modified once initialized.
-    disco_key: key::disco::PublicKey,
-
-    /// The precomputed key for communication with the peer that has the `DiscoKey` used to
+    pub(super) node_key: key::node::PublicKey,
+    /// The precomputed key for communication with the peer that has the `node_key` used to
     /// look up this `DiscoInfo` in Conn.discoInfo.
     /// Not modified once initialized.
-    shared_key: key::disco::SharedSecret,
+    shared_key: key::node::SharedSecret,
 
-    // Mutable fields follow, owned by Conn.mu:
-    /// Tthe src of a ping for `DiscoKey`.
+    /// Tthe src of a ping for `node_key`.
     last_ping_from: Option<SocketAddr>,
 
-    /// The last time of a ping for discoKey.
+    /// The last time of a ping for `node_key`.
     last_ping_time: Option<Instant>,
-
-    /// The last NodeKey seen using `DiscoKey`.
-    /// It's only updated if the NodeKey is unambiguous.
-    last_node_key: Option<key::node::PublicKey>,
-
-    /// The time a NodeKey was last seen using this `DiscoKey`. It's only updated if the
-    /// NodeKey is unambiguous.
-    last_node_key_time: Option<Instant>,
-}
-
-impl DiscoInfo {
-    /// Sets the most recent mapping from di.discoKey to the NodeKey nk.
-    pub fn set_node_key(&mut self, nk: key::node::PublicKey) {
-        self.last_node_key.replace(nk);
-        self.last_node_key_time.replace(Instant::now());
-    }
 }
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
@@ -1073,7 +1060,7 @@ impl AsyncUdpSocket for Conn {
         }
         // Derp
         debug!(
-            "poll_recv: {} - {} - {}",
+            "poll_recv: received: {} - requested: {} - derp_buffer: {}",
             num_msgs_total,
             bufs.len(),
             self.derp_recv_ch.len()
@@ -1250,8 +1237,7 @@ enum ActorMessage {
     },
     SendDiscoMessage {
         dst: SocketAddr,
-        dst_key: Option<key::node::PublicKey>,
-        dst_disco: key::disco::PublicKey,
+        dst_key: key::node::PublicKey,
         msg: disco::Message,
         s: sync::oneshot::Sender<Result<bool>>,
     },
@@ -1297,7 +1283,7 @@ struct Actor {
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<cfg::NetInfo>,
     /// The state for an active DiscoKey.
-    disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
+    disco_info: HashMap<key::node::PublicKey, DiscoInfo>,
 }
 
 impl Actor {
@@ -1374,9 +1360,9 @@ impl Actor {
                             let _ = s.send(());
                         }
                         ActorMessage::SendDiscoMessage {
-                            dst, dst_key, dst_disco, msg, s
+                            dst, dst_key, msg, s
                         } => {
-                            let res = self.send_disco_message(dst, dst_key, dst_disco, msg).await;
+                            let res = self.send_disco_message(dst, dst_key, msg).await;
                             let _ = s.send(res);
                         }
                         ActorMessage::SetNetworkMap(nm, s) => {
@@ -1384,7 +1370,7 @@ impl Actor {
                             s.send(()).unwrap();
                         }
                         ActorMessage::HandleDiscoMessage { msg, src, derp_node_src, s} => {
-                            let res = self.handle_disco_message(&msg, src, derp_node_src.as_ref()).await;
+                            let res = self.handle_disco_message(&msg, src, derp_node_src).await;
                             let _ = s.send(res);
                         }
                     }
@@ -2108,9 +2094,8 @@ impl Actor {
                     let msg_sender = msg_sender.clone();
                     Box::pin(async move {
                         info!(
-                            "STUN done; sending call-me-maybe to {:?} {:?}",
-                            endpoint.disco_key().await,
-                            endpoint.public_key
+                            "STUN done; sending call-me-maybe to {:?}",
+                            endpoint.public_key().await
                         );
                         msg_sender
                             .send_async(ActorMessage::EnqueueCallMeMaybe {
@@ -2127,7 +2112,7 @@ impl Actor {
                 .send_async(ActorMessage::ReStun("refresh-for-peering"))
                 .await
                 .unwrap();
-        } else {
+        } else if let Some(public_key) = endpoint.public_key().await {
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
@@ -2138,8 +2123,7 @@ impl Actor {
                 if let Err(err) = msg_sender
                     .send_async(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
-                        dst_key: Some(endpoint.public_key.clone()),
-                        dst_disco: endpoint.disco_key().await,
+                        dst_key: public_key,
                         msg,
                         s,
                     })
@@ -2270,8 +2254,7 @@ impl Actor {
     async fn send_disco_message(
         &mut self,
         dst: SocketAddr,
-        dst_key: Option<key::node::PublicKey>,
-        dst_disco: key::disco::PublicKey,
+        dst_key: key::node::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
         debug!("sending disco message to {}: {:?}", dst, msg);
@@ -2279,7 +2262,7 @@ impl Actor {
             bail!("connection closed");
         }
         let conn = self.conn.clone();
-        let di = self.get_disco_info(&conn.disco_private, &dst_disco);
+        let di = self.get_disco_info(&conn.private_key, &dst_key);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
         // let is_derp = dst.ip() == DERP_MAGIC_IP;
@@ -2290,8 +2273,8 @@ impl Actor {
         // 	metricSendDiscoUDP.Add(1)
         // }
 
-        let pkt = disco::encode_message(&self.conn.disco_public(), seal);
-        let sent = self.send_addr(dst, dst_key.as_ref(), pkt).await;
+        let pkt = disco::encode_message(&self.conn.public_key(), seal);
+        let sent = self.send_addr(dst, Some(&dst_key), pkt).await;
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
@@ -2362,20 +2345,18 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn get_disco_info<'a>(
         &'a mut self,
-        disco_private: &key::disco::SecretKey,
-        k: &key::disco::PublicKey,
+        node_private: &key::node::SecretKey,
+        k: &key::node::PublicKey,
     ) -> &'a mut DiscoInfo {
         if !self.disco_info.contains_key(k) {
-            let shared_key = disco_private.shared(k);
+            let shared_key = node_private.shared(k);
             self.disco_info.insert(
                 k.clone(),
                 DiscoInfo {
-                    disco_key: k.clone(),
+                    node_key: k.clone(),
                     shared_key,
                     last_ping_from: None,
                     last_ping_time: None,
-                    last_node_key: None,
-                    last_node_key_time: None,
                 },
             );
         }
@@ -2399,7 +2380,7 @@ impl Actor {
         &mut self,
         msg: &[u8],
         src: SocketAddr,
-        derp_node_src: Option<&key::node::PublicKey>,
+        derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         let conn = self.conn.clone();
@@ -2414,26 +2395,41 @@ impl Actor {
             return true;
         }
 
-        let sender = key::disco::PublicKey::from(source);
-        if !conn
+        let sender = key::node::PublicKey::from(source);
+        if conn
             .peer_map
             .read()
             .await
-            .any_endpoint_for_disco_key(&sender)
+            .endpoint_for_node_key(&sender)
+            .is_none()
         {
-            // TODO:
-            // metricRecvDiscoBadPeer.Add(1)
-            debug!(
-                "disco: ignoring disco-looking frame, don't know endpoint for {:?}",
-                sender
-            );
-            return true;
+            let mut abort = true;
+            // Disco Ping from seen endpoint without node key
+            let mut peer_map = conn.peer_map.write().await;
+            if let Some(ep) = peer_map.endpoint_for_ip_port(&src) {
+                if ep.public_key().await.is_none() {
+                    debug!("disco: inserting {:?} - {}", sender, src);
+                    ep.set_public_key(sender.clone()).await;
+                    let ep = ep.clone();
+                    peer_map.upsert_endpoint(ep);
+                    abort = false;
+                }
+            }
+            if abort {
+                // TODO:
+                // metricRecvDiscoBadPeer.Add(1)
+                debug!(
+                    "disco: ignoring disco-looking frame, don't know endpoint for {:?}",
+                    sender
+                );
+                return true;
+            }
         }
 
         // We're now reasonably sure we're expecting communication from
         // this peer, do the heavy crypto lifting to see what they want.
 
-        let di = self.get_disco_info(&conn.disco_private, &sender);
+        let di = self.get_disco_info(&conn.private_key, &sender);
         let payload = di.shared_key.open(&sealed_box);
         if payload.is_err() {
             // This might be have been intended for a previous
@@ -2445,7 +2441,7 @@ impl Actor {
             // it's actually a wireguard packet (super unlikely, but).
             debug!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                self.conn.disco_public(),
+                self.conn.public_key(),
                 sender,
                 payload,
             );
@@ -2491,17 +2487,9 @@ impl Actor {
                 // There might be multiple nodes for the sender's DiscoKey.
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
-                let eps: Vec<_> = peer_map
-                    .endpoints_with_disco_key(&sender)
-                    .cloned()
-                    .collect();
-                for ep in eps {
-                    if ep
-                        .handle_pong_conn(&mut *peer_map, &conn.disco_public(), &pong, di, src)
-                        .await
-                    {
-                        break;
-                    }
+                if let Some(ep) = peer_map.endpoint_for_node_key(&sender).cloned() {
+                    ep.handle_pong_conn(&mut *peer_map, conn.public_key(), &pong, di, src)
+                        .await;
                 }
                 true
             }
@@ -2515,41 +2503,26 @@ impl Actor {
                     return true;
                 }
                 let node_key = derp_node_src.unwrap();
-                let di_disco_key = di.disco_key.clone();
-                drop(di);
-                let ep = peer_map.endpoint_for_node_key(&node_key);
-                if ep.is_none() {
-                    // metricRecvDiscoCallMeMaybeBadNode.Add(1)
-                    debug!(
-                        "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
-                        sender, derp_node_src
-                    );
-                    return true;
+                match peer_map.endpoint_for_node_key(&node_key).cloned() {
+                    None => {
+                        // metricRecvDiscoCallMeMaybeBadNode.Add(1)
+                        debug!(
+                            "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
+                            sender, node_key,
+                        );
+                    }
+                    Some(ep) => {
+                        info!(
+                            "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
+                            self.conn.public_key(),
+                            ep.public_key().await,
+                            src,
+                            cm.my_number.len()
+                        );
+
+                        tokio::task::spawn(async move { ep.handle_call_me_maybe(cm).await });
+                    }
                 }
-                let ep = ep.unwrap().clone();
-                let ep_disco_key = ep.disco_key().await;
-                if ep_disco_key != di_disco_key {
-                    // metricRecvDiscoCallMeMaybeBadDisco.Add(1)
-                    debug!("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source");
-                    return true;
-                }
-
-                let di = self.get_disco_info(&conn.disco_private, &sender);
-                di.set_node_key(node_key.clone());
-
-                info!(
-                    "disco: {:?}<-{:?} ({:?}, {:?})  got call-me-maybe, {} endpoints",
-                    self.conn.disco_public(),
-                    ep_disco_key,
-                    ep.public_key,
-                    src,
-                    cm.my_number.len()
-                );
-
-                tokio::task::spawn(async move {
-                    ep.handle_call_me_maybe(cm).await;
-                });
-
                 true
             }
         }
@@ -2561,13 +2534,13 @@ impl Actor {
     async fn handle_ping(
         &mut self,
         dm: disco::Ping,
-        sender: &key::disco::PublicKey,
+        sender: &key::node::PublicKey,
         src: SocketAddr,
-        derp_node_src: Option<&key::node::PublicKey>,
+        derp_node_src: Option<key::node::PublicKey>,
     ) {
         let conn = self.conn.clone();
         let mut peer_map = conn.peer_map.write().await;
-        let di = self.get_disco_info(&conn.disco_private, &sender);
+        let di = self.get_disco_info(&conn.private_key, &sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -2587,23 +2560,12 @@ impl Actor {
         {
             // Attempt to look up an unambiguous mapping from a DiscoKey `dk` (which sent ping dm) to a NodeKey.
             // `None` if not unamabigous.
-            if let Some(src) = derp_node_src {
-                if let Some(ep) = peer_map.endpoint_for_node_key(src) {
-                    if ep.state.lock().await.disco_key == di.disco_key {
-                        unambigous_node_key = Some(src.clone());
-                    }
+            if let Some(ref src) = derp_node_src {
+                if peer_map.endpoint_for_node_key(src).is_some() {
+                    unambigous_node_key = Some(src.clone());
                 }
             } else if let Some(ep) = peer_map.endpoint_for_node_key(&dm.node_key) {
-                // Pings contains its node source. See if it maps back.
-                if ep.state.lock().await.disco_key == di.disco_key {
-                    unambigous_node_key = Some(dm.node_key.clone());
-                }
-            } else if let Some(set) = peer_map.nodes_of_disco.get(&di.disco_key) {
-                // If there's exactly 1 node in our netmap with DiscoKey dk,
-                // then it's not ambiguous which node key dm was from.
-                if set.len() == 1 {
-                    unambigous_node_key = Some(set.iter().next().unwrap().clone());
-                }
+                unambigous_node_key = Some(dm.node_key.clone());
             }
         }
 
@@ -2611,7 +2573,6 @@ impl Actor {
             if !is_derp {
                 peer_map.set_node_key_for_ip_port(&src, &nk);
             }
-            di.set_node_key(nk);
         }
 
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
@@ -2624,7 +2585,7 @@ impl Actor {
         } else {
             assert!(derp_node_src.is_none());
         }
-        let mut dst_key = derp_node_src.cloned();
+        let mut dst_key = derp_node_src.clone();
 
         // Remember this route if not present.
         let mut num_nodes = 0;
@@ -2638,14 +2599,14 @@ impl Actor {
                 num_nodes = 1;
             }
         } else {
-            for ep in peer_map.endpoints_with_disco_key(&di.disco_key) {
+            if let Some(ep) = peer_map.endpoint_for_node_key(&di.node_key) {
                 if ep.add_candidate_endpoint(src, dm.tx_id).await {
                     dup = true;
-                    break;
-                }
-                num_nodes += 1;
-                if num_nodes == 1 && dst_key.is_none() {
-                    dst_key.replace(ep.public_key.clone());
+                } else {
+                    num_nodes += 1;
+                    if num_nodes == 1 && dst_key.is_none() {
+                        dst_key.replace(di.node_key.clone());
+                    }
                 }
             }
             if dup {
@@ -2674,8 +2635,8 @@ impl Actor {
             };
             info!(
                 "disco: {:?}<-{:?} ({:?}, {:?})  got ping tx={:?}",
-                conn.disco_public(),
-                di.disco_key,
+                conn.public_key(),
+                di.node_key,
                 ping_node_src_str,
                 src,
                 dm.tx_id
@@ -2683,16 +2644,12 @@ impl Actor {
         }
 
         let ip_dst = src;
-        let disco_dest = di.disco_key.clone();
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src,
         });
-
-        if let Err(err) = self
-            .send_disco_message(ip_dst, dst_key, disco_dest, pong)
-            .await
-        {
+        let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
+        if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
             warn!("failed to send disco message to {}: {:?}", ip_dst, err);
         }
     }
@@ -2730,14 +2687,13 @@ impl Actor {
         let mut peer_map = self.conn.peer_map.write().await;
         for n in &self.net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
-                let old_disco_key = ep.disco_key().await;
                 ep.update_from_node(n).await;
-                peer_map.upsert_endpoint(ep, Some(&old_disco_key)).await; // maybe update discokey mappings in peerMap
+                peer_map.upsert_endpoint(ep); // maybe update discokey mappings in peerMap
                 continue;
             }
-            let ep = Endpoint::new(self.conn.clone(), n);
+            let ep = Endpoint::new(self.conn.clone(), Some(n.key.clone()));
             ep.update_from_node(n).await;
-            peer_map.upsert_endpoint(ep, None).await;
+            peer_map.upsert_endpoint(ep);
         }
 
         // If the set of nodes changed since the last set_network_map, the
@@ -2755,25 +2711,19 @@ impl Actor {
                 .map(|n| n.key.clone())
                 .collect();
 
-            let to_delete: Vec<_> = peer_map
-                .endpoints()
-                .filter_map(|ep| {
-                    if keep.contains(&ep.public_key) {
-                        None
-                    } else {
-                        Some(ep.clone())
+            let mut to_delete = Vec::new();
+            for ep in peer_map.endpoints() {
+                if let Some(ref public_key) = ep.public_key().await {
+                    if !keep.contains(public_key) {
+                        to_delete.push(ep.clone());
                     }
-                })
-                .collect();
+                }
+            }
 
             for ep in to_delete {
                 peer_map.delete_endpoint(&ep).await;
             }
         }
-
-        // discokeys might have changed in the above. Discard unused info.
-        self.disco_info
-            .retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
     }
 
     fn log_active_derp(&self) {
@@ -3320,7 +3270,9 @@ mod tests {
             let peer_map = &*self.conn.peer_map.read().await;
             let mut out = Vec::new();
             for ep in peer_map.endpoints() {
-                out.push(ep.public_key.clone());
+                if let Some(key) = ep.public_key().await {
+                    out.push(key);
+                }
             }
             out
         }
@@ -3350,12 +3302,8 @@ mod tests {
                 let addresses = vec![Ipv4Addr::new(1, 0, 0, (i + 1) as u8).into()];
                 peers.push(cfg::Node {
                     addresses: addresses.clone(),
-                    id: (i + 1) as u64,
-                    stable_id: String::new(),
                     name: Some(format!("node{}", i + 1)),
                     key: peer.key.public_key().into(),
-                    disco_key: peer.conn.disco_public(),
-                    allowed_ips: addresses,
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),

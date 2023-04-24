@@ -72,7 +72,7 @@ impl SecretKey {
     }
 }
 
-/// Shared Secret for a very Node.
+/// Shared Secret.
 #[derive(Clone)]
 pub struct SharedSecret(crypto_box::ChaChaBox);
 

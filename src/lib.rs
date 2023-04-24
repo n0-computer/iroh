@@ -48,8 +48,14 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn basics() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
@@ -179,7 +185,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address(),
+                provider.local_address().unwrap(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -270,8 +276,10 @@ mod tests {
             events
         });
 
+        let addrs = dbg!(provider.listen_addresses()?);
+        let addr = *addrs.first().unwrap();
         let opts = get::Options {
-            addr: dbg!(provider.local_address()),
+            addr,
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -368,7 +376,7 @@ mod tests {
             .await
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_address().unwrap();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -442,7 +450,7 @@ mod tests {
             .spawn()
             .await?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_address()?;
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -490,7 +498,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.local_address();
+        let addr = provider.local_address().unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),

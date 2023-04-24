@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
+use crate::hp::cfg::DERP_MAGIC_IP;
+use crate::hp::{cfg, netmap};
 use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
@@ -93,13 +95,34 @@ async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let (endpoint, magicsock) =
         make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false).await?;
 
-    // TODO: insert endpoint configs
+    // Only a single peer in our network currently.
+    let peer_id = opts.peer_id.expect("need peer");
+    let node_key: crate::hp::key::node::PublicKey = peer_id.into();
+    const DEFAULT_DERP_REGION: u16 = 1;
+
+    magicsock
+        .set_network_map(netmap::NetworkMap {
+            peers: vec![cfg::Node {
+                name: None,
+                addresses: vec![opts.addr.ip()],
+                key: node_key.clone(),
+                endpoints: vec![opts.addr],
+                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                created: Instant::now(),
+                hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                keep_alive: false,
+                expired: false,
+                online: None,
+                last_seen: None,
+            }],
+        })
+        .await?;
+
     let addr = magicsock
-        .get_mapping_addr(&opts.peer_id.unwrap().clone().into())
+        .get_mapping_addr(&node_key)
         .await
-        .expect("unable to provide mapping");
-    // TODO: pass along optional opts.addr
-    debug!("connecting to {}", opts.addr);
+        .expect("just inserted");
+    debug!("connecting to {}: (via {} - {})", peer_id, addr, opts.addr);
     let connect = endpoint.connect(addr, "localhost")?;
     let connection = connect.await.context("failed connecting to provider")?;
 
