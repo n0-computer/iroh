@@ -9,7 +9,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    task::{Context, Poll},
     time::Duration,
 };
 
@@ -618,7 +617,9 @@ impl Endpoint {
                 );
 
                 for PendingCliPing { mut res, cb } in state.pending_cli_pings.drain(..) {
-                    self.c.populate_cli_ping_response(&mut res, latency, sp.to);
+                    self.c
+                        .populate_cli_ping_response(&mut res, latency, sp.to)
+                        .await;
                     tokio::task::spawn(async move {
                         cb(res).await;
                     });
@@ -738,19 +739,13 @@ impl Endpoint {
     }
 
     #[instrument(skip_all, fields(self.name = %self.name()))]
-    pub(crate) fn poll_send(
+    pub(crate) async fn get_send_addrs(
         &self,
-        udp_state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        let mut state = self.state.lock_blocking();
+    ) -> io::Result<(Option<SocketAddr>, Option<SocketAddr>)> {
+        let mut state = self.state.lock().await;
 
         if state.expired {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "endpoint expired",
-            )));
+            return Err(io::Error::new(io::ErrorKind::Other, "endpoint expired"));
         }
 
         let now = Instant::now();
@@ -787,16 +782,6 @@ impl Endpoint {
             debug!("send pings all");
             self.send_pings(&mut state, now, true);
         }
-        let public_key = state.public_key.clone();
-        drop(state);
-        debug!("dropped state");
-
-        if udp_addr.is_none() && derp_addr.is_none() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "no UDP or DERP addr",
-            )));
-        }
 
         debug!(
             "sending UDP: {}, DERP: {}",
@@ -804,30 +789,7 @@ impl Endpoint {
             derp_addr.is_some()
         );
 
-        let res = if let Some(udp_addr) = udp_addr {
-            debug!("sending UDP: {}", udp_addr);
-            self.c.poll_send_raw(udp_state, cx, udp_addr, transmits)
-        } else {
-            Poll::Pending
-        };
-        if let Some(derp_addr) = derp_addr {
-            match self
-                .c
-                .poll_send_addr(udp_state, cx, derp_addr, public_key.as_ref(), transmits)
-            {
-                Poll::Pending => {}
-                Poll::Ready(Ok(sent)) => {
-                    if sent == transmits.len() {
-                        return Poll::Ready(Ok(sent));
-                    }
-                }
-                Poll::Ready(Err(err)) => {
-                    warn!("failed to send {:?}", err);
-                }
-            }
-        }
-
-        res
+        Ok((udp_addr, derp_addr))
     }
 }
 
