@@ -859,39 +859,6 @@ impl Drop for WgGuard {
     }
 }
 
-fn group_by<F, G, T, U>(transmits: &[T], f: F, mut g: G) -> Option<U>
-where
-    F: Fn(&T, &T) -> bool,
-    G: FnMut(&[T]) -> Option<U>,
-{
-    if transmits.is_empty() {
-        return None;
-    }
-
-    let mut last = &transmits[0];
-    let mut start = 0;
-    let mut end = 1;
-
-    for i in 1..transmits.len() {
-        if f(last, &transmits[i]) {
-            // Same group, continue.
-            end += 1;
-        } else {
-            // New group.
-            let res = g(&transmits[start..end]);
-            if res.is_some() {
-                return res;
-            }
-            start = i;
-            end = i + 1;
-        }
-        last = &transmits[i];
-    }
-
-    // Last group.
-    g(&transmits[start..end])
-}
-
 #[derive(Debug)]
 enum ActorMessage {
     GetMappingAddr(
@@ -1014,8 +981,8 @@ impl Actor {
                             let _ = s.send(res);
                         }
                         ActorMessage::Shutdown => {
-                            for (_, ep) in self.peer_map.endpoints() {
-                                ep.stop_and_reset().await;
+                            for (_, ep) in self.peer_map.endpoints_mut() {
+                                ep.stop_and_reset();
                             }
                             self.close_all_derp("conn-close").await;
                             return Ok(());
@@ -1059,7 +1026,7 @@ impl Actor {
                             let _ = s.send(res);
                         }
                         ActorMessage::SetNetworkMap(nm, s) => {
-                            self.set_network_map(nm).await;
+                            self.set_network_map(nm);
                             s.send(()).unwrap();
                         }
                     }
@@ -1113,7 +1080,7 @@ impl Actor {
                                             }).await;
                                         }
                                         Network::Ipv6 => {
-                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv4 {
+                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv6 {
                                                 bytes,
                                                 meta,
                                             }).await;
@@ -1189,8 +1156,8 @@ impl Actor {
                 let id = self.peer_map.insert_endpoint(self.conn.clone(), None);
                 self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
-                let ep = self.peer_map.by_id(&id).expect("inserted");
-                ep.maybe_add_best_addr(meta.addr).await;
+                let ep = self.peer_map.by_id_mut(&id).expect("inserted");
+                ep.maybe_add_best_addr(meta.addr);
                 meta.addr = ep.fake_wg_addr;
             }
             Some(ep) => {
@@ -1457,11 +1424,11 @@ impl Actor {
         }
 
         for group in groups {
-            match self.peer_map.endpoint_for_ip_port(&current_destination) {
+            match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
                 Some(ep) => match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = self.conn.send_raw(udp_state, udp_addr, &group).await;
-                        if let Some(public_key) = ep.public_key().await {
+                        if let Some(public_key) = ep.public_key() {
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -1474,7 +1441,7 @@ impl Actor {
                         }
                     }
                     Ok((None, Some(derp_addr))) => {
-                        if let Some(public_key) = ep.public_key().await {
+                        if let Some(public_key) = ep.public_key() {
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -2024,7 +1991,7 @@ impl Actor {
                 .send_async(ActorMessage::ReStun("refresh-for-peering"))
                 .await
                 .unwrap();
-        } else if let Some(public_key) = endpoint.public_key().await {
+        } else if let Some(public_key) = endpoint.public_key() {
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
@@ -2063,15 +2030,15 @@ impl Actor {
 
         let ifs = Default::default(); // TODO: load actual interfaces from the monitor
         self.maybe_close_derps_on_rebind(ifs).await;
-        self.reset_endpoint_states().await;
+        self.reset_endpoint_states();
     }
 
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn reset_endpoint_states(&self) {
-        for (_, ep) in self.peer_map.endpoints() {
-            ep.note_connectivity_change().await;
+    fn reset_endpoint_states(&mut self) {
+        for (_, ep) in self.peer_map.endpoints_mut() {
+            ep.note_connectivity_change();
         }
     }
 
@@ -2100,7 +2067,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    pub async fn set_preferred_port(&self, port: u16) {
+    pub async fn set_preferred_port(&mut self, port: u16) {
         let existing_port = self.conn.port.swap(port, Ordering::Relaxed);
         if existing_port == port {
             return;
@@ -2110,7 +2077,7 @@ impl Actor {
             warn!("failed to rebind: {:?}", err);
             return;
         }
-        self.reset_endpoint_states().await;
+        self.reset_endpoint_states();
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
@@ -2284,11 +2251,12 @@ impl Actor {
         if self.peer_map.endpoint_for_node_key(&sender).is_none() {
             let mut abort = true;
             // Disco Ping from seen endpoint without node key
-            if let Some(ep) = self.peer_map.endpoint_for_ip_port(&src) {
-                if ep.public_key().await.is_none() {
+            if let Some(ep) = self.peer_map.endpoint_for_ip_port_mut(&src) {
+                if ep.public_key().is_none() {
                     debug!("disco: inserting {:?} - {}", sender, src);
-                    ep.set_public_key(sender.clone()).await;
-                    self.peer_map.store_node_key_mapping(ep.id, sender.clone());
+                    ep.set_public_key(sender.clone());
+                    let id = ep.id;
+                    self.peer_map.store_node_key_mapping(id, sender.clone());
                     abort = false;
                 }
             }
@@ -2363,7 +2331,7 @@ impl Actor {
                 // There might be multiple nodes for the sender's DiscoKey.
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
-                if let Some(ep) = self.peer_map.endpoint_for_node_key(&sender) {
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
                     let (_, insert) = ep.handle_pong_conn(conn.public_key(), &pong, di, src).await;
                     if let Some((src, key)) = insert {
                         self.peer_map.set_node_key_for_ip_port(&src, &key);
@@ -2380,7 +2348,7 @@ impl Actor {
                     return true;
                 }
                 let node_key = derp_node_src.unwrap();
-                match self.peer_map.endpoint_for_node_key(&node_key) {
+                match self.peer_map.endpoint_for_node_key_mut(&node_key) {
                     None => {
                         // metricRecvDiscoCallMeMaybeBadNode.Add(1)
                         debug!(
@@ -2392,7 +2360,7 @@ impl Actor {
                         info!(
                             "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
                             self.conn.public_key(),
-                            ep.public_key().await,
+                            ep.public_key(),
                             src,
                             cm.my_number.len()
                         );
@@ -2439,7 +2407,7 @@ impl Actor {
                 if self.peer_map.endpoint_for_node_key(src).is_some() {
                     unambigous_node_key = Some(src.clone());
                 }
-            } else if let Some(ep) = self.peer_map.endpoint_for_node_key(&dm.node_key) {
+            } else if let Some(_ep) = self.peer_map.endpoint_for_node_key(&dm.node_key) {
                 unambigous_node_key = Some(dm.node_key.clone());
             }
         }
@@ -2466,16 +2434,16 @@ impl Actor {
         let mut num_nodes = 0;
         let mut dup = false;
         if let Some(ref dst_key) = dst_key {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key(dst_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id).await {
+            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(dst_key) {
+                if ep.add_candidate_endpoint(src, dm.tx_id) {
                     debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
                     return;
                 }
                 num_nodes = 1;
             }
         } else {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key(&di.node_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id).await {
+            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
+                if ep.add_candidate_endpoint(src, dm.tx_id) {
                     dup = true;
                 } else {
                     num_nodes += 1;
@@ -2530,7 +2498,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn set_network_map(&mut self, nm: netmap::NetworkMap) {
+    fn set_network_map(&mut self, nm: netmap::NetworkMap) {
         if self.conn.is_closed() {
             return;
         }
@@ -2560,8 +2528,8 @@ impl Actor {
         // we'll fall through to the next pass, which allocates but can
         // handle full set updates.
         for n in &self.net_map.as_ref().unwrap().peers {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key(&n.key) {
-                ep.update_from_node(n).await;
+            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
+                ep.update_from_node(n);
                 continue;
             }
 
@@ -2569,7 +2537,7 @@ impl Actor {
                 .peer_map
                 .upsert_endpoint(self.conn.clone(), Some(n.key.clone()))
             {
-                self.peer_map.by_id(&id).unwrap().update_from_node(n).await;
+                self.peer_map.by_id_mut(&id).unwrap().update_from_node(n);
             }
         }
 
@@ -2590,7 +2558,7 @@ impl Actor {
 
             let mut to_delete = Vec::new();
             for (id, ep) in self.peer_map.endpoints() {
-                if let Some(ref public_key) = ep.public_key().await {
+                if let Some(ref public_key) = ep.public_key() {
                     if !keep.contains(public_key) {
                         to_delete.push(*id);
                     }
@@ -2598,7 +2566,7 @@ impl Actor {
             }
 
             for id in to_delete {
-                self.peer_map.delete_endpoint(id).await;
+                self.peer_map.delete_endpoint(id);
             }
         }
     }
@@ -2967,80 +2935,6 @@ mod tests {
         hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
         tls,
     };
-
-    #[test]
-    fn test_group_by_continue() {
-        let cases = [
-            (vec![1, 1], vec![vec![1, 1]]),
-            (vec![1, 2, 3], vec![vec![1], vec![2], vec![3]]),
-            (
-                vec![1, 1, 2, 3, 4, 4, 4, 5, 1],
-                vec![
-                    vec![1, 1],
-                    vec![2],
-                    vec![3],
-                    vec![4, 4, 4],
-                    vec![5],
-                    vec![1],
-                ],
-            ),
-        ];
-        for (input, expected) in cases {
-            let mut out = Vec::new();
-            let res: Option<()> = group_by(
-                &input,
-                |a, b| a == b,
-                |els| {
-                    out.push(els.to_vec());
-                    None
-                },
-            );
-            assert!(res.is_none());
-            assert_eq!(out, expected,);
-        }
-    }
-
-    #[test]
-    fn test_group_by_early_return() {
-        let cases = [
-            (vec![(1, true), (1, false)], vec![vec![1, 1]]),
-            (
-                vec![(1, true), (2, false), (3, false)],
-                vec![vec![1], vec![2]],
-            ),
-            (
-                vec![
-                    (1, true),
-                    (1, true),
-                    (2, true),
-                    (3, true),
-                    (4, true),
-                    (4, false),
-                    (4, false),
-                    (5, false),
-                ],
-                vec![vec![1, 1], vec![2], vec![3], vec![4, 4, 4]],
-            ),
-        ];
-        for (i, (input, expected)) in cases.into_iter().enumerate() {
-            println!("case {}", i);
-            let mut out: Vec<Vec<usize>> = Vec::new();
-            let res: Option<()> = group_by(
-                &input,
-                |a, b| a.0 == b.0,
-                |els| {
-                    out.push(els.iter().map(|(e, _)| *e).collect());
-                    if els.last().unwrap().1 {
-                        None
-                    } else {
-                        Some(())
-                    }
-                },
-            );
-            assert!(res.is_some()); // all abort early
-            assert_eq!(out, expected);
-        }
-    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();

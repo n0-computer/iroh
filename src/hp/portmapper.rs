@@ -26,7 +26,7 @@ impl Client {
     }
 
     /// Updates the local port number to which we want to port map UDP traffic.
-    pub async fn set_local_port(&self, local_port: u16) {
+    pub async fn set_local_port(&self, _local_port: u16) {
         // TODO:
     }
 
