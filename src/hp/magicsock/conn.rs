@@ -38,7 +38,7 @@ use crate::{
 };
 
 use super::{
-    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, Endpoint, DERP_CLEAN_STALE_INTERVAL,
+    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, DERP_CLEAN_STALE_INTERVAL,
     DERP_INACTIVE_CLEANUP_TIME, ENDPOINTS_FRESH_ENOUGH_DURATION,
 };
 
@@ -165,10 +165,6 @@ pub struct Inner {
     network_recv_wakers: std::sync::Mutex<VecDeque<Waker>>,
     network_send_wakers: std::sync::Mutex<VecDeque<Waker>>,
 
-    // Used by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
-    socket_endpoint4: SocketEndpointCache,
-    socket_endpoint6: SocketEndpointCache,
-
     /// Whether IPv4 UDP is known to be unable to transmit
     /// at all. This could happen if the socket is in an invalid state
     /// (as can happen on darwin after a network link status change).
@@ -246,11 +242,11 @@ impl Inner {
     /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
     #[instrument(skip_all, fields(self.name = %self.name))]
-    pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint: Endpoint) {
+    pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint_id: usize) {
         self.actor_sender
             .send_async(ActorMessage::EnqueueCallMeMaybe {
                 derp_addr,
-                endpoint,
+                endpoint_id,
             })
             .await
             .unwrap();
@@ -417,8 +413,6 @@ impl Conn {
             no_v4_send: AtomicBool::new(false),
             pconn4,
             pconn6,
-            socket_endpoint4: SocketEndpointCache::default(),
-            socket_endpoint6: SocketEndpointCache::default(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             network_recv_ch: derp_recv_ch_receiver,
@@ -846,26 +840,6 @@ struct DerpReadResult {
     buf: BytesMut,
 }
 
-#[derive(Default)]
-struct SocketEndpointCache(std::sync::Mutex<Option<(SocketAddr, u64, Endpoint)>>);
-
-impl SocketEndpointCache {
-    pub fn get(&self, addr: &SocketAddr) -> Option<Endpoint> {
-        if let Some(inner) = &*self.0.lock().unwrap() {
-            if &inner.0 == addr && inner.1 == inner.2.num_stop_and_reset() {
-                return Some(inner.2.clone());
-            }
-        }
-
-        None
-    }
-
-    pub fn update(&self, addr: SocketAddr, ep: Endpoint) {
-        let mut inner = self.0.lock().unwrap();
-        inner.replace((addr, ep.num_stop_and_reset(), ep));
-    }
-}
-
 /// Contains fields for an active DERP connection.
 #[derive(Debug)]
 struct ActiveDerp {
@@ -937,7 +911,7 @@ enum ActorMessage {
     },
     EnqueueCallMeMaybe {
         derp_addr: SocketAddr,
-        endpoint: Endpoint,
+        endpoint_id: usize,
     },
     SendDiscoMessage {
         dst: SocketAddr,
@@ -975,7 +949,7 @@ struct Actor {
 
     /// Functions to run (in their own tasks) when endpoints are refreshed.
     on_endpoint_refreshed:
-        HashMap<Endpoint, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+        HashMap<usize, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
     /// When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1040,7 +1014,7 @@ impl Actor {
                             let _ = s.send(res);
                         }
                         ActorMessage::Shutdown => {
-                            for ep in self.peer_map.endpoints() {
+                            for (_, ep) in self.peer_map.endpoints() {
                                 ep.stop_and_reset().await;
                             }
                             self.close_all_derp("conn-close").await;
@@ -1066,9 +1040,9 @@ impl Actor {
                         }
                         ActorMessage::EnqueueCallMeMaybe {
                             derp_addr,
-                            endpoint,
+                            endpoint_id,
                         } => {
-                            self.enqueue_call_me_maybe(derp_addr, endpoint).await;
+                            self.enqueue_call_me_maybe(derp_addr, endpoint_id).await;
                         }
                         ActorMessage::RebindAll(s) => {
                             self.rebind_all().await;
@@ -1191,7 +1165,10 @@ impl Actor {
         meta: &mut quinn_udp::RecvMeta,
         network: Network,
     ) -> bool {
-        debug!("received data {} from {}", meta.len, meta.addr);
+        debug!(
+            "received data {} from {} on {:?}",
+            meta.len, meta.addr, network
+        );
 
         if stun::is(bytes) {
             debug!("received STUN message {}", bytes.len());
@@ -1202,39 +1179,27 @@ impl Actor {
             debug!("received DISCO message {}", bytes.len());
             return false;
         }
-        let cache = match network {
-            Network::Ipv4 => &self.conn.socket_endpoint4,
-            Network::Ipv6 => &self.conn.socket_endpoint6,
-        };
+        match self.peer_map.endpoint_for_ip_port(&meta.addr) {
+            None => {
+                debug!(
+                    "no peer_map state found for {} in {:#?}",
+                    meta.addr, self.peer_map
+                );
 
-        if let Some(de) = cache.get(&meta.addr) {
-            meta.addr = de.fake_wg_addr;
-        } else {
-            match self.peer_map.endpoint_for_ip_port(&meta.addr) {
-                None => {
-                    debug!(
-                        "no peer_map state found for {} in {:#?}",
-                        meta.addr, self.peer_map
-                    );
+                let id = self.peer_map.insert_endpoint(self.conn.clone(), None);
+                self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
-                    let ep = Endpoint::new(self.conn.clone(), None);
-                    ep.maybe_add_best_addr(meta.addr).await;
-                    self.peer_map.upsert_endpoint(ep.clone()).await;
-                    self.peer_map
-                        .set_endpoint_for_ip_port(&meta.addr, ep.clone());
+                let ep = self.peer_map.by_id(&id).expect("inserted");
+                ep.maybe_add_best_addr(meta.addr).await;
+                meta.addr = ep.fake_wg_addr;
+            }
+            Some(ep) => {
+                debug!(
+                    "peer_map state found for {} in {:#?}",
+                    meta.addr, self.peer_map
+                );
 
-                    cache.update(meta.addr, ep.clone());
-                    meta.addr = ep.fake_wg_addr;
-                }
-                Some(de) => {
-                    debug!(
-                        "peer_map state found for {} in {:#?}",
-                        meta.addr, self.peer_map
-                    );
-
-                    cache.update(meta.addr, de.clone());
-                    meta.addr = de.fake_wg_addr;
-                }
+                meta.addr = ep.fake_wg_addr;
             }
         }
 
@@ -2018,7 +1983,16 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint: Endpoint) {
+    async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint_id: usize) {
+        let endpoint = self.peer_map.by_id(&endpoint_id);
+        if endpoint.is_none() {
+            warn!(
+                "enqueue_call_me_maybe with invalid endpoint_id called: {} - {}",
+                derp_addr, endpoint_id
+            );
+            return;
+        }
+        let endpoint = endpoint.unwrap();
         if self.last_endpoints_time.is_none()
             || self.last_endpoints_time.as_ref().unwrap().elapsed()
                 > ENDPOINTS_FRESH_ENOUGH_DURATION
@@ -2030,19 +2004,15 @@ impl Actor {
 
             let msg_sender = self.msg_sender.clone();
             self.on_endpoint_refreshed.insert(
-                endpoint.clone(),
+                endpoint_id,
                 Box::new(move || {
-                    let endpoint = endpoint.clone();
                     let msg_sender = msg_sender.clone();
                     Box::pin(async move {
-                        info!(
-                            "STUN done; sending call-me-maybe to {:?}",
-                            endpoint.public_key().await
-                        );
+                        info!("STUN done; sending call-me-maybe",);
                         msg_sender
                             .send_async(ActorMessage::EnqueueCallMeMaybe {
                                 derp_addr,
-                                endpoint,
+                                endpoint_id,
                             })
                             .await
                             .unwrap();
@@ -2100,7 +2070,7 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn reset_endpoint_states(&self) {
-        for ep in self.peer_map.endpoints() {
+        for (_, ep) in self.peer_map.endpoints() {
             ep.note_connectivity_change().await;
         }
     }
@@ -2318,8 +2288,7 @@ impl Actor {
                 if ep.public_key().await.is_none() {
                     debug!("disco: inserting {:?} - {}", sender, src);
                     ep.set_public_key(sender.clone()).await;
-                    let ep = ep.clone();
-                    self.peer_map.upsert_endpoint(ep).await;
+                    self.peer_map.store_node_key_mapping(ep.id, sender.clone());
                     abort = false;
                 }
             }
@@ -2394,9 +2363,11 @@ impl Actor {
                 // There might be multiple nodes for the sender's DiscoKey.
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
-                if let Some(ep) = self.peer_map.endpoint_for_node_key(&sender).cloned() {
-                    ep.handle_pong_conn(&mut self.peer_map, conn.public_key(), &pong, di, src)
-                        .await;
+                if let Some(ep) = self.peer_map.endpoint_for_node_key(&sender) {
+                    let (_, insert) = ep.handle_pong_conn(conn.public_key(), &pong, di, src).await;
+                    if let Some((src, key)) = insert {
+                        self.peer_map.set_node_key_for_ip_port(&src, &key);
+                    }
                 }
                 true
             }
@@ -2409,7 +2380,7 @@ impl Actor {
                     return true;
                 }
                 let node_key = derp_node_src.unwrap();
-                match self.peer_map.endpoint_for_node_key(&node_key).cloned() {
+                match self.peer_map.endpoint_for_node_key(&node_key) {
                     None => {
                         // metricRecvDiscoCallMeMaybeBadNode.Add(1)
                         debug!(
@@ -2425,8 +2396,7 @@ impl Actor {
                             src,
                             cm.my_number.len()
                         );
-
-                        tokio::task::spawn(async move { ep.handle_call_me_maybe(cm).await });
+                        ep.handle_call_me_maybe(cm).await;
                     }
                 }
                 true
@@ -2590,14 +2560,17 @@ impl Actor {
         // we'll fall through to the next pass, which allocates but can
         // handle full set updates.
         for n in &self.net_map.as_ref().unwrap().peers {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key(&n.key).cloned() {
+            if let Some(ep) = self.peer_map.endpoint_for_node_key(&n.key) {
                 ep.update_from_node(n).await;
-                self.peer_map.upsert_endpoint(ep).await; // maybe update discokey mappings in peerMap
                 continue;
             }
-            let ep = Endpoint::new(self.conn.clone(), Some(n.key.clone()));
-            ep.update_from_node(n).await;
-            self.peer_map.upsert_endpoint(ep).await;
+
+            if let Some(id) = self
+                .peer_map
+                .upsert_endpoint(self.conn.clone(), Some(n.key.clone()))
+            {
+                self.peer_map.by_id(&id).unwrap().update_from_node(n).await;
+            }
         }
 
         // If the set of nodes changed since the last set_network_map, the
@@ -2616,16 +2589,16 @@ impl Actor {
                 .collect();
 
             let mut to_delete = Vec::new();
-            for ep in self.peer_map.endpoints() {
+            for (id, ep) in self.peer_map.endpoints() {
                 if let Some(ref public_key) = ep.public_key().await {
                     if !keep.contains(public_key) {
-                        to_delete.push(ep.clone());
+                        to_delete.push(*id);
                     }
                 }
             }
 
-            for ep in to_delete {
-                self.peer_map.delete_endpoint(&ep).await;
+            for id in to_delete {
+                self.peer_map.delete_endpoint(id).await;
             }
         }
     }

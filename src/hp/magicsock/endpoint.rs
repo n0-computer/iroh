@@ -4,7 +4,6 @@ use std::{
     hash::Hash,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    ops::Deref,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -26,26 +25,21 @@ use crate::{
 };
 
 use super::{
-    conn::DiscoInfo, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer, DISCO_PING_INTERVAL,
-    GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT,
-    TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
+    conn::DiscoInfo, Timer, DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION,
+    PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
-
-/// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
-/// based on network conditions and what the peer supports.
-#[derive(Clone)]
-pub struct Endpoint(Arc<InnerEndpoint>);
 
 impl Debug for Endpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "MagicsockEndpoint({:?}, {})",
+            "MagicsockEndpoint({:?}, {}, {})",
             self.state
                 .lock_blocking()
                 .public_key
                 .as_ref()
                 .map(crate::util::encode),
+            self.id,
             self.fake_wg_addr,
         )
     }
@@ -66,20 +60,17 @@ impl Hash for Endpoint {
 impl PartialEq for Endpoint {
     fn eq(&self, other: &Self) -> bool {
         self.state.lock_blocking().public_key == other.state.lock_blocking().public_key
+            && self.id == other.id
             && self.fake_wg_addr == other.fake_wg_addr
     }
 }
 
 impl Eq for Endpoint {}
 
-impl Deref for Endpoint {
-    type Target = InnerEndpoint;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-pub struct InnerEndpoint {
+/// A conneciton endpoint that picks the best available path to communicate with a peer,
+/// based on network conditions and what the peer supports.
+pub struct Endpoint {
+    pub id: usize,
     pub num_stop_and_reset_atomic: AtomicU64,
     pub c: Arc<super::conn::Inner>,
     /// The UDP address we tell wireguard-go we're using
@@ -119,10 +110,15 @@ pub struct PendingCliPing {
 }
 
 impl Endpoint {
-    pub fn new(conn: Arc<super::conn::Inner>, public_key: Option<key::node::PublicKey>) -> Self {
+    pub fn new(
+        conn: Arc<super::conn::Inner>,
+        id: usize,
+        public_key: Option<key::node::PublicKey>,
+    ) -> Self {
         let fake_wg_addr = init_fake_udp_addr();
 
-        Endpoint(Arc::new(InnerEndpoint {
+        Endpoint {
+            id,
             c: conn,
             fake_wg_addr,
             num_stop_and_reset_atomic: Default::default(),
@@ -139,7 +135,7 @@ impl Endpoint {
                 pending_cli_pings: Vec::new(),
                 expired: false,
             }),
-        }))
+        }
     }
 
     fn name(&self) -> String {
@@ -217,7 +213,8 @@ impl Endpoint {
         let now = Instant::now();
         let (udp_addr, derp_addr) = self.addr_for_send(&state, &now);
         if let Some(derp_addr) = derp_addr {
-            self.start_ping(&mut state, derp_addr, now, DiscoPingPurpose::Cli);
+            self.start_ping(&mut state, derp_addr, now, DiscoPingPurpose::Cli)
+                .await;
         }
         if let Some(udp_addr) = udp_addr {
             if state.is_best_addr_valid(now) {
@@ -225,11 +222,13 @@ impl Endpoint {
                 // Otherwise "tailscale ping" results to a node on the local network
                 // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
                 // IPv6 address, both 1ms away, and it's random who replies first.
-                self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Cli);
+                self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Cli)
+                    .await;
             } else {
                 let eps: Vec<_> = state.endpoint_state.keys().cloned().collect();
                 for ep in eps {
-                    self.start_ping(&mut state, ep, now, DiscoPingPurpose::Cli);
+                    self.start_ping(&mut state, ep, now, DiscoPingPurpose::Cli)
+                        .await;
                 }
             }
         }
@@ -299,7 +298,7 @@ impl Endpoint {
     }
 
     #[instrument(skip_all, fields(self.name = %self.name()))]
-    fn start_ping(
+    async fn start_ping(
         &self,
         state: &mut InnerMutEndpoint,
         ep: SocketAddr,
@@ -321,7 +320,6 @@ impl Endpoint {
         }
 
         let txid = stun::TransactionId::default();
-        let this = self.clone();
         debug!("disco: sent ping [{}]", txid);
         state.sent_ping.insert(
             txid,
@@ -329,20 +327,23 @@ impl Endpoint {
                 to: ep,
                 at: now,
                 timer: Timer::after(PING_TIMEOUT_DURATION, async move {
-                    this.ping_timeout(txid).await;
+                    todo!()
+                    // self.ping_timeout(txid).await;
                 }),
                 purpose,
             },
         );
         let public_key = state.public_key.clone();
-        let this = self.clone();
-        tokio::task::spawn(async move {
-            this.send_disco_ping(ep, public_key, txid).await;
-        });
+        self.send_disco_ping(ep, public_key, txid).await;
     }
 
     #[instrument(skip_all, fields(self.name = %self.name()))]
-    fn send_pings(&self, state: &mut InnerMutEndpoint, now: Instant, send_call_me_maybe: bool) {
+    async fn send_pings(
+        &self,
+        state: &mut InnerMutEndpoint,
+        now: Instant,
+        send_call_me_maybe: bool,
+    ) {
         state.last_full_ping.replace(now);
 
         // first cleanout out all old endpoints
@@ -380,7 +381,8 @@ impl Endpoint {
                 info!("disco: send, starting discovery for {:?}", state.public_key);
             }
 
-            self.start_ping(state, ep, now, DiscoPingPurpose::Discovery);
+            self.start_ping(state, ep, now, DiscoPingPurpose::Discovery)
+                .await;
         }
 
         let derp_addr = state.derp_addr.clone();
@@ -391,9 +393,10 @@ impl Endpoint {
                 // message to our peer via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                let this = self.clone();
+                let id = self.id;
+                let conn = self.c.clone();
                 tokio::task::spawn(async move {
-                    this.c.enqueue_call_me_maybe(derp_addr, this.clone()).await;
+                    conn.enqueue_call_me_maybe(derp_addr, id).await;
                 });
             }
         }
@@ -548,12 +551,11 @@ impl Endpoint {
     #[instrument(skip_all, fields(self.name = %self.name()))]
     pub(super) async fn handle_pong_conn(
         &self,
-        peer_map: &mut PeerMap,
         conn_disco_public: &key::node::PublicKey,
         m: &disco::Pong,
         di: &mut DiscoInfo,
         src: SocketAddr,
-    ) -> bool {
+    ) -> (bool, Option<(SocketAddr, key::node::PublicKey)>) {
         let mut state = self.state.lock().await;
 
         let is_derp = src.ip() == DERP_MAGIC_IP;
@@ -569,10 +571,11 @@ impl Endpoint {
                     "disco: received unexpected pong {:?} from {:?}",
                     m.tx_id, src,
                 );
-                return false;
+                return (false, None);
             }
             Some(sp) => {
                 let known_tx_id = true;
+                let mut peer_map_insert = None;
                 sp.timer.stop().await;
 
                 let now = Instant::now();
@@ -587,10 +590,10 @@ impl Endpoint {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
                             // This is no longer an endpoint we care about.
-                            return known_tx_id;
+                            return (known_tx_id, peer_map_insert);
                         }
                         Some(st) => {
-                            peer_map.set_node_key_for_ip_port(&src, &key);
+                            peer_map_insert = Some((src, key.clone()));
                             st.add_pong_reply(PongReply {
                                 latency,
                                 pong_at: now,
@@ -648,7 +651,8 @@ impl Endpoint {
                             .replace(now + TRUST_UDP_ADDR_DURATION);
                     }
                 }
-                known_tx_id
+
+                (known_tx_id, peer_map_insert)
             }
         }
     }
@@ -712,7 +716,7 @@ impl Endpoint {
         for st in state.endpoint_state.values_mut() {
             st.last_ping = None;
         }
-        self.send_pings(state, Instant::now(), false);
+        self.send_pings(state, Instant::now(), false).await;
     }
 
     /// Stops timers associated with de and resets its state back to zero.
@@ -771,7 +775,8 @@ impl Endpoint {
                         ep_state.last_ping.map(|l| now - l),
                         now
                     );
-                    self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Heartbeat);
+                    self.start_ping(&mut state, udp_addr, now, DiscoPingPurpose::Heartbeat)
+                        .await;
                 }
             }
         }
@@ -780,7 +785,7 @@ impl Endpoint {
         // If we do not have an optimal addr, send pings to all known places.
         if udp_addr.is_none() || self.want_full_ping(&mut state, &now) {
             debug!("send pings all");
-            self.send_pings(&mut state, now, true);
+            self.send_pings(&mut state, now, true).await;
         }
 
         debug!(
@@ -835,44 +840,74 @@ pub struct AddrLatency {
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
 pub struct PeerMap {
-    pub by_node_key: HashMap<key::node::PublicKey, PeerInfo>,
-    pub by_ip_port: HashMap<SocketAddr, PeerInfo>,
+    by_node_key: HashMap<key::node::PublicKey, usize>,
+    by_ip_port: HashMap<SocketAddr, usize>,
+    by_id: HashMap<usize, Endpoint>,
+    next_id: usize,
 }
 
 impl PeerMap {
     /// Number of nodes currently listed.
     pub fn node_count(&self) -> usize {
-        self.by_node_key.len()
+        self.by_id.len()
+    }
+
+    pub fn by_id(&self, id: &usize) -> Option<&Endpoint> {
+        self.by_id.get(&id)
     }
 
     /// Returns the endpoint for nk, or None if nk is not known to us.
     pub fn endpoint_for_node_key(&self, nk: &key::node::PublicKey) -> Option<&Endpoint> {
-        self.by_node_key.get(nk).map(|i| &i.ep)
+        self.by_node_key.get(nk).and_then(|id| self.by_id(id))
     }
 
     /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
     pub fn endpoint_for_ip_port(&self, ipp: &SocketAddr) -> Option<&Endpoint> {
-        self.by_ip_port.get(ipp).map(|i| &i.ep)
+        self.by_ip_port.get(ipp).and_then(|id| self.by_id(id))
     }
 
-    pub fn endpoints(&self) -> impl Iterator<Item = &Endpoint> {
-        self.by_node_key.values().map(|pi| &pi.ep)
+    pub fn endpoints(&self) -> impl Iterator<Item = (&usize, &Endpoint)> {
+        self.by_id.iter()
     }
 
-    /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
-    /// tailcfg.Node for ep.publicKey.
-    pub async fn upsert_endpoint(&mut self, ep: Endpoint) {
-        let public_key = ep.state.lock().await.public_key.clone();
+    pub fn store_node_key_mapping(&mut self, id: usize, public_key: key::node::PublicKey) {
+        if !self.by_node_key.contains_key(&public_key) {
+            self.by_node_key.insert(public_key, id);
+            // allow lookups by the fake addr
+            let fake_wg_addr = self.by_id(&id).unwrap().fake_wg_addr;
+            self.by_ip_port.insert(fake_wg_addr, id);
+        }
+    }
+
+    /// Stores endpoint, with a public key.
+    pub fn upsert_endpoint(
+        &mut self,
+        conn: Arc<super::conn::Inner>,
+        public_key: Option<key::node::PublicKey>,
+    ) -> Option<usize> {
         if let Some(public_key) = public_key {
             if !self.by_node_key.contains_key(&public_key) {
-                let fake_wg_addr = ep.fake_wg_addr;
-                let mut info = PeerInfo::new(ep);
-                info.ip_ports.insert(fake_wg_addr);
-                self.by_node_key.insert(public_key, info.clone());
+                let id = self.insert_endpoint(conn, Some(public_key.clone()));
+                self.by_node_key.insert(public_key, id);
                 // allow lookups by the fake addr
-                self.by_ip_port.insert(fake_wg_addr, info);
+                let fake_wg_addr = self.by_id(&id).unwrap().fake_wg_addr;
+                self.by_ip_port.insert(fake_wg_addr, id);
+                return Some(id);
             }
         }
+        None
+    }
+
+    pub fn insert_endpoint(
+        &mut self,
+        conn: Arc<super::conn::Inner>,
+        public_key: Option<key::node::PublicKey>,
+    ) -> usize {
+        let id = self.next_id;
+        let ep = Endpoint::new(conn, id, public_key);
+        self.next_id = self.next_id.wrapping_add(1);
+        self.by_id.insert(id, ep);
+        id
     }
 
     /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
@@ -881,35 +916,32 @@ impl PeerMap {
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
     pub fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::node::PublicKey) {
-        if let Some(pi) = self.by_ip_port.get_mut(ipp) {
-            pi.ip_ports.remove(ipp);
+        if let Some(id) = self.by_ip_port.get(ipp) {
             if !self.by_node_key.contains_key(nk) {
-                let pi = pi.clone();
-                self.by_node_key.insert(nk.clone(), pi);
+                self.by_node_key.insert(nk.clone(), *id);
             }
             self.by_ip_port.remove(ipp);
         }
-        if let Some(pi) = self.by_node_key.get_mut(nk) {
-            pi.ip_ports.insert(ipp.clone());
-            self.by_ip_port.insert(*ipp, pi.clone());
-        } else {
+        if let Some(id) = self.by_node_key.get(nk) {
+            self.by_ip_port.insert(*ipp, *id);
         }
     }
 
-    pub fn set_endpoint_for_ip_port(&mut self, ipp: &SocketAddr, ep: Endpoint) {
-        self.by_ip_port.insert(*ipp, PeerInfo::new(ep));
+    pub fn set_endpoint_for_ip_port(&mut self, ipp: &SocketAddr, id: usize) {
+        self.by_ip_port.insert(*ipp, id);
     }
 
-    /// Deletes the peerInfo associated with ep, and updates indexes.
-    pub async fn delete_endpoint(&mut self, ep: &Endpoint) {
-        ep.stop_and_reset().await;
-        if let Some(public_key) = ep.public_key().await {
-            if let Some(pi) = self.by_node_key.remove(&public_key) {
-                for ip in &pi.ip_ports {
-                    self.by_ip_port.remove(ip);
-                }
+    /// Deletes the endpoint.
+    pub async fn delete_endpoint(&mut self, id: usize) {
+        if let Some(ep) = self.by_id.remove(&id) {
+            ep.stop_and_reset().await;
+
+            if let Some(public_key) = ep.public_key().await {
+                self.by_node_key.remove(&public_key);
             }
         }
+
+        self.by_ip_port.retain(|_, v| *v != id);
     }
 }
 
@@ -985,6 +1017,37 @@ impl EndpointState {
         // This was an endpoint discovered at runtime.
         self.last_got_ping.as_ref().unwrap().elapsed() > SESSION_ACTIVE_TIMEOUT
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PongReply {
+    latency: Duration,
+    /// When we received the pong.
+    pong_at: Instant,
+    // The pong's src (usually same as endpoint map key).
+    from: SocketAddr,
+    // What they reported they heard.
+    pong_src: SocketAddr,
+}
+
+#[derive(Debug)]
+pub struct SentPing {
+    pub to: SocketAddr,
+    pub at: Instant,
+    // timeout timer
+    pub timer: Timer,
+    pub purpose: DiscoPingPurpose,
+}
+
+/// The reason why a discovery ping message was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoPingPurpose {
+    /// The purpose of a ping was to see if a path was valid.
+    Discovery,
+    /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
+    Cli,
+    /// Ping to ensure the current route is still valid.
+    Heartbeat,
 }
 
 static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
