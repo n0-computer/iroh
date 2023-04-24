@@ -249,6 +249,7 @@ impl Endpoint {
         public_key: Option<key::node::PublicKey>,
         tx_id: stun::TransactionId,
     ) {
+        debug!("send disco ping: start");
         let mut sent = false;
         if let Some(pub_key) = public_key {
             sent = self
@@ -262,10 +263,11 @@ impl Endpoint {
                     }),
                 )
                 .await
+                .map(|_| true)
                 .unwrap_or_default();
-
-            debug!("disco ping was sent? {}", sent);
         }
+
+        debug!("send disco ping: done: sent? {}", sent);
         if !sent {
             self.forget_ping(tx_id);
         }
@@ -710,8 +712,13 @@ impl Endpoint {
             udp_addr, derp_addr
         );
 
-        // Send heartbeat ping to keep the current addr going as long as we need it.
-        if let Some(udp_addr) = udp_addr {
+        if udp_addr.is_none() || self.want_full_ping(&now) {
+            // If we do not have an optimal addr, send pings to all known places.
+            debug!("send pings all");
+            self.send_pings(now, true).await;
+        } else if let Some(udp_addr) = udp_addr {
+            // Send heartbeat ping to keep the current addr going as long as we need it.
+
             if let Some(ep_state) = self.endpoint_state.get(&udp_addr) {
                 let needs_ping = ep_state
                     .last_ping
@@ -729,13 +736,6 @@ impl Endpoint {
                         .await;
                 }
             }
-        }
-
-        debug!("check all pings");
-        // If we do not have an optimal addr, send pings to all known places.
-        if udp_addr.is_none() || self.want_full_ping(&now) {
-            debug!("send pings all");
-            self.send_pings(now, true).await;
         }
 
         debug!(

@@ -17,7 +17,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
 use bytes::BytesMut;
-use futures::{future::BoxFuture, Stream, StreamExt, TryFutureExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 use quinn::{AsyncUdpSocket, Transmit};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -205,20 +205,11 @@ impl Inner {
         dst: SocketAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
-    ) -> Result<bool> {
-        let (s, r) = sync::oneshot::channel();
-
+    ) -> Result<()> {
         self.actor_sender
-            .send_async(ActorMessage::SendDiscoMessage {
-                dst,
-                dst_key,
-                msg,
-                s,
-            })
+            .send_async(ActorMessage::SendDiscoMessage { dst, dst_key, msg })
             .await?;
-
-        let res = r.await??;
-        Ok(res)
+        Ok(())
     }
 
     pub fn public_key(&self) -> &key::node::PublicKey {
@@ -386,7 +377,7 @@ impl Conn {
             private_key,
         } = opts;
 
-        let (derp_recv_ch_sender, derp_recv_ch_receiver) = flume::bounded(64);
+        let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port().await;
@@ -397,7 +388,7 @@ impl Conn {
         if let Some(conn6) = pconn6.clone() {
             net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
         }
-        let (derp_sender, derp_receiver) = flume::bounded(64);
+        let (actor_sender, actor_receiver) = flume::bounded(128);
 
         let inner = Arc::new(Inner {
             name,
@@ -415,18 +406,19 @@ impl Conn {
             pconn6,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            network_recv_ch: derp_recv_ch_receiver,
+            network_recv_ch: network_recv_ch_receiver,
             network_recv_wakers: std::sync::Mutex::new(VecDeque::new()),
             network_send_wakers: std::sync::Mutex::new(VecDeque::new()),
             derp_map: Default::default(),
             private_key,
-            actor_sender: derp_sender.clone(),
+            actor_sender: actor_sender.clone(),
             my_derp: AtomicU16::new(0),
         });
 
         let conn = inner.clone();
         let derp_task = tokio::task::spawn(async move {
-            let derp_handler = Actor::new(derp_receiver, derp_sender, derp_recv_ch_sender, conn);
+            let derp_handler =
+                Actor::new(actor_receiver, actor_sender, network_recv_ch_sender, conn);
 
             if let Err(err) = derp_handler.run().await {
                 warn!("derp handler errored: {:?}", err);
@@ -884,7 +876,6 @@ enum ActorMessage {
         dst: SocketAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
-        s: sync::oneshot::Sender<Result<bool>>,
     },
     SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
 }
@@ -1020,10 +1011,9 @@ impl Actor {
                             let _ = s.send(());
                         }
                         ActorMessage::SendDiscoMessage {
-                            dst, dst_key, msg, s
+                            dst, dst_key, msg,
                         } => {
-                            let res = self.send_disco_message(dst, dst_key, msg).await;
-                            let _ = s.send(res);
+                            let _res = self.send_disco_message(dst, dst_key, msg).await;
                         }
                         ActorMessage::SetNetworkMap(nm, s) => {
                             self.set_network_map(nm);
@@ -1477,6 +1467,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
+        debug!("sending derp region: {} - {:?}", port, peer);
         let region_id = port;
         {
             let derp_map = self.conn.derp_map.read().await;
@@ -1997,19 +1988,11 @@ impl Actor {
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
-                let (s, r) = sync::oneshot::channel();
-
                 if let Err(err) = msg_sender
                     .send_async(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
                         dst_key: public_key,
                         msg,
-                        s,
-                    })
-                    .map_err(|e| anyhow::anyhow!(e))
-                    .and_then(|_| async move {
-                        r.await??;
-                        Ok(())
                     })
                     .await
                 {
