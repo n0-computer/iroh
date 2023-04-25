@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
+use iroh::get::make_partial_download;
 use rand::{RngCore, SeedableRng};
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -55,6 +56,31 @@ fn cli_provide_tree() -> Result<()> {
     make_rand_file(5000, &file3)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&dir, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_tree_resume() -> Result<()> {
+    let dir = testdir!();
+    let foo_path = dir.join("foo");
+    let bar_path = dir.join("bar");
+    let file1 = foo_path.join("file1");
+    let file2 = bar_path.join("file2");
+    let file3 = bar_path.join("file3");
+    std::fs::create_dir(&foo_path)?;
+    std::fs::create_dir(&bar_path)?;
+    make_rand_file(1000, &file1)?;
+    make_rand_file(10000, &file2)?;
+    make_rand_file(5000, &file3)?;
+    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+    let tmp = testdir!();
+    let out = tmp.join("out");
+    test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
+    // turn the output into a partial download
+    let _hash = make_partial_download(&out)?;
+    // resume the download
+    test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
+
+    Ok(())
 }
 
 #[test]
@@ -197,6 +223,8 @@ enum Output {
     Path,
     /// Indicates we should pipe the content to `stdout` of the `iroh get` process
     Stdout,
+    /// Custom output
+    Custom(PathBuf),
 }
 
 /// Parameter for `test_provide_get_loop`, that determines how we send the data to the `provide`
@@ -259,11 +287,13 @@ fn make_provider(
 /// checks the output of the "provide" and "get" processes against expected regex output. Finally,
 /// test the content fetched from the "get" process is the same as the "provided" content.
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
-    let out = if output == Output::Stdout {
-        None
-    } else {
-        let dir = testdir!();
-        Some(dir.join("out"))
+    let out = match output {
+        Output::Stdout => None,
+        Output::Path => {
+            let dir = testdir!();
+            Some(dir.join("out"))
+        }
+        Output::Custom(out) => Some(out),
     };
 
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -301,6 +331,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // test get stderr output
     let get_output = cmd.output()?;
+    // std::io::copy(&mut std::io::Cursor::new(&get_output.stderr), &mut std::io::stderr())?;
     assert!(get_output.status.success());
 
     // test output

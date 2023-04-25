@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AuthToken, Handshake, Request};
+use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
@@ -20,6 +20,7 @@ use anyhow::{anyhow, Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::tokio::DecodeResponseStreamRef;
 use bao_tree::io::DecodeResponseItem;
+use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::BytesMut;
 use default_net::Interface;
@@ -27,6 +28,7 @@ use futures::{Future, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, debug_span, error};
 use tracing_futures::Instrument;
@@ -225,7 +227,11 @@ where
     .await
 }
 
+/// State that gets threaded through each async on_blob call.
 ///
+/// This is guaranteed to be accessed sequentially, and therefore does not need
+/// to be synchronized. This state includes the (hidden) quinn RecvStream as well
+/// as custom user-provided state.
 #[derive(Debug)]
 pub struct OnBlobData<T> {
     /// the offset of the current blob. 0 is for the item itself (the collection)
@@ -500,8 +506,8 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let used = postcard::to_slice(&request, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
+        let request_bytes = postcard::to_stdvec(&request)?;
+        write_lp(&mut writer, &request_bytes).await?;
     }
     let (mut writer, bytes_written) = writer.into_parts();
     writer.finish().await?;
@@ -548,4 +554,215 @@ where
             bytes_read,
         },
     ))
+}
+
+/// Given a directory, make a partial download of it.
+#[cfg(feature = "cli")]
+pub fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<crate::Hash> {
+    use crate::provider::{create_collection, create_data_sources, BlobOrCollection};
+
+    let out_dir: &Path = out_dir.as_ref();
+    let temp_dir = out_dir.join(".iroh-tmp");
+    anyhow::ensure!(!temp_dir.exists());
+    std::fs::create_dir_all(&temp_dir)?;
+    let sources = create_data_sources(out_dir.to_owned())?;
+    println!("{:?}", sources);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (db, hash) = rt.block_on(create_collection(sources))?;
+    let db = db.to_inner();
+    for (hash, boc) in db {
+        let text = blake3::Hash::from(hash).to_hex();
+        let mut outboard_path = temp_dir.join(text.as_str());
+        outboard_path.set_extension("outboard.part");
+        let mut data_path = temp_dir.join(text.as_str());
+        match boc {
+            BlobOrCollection::Blob { outboard, path, .. } => {
+                data_path.set_extension("data.part");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::rename(path, data_path)?;
+            }
+            BlobOrCollection::Collection { outboard, data } => {
+                data_path.set_extension("data");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::write(data_path, data)?;
+            }
+        }
+    }
+    Ok(hash)
+}
+
+/// Create a pathbuf from a name.
+pub fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
+    }
+    path
+}
+
+/// Get missing range for a single file, given a temp and target directory
+pub fn get_missing_range(
+    hash: &Hash,
+    name: &str,
+    temp_dir: impl AsRef<Path>,
+    target_dir: impl AsRef<Path>,
+) -> io::Result<RangeSpecSeq> {
+    let target_dir = target_dir.as_ref();
+    let temp_dir = temp_dir.as_ref();
+    if target_dir.exists() && !temp_dir.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Target directory exists but does not contain temp directory",
+        ));
+    }
+    let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
+    let spec = RangeSpecSeq::new(vec![range]);
+    Ok(spec)
+}
+
+/// Get missing range for a single file
+fn get_missing_range_impl(
+    hash: &Hash,
+    name: &str,
+    temp_dir: impl AsRef<Path>,
+    target_dir: impl AsRef<Path>,
+) -> io::Result<RangeSet2<ChunkNum>> {
+    let paths = FilePaths::new(hash, name, temp_dir, target_dir);
+    Ok(if paths.is_final() {
+        tracing::debug!("Found final file: {:?}", paths.target);
+        // we assume that the file is correct
+        RangeSet2::empty()
+    } else if paths.is_incomplete() {
+        tracing::debug!("Found incomplete file: {:?}", paths.temp);
+        // we got incomplete data
+        let outboard = std::fs::read(&paths.outboard)?;
+        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard, false);
+        match outboard {
+            Ok(outboard) => {
+                // compute set of valid ranges from the outboard and the file
+                //
+                // We assume that the file is correct and does not contain holes.
+                // Otherwise, we would have to rehash the file.
+                //
+                // Do a quick check of the outboard in case something went wrong when writing.
+                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                let valid_from_file =
+                    RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
+                tracing::debug!("valid_from_file: {:?}", valid_from_file);
+                tracing::debug!("valid_from_outboard: {:?}", valid);
+                valid &= valid_from_file;
+                RangeSet2::all().difference(&valid)
+            }
+            Err(cause) => {
+                tracing::debug!("Outboard damaged, assuming missing {cause:?}");
+                // the outboard is invalid, so we assume that the file is missing
+                RangeSet2::all()
+            }
+        }
+    } else {
+        tracing::debug!("Found missing file: {:?}", paths.target);
+        // we don't know anything about this file, so we assume it's missing
+        RangeSet2::all()
+    })
+}
+
+/// Given a target directory and a temp directory, get a set of ranges that we are missing
+pub fn get_missing_ranges(
+    hash: Hash,
+    target_dir: impl AsRef<Path>,
+    temp_dir: impl AsRef<Path>,
+) -> io::Result<(RangeSpecSeq, Option<Collection>)> {
+    let target_dir = target_dir.as_ref();
+    let temp_dir = temp_dir.as_ref();
+    if target_dir.exists() && !temp_dir.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Target directory exists but does not contain temp directory",
+        ));
+    }
+    // try to load the collection from the temp directory
+    let collection = load_collection(temp_dir, hash)?;
+    let collection = match collection {
+        Some(collection) => collection,
+        None => return Ok((RangeSpecSeq::all(), None)),
+    };
+    let mut ranges = collection
+        .blobs()
+        .iter()
+        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
+        .collect::<io::Result<Vec<_>>>()?;
+    ranges
+        .iter()
+        .zip(collection.blobs())
+        .for_each(|(ranges, blob)| {
+            if ranges.is_empty() {
+                tracing::debug!("{} is complete", blob.name);
+            } else if ranges.is_all() {
+                tracing::debug!("{} is missing", blob.name);
+            } else {
+                tracing::debug!("{} is partial {:?}", blob.name, ranges);
+            }
+        });
+    // make room for the collection at offset 0
+    // if we get here, we already have the collection, so we don't need to ask for it again.
+    ranges.insert(0, RangeSet2::empty());
+    Ok((RangeSpecSeq::new(ranges), Some(collection)))
+}
+
+#[derive(Debug)]
+struct FilePaths {
+    target: PathBuf,
+    temp: PathBuf,
+    outboard: PathBuf,
+}
+
+impl FilePaths {
+    fn new(
+        hash: &Hash,
+        name: &str,
+        temp_dir: impl AsRef<Path>,
+        target_dir: impl AsRef<Path>,
+    ) -> Self {
+        let target = target_dir.as_ref().join(pathbuf_from_name(name));
+        let hash = blake3::Hash::from(*hash).to_hex();
+        let temp = temp_dir.as_ref().join(format!("{}.data.part", hash));
+        let outboard = temp_dir.as_ref().join(format!("{}.outboard.part", hash));
+        Self {
+            target,
+            temp,
+            outboard,
+        }
+    }
+
+    fn is_final(&self) -> bool {
+        self.target.exists()
+    }
+
+    fn is_incomplete(&self) -> bool {
+        self.temp.exists() && self.outboard.exists()
+    }
+}
+
+/// get data path for a hash
+pub fn get_data_path(dir: impl AsRef<Path>, hash: Hash) -> PathBuf {
+    let data_path = dir.as_ref();
+    let hash = blake3::Hash::from(hash).to_hex();
+    data_path.join(format!("{}.data", hash))
+}
+
+/// Load a collection from a data path
+fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option<Collection>> {
+    let collection_path = get_data_path(data_path, hash);
+    Ok(if collection_path.exists() {
+        let collection = std::fs::read(&collection_path)?;
+        // todo: error
+        let collection = Collection::from_bytes(&collection).unwrap();
+        Some(collection)
+    } else {
+        None
+    })
 }

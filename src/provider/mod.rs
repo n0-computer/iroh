@@ -22,7 +22,7 @@ use bao_tree::io::tokio::encode_ranges_validated;
 use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, TryFutureExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -543,32 +543,7 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = if root.is_dir() {
-            let files = futures::stream::iter(WalkDir::new(&root));
-            let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
-                let root = root.clone();
-                async move {
-                    if !entry.file_type().is_file() {
-                        // Skip symlinks. Directories are handled by WalkDir.
-                        return Ok(None);
-                    }
-                    let path = entry.into_path();
-                    let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                    anyhow::Ok(Some(DataSource::NamedFile { name, path }))
-                }
-            });
-            let data_sources: Vec<anyhow::Result<DataSource>> =
-                data_sources.collect::<Vec<_>>().await;
-            data_sources
-                .into_iter()
-                .collect::<anyhow::Result<Vec<_>>>()?
-        } else {
-            // A single file, use the file name as the name of the blob.
-            vec![DataSource::NamedFile {
-                name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-                path: root,
-            }]
-        };
+        let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
         let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
@@ -615,6 +590,36 @@ impl RpcHandler {
             ))
         })
     }
+}
+
+/// Create data sources from a path.
+pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
+    Ok(if root.is_dir() {
+        let files = WalkDir::new(&root).into_iter();
+        let data_sources = files
+            .map(|entry| {
+                let entry = entry?;
+                let root = root.clone();
+                if !entry.file_type().is_file() {
+                    // Skip symlinks. Directories are handled by WalkDir.
+                    return Ok(None);
+                }
+                let path = entry.into_path();
+                let name = canonicalize_path(path.strip_prefix(&root)?)?;
+                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+            })
+            .filter_map(Result::transpose);
+        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
+        data_sources
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+    } else {
+        // A single file, use the file name as the name of the blob.
+        vec![DataSource::NamedFile {
+            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
+            path: root,
+        }]
+    })
 }
 
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(

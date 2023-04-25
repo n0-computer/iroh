@@ -12,7 +12,9 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
-use iroh::get::OnBlobData;
+use iroh::get::{
+    get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name, OnBlobData,
+};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -28,9 +30,7 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::{
-    get_data_path, get_missing_range, get_missing_ranges, iroh_data_root, pathbuf_from_name,
-};
+use crate::main_util::iroh_data_root;
 
 #[cfg(feature = "metrics")]
 use iroh::metrics::init_metrics;
@@ -865,8 +865,42 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
             .progress_chars("#>-"),
     );
 
+    let init_download_progress = |size: u64| {
+        progress!("{} Downloading ...", style("[3/3]").bold().dim());
+        pb.set_length(size);
+        pb.reset();
+        pb.set_draw_target(ProgressDrawTarget::stderr());
+    };
+
+    let init_download_progress_multi = |count: u64, missing_bytes: u64| {
+        progress!("{} Downloading ...", style("[3/3]").bold().dim());
+        progress!(
+            "  {} file(s) with total transfer size {}",
+            count,
+            HumanBytes(missing_bytes)
+        );
+        pb.set_length(missing_bytes);
+        pb.reset();
+        pb.set_draw_target(ProgressDrawTarget::stderr());
+    };
+
+    // collection info, in case we won't get a callback with is_root
+    let collection_info = if collection.is_empty() {
+        None
+    } else {
+        Some((collection.len() as u64 + 1, 0, query.single().is_some()))
+    };
     let on_connected = || async move {
         progress!("{} Requesting ...", style("[2/3]").bold().dim());
+        // we need to init the download progress bar here, since we are resuming a download
+        // and already know the collection.
+        if let Some((count, size, single)) = collection_info {
+            if single {
+                init_download_progress(size);
+            } else {
+                init_download_progress_multi(count, size);
+            }
+        }
         Ok(())
     };
 
@@ -887,26 +921,19 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                         .context("Unable to create directory {out_dir}")?;
                 };
                 if single {
-                    progress!("{} Downloading ...", style("[3/3]").bold().dim());
-                    pb.set_length(data.size());
-                    pb.reset();
-                    pb.set_draw_target(ProgressDrawTarget::stderr());
+                    init_download_progress(data.size());
                 } else {
                     // setup for when we are not in single file mode
                     let collection_data = data.read_blob(hash).await?;
                     let collection = Collection::from_bytes(&collection_data)?;
+                    init_download_progress_multi(
+                        collection.total_entries(),
+                        collection.total_blobs_size(),
+                    );
                     if let Some(ref temp_dir) = temp_dir {
                         tokio::fs::write(get_data_path(temp_dir, hash), collection_data).await?;
                     };
-                    progress!("{} Downloading ...", style("[3/3]").bold().dim());
-                    progress!(
-                        "  {} file(s) with total transfer size {}",
-                        collection.total_entries(),
-                        HumanBytes(collection.total_blobs_size())
-                    );
-                    pb.set_length(collection.total_blobs_size());
-                    pb.reset();
-                    pb.set_draw_target(ProgressDrawTarget::stderr());
+
                     data.set_limit(collection.total_entries() + 1);
                     data.user = collection.into_inner();
                     return data.end();
