@@ -27,7 +27,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use quinn::AsyncUdpSocket;
 use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
@@ -399,15 +398,15 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> std::io::Result<SocketAddr> {
-        self.inner.conn.local_addr()
+    pub async fn local_address(&self) -> Result<SocketAddr> {
+        self.inner.conn.local_addr().await
     }
 
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
-    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.local_address()?)
+    pub async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(self.local_address().await?)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -436,9 +435,9 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = self.listen_addresses()?;
+        let addrs = self.listen_addresses().await?;
         Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
     }
 
@@ -561,13 +560,14 @@ impl RpcHandler {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
             auth_token: Box::new(self.inner.auth_token),
-            listen_addr: Box::new(self.inner.conn.local_addr().unwrap()),
+            listen_addr: Box::new(self.inner.conn.local_addr().await.unwrap()),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.conn.local_addr().unwrap()).unwrap_or_default(),
+            addrs: find_local_addresses(self.inner.conn.local_addr().await.unwrap())
+                .unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -1313,7 +1313,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

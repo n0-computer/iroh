@@ -259,7 +259,7 @@ impl Endpoint {
                     pub_key,
                     disco::Message::Ping(disco::Ping {
                         tx_id,
-                        node_key: self.c.public_key.clone(),
+                        node_key: self.c.public_key().clone(),
                     }),
                 )
                 .await

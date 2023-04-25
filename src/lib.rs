@@ -185,7 +185,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address().unwrap(),
+                provider.local_address().await.unwrap(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -276,7 +276,7 @@ mod tests {
             events
         });
 
-        let addrs = dbg!(provider.listen_addresses()?);
+        let addrs = dbg!(provider.listen_addresses().await?);
         let addr = *addrs.first().unwrap();
         let opts = get::Options {
             addr,
@@ -376,7 +376,7 @@ mod tests {
             .await
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address().unwrap();
+        let provider_addr = provider.local_address().await.unwrap();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -450,7 +450,7 @@ mod tests {
             .spawn()
             .await?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address()?;
+        let provider_addr = provider.local_address().await?;
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -498,7 +498,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.local_address().unwrap();
+        let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),
@@ -533,7 +533,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         let mut on_connected = false;
         let mut on_collection = false;
         let mut on_blob = false;

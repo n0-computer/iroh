@@ -129,11 +129,6 @@ impl RebindingUdpConn {
         Ok(addr)
     }
 
-    pub fn local_addr_blocking(&self) -> io::Result<SocketAddr> {
-        let addr = self.pconn.read_blocking().local_addr()?;
-        Ok(addr)
-    }
-
     pub(super) fn from_socket(pconn: UdpSocket) -> Self {
         RebindingUdpConn {
             pconn: Arc::new(RwLock::new(pconn)),
@@ -178,7 +173,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.local_addr_blocking()
+        self.pconn.read_blocking().local_addr()
     }
 }
 
