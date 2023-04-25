@@ -383,7 +383,7 @@ where
     C: FnMut(OnBlobData<U>) -> FutC,
     FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
-    let span = debug_span!("get", %request.name);
+    let span = debug_span!("get", %request.hash);
     async move {
         let connection = dial_peer(opts).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
@@ -670,8 +670,8 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let serialized = postcard::to_stdvec(&request)?;
-        write_lp(&mut writer, &serialized).await?;
+        let used = postcard::to_slice(&request, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
     }
     let (mut writer, bytes_written) = writer.into_parts();
     writer.finish().await?;

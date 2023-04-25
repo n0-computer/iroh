@@ -39,7 +39,7 @@ impl Handshake {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct Request {
     /// blake3 hash
-    pub name: Hash,
+    pub hash: Hash,
     /// The range of data to request
     ///
     /// The first element is the parent, all subsequent elements are children.
@@ -48,14 +48,14 @@ pub struct Request {
 
 impl Request {
     /// Request a blob or collection with specified ranges
-    pub fn new(name: Hash, ranges: RangeSpecSeq) -> Self {
-        Self { name, ranges }
+    pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
+        Self { hash, ranges }
     }
 
     /// Request a collection and all its children
-    pub fn all(name: Hash) -> Self {
+    pub fn all(hash: Hash) -> Self {
         Self {
-            name,
+            hash,
             ranges: RangeSpecSeq::all(),
         }
     }
