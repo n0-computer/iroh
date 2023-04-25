@@ -38,8 +38,9 @@ use crate::{
 };
 
 use super::{
-    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, DERP_CLEAN_STALE_INTERVAL,
-    DERP_INACTIVE_CLEANUP_TIME, ENDPOINTS_FRESH_ENOUGH_DURATION,
+    endpoint::{Options as EndpointOptions, PeerMap},
+    rebinding_conn::RebindingUdpConn,
+    DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME, ENDPOINTS_FRESH_ENOUGH_DURATION,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -165,28 +166,6 @@ pub struct Inner {
 }
 
 impl Inner {
-    /// Sends discovery message m to dst_disco at dst.
-    ///
-    /// If dst is a DERP IP:port, then dst_key must be Some.
-    ///
-    /// The dst_key should only be `Some` the dst_disco key unambiguously maps to exactly one peer.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub(super) async fn send_disco_message(
-        &self,
-        dst: SocketAddr,
-        dst_key: key::node::PublicKey,
-        msg: disco::Message,
-    ) -> Result<()> {
-        self.actor_sender
-            .send_async(ActorMessage::SendDiscoMessage { dst, dst_key, msg })
-            .await?;
-        Ok(())
-    }
-
-    pub(super) fn public_key(&self) -> &key::node::PublicKey {
-        &self.public_key
-    }
-
     async fn get_derp_region(&self, region: usize) -> Option<DerpRegion> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
@@ -196,45 +175,7 @@ impl Inner {
         r.await.ok()?
     }
 
-    /// Schedules a send of disco.CallMeMaybe to de via derpAddr
-    /// once we know that our STUN endpoint is fresh.
-    ///
-    /// derp_addr is Endpoint.derp_addr at the time of send. It's assumed the peer won't be
-    /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
-    /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub(super) async fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, endpoint_id: usize) {
-        self.actor_sender
-            .send_async(ActorMessage::EnqueueCallMeMaybe {
-                derp_addr,
-                endpoint_id,
-            })
-            .await
-            .unwrap();
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    pub(super) async fn populate_cli_ping_response(
-        &self,
-        res: &mut cfg::PingResult,
-        latency: Duration,
-        ep: SocketAddr,
-    ) {
-        res.latency_seconds = Some(latency.as_secs_f64());
-        if ep.ip() != DERP_MAGIC_IP {
-            res.endpoint = Some(ep);
-            return;
-        }
-        let region_id = usize::from(ep.port());
-        res.derp_region_id = Some(region_id);
-        let region_code = self
-            .get_derp_region(region_id)
-            .await
-            .map(|r| r.region_code.clone());
-        res.derp_region_code = region_code;
-    }
-
-    pub(super) fn is_closing(&self) -> bool {
+    fn is_closing(&self) -> bool {
         self.closing.load(Ordering::Relaxed)
     }
 
@@ -744,7 +685,7 @@ impl Drop for WgGuard {
 }
 
 #[derive(Debug)]
-enum ActorMessage {
+pub(super) enum ActorMessage {
     GetLocalAddr(sync::oneshot::Sender<io::Result<SocketAddr>>),
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     GetDerpRegion(usize, sync::oneshot::Sender<Option<DerpRegion>>),
@@ -1066,7 +1007,11 @@ impl Actor {
                     meta.addr, self.peer_map
                 );
 
-                let id = self.peer_map.insert_endpoint(self.conn.clone(), None);
+                let id = self.peer_map.insert_endpoint(EndpointOptions {
+                    conn_sender: self.conn.actor_sender.clone(),
+                    conn_public_key: self.conn.public_key.clone(),
+                    public_key: None,
+                });
                 self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
@@ -2058,7 +2003,7 @@ impl Actor {
         // 	metricSendDiscoUDP.Add(1)
         // }
 
-        let pkt = disco::encode_message(&self.conn.public_key(), seal);
+        let pkt = disco::encode_message(&self.conn.public_key, seal);
         let sent = self.send_addr(dst, Some(&dst_key), pkt).await;
         match sent {
             Ok(0) => {
@@ -2193,9 +2138,7 @@ impl Actor {
             // it's actually a wireguard packet (super unlikely, but).
             debug!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                self.conn.public_key(),
-                sender,
-                payload,
+                self.conn.public_key, sender, payload,
             );
             // TODO:
             // metricRecvDiscoBadKey.Add(1)
@@ -2239,7 +2182,7 @@ impl Actor {
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
-                    let (_, insert) = ep.handle_pong_conn(conn.public_key(), &pong, di, src).await;
+                    let (_, insert) = ep.handle_pong_conn(&conn.public_key, &pong, di, src).await;
                     if let Some((src, key)) = insert {
                         self.peer_map.set_node_key_for_ip_port(&src, &key);
                     }
@@ -2266,7 +2209,7 @@ impl Actor {
                     Some(ep) => {
                         info!(
                             "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
-                            self.conn.public_key(),
+                            self.conn.public_key,
                             ep.public_key(),
                             src,
                             cm.my_number.len()
@@ -2384,11 +2327,7 @@ impl Actor {
             };
             info!(
                 "disco: {:?}<-{:?} ({:?}, {:?})  got ping tx={:?}",
-                self.conn.public_key(),
-                di.node_key,
-                ping_node_src_str,
-                src,
-                dm.tx_id
+                self.conn.public_key, di.node_key, ping_node_src_str, src, dm.tx_id
             );
         }
 
@@ -2477,10 +2416,11 @@ impl Actor {
                 continue;
             }
 
-            if let Some(id) = self
-                .peer_map
-                .upsert_endpoint(self.conn.clone(), Some(n.key.clone()))
-            {
+            if let Some(id) = self.peer_map.upsert_endpoint(EndpointOptions {
+                conn_sender: self.conn.actor_sender.clone(),
+                conn_public_key: self.conn.public_key.clone(),
+                public_key: Some(n.key.clone()),
+            }) {
                 self.peer_map.by_id_mut(&id).unwrap().update_from_node(n);
             }
         }
@@ -2752,7 +2692,7 @@ fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
 
 /// Manages reading state for a single derp connection.
 #[derive(Debug)]
-struct ReaderState {
+pub(super) struct ReaderState {
     region: u16,
     derp_client: derp::http::Client,
     /// The set of senders we know are present on this connection, based on
