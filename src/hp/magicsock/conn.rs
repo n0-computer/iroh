@@ -433,6 +433,15 @@ impl Conn {
         Ok(c)
     }
 
+    pub async fn tracked_endpoints(&self) -> Result<Vec<key::node::PublicKey>> {
+        let (s, r) = sync::oneshot::channel();
+        self.actor_sender
+            .send_async(ActorMessage::TrackedEndpoints(s))
+            .await?;
+        let res = r.await?;
+        Ok(res)
+    }
+
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn re_stun(&self, why: &'static str) {
@@ -853,6 +862,7 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 enum ActorMessage {
+    TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
     GetMappingAddr(
         key::node::PublicKey,
         sync::oneshot::Sender<Option<SocketAddr>>,
@@ -965,6 +975,10 @@ impl Actor {
                     }
 
                     match msg? {
+                        ActorMessage::TrackedEndpoints(s) => {
+                            let eps: Vec<_> = self.peer_map.endpoints().filter_map(|(_, ep)| ep.public_key.clone()).collect();
+                            let _ = s.send(eps);
+                        }
                         ActorMessage::GetMappingAddr(node_key, s) => {
                             let res = self.peer_map
                                 .endpoint_for_node_key(&node_key)
@@ -3133,15 +3147,7 @@ mod tests {
         }
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
-            // let peer_map = &*self.conn.peer_map.read().await;
-            // let mut out = Vec::new();
-            // for ep in peer_map.endpoints() {
-            //     if let Some(key) = ep.public_key().await {
-            //         out.push(key);
-            //     }
-            // }
-            // out
-            todo!()
+            self.conn.tracked_endpoints().await.unwrap_or_default()
         }
 
         fn public(&self) -> key::node::PublicKey {
@@ -3248,21 +3254,20 @@ mod tests {
 
         let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
-        // // Wait for magicsock to be told about peers from mesh_stacks.
-        // let m1t = m1.clone();
-        // let m2t = m2.clone();
-        // time::timeout(Duration::from_secs(10), async move {
-        //     loop {
-        //         let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-        //         let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-        //         if ab && ba {
-        //             break;
-        //         }
-        //     }
-        // })
-        // .await
-        // .context("failed to connect peers")?;
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Wait for magicsock to be told about peers from mesh_stacks.
+        let m1t = m1.clone();
+        let m2t = m2.clone();
+        time::timeout(Duration::from_secs(10), async move {
+            loop {
+                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                if ab && ba {
+                    break;
+                }
+            }
+        })
+        .await
+        .context("failed to connect peers")?;
 
         // msg from  m2 -> m1
         macro_rules! roundtrip {
@@ -3415,20 +3420,20 @@ mod tests {
             let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
             // Wait for magicsock to be told about peers from mesh_stacks.
-            // println!("waiting for connection");
-            // let m1t = m1.clone();
-            // let m2t = m2.clone();
-            // time::timeout(Duration::from_secs(10), async move {
-            //     loop {
-            //         let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-            //         let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-            //         if ab && ba {
-            //             break;
-            //         }
-            //     }
-            // })
-            // .await
-            // .context("failed to connect peers")?;
+            println!("waiting for connection");
+            let m1t = m1.clone();
+            let m2t = m2.clone();
+            time::timeout(Duration::from_secs(10), async move {
+                loop {
+                    let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                    let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                    if ab && ba {
+                        break;
+                    }
+                }
+            })
+            .await
+            .context("failed to connect peers")?;
 
             println!("closing endpoints");
             m1.quic_ep.close(0u32.into(), b"done");
