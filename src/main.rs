@@ -12,7 +12,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
-use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, OnBlobData};
+use iroh::get::OnBlobData;
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -28,7 +28,9 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::{iroh_data_root, pathbuf_from_name};
+use crate::main_util::{
+    get_data_path, get_missing_range, get_missing_ranges, iroh_data_root, pathbuf_from_name,
+};
 
 #[cfg(feature = "metrics")]
 use iroh::metrics::init_metrics;

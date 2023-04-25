@@ -860,7 +860,7 @@ async fn handle_stream(
 
     // 4. Attempt to find hash
     match db.get(&hash) {
-        // Collection request
+        // Collection or blob request
         Some(entry) => {
             // 5. Transfer data!
             match transfer_collection(

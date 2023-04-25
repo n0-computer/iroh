@@ -10,7 +10,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek, Write},
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     result,
     str::FromStr,
 };
@@ -237,15 +237,6 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(parts.join("/"))
-}
-
-/// Create a pathbuf from a name.
-pub fn pathbuf_from_name(name: &str) -> PathBuf {
-    let mut path = PathBuf::new();
-    for part in name.split('/') {
-        path.push(part);
-    }
-    path
 }
 
 pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {

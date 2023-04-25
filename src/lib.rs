@@ -21,7 +21,8 @@ pub use util::Hash;
 
 use bao_tree::BlockSize;
 
-pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
+/// Block size used by iroh, 2^4*1024 = 16KiB
+pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
     Some(bs) => bs,
     None => panic!(),
 };
@@ -403,15 +404,15 @@ mod tests {
             move |mut data| async move {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
-                    data.set_limit(collection.total_entries() + 1);
-                    data.user = Some(collection);
+                    data.set_limit(collection.total_entries() as u64 + 1);
+                    data.user = collection.into_inner();
                 } else {
-                    let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                    let hash = data.user[0].hash;
                     data.drain(hash).await?;
                 }
                 data.end()
             },
-            None,
+            vec![],
         )
         .await
         .unwrap();
@@ -507,14 +508,14 @@ mod tests {
                     if data.is_root() {
                         let collection = data.read_collection(hash).await?;
                         data.set_limit(collection.total_entries() + 1);
-                        data.user = Some(collection);
+                        data.user = collection.into_inner();
                     } else {
-                        let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                        let hash = data.user[0].hash;
                         data.drain(hash).await?;
                     }
                     data.end()
                 },
-                None,
+                vec![],
             ),
         )
         .await

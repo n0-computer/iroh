@@ -1,3 +1,5 @@
+//! Specifications for individual ranges within a blob, and for ranges for a
+//! collection and its children.
 use std::fmt;
 
 use bao_tree::ChunkNum;
