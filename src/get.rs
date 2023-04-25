@@ -401,7 +401,7 @@ impl<U> OnBlobData<U> {
     /// write all the data to a file or buffer
     ///
     /// `target` is the main file
-    /// `create_outboard` is a function that creates an optional outboard file
+    /// `outboard` is an optional outboard file
     /// `on_write` is a callback for writes, e.g. to update a progress bar
     pub async fn write_all_with_outboard<T, O, OW>(
         &mut self,
@@ -557,7 +557,7 @@ where
 }
 
 /// Given a directory, make a partial download of it.
-#[cfg(feature = "cli")]
+#[cfg(any(test, feature = "cli"))]
 pub fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<crate::Hash> {
     use crate::provider::{create_collection, create_data_sources, BlobOrCollection};
 

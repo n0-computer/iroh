@@ -865,14 +865,7 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
             .progress_chars("#>-"),
     );
 
-    let init_download_progress = |size: u64| {
-        progress!("{} Downloading ...", style("[3/3]").bold().dim());
-        pb.set_length(size);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
-    };
-
-    let init_download_progress_multi = |count: u64, missing_bytes: u64| {
+    let init_download_progress = |count: u64, missing_bytes: u64| {
         progress!("{} Downloading ...", style("[3/3]").bold().dim());
         progress!(
             "  {} file(s) with total transfer size {}",
@@ -888,18 +881,14 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
     let collection_info = if collection.is_empty() {
         None
     } else {
-        Some((collection.len() as u64 + 1, 0, query.single().is_some()))
+        Some((collection.len() as u64, 0))
     };
     let on_connected = || async move {
         progress!("{} Requesting ...", style("[2/3]").bold().dim());
         // we need to init the download progress bar here, since we are resuming a download
         // and already know the collection.
-        if let Some((count, size, single)) = collection_info {
-            if single {
-                init_download_progress(size);
-            } else {
-                init_download_progress_multi(count, size);
-            }
+        if let Some((count, missing_bytes)) = collection_info {
+            init_download_progress(count, missing_bytes);
         }
         Ok(())
     };
@@ -921,12 +910,12 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
                         .context("Unable to create directory {out_dir}")?;
                 };
                 if single {
-                    init_download_progress(data.size());
+                    init_download_progress(0, data.size());
                 } else {
                     // setup for when we are not in single file mode
                     let collection_data = data.read_blob(hash).await?;
                     let collection = Collection::from_bytes(&collection_data)?;
-                    init_download_progress_multi(
+                    init_download_progress(
                         collection.total_entries(),
                         collection.total_blobs_size(),
                     );

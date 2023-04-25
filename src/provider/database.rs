@@ -421,7 +421,7 @@ impl Database {
         items.into_iter()
     }
 
-    #[cfg(feature = "cli")]
+    #[cfg(any(test, feature = "cli"))]
     pub(crate) fn to_inner(&self) -> HashMap<Hash, BlobOrCollection> {
         self.0.read().unwrap().clone()
     }
