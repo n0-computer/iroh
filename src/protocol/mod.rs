@@ -38,24 +38,26 @@ impl Handshake {
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct Request {
-    /// blake3 hash
-    pub name: Hash,
-    /// The range of data to request
+    /// The blake3 hash of the requested blob.
+    pub hash: Hash,
+    /// Which data to request.
     ///
-    /// The first element is the parent, all subsequent elements are children.
+    /// If the sequence describes a single blob a single blob is returned.  If the sequence
+    /// describes multiple blobs the first blob is interpreted as a collection and used to
+    /// understand to other blobs returned.
     pub ranges: RangeSpecSeq,
 }
 
 impl Request {
     /// Request a blob or collection with specified ranges
     pub fn new(name: Hash, ranges: RangeSpecSeq) -> Self {
-        Self { name, ranges }
+        Self { hash: name, ranges }
     }
 
     /// Request a collection and all its children
     pub fn all(name: Hash) -> Self {
         Self {
-            name,
+            hash: name,
             ranges: RangeSpecSeq::all(),
         }
     }

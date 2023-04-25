@@ -752,7 +752,7 @@ async fn transfer_collection(
     connection_id: u64,
     request_id: u64,
 ) -> Result<SentStatus> {
-    let hash = request.name;
+    let hash = request.hash;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
@@ -771,7 +771,7 @@ async fn transfer_collection(
         None
     };
 
-    for (offset, ranges) in request.ranges.non_empty_iter() {
+    for (offset, ranges) in request.ranges.iter_non_empty() {
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
             // send the root
@@ -850,7 +850,7 @@ async fn handle_stream(
         }
     };
 
-    let hash = request.name;
+    let hash = request.hash;
     debug!(%hash, "received request");
     let _ = events.send(Event::RequestReceived {
         connection_id,

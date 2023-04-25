@@ -20,17 +20,19 @@ use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, Context, Result};
 use bao_tree::io::error::DecodeError;
-use bao_tree::io::tokio::DecodeResponseStreamRef;
+use bao_tree::io::tokio::{AsyncResponseDecoder, DecodeResponseStreamRef};
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::BytesMut;
 use default_net::Interface;
-use futures::{Future, StreamExt};
+use futures::{Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
-use tokio::io::{AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{
+    AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf,
+};
 use tracing::{debug, debug_span, error};
 use tracing_futures::Instrument;
 
@@ -368,10 +370,134 @@ pub fn get_missing_ranges(
     Ok((RangeSpecSeq::new(ranges), Some(collection)))
 }
 
+/// A verified stream of data coming from the provider.
+///
+/// The stream contains the data for a single blob.  In case only a sub-set of the blob was
+/// requested using a range request, this stream will only contain the data of the chunk
+/// spans requested.  All requested spans are concatenated in the stream so the requested
+/// chunks need to be known to know the bytes offsets in the stream which are on chunk
+/// edges.
+///
+/// The data is guaranteed to be correct by incrementally verifying a hash.
+// TODO: maybe have a method to turn this into an iterator of streams, one stream for each
+// span.  with each stream then having methods for the start and end byte offsets.
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct DataStream(AsyncResponseDecoder<quinn::RecvStream>);
+
+impl DataStream {
+    fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
+        let decoder =
+            AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, inner);
+        DataStream(decoder)
+    }
+
+    async fn read_size(&mut self) -> io::Result<u64> {
+        self.0.read_size().await
+    }
+
+    fn into_inner(self) -> quinn::RecvStream {
+        self.0.into_inner()
+    }
+}
+
+impl AsyncRead for DataStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+// TODO: move back to protocol.rs
+/// Read and decode the given bao encoded data from the provided source.
+///
+/// After the data is read successfully, the reader will be at the end of the data.
+/// If there is an error, the reader can be anywhere, so it is recommended to discard it.
+pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
+    reader: R,
+    hash: Hash,
+) -> Result<Vec<u8>> {
+    let mut decoder =
+        AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, reader);
+    // we don't know the size yet, so we just allocate a reasonable amount
+    let mut decoded = Vec::with_capacity(4096);
+    decoder.read_to_end(&mut decoded).await?;
+    Ok(decoded)
+}
+
+/// Retrieves a collection.
+pub async fn collection<A, B, C, FutA, FutB, FutC>(
+    request: Request,
+    opts: Options,
+    auth_token: AuthToken,
+    on_connected: A,
+    on_collection: B,
+    on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnOnce(Hash, DataStream) -> FutB,
+    FutB: Future<Output = Result<(Box<dyn Stream<Item = Hash>>, DataStream)>>,
+    C: FnMut(Hash, DataStream) -> FutC,
+    FutC: Future<Output = Result<DataStream>>,
+{
+    let start = Instant::now();
+    let connection = dial_peer(opts).await?;
+    let (mut writer, reader) = connection.open_bi().await?;
+    let mut buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+    // 1. Send Handshake
+    {
+        debug!("sending handshake");
+        let handshake = Handshake::new(auth_token);
+        let used = postcard::to_slice(&handshake, &mut buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
+
+    // 2. Send Request
+    {
+        debug!("sending request");
+        let serialized = postcard::to_stdvec(&request)?;
+        write_lp(&mut writer, &serialized).await?;
+    }
+    writer.finish().await?;
+    drop(writer);
+
+    // 3. Read response
+    let mut ranges_iter = request.ranges.iter();
+    let first_span = ranges_iter
+        .next()
+        .context("missing range spec for collection blob")?;
+
+    todo!()
+}
+
+/// Retrieves one or more blob.
+pub async fn blobs<A, B, C, FutA, FutB, FutC>(
+    request: Request,
+    opts: Options,
+    on_connected: A,
+    on_collection: B,
+    on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnOnce(Hash, DataStream) -> FutB,
+    FutB: Future<Output = Result<(Box<dyn Stream<Item = Hash>>, DataStream)>>,
+    C: FnMut(Hash, DataStream) -> FutC,
+    FutC: Future<Output = Result<DataStream>>,
+{
+    todo!()
+}
+
 /// Get a collection and all its blobs from a provider
 pub async fn run<A, C, FutA, FutC, U>(
     request: Request,
-    auth_token: AuthToken,
     opts: Options,
     on_connected: A,
     on_blob: C,
@@ -383,7 +509,7 @@ where
     C: FnMut(OnBlobData<U>) -> FutC,
     FutC: Future<Output = Result<OnBlobResult<U>>>,
 {
-    let span = debug_span!("get", %request.name);
+    let span = debug_span!("get", %request.hash);
     async move {
         let connection = dial_peer(opts).await?;
         let span = debug_span!("connection", remote_addr=%connection.remote_address());
@@ -650,7 +776,7 @@ where
 {
     let start = Instant::now();
     // expect to get blob data in the order they appear in the collection
-    let ranges_iter = request.ranges.non_empty_iter();
+    let ranges_iter = request.ranges.iter_non_empty();
     let (writer, reader) = connection.open_bi().await?;
     let mut reader = TrackingReader::new(reader);
     let mut writer = TrackingWriter::new(writer);

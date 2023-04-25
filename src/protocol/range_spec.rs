@@ -7,7 +7,13 @@ use smallvec::{smallvec, SmallVec};
 
 /// A chunk range specification.
 ///
-/// this is a sequence of spans, where the first span is considered false, and each subsequent span is alternating.
+/// A sequence of spans in a blob, encoded as a sequence of bao chunk offsets.
+///
+/// Each index in this sequence is the chunk offset of a span boundary.  The first span
+/// starts at the first offset and ends at the second offset, the second span from the 3rd
+/// offset to the 4th offset.  More generally spans range from offset of every odd index in
+/// this sequence to offset with the next even index.  Thus an empty sequence is no spans
+/// and an unclosed span indicates to the end of the blob.
 ///
 /// Examples:
 /// The range 10..33 would be encoded as `[10, 23]`
@@ -18,13 +24,14 @@ use smallvec::{smallvec, SmallVec};
 /// All values except for the first one must be non-zero. The first value may be zero.
 /// Values are bao chunk numbers, not byte offsets.
 ///
-/// This is a SmallVec so we can avoid allocations for the very common case of a single chunk range.
+/// This is a SmallVec so we can avoid allocations for the very common case of a single
+/// chunk range.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpec(SmallVec<[u64; 2]>);
 
 impl RangeSpec {
-    /// Create a new range spec from a range set
+    /// Creates a new range spec from a range set.
     pub fn new(ranges: impl AsRef<RangeSetRef<ChunkNum>>) -> Self {
         let ranges = ranges.as_ref().boundaries();
         let mut res = SmallVec::new();
@@ -39,25 +46,27 @@ impl RangeSpec {
         Self(res)
     }
 
-    /// An empty range spec
+    /// An empty range spec.
     pub const EMPTY: Self = Self(SmallVec::new_const());
 
-    /// Create a range spec that covers the entire range
+    /// Creates a range spec that covers the entire range.
     pub fn all() -> Self {
         Self(smallvec![0])
     }
 
-    /// Check if this range spec is empty
+    /// Checks if this range spec is empty.
+    ///
+    /// Empty range specs do not contain any spans.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Check if this range spec covers all values
+    /// Checks if this range spec is a single span containing the entire blob.
     pub fn is_all(&self) -> bool {
         self.0.len() == 1 && self.0[0] == 0
     }
 
-    /// Convert a range set from this range spec
+    /// Converts to a range set from this range spec.
     pub fn to_chunk_ranges(&self) -> RangeSet2<ChunkNum> {
         // this is zero allocation for single ranges
         // todo: optimize this in range collections
@@ -95,7 +104,11 @@ impl fmt::Debug for RangeSpec {
     }
 }
 
-/// A compressed sequence of range specs
+/// A sequence of [`RangeSpec`]s.
+///
+/// Like [`RangeSpec`] this is used to specify which chunk spans to retrieve, but for a
+/// collection of blobs.  Each entry in the sequence is a tuple of `(count, range_spec)`:
+/// for `count` blobs the spans in `range_spec` should be used.
 ///
 /// Examples:
 ///
@@ -106,22 +119,25 @@ impl fmt::Debug for RangeSpec {
 /// Chunks 10 to 30 of child 6789: `[(6789, [10, 20]), (1, [])]`.
 /// No child ranges: `[]`
 ///
-/// This is a smallvec so that we can avoid allocations in the common case of a single child range.
+/// This is a smallvec so that we can avoid allocations in the common case of a single child
+/// range.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 #[repr(transparent)]
 pub struct RangeSpecSeq(SmallVec<[(u64, RangeSpec); 2]>);
 
 impl RangeSpecSeq {
     #[allow(dead_code)]
-    /// An empty range spec sequence
+    /// An empty range spec sequence.
     ///
-    /// When iterated, will return an empty range forever
+    /// When iterated, will return an empty range forever, i.e. no spans.
     pub const fn empty() -> Self {
         Self(SmallVec::new_const())
     }
 
-    /// If this range seq describes a range for a single item, returns the offset
-    /// and range spec for that item
+    /// Returns the blob offset and [`RangeSpec`] for a single item.
+    ///
+    /// Only if this sequence contains a [`RangeSpec`] for a single blob will this return
+    /// something.
     pub fn single(&self) -> Option<(u64, &RangeSpec)> {
         // we got two elements,
         // the first element starts at offset 0,
@@ -138,14 +154,14 @@ impl RangeSpecSeq {
         }
     }
 
-    /// A complete range spec sequence
+    /// A complete range spec sequence.
     ///
-    /// When iterated, will return a full range forever
+    /// When iterated, will return a full range forever.
     pub fn all() -> Self {
         Self(smallvec![(0, RangeSpec::all())])
     }
 
-    /// Create a new range spec sequence from a sequence of range sets
+    /// Creates a new range spec sequence from a sequence of range sets.
     pub fn new(children: impl IntoIterator<Item = RangeSet2<ChunkNum>>) -> Self {
         let mut prev = RangeSet2::empty();
         let mut count = 0;
@@ -165,35 +181,46 @@ impl RangeSpecSeq {
         Self(res)
     }
 
-    /// An infinite iterator of range specs
-    pub fn iter(&self) -> RequestRangeSpecIter<'_> {
+    /// Returns an iterator of range specs.
+    ///
+    /// This iterator will yield the [`RangeSpec`] for each item in the sequence, expanding
+    /// the compact notation.  For example if the sequence represents the blobs of a
+    /// collection each time `.next()` is called the [`RangeSpec`] for the next blob is
+    /// returned.
+    ///
+    /// The iterator does not know the size of the collection this [`RangeSpecSeq`]
+    /// describes, hence the last [`RangeSpec`] in the sequence will be repeated forever.
+    pub fn iter(&self) -> RangeSpecSeqIter<'_> {
         let before_first = self.0.get(0).map(|(c, _)| *c).unwrap_or_default();
-        RequestRangeSpecIter {
+        RangeSpecSeqIter {
             current: &EMPTY_RANGE_SPEC,
             count: before_first,
             remaining: &self.0,
         }
     }
 
-    /// An iterator over non empty range specs
+    /// Returns an iterator over non empty range specs.
     ///
-    /// This iterator is infinite if the range spec is infinite
-    pub fn non_empty_iter(&self) -> NonEmptyRequestRangeSpecIter<'_> {
-        NonEmptyRequestRangeSpecIter::new(self.iter())
+    /// This iterator will yield the sequence offset and [`RangeSpec`] for each item in the
+    /// sequence containing a non-empty rangespec.  For example when used for a collection
+    /// request this will yield each blob index in the sequence for which spans are
+    /// requested.
+    ///
+    /// If the last range spec in the sequence contains spans, it will be repeated forever
+    /// since a [`RangeSpecSeq`] does not know how many items are in a collection it
+    /// describes.
+    pub fn iter_non_empty(&self) -> NonEmptyRangeSpecSeqIter<'_> {
+        NonEmptyRangeSpecSeqIter::new(self.iter())
     }
-
-    // pub fn non_empty_iter(&self) -> impl Iterator<Item = (usize, &RangeSpec)> {
-    //     self.iter().enumerate().filter(|(_, r)| !r.is_empty())
-    // }
 }
 
 static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;
 
-/// An infinite iterator of range specs
+/// An iterator of range specs for a [`RangeSpecSeq`].
 ///
-/// default is what to use if the children of this RequestRangeSpec are empty.
+/// See [`RangeSpecSeq::iter`] which is used to create this iterator.
 #[derive(Debug)]
-pub struct RequestRangeSpecIter<'a> {
+pub struct RangeSpecSeqIter<'a> {
     /// current value
     current: &'a RangeSpec,
     /// number of times to emit current before grabbing next value
@@ -203,10 +230,10 @@ pub struct RequestRangeSpecIter<'a> {
     remaining: &'a [(u64, RangeSpec)],
 }
 
-impl<'a> RequestRangeSpecIter<'a> {
+impl<'a> RangeSpecSeqIter<'a> {
     pub fn new(ranges: &'a [(u64, RangeSpec)]) -> Self {
         let before_first = ranges.get(0).map(|(c, _)| *c).unwrap_or_default();
-        RequestRangeSpecIter {
+        RangeSpecSeqIter {
             current: &EMPTY_RANGE_SPEC,
             count: before_first,
             remaining: ranges,
@@ -222,7 +249,7 @@ impl<'a> RequestRangeSpecIter<'a> {
     }
 }
 
-impl<'a> Iterator for RequestRangeSpecIter<'a> {
+impl<'a> Iterator for RangeSpecSeqIter<'a> {
     type Item = &'a RangeSpec;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -245,22 +272,22 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     }
 }
 
-/// An infinite iterator of range specs
+/// An iterator of the items of a [`RangeSpecSeq`] containing spans.
 ///
-/// default is what to use if the children of this RequestRangeSpec are empty.
+/// See [`RangeSpecSeq::iter_non_empty`] which is used to create this iterator.
 #[derive(Debug)]
-pub struct NonEmptyRequestRangeSpecIter<'a> {
-    inner: RequestRangeSpecIter<'a>,
+pub struct NonEmptyRangeSpecSeqIter<'a> {
+    inner: RangeSpecSeqIter<'a>,
     count: u64,
 }
 
-impl<'a> NonEmptyRequestRangeSpecIter<'a> {
-    fn new(inner: RequestRangeSpecIter<'a>) -> Self {
+impl<'a> NonEmptyRangeSpecSeqIter<'a> {
+    fn new(inner: RangeSpecSeqIter<'a>) -> Self {
         Self { inner, count: 0 }
     }
 }
 
-impl<'a> Iterator for NonEmptyRequestRangeSpecIter<'a> {
+impl<'a> Iterator for NonEmptyRangeSpecSeqIter<'a> {
     type Item = (u64, &'a RangeSpec);
 
     fn next(&mut self) -> Option<Self::Item> {
