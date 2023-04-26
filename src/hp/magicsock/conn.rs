@@ -1044,6 +1044,9 @@ impl Actor {
             }
         }
 
+        // Normalize local_ip
+        meta.dst_ip = self.local_addr().await.ok().map(|addr| addr.ip());
+
         // ep.noteRecvActivity();
         // if stats := c.stats.Load(); stats != nil {
         //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
@@ -1106,7 +1109,8 @@ impl Actor {
             len: dm.buf.len(),
             stride: dm.buf.len(),
             addr: ep_fake_wg_addr,
-            dst_ip: None,
+            // Normalize local_ip
+            dst_ip: self.local_addr().await.ok().map(|addr| addr.ip()),
             ecn: None,
         };
 
