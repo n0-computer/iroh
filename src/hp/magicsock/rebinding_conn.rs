@@ -11,7 +11,7 @@ use async_lock::RwLock;
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -188,7 +188,12 @@ impl AsyncUdpSocket for UdpSocket {
             "sending {:?} transmits",
             transmits
                 .iter()
-                .map(|t| format!("dest: {:?}, bytes: {}", t.destination, t.contents.len()))
+                .map(|t| format!(
+                    "dest: {:?}, src: {:?} bytes: {}",
+                    t.destination,
+                    t.src_ip,
+                    t.contents.len()
+                ))
                 .collect::<Vec<_>>()
         );
 
@@ -200,7 +205,12 @@ impl AsyncUdpSocket for UdpSocket {
                 inner.send(io.into(), state, transmits)
             }) {
                 for t in transmits.iter().take(res) {
-                    debug!("[UDP] -> {} ({}b)", t.destination, t.contents.len());
+                    info!(
+                        "[UDP] -> {} src: {:?} ({}b)",
+                        t.destination,
+                        t.src_ip,
+                        t.contents.len()
+                    );
                 }
 
                 return Poll::Ready(Ok(res));
@@ -222,7 +232,10 @@ impl AsyncUdpSocket for UdpSocket {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
-                    debug!("[UDP] <- {} ({}b)", meta.addr, meta.len);
+                    info!(
+                        "[UDP] <- {} dest: {:?} ({}b)",
+                        meta.addr, meta.dst_ip, meta.len
+                    );
                 }
 
                 return Poll::Ready(Ok(res));
@@ -281,7 +294,7 @@ async fn bind(
                 return Ok(pconn);
             }
             Err(err) => {
-                info!(
+                warn!(
                     "bind_socket: unable to bind {:?} port {}: {:?}",
                     network, port, err
                 );
@@ -304,13 +317,13 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket
     )?;
 
     if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-        info!(
+        warn!(
             "failed to set recv_buffer_size to {}: {:?}",
             SOCKET_BUFFER_SIZE, err
         );
     }
     if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-        info!(
+        warn!(
             "failed to set send_buffer_size to {}: {:?}",
             SOCKET_BUFFER_SIZE, err
         );

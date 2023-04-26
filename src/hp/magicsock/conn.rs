@@ -480,6 +480,9 @@ pub(super) struct DiscoInfo {
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
 fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
+    if xs.is_empty() && ys.is_empty() {
+        return true;
+    }
     if xs.len() == ys.len() {
         let mut order_matches = true;
         for (i, x) in xs.iter().enumerate() {
@@ -520,12 +523,20 @@ impl AsyncUdpSocket for Conn {
         // :(  no (cheap) clone for Transmit yet
         let transmits: Vec<_> = transmits
             .iter()
-            .map(|t| Transmit {
-                destination: t.destination,
-                ecn: t.ecn,
-                contents: t.contents.clone(),
-                segment_size: t.segment_size,
-                src_ip: t.src_ip,
+            .map(|t| {
+                info!(
+                    "[UDP] -> {} ({}b) ({})",
+                    t.destination,
+                    t.contents.len(),
+                    self.name
+                );
+                Transmit {
+                    destination: t.destination,
+                    ecn: t.ecn,
+                    contents: t.contents.clone(),
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                }
             })
             .collect();
 
@@ -622,7 +633,12 @@ impl AsyncUdpSocket for Conn {
                     .collect::<Vec<_>>(),
                 num_msgs
             );
-
+            for m in metas {
+                info!(
+                    "[UDP] <- {} ({}b) ({}) ({:?})",
+                    m.addr, m.len, self.name, m.dst_ip
+                );
+            }
             return Poll::Ready(Ok(num_msgs));
         }
 
@@ -1002,7 +1018,7 @@ impl Actor {
         }
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
-                debug!(
+                info!(
                     "no peer_map state found for {} in {:#?}",
                     meta.addr, self.peer_map
                 );
@@ -1783,21 +1799,6 @@ impl Actor {
     /// Records the new endpoints, reporting whether they're changed.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn set_endpoints(&mut self, endpoints: &[cfg::Endpoint]) -> bool {
-        let any_stun = endpoints.iter().any(|ep| ep.typ == cfg::EndpointType::Stun);
-
-        if !any_stun && self.derp_map.is_none() {
-            // Don't bother storing or reporting this yet. We
-            // don't have a DERP map or any STUN entries, so we're
-            // just starting up. A DERP map should arrive shortly
-            // and then we'll have more interesting endpoints to
-            // report. This saves a map update.
-            debug!(
-                "ignoring pre-DERP map, STUN-less endpoint update: {:?}",
-                endpoints
-            );
-            return false;
-        }
-
         self.last_endpoints_time = Some(Instant::now());
         for (_de, f) in self.on_endpoint_refreshed.drain() {
             tokio::task::spawn(async move {
@@ -2035,6 +2036,7 @@ impl Actor {
     }
 
     /// Sends either to UDP or DERP, depending on the IP.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_addr(
         &mut self,
         addr: SocketAddr,
@@ -2411,17 +2413,27 @@ impl Actor {
         // we'll fall through to the next pass, which allocates but can
         // handle full set updates.
         for n in &self.net_map.as_ref().unwrap().peers {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
-                ep.update_from_node(n);
-                continue;
+            if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
+                info!(
+                    "upserting endpoint {:?} - {:?} {:#?} {:#?}",
+                    self.conn.public_key,
+                    n.key.clone(),
+                    self.peer_map,
+                    n,
+                );
+                self.peer_map.upsert_endpoint(EndpointOptions {
+                    conn_sender: self.conn.actor_sender.clone(),
+                    conn_public_key: self.conn.public_key.clone(),
+                    public_key: Some(n.key.clone()),
+                });
             }
 
-            if let Some(id) = self.peer_map.upsert_endpoint(EndpointOptions {
-                conn_sender: self.conn.actor_sender.clone(),
-                conn_public_key: self.conn.public_key.clone(),
-                public_key: Some(n.key.clone()),
-            }) {
-                self.peer_map.by_id_mut(&id).unwrap().update_from_node(n);
+            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&n.key) {
+                ep.update_from_node(n);
+                let id = ep.id;
+                for endpoint in &n.endpoints {
+                    self.peer_map.set_endpoint_for_ip_port(endpoint, id);
+                }
             }
         }
 
@@ -2460,6 +2472,7 @@ impl Actor {
         self.pconn4.port().await
     }
 
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_raw(
         &self,
         state: &quinn_udp::UdpState,
@@ -2678,7 +2691,7 @@ async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)>
 }
 
 fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
-    info!("endpoints changed: {}", {
+    debug!("endpoints changed: {}", {
         let mut s = String::new();
         for (i, ep) in endpoints.iter().enumerate() {
             if i > 0 {
@@ -3104,7 +3117,7 @@ mod tests {
         let eps = Arc::new(Mutex::new(vec![Vec::new(); stacks.len()]));
 
         async fn build_netmap(
-            eps: &[Vec<cfg::Endpoint>],
+            eps: &[cfg::Endpoint],
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
@@ -3120,7 +3133,7 @@ mod tests {
                     addresses: addresses.clone(),
                     name: Some(format!("node{}", i + 1)),
                     key: peer.key.public_key().into(),
-                    endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
+                    endpoints: eps.iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),
                     hostinfo: crate::hp::hostinfo::Hostinfo::new(),
@@ -3144,8 +3157,10 @@ mod tests {
             eps[idx] = new_eps;
 
             for (i, m) in ms.iter().enumerate() {
-                let nm = build_netmap(&eps[..], ms, i).await;
-                let _ = m.conn.set_network_map(nm).await;
+                if !eps[i].is_empty() {
+                    let nm = build_netmap(&eps[i], ms, i).await;
+                    let _ = m.conn.set_network_map(nm).await;
+                }
             }
         }
 
