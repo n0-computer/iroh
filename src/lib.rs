@@ -37,16 +37,21 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use futures::StreamExt;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::{AuthToken, Request};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
+    use crate::{
+        blobs::Collection,
+        get::{dial_peer, ResponseStreamItem},
+        protocol::{AuthToken, Request},
+    };
 
     use super::*;
 
@@ -404,7 +409,7 @@ mod tests {
             move |mut data| async move {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
-                    data.set_limit(collection.total_entries() as u64 + 1);
+                    data.set_limit(collection.total_entries() + 1);
                     data.user = collection.into_inner();
                 } else {
                     let hash = data.user[0].hash;
@@ -575,5 +580,73 @@ mod tests {
         assert!(on_connected);
         assert!(on_collection);
         assert!(on_blob);
+    }
+
+    #[tokio::test]
+    async fn test_run_stream() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addr,
+                peer_id,
+                keylog: true,
+            })
+            .await?;
+            let request = Request::all(hash);
+            let mut stream = get::run_stream(connection, request, auth_token);
+            let mut collection = Vec::new();
+            let mut hashes = Vec::<Hash>::new();
+            while let Some(item) = stream.next().await {
+                match item {
+                    ResponseStreamItem::Start { child } => {
+                        if child > 0 {
+                            // start with a child
+                            stream.set_hash(hashes[(child - 1) as usize].into());
+                        }
+                    }
+                    ResponseStreamItem::Leaf { child, data, .. } => {
+                        if child == 0 {
+                            // got a piece of the collection
+                            collection.extend_from_slice(&data);
+                        }
+                    }
+                    ResponseStreamItem::Done { child } => {
+                        if child == 0 {
+                            // finished with the collection
+                            let collection = Collection::from_bytes(&collection)?;
+                            stream.set_limit(collection.total_entries() + 1);
+                            hashes = collection.blobs().iter().map(|b| b.hash).collect();
+                        }
+                    }
+                    ResponseStreamItem::Error(cause) => {
+                        println!("{:?}", cause);
+                        panic!();
+                    }
+                    ResponseStreamItem::Finished { stats } => {
+                        println!("{:?}", stats);
+                    }
+                    _ => {}
+                }
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
     }
 }

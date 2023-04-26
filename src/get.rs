@@ -3,10 +3,13 @@
 //! The main entry point is [`run`]. This function takes callbacks that will
 //! be invoked when blobs or collections are received. It is up to the caller
 //! to store the received data.
-use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::{self, Debug};
 use std::io::{self, Cursor, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
@@ -22,9 +25,10 @@ use bao_tree::io::tokio::DecodeResponseStreamRef;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use default_net::Interface;
-use futures::{Future, StreamExt};
+use futures::stream::BoxStream;
+use futures::{Future, Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -77,7 +81,7 @@ pub fn make_client_endpoint(
 }
 
 /// Establishes a QUIC connection to the provided peer.
-async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
+pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let bind_addr = match opts.addr.is_ipv6() {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
@@ -466,6 +470,305 @@ impl<U> OnBlobData<U> {
         }
         self.completed = true;
         Ok(())
+    }
+}
+
+use genawaiter::{sync::gen, yield_};
+
+#[derive(Debug)]
+struct StreamInfo {
+    hash: Option<blake3::Hash>,
+    limit: Option<u64>,
+}
+
+///
+pub struct ResponseStream {
+    stream: BoxStream<'static, ResponseStreamItem>,
+    cell: Arc<Mutex<StreamInfo>>,
+}
+
+impl Debug for ResponseStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResponseStream").finish()
+    }
+}
+
+impl ResponseStream {
+    ///
+    pub fn set_hash(&mut self, hash: blake3::Hash) {
+        self.cell.lock().unwrap().hash = Some(hash);
+    }
+
+    ///
+    pub fn set_limit(&mut self, limit: u64) {
+        self.cell.lock().unwrap().limit = Some(limit);
+    }
+}
+
+impl Stream for ResponseStream {
+    type Item = ResponseStreamItem;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).poll_next(cx)
+    }
+}
+
+/// Do a request and return a stream of responses
+pub fn run_stream(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+) -> ResponseStream {
+    let cell = Arc::new(Mutex::new(StreamInfo {
+        hash: Some(request.hash.into()),
+        limit: None,
+    }));
+    let stream = run_stream_inner(connection, request, auth_token, cell.clone()).boxed();
+    ResponseStream { stream, cell }
+}
+
+fn run_stream_inner(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+    cell: Arc<Mutex<StreamInfo>>,
+) -> impl futures::Stream<Item = ResponseStreamItem> + Send + Sync + Unpin + 'static {
+    gen!({
+        let start = Instant::now();
+        // expect to get blob data in the order they appear in the collection
+        let ranges_iter = request.ranges.non_empty_iter();
+
+        let (writer, reader) = match connection.open_bi().await {
+            Ok(stream) => stream,
+            Err(cause) => {
+                yield_!(cause.into());
+                return;
+            }
+        };
+        let mut reader = TrackingReader::new(reader);
+        let mut writer = TrackingWriter::new(writer);
+
+        yield_!(ResponseStreamItem::Connected);
+
+        let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+        // 1. Send Handshake
+        {
+            debug!("sending handshake");
+            let handshake = Handshake::new(auth_token);
+            let used = match postcard::to_slice(&handshake, &mut out_buffer) {
+                Ok(used) => used,
+                Err(cause) => {
+                    yield_!(cause.into());
+                    return;
+                }
+            };
+            if let Err(cause) = write_lp(&mut writer, used).await {
+                yield_!(cause.into());
+                return;
+            }
+        }
+
+        // 2. Send Request
+        {
+            debug!("sending request");
+            let request_bytes = match postcard::to_stdvec(&request) {
+                Ok(bytes) => bytes,
+                Err(cause) => {
+                    yield_!(cause.into());
+                    return;
+                }
+            };
+            if let Err(cause) = write_lp(&mut writer, &request_bytes).await {
+                yield_!(cause.into());
+                return;
+            }
+        }
+        let (mut writer, bytes_written) = writer.into_parts();
+        if let Err(cause) = writer.finish().await {
+            yield_!(cause.into());
+            return;
+        }
+        drop(writer);
+
+        // 3. Read responses
+        debug!("reading response");
+        for (child, query) in ranges_iter {
+            let limit = cell.lock().unwrap().limit;
+            if let Some(limit) = limit {
+                if child >= limit {
+                    break;
+                }
+            }
+            yield_!(ResponseStreamItem::Start { child });
+
+            let hash_opt = cell.lock().unwrap().hash.take();
+            let hash = match hash_opt {
+                Some(hash) => hash,
+                None => {
+                    yield_!(anyhow!("missing hash").into());
+                    return;
+                }
+            };
+
+            let chunk_ranges = query.to_chunk_ranges();
+            let mut stream =
+                DecodeResponseStreamRef::new(hash, &chunk_ranges, IROH_BLOCK_SIZE, &mut reader);
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(item) => {
+                        yield_!(match item {
+                            DecodeResponseItem::Header { size } => {
+                                ResponseStreamItem::Size {
+                                    child,
+                                    size: size.0,
+                                }
+                            }
+                            DecodeResponseItem::Parent {
+                                node,
+                                pair: (l_hash, r_hash),
+                                ..
+                            } => {
+                                ResponseStreamItem::Parent {
+                                    child,
+                                    pair: (l_hash, r_hash),
+                                }
+                            }
+                            DecodeResponseItem::Leaf { offset, data } => {
+                                ResponseStreamItem::Leaf {
+                                    child,
+                                    offset: offset.0,
+                                    data,
+                                }
+                            }
+                        });
+                    }
+                    Err(cause) => {
+                        yield_!(cause.into());
+                        return;
+                    }
+                }
+            }
+            yield_!(ResponseStreamItem::Done { child });
+        }
+        yield_!(ResponseStreamItem::Finished {
+            stats: Stats {
+                bytes_written,
+                bytes_read: reader.bytes_read(),
+                elapsed: start.elapsed(),
+            }
+        });
+    })
+}
+
+/// Error when processing a response
+#[derive(thiserror::Error, Debug)]
+pub enum ResponseStreamError {
+    /// Error when opening a stream
+    #[error("connection: {0}")]
+    Connection(#[from] quinn::ConnectionError),
+    /// Error when writing the handshake or request to the stream
+    #[error("write: {0}")]
+    Write(#[from] quinn::WriteError),
+    /// Error when reading from the stream
+    #[error("read: {0}")]
+    Read(#[from] quinn::ReadError),
+    /// Error when decoding, e.g. hash mismatch
+    #[error("decode: {0}")]
+    Decode(bao_tree::io::error::DecodeError),
+    /// A generic error
+    #[error("generic: {0}")]
+    Generic(anyhow::Error),
+}
+
+/// An item from a response stream
+#[derive(Debug)]
+pub enum ResponseStreamItem {
+    /// we are connected
+    Connected,
+    /// we are starting to download a blob with the given offset in the query
+    Start {
+        /// the offset of the blob in the query, 0 for the collection
+        child: u64,
+    },
+    /// we got the size header for the blob with the given offset in the query
+    Size {
+        ///
+        child: u64,
+        ///
+        size: u64,
+    },
+    /// we got a parent hash for a blob
+    Parent {
+        ///
+        child: u64,
+        ///
+        pair: (blake3::Hash, blake3::Hash),
+    },
+    /// we got a leaf chunk for a blob
+    Leaf {
+        ///
+        child: u64,
+        ///
+        offset: u64,
+        ///
+        data: Bytes,
+    },
+    /// we are done with a blob
+    Done {
+        ///
+        child: u64,
+    },
+    /// we are done with everything
+    Finished {
+        /// stats about the interaction
+        stats: Stats,
+    },
+    /// An error
+    Error(ResponseStreamError),
+}
+
+impl<T: Into<ResponseStreamError>> From<T> for ResponseStreamItem {
+    fn from(cause: T) -> Self {
+        Self::Error(cause.into())
+    }
+}
+
+impl From<postcard::Error> for ResponseStreamError {
+    fn from(cause: postcard::Error) -> Self {
+        Self::Generic(cause.into())
+    }
+}
+
+impl From<bao_tree::io::error::DecodeError> for ResponseStreamError {
+    fn from(cause: bao_tree::io::error::DecodeError) -> Self {
+        match cause {
+            bao_tree::io::error::DecodeError::Io(cause) => {
+                // try to downcast to specific quinn errors
+                if let Some(source) = cause.source() {
+                    if let Some(error) = source.downcast_ref::<quinn::ConnectionError>() {
+                        return Self::Connection(error.clone());
+                    }
+                    if let Some(error) = source.downcast_ref::<quinn::ReadError>() {
+                        return Self::Read(error.clone());
+                    }
+                    if let Some(error) = source.downcast_ref::<quinn::WriteError>() {
+                        return Self::Write(error.clone());
+                    }
+                }
+                Self::Generic(cause.into())
+            }
+            _ => Self::Decode(cause),
+        }
+    }
+}
+
+impl From<anyhow::Error> for ResponseStreamError {
+    fn from(cause: anyhow::Error) -> Self {
+        Self::Generic(cause)
     }
 }
 
