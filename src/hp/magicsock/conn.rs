@@ -219,8 +219,6 @@ impl Conn {
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
         let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
-        let mut net_checker = netcheck::Client::default();
-        net_checker.port_mapper = Some(port_mapper.clone());
 
         let Options {
             port,
@@ -237,10 +235,14 @@ impl Conn {
         port_mapper.set_local_port(port).await;
 
         let conn4 = pconn4.clone();
-        net_checker.get_stun_conn4 = Some(Arc::new(Box::new(move || conn4.as_socket())));
-        if let Some(conn6) = pconn6.clone() {
-            net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
-        }
+        let get_stun_conn4 = Some(Arc::new(Box::new(move || conn4.as_socket()) as _));
+        let get_stun_conn6 = if let Some(conn6) = pconn6.clone() {
+            Some(Arc::new(Box::new(move || conn6.as_socket()) as _))
+        } else {
+            None
+        };
+        let net_checker =
+            netcheck::Client::new(Some(port_mapper.clone()), get_stun_conn4, get_stun_conn6).await;
         let (actor_sender, actor_receiver) = flume::bounded(128);
         let (network_sender, network_receiver) = flume::bounded(128);
 
