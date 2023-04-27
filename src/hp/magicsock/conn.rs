@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt::Debug,
     io::{self, IoSliceMut},
     mem::MaybeUninit,
@@ -154,8 +154,8 @@ pub struct Inner {
     /// Used for receiving DERP messages.
     network_recv_ch: flume::Receiver<NetworkReadResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
-    network_recv_wakers: std::sync::Mutex<VecDeque<Waker>>,
-    network_send_wakers: std::sync::Mutex<VecDeque<Waker>>,
+    network_recv_wakers: std::sync::Mutex<Option<Waker>>,
+    network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
     public_key: key::node::PublicKey,
 
@@ -254,8 +254,8 @@ impl Conn {
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             network_recv_ch: network_recv_ch_receiver,
-            network_recv_wakers: std::sync::Mutex::new(VecDeque::new()),
-            network_send_wakers: std::sync::Mutex::new(VecDeque::new()),
+            network_recv_wakers: std::sync::Mutex::new(None),
+            network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             network_sender,
         });
@@ -552,7 +552,7 @@ impl AsyncUdpSocket for Conn {
                 self.network_send_wakers
                     .lock()
                     .unwrap()
-                    .push_back(cx.waker().clone());
+                    .replace(cx.waker().clone());
 
                 Poll::Pending
             }
@@ -587,7 +587,7 @@ impl AsyncUdpSocket for Conn {
                     self.network_recv_wakers
                         .lock()
                         .unwrap()
-                        .push_back(cx.waker().clone());
+                        .replace(cx.waker().clone());
                     break;
                 }
                 Err(flume::TryRecvError::Disconnected) => {
@@ -813,17 +813,16 @@ impl Actor {
                 transmits = self.network_receiver.recv_async() => {
                     debug!("tick: network send");
                     self.send_network(&ip_stream.udp_state, transmits?).await;
-                }
-                msg = self.msg_receiver.recv_async() => {
                     debug!("tick: msg");
                     {
                         // Wakeup any send wakers that have been waiting for the channel
                         let mut wakers = self.conn.network_send_wakers.lock().unwrap();
-                        while let Some(waker) = wakers.pop_front() {
+                        if let Some(waker) = wakers.take() {
                             waker.wake();
                         }
                     }
-
+                }
+                msg = self.msg_receiver.recv_async() => {
                     match msg? {
                         ActorMessage::GetLocalAddr(s) => {
                             let addr = self.local_addr().await;
@@ -929,7 +928,7 @@ impl Actor {
                             if let Some(passthrough) = self.process_derp_read_result(read_result).await {
                                 self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
                                 let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                                while let Some(waker) = wakers.pop_front() {
+                                if let Some(waker) = wakers.take() {
                                     waker.wake();
                                 }
                             }
@@ -958,7 +957,7 @@ impl Actor {
                                         }
                                     }
                                     let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                                    while let Some(waker) = wakers.pop_front() {
+                                    if let Some(waker) = wakers.take() {
                                         waker.wake();
                                     }
                                 }
@@ -967,7 +966,7 @@ impl Actor {
                         Err(err) => {
                             let _ = self.derp_recv_sender.send_async(NetworkReadResult::Error(err)).await;
                             let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                            while let Some(waker) = wakers.pop_front() {
+                            while let Some(waker) = wakers.take() {
                                 waker.wake();
                             }
                         }
