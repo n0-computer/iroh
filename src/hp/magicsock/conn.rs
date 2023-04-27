@@ -143,6 +143,8 @@ impl Debug for Inner {
 
 pub struct Inner {
     actor_sender: flume::Sender<ActorMessage>,
+    /// Sends network messages.
+    network_sender: flume::Sender<Vec<Transmit>>,
     pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
@@ -240,6 +242,7 @@ impl Conn {
             net_checker.get_stun_conn6 = Some(Arc::new(Box::new(move || conn6.as_socket())));
         }
         let (actor_sender, actor_receiver) = flume::bounded(128);
+        let (network_sender, network_receiver) = flume::bounded(128);
 
         let inner = Arc::new(Inner {
             name,
@@ -254,6 +257,7 @@ impl Conn {
             network_recv_wakers: std::sync::Mutex::new(VecDeque::new()),
             network_send_wakers: std::sync::Mutex::new(VecDeque::new()),
             actor_sender: actor_sender.clone(),
+            network_sender,
         });
 
         let conn = inner.clone();
@@ -261,11 +265,11 @@ impl Conn {
             let actor = Actor {
                 msg_receiver: actor_receiver,
                 msg_sender: actor_sender,
+                network_receiver,
                 conn,
                 net_map: None,
                 derp_recv_sender: network_recv_ch_sender,
                 active_derp: HashMap::default(),
-                prev_derp: HashMap::default(),
                 derp_route: HashMap::new(),
                 endpoints_update_state: EndpointUpdateState::new(),
                 last_endpoints: Vec::new(),
@@ -542,10 +546,7 @@ impl AsyncUdpSocket for Conn {
             .collect();
 
         let n = transmits.len();
-        match self
-            .actor_sender
-            .try_send(ActorMessage::NetworkWriteRequest { transmits })
-        {
+        match self.network_sender.try_send(transmits) {
             Ok(_) => Poll::Ready(Ok(n)),
             Err(flume::TrySendError::Full(_)) => {
                 self.network_send_wakers
@@ -717,9 +718,6 @@ pub(super) enum ActorMessage {
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     Connected(ReaderState),
-    NetworkWriteRequest {
-        transmits: Vec<Transmit>,
-    },
     EnqueueCallMeMaybe {
         derp_addr: SocketAddr,
         endpoint_id: usize,
@@ -737,11 +735,11 @@ struct Actor {
     net_map: Option<netmap::NetworkMap>,
     msg_receiver: flume::Receiver<ActorMessage>,
     msg_sender: flume::Sender<ActorMessage>,
+    network_receiver: flume::Receiver<Vec<Transmit>>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<NetworkReadResult>,
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<u16, ActiveDerp>,
-    prev_derp: HashMap<u16, wg::AsyncWaitGroup>,
     /// Contains optional alternate routes to use as an optimization instead of
     /// contacting a peer via their home DERP connection.  If they sent us a message
     /// on a different DERP connection (which should really only be on our DERP
@@ -812,6 +810,10 @@ impl Actor {
             IpStream::new(self.conn.clone(), self.pconn4.clone(), self.pconn6.clone());
         loop {
             tokio::select! {
+                transmits = self.network_receiver.recv_async() => {
+                    debug!("tick: network send");
+                    self.send_network(&ip_stream.udp_state, transmits?).await;
+                }
                 msg = self.msg_receiver.recv_async() => {
                     debug!("tick: msg");
                     {
@@ -874,9 +876,6 @@ impl Actor {
                         }
                         ActorMessage::Connected(rs) => {
                             recvs.push(rs.recv())
-                        }
-                        ActorMessage::NetworkWriteRequest { transmits } => {
-                            self.send_network(&ip_stream.udp_state, transmits).await;
                         }
                         ActorMessage::EnqueueCallMeMaybe {
                             derp_addr,
@@ -1331,15 +1330,18 @@ impl Actor {
                     let public_key = ep.public_key();
                     match ep.get_send_addrs().await {
                         Ok((Some(udp_addr), Some(derp_addr))) => {
-                            let res = self.send_raw(udp_state, udp_addr, &group).await;
-                            if let Some(public_key) = public_key {
+                            let res = if let Some(public_key) = public_key {
+                                let res = self.send_raw(udp_state, udp_addr, &group).await;
                                 self.send_derp(
                                     derp_addr.port(),
                                     public_key,
                                     group.into_iter().map(|t| t.contents).collect(),
                                 )
-                                .await
-                            }
+                                .await;
+                                res
+                            } else {
+                                self.send_raw(udp_state, udp_addr, &group).await
+                            };
                             if let Err(err) = res {
                                 warn!("failed to send UDP: {:?}", err);
                             }
