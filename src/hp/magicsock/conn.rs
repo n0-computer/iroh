@@ -41,6 +41,7 @@ use super::{
     endpoint::{Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME, ENDPOINTS_FRESH_ENOUGH_DURATION,
+    HEARTBEAT_INTERVAL,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -803,6 +804,7 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
         let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
+        let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
@@ -975,6 +977,13 @@ impl Actor {
                 tick = self.periodic_re_stun_timer.tick() => {
                     debug!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
+                }
+                _ = endpoint_heartbeat_timer.tick() => {
+                    debug!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
+                    // TODO: this might trigger too many packets at once, pace this
+                    for (_, ep) in self.peer_map.endpoints_mut() {
+                        ep.heartbeat().await;
+                    }
                 }
                 _ = endpoints_update_receiver.changed() => {
                     let reason = endpoints_update_receiver.borrow().clone();

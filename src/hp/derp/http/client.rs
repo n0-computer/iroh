@@ -566,7 +566,7 @@ impl Client {
             match client.recv().await {
                 Ok(msg) => {
                     let region = self.current_region().await?;
-                    debug!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
+                    tracing::info!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
 
                     if let ReceivedMessage::Pong(ping) = msg {
                         if let Some(chan) = self.unregister_ping(ping).await {

@@ -46,6 +46,8 @@ const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 /// resetting the counter, as the first pings likely didn't through the firewall)
 const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
 /// How many `PongReply` values we keep per `EndpointState`.
 const PONG_HISTORY_COUNT: usize = 64;
 

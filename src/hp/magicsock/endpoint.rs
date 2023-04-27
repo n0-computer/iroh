@@ -158,18 +158,24 @@ impl Endpoint {
     fn want_full_ping(&self, now: &Instant) -> bool {
         debug!("want full ping? {:?}", now);
         if self.last_full_ping.is_none() {
+            info!("full ping: no full ping done");
             return true;
         }
         if !self.is_best_addr_valid(*now) {
+            info!("full ping: best addr expired");
             return true;
-        }
-        if self.best_addr.as_ref().unwrap().latency <= GOOD_ENOUGH_LATENCY {
-            return false;
         }
 
-        if *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL {
+        if self.best_addr.as_ref().unwrap().latency > GOOD_ENOUGH_LATENCY
+            && *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL
+        {
+            info!(
+                "full ping: full ping interval expired and latency is only {}ms",
+                self.best_addr.as_ref().unwrap().latency.as_millis()
+            );
             return true;
         }
+
         false
     }
 
@@ -214,7 +220,7 @@ impl Endpoint {
     fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
             if !self.is_best_addr_valid(Instant::now()) {
-                info!(
+                debug!(
                     "disco: timeout waiting for pong {:?} from {:?} ({:?})",
                     txid, sp.to, self.public_key,
                 );
@@ -268,7 +274,7 @@ impl Endpoint {
     }
 
     async fn start_ping(&mut self, ep: SocketAddr, now: Instant, purpose: DiscoPingPurpose) {
-        debug!("start ping {:?}", purpose);
+        info!("start ping {:?}", purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = self.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
@@ -330,7 +336,7 @@ impl Endpoint {
                 if st.last_ping.is_some()
                     && now - *st.last_ping.as_ref().unwrap() < DISCO_PING_INTERVAL
                 {
-                    info!(
+                    debug!(
                         "disco: [{:?}] skipping ping, too new {:?} {:?}",
                         ep, now, st.last_ping
                     );
@@ -343,7 +349,7 @@ impl Endpoint {
         let sent_any = !pings.is_empty();
         for (i, ep) in pings.into_iter().enumerate() {
             if i == 0 && send_call_me_maybe {
-                info!("disco: send, starting discovery for {:?}", self.public_key);
+                debug!("disco: send, starting discovery for {:?}", self.public_key);
             }
 
             self.start_ping(ep, now, DiscoPingPurpose::Discovery).await;
@@ -666,7 +672,7 @@ impl Endpoint {
             }
         }
         if !new_eps.is_empty() {
-            info!(
+            debug!(
                 "disco: call-me-maybe from {:?} added new endpoints: {:?}",
                 self.public_key, new_eps,
             );
@@ -700,26 +706,11 @@ impl Endpoint {
         self.pending_cli_pings.clear();
     }
 
-    pub(crate) async fn get_send_addrs(
-        &mut self,
-    ) -> io::Result<(Option<SocketAddr>, Option<SocketAddr>)> {
-        if self.expired {
-            return Err(io::Error::new(io::ErrorKind::Other, "endpoint expired"));
-        }
-
+    pub(super) async fn heartbeat(&mut self) {
         let now = Instant::now();
-        let (udp_addr, derp_addr) = self.addr_for_send(&now);
+        let (udp_addr, _derp_addr) = self.addr_for_send(&now);
 
-        debug!(
-            "available addrs: UDP({:?}), DERP({:?})",
-            udp_addr, derp_addr
-        );
-
-        if udp_addr.is_none() || self.want_full_ping(&now) {
-            // If we do not have an optimal addr, send pings to all known places.
-            debug!("send pings all");
-            self.send_pings(now, true).await;
-        } else if let Some(udp_addr) = udp_addr {
+        if let Some(udp_addr) = udp_addr {
             // Send heartbeat ping to keep the current addr going as long as we need it.
 
             if let Some(ep_state) = self.endpoint_state.get(&udp_addr) {
@@ -739,6 +730,28 @@ impl Endpoint {
                         .await;
                 }
             }
+        }
+
+        if udp_addr.is_none() || self.want_full_ping(&now) {
+            // If we do not have an optimal addr, send pings to all known places.
+            debug!("send pings all");
+            self.send_pings(now, true).await;
+        }
+    }
+
+    pub(crate) async fn get_send_addrs(
+        &mut self,
+    ) -> io::Result<(Option<SocketAddr>, Option<SocketAddr>)> {
+        if self.expired {
+            return Err(io::Error::new(io::ErrorKind::Other, "endpoint expired"));
+        }
+
+        let now = Instant::now();
+        let (udp_addr, derp_addr) = self.addr_for_send(&now);
+
+        // Trigger a round of pings if we haven't had any full pings yet.
+        if self.last_full_ping.is_none() {
+            self.heartbeat().await;
         }
 
         debug!(
