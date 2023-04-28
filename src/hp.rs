@@ -6,7 +6,6 @@ pub mod portmapper;
 pub mod stun;
 
 pub mod cfg;
-mod clock;
 mod disco;
 pub mod hostinfo;
 pub mod key;

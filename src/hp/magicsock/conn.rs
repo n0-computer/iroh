@@ -1018,7 +1018,7 @@ impl Actor {
 
         if stun::is(bytes) {
             debug!("received STUN message {}", bytes.len());
-            self.on_stun_receive(bytes, meta.addr);
+            self.on_stun_receive(bytes, meta.addr).await;
             return false;
         }
         if self.handle_disco_message(&bytes, meta.addr, None).await {
@@ -1076,13 +1076,10 @@ impl Actor {
         Ok(addr)
     }
 
-    fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
+    async fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
         if self.enable_stun_packets {
             let packet = packet.to_vec();
-            let net_checker = self.net_checker.clone();
-            tokio::task::spawn(async move {
-                net_checker.receive_stun_packet(&packet, addr).await;
-            });
+            self.net_checker.receive_stun_packet(&packet, addr).await;
         }
     }
 
@@ -1720,7 +1717,7 @@ impl Actor {
 
         self.enable_stun_packets = true;
         let dm = self.derp_map.as_ref().unwrap();
-        let net_checker = self.net_checker.clone();
+        let net_checker = &mut self.net_checker;
         let report = time::timeout(Duration::from_secs(4), async move {
             net_checker.get_report(&dm).await
         })
