@@ -134,6 +134,7 @@ impl Report {
 }
 
 /// Generates a netcheck [`Report`].
+#[derive(Debug)]
 pub struct Client {
     msg_sender: mpsc::Sender<ActorMessage>,
     actor: Actor,
@@ -935,14 +936,6 @@ impl ReportState {
         self.report.read().await.udp
     }
 
-    async fn have_region_latency(&self, region_id: usize) -> bool {
-        self.report
-            .read()
-            .await
-            .region_latency
-            .contains_key(&region_id)
-    }
-
     /// Reports whether executing the given probe would yield any new information.
     /// The given node is provided just because the sole caller already has it
     /// and it saves a lookup.
@@ -1133,13 +1126,16 @@ async fn run_probe(
 
             let res = if let Some(ref pinger) = pinger {
                 tokio::join!(
-                    measure_icmp_latency(&reg, pinger).map(Some),
+                    time::timeout(
+                        ICMP_PROBE_TIMEOUT,
+                        measure_icmp_latency(&reg, pinger).map(Some)
+                    ),
                     measure_https_latency(&reg)
                 )
             } else {
-                (None, measure_https_latency(&reg).await)
+                (Ok(None), measure_https_latency(&reg).await)
             };
-            if let Some(icmp_res) = res.0 {
+            if let Ok(Some(icmp_res)) = res.0 {
                 match icmp_res {
                     Ok(d) => {
                         result.delay = Some(d);
@@ -1278,6 +1274,20 @@ struct Actor {
     got_hair_stun: broadcast::Sender<SocketAddr>,
 }
 
+impl Debug for Actor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Actor")
+            .field("receiver", &self.receiver)
+            .field("skip_external_network", &self.skip_external_network)
+            .field("udp_bind_addr", &self.udp_bind_addr)
+            .field("port_mapper", &self.port_mapper)
+            .field("get_stun_conn4", &"[..]")
+            .field("get_stun_conn6", &"[..]")
+            .field("got_hair_stun", &self.got_hair_stun)
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 enum ActorMessage {
     StunPacket(Vec<u8>, SocketAddr),
@@ -1318,7 +1328,7 @@ impl Actor {
                 res = maybe_pending(pc4.as_ref().map(|c| c.recv_from(&mut buf4))) => {
                     match res {
                         Err(err) => {
-                            warn!("faile to read ipv4: {:?}", err);
+                            warn!("failed to read ipv4: {:?}", err);
                         }
                         Ok((n, addr)) => {
                             self.process_packet(&mut in_flight, &buf4[..n], addr).await;
@@ -1328,7 +1338,7 @@ impl Actor {
                 res = maybe_pending(pc6.as_ref().map(|c| c.recv_from(&mut buf6))) => {
                     match res {
                         Err(err) => {
-                            warn!("faile to read ipv6: {:?}", err);
+                            warn!("failed to read ipv6: {:?}", err);
                         }
                         Ok((n, addr)) => {
                             self.process_packet(&mut in_flight, &buf6[..n], addr).await;
@@ -1399,7 +1409,7 @@ impl Actor {
             // metricNumGetReportFull.Add(1);
         }
 
-        let rs = ReportState {
+        Ok(ReportState {
             incremental: last.is_some(),
             pc4,
             pc6,
@@ -1415,8 +1425,7 @@ impl Actor {
             got_hair_stun: got_hair_stun_r,
             plan,
             last,
-        };
-        Ok(rs)
+        })
     }
 
     async fn init_stun_conn4(&self) -> Result<Arc<net::UdpSocket>> {
@@ -1686,6 +1695,7 @@ async fn os_has_ipv6() -> bool {
 // 	metricHTTPSend  = clientmetric.NewCounter("netcheck_https_measure")
 // )
 
+/// Resoles to pending if the future is `None`.
 async fn maybe_pending<T>(maybe_fut: Option<impl Future<Output = T>>) -> T {
     match maybe_fut {
         Some(t) => t.await,
@@ -1693,6 +1703,7 @@ async fn maybe_pending<T>(maybe_fut: Option<impl Future<Output = T>>) -> T {
     }
 }
 
+/// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
 struct MaybeFuture<T> {
     inner: Option<T>,
@@ -1719,25 +1730,6 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use super::*;
     use tracing_subscriber::{prelude::*, EnvFilter};
-
-    // #[tokio::test]
-    // async fn test_hairpin_stun() {
-    //     let client = Client::new(None, None, None).await;
-    //     let pc4_hair = Arc::new(net::UdpSocket::bind("0.0.0.0:0").await.unwrap());
-    //     let hs_r = Arc::new(Mutex::new(client.got_hair_stun.subscribe()));
-    //     let s = ReportState::new(hs_r.clone(), pc4_hair, client.clock.clone());
-    //     let tx = s.hair_tx;
-    //     client.reports.lock().await.current_hair_tx = Some(tx);
-    //     client.is_running.store(true, Ordering::Relaxed);
-
-    //     let req = stun::request(tx);
-    //     assert!(stun::is(&req));
-    //     let src = "127.0.0.1:0".parse().unwrap();
-
-    //     let res = client.handle_hair_stun_locked(&req, src).await;
-    //     assert!(res, "expected hair to be true");
-    //     assert_eq!(hs_r.lock().await.recv().await.unwrap(), src);
-    // }
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
