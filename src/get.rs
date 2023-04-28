@@ -3,10 +3,11 @@
 //! The main entry point is [`run`]. This function takes callbacks that will
 //! be invoked when blobs or collections are received. It is up to the caller
 //! to store the received data.
-use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::{self, Debug};
 use std::io::{self, Cursor, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
@@ -22,9 +23,11 @@ use bao_tree::io::tokio::DecodeResponseStreamRef;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use default_net::Interface;
+use futures::stream::BoxStream;
 use futures::{Future, StreamExt};
+use genawaiter::sync::{Co, Gen};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -77,7 +80,7 @@ pub fn make_client_endpoint(
 }
 
 /// Establishes a QUIC connection to the provided peer.
-async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
+pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let bind_addr = match opts.addr.is_ipv6() {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
@@ -466,6 +469,280 @@ impl<U> OnBlobData<U> {
         }
         self.completed = true;
         Ok(())
+    }
+}
+
+/// Low level response for a get request
+///
+/// This is a bit like a stream, but not really a stream. It is more like an
+/// async state machine that you can use to consume a get request.
+///
+/// A stream you can delay, transform and filter, but in this case you need to be
+/// able to call methods on the GetResponse.
+pub struct GetResponse {
+    stream: BoxStream<'static, ResponseItem>,
+    // todo: if we were doing thread per core we could get rid of this mutex
+    // and instead just use a RefCell here, which would be much cheaper.
+    cell: Arc<Mutex<Option<Hash>>>,
+}
+
+impl Debug for GetResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResponseStream").finish()
+    }
+}
+
+impl GetResponse {
+    /// Set the hash. This must be called before each non root item, otherwise
+    /// we don't have a way to validate the data.
+    ///
+    /// Setting this to None or not calling it at all will finish the response.
+    pub fn set_hash(&mut self, hash: Option<Hash>) {
+        *self.cell.lock().unwrap() = hash;
+    }
+
+    /// Get the next response item
+    pub async fn next(&mut self) -> Option<ResponseItem> {
+        self.stream.next().await
+    }
+}
+
+/// Do a get request and return a stream of responses
+pub fn run_get(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+) -> GetResponse {
+    let cell = Arc::new(Mutex::new(Some(request.hash.into())));
+
+    let stream =
+        Gen::new(|co| run_get_handle_error(connection, request, auth_token, cell.clone(), co))
+            .boxed();
+    GetResponse { stream, cell }
+}
+
+/// Wrapper that calls run_get_inner and makes sure an error is sent
+async fn run_get_handle_error(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+    cell: Arc<Mutex<Option<Hash>>>,
+    co: Co<ResponseItem>,
+) {
+    if let Err(cause) = run_get_inner(connection, request, auth_token, cell, &co).await {
+        co.yield_(ResponseItem::Error(cause.into())).await;
+    }
+}
+
+/// The actual logic for the get request
+///
+/// An error within this function will cause the response to be ended with a
+/// single error item.
+async fn run_get_inner(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+    cell: Arc<Mutex<Option<Hash>>>,
+    co: &Co<ResponseItem>,
+) -> anyhow::Result<()> {
+    let start = Instant::now();
+    // expect to get blob data in the order they appear in the collection
+    let ranges_iter = request.ranges.non_empty_iter();
+
+    let (writer, reader) = connection.open_bi().await?;
+    let mut reader = TrackingReader::new(reader);
+    let mut writer = TrackingWriter::new(writer);
+
+    co.yield_(ResponseItem::Connected).await;
+
+    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+    // 1. Send Handshake
+    {
+        debug!("sending handshake");
+        let handshake = Handshake::new(auth_token);
+        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
+
+    // 2. Send Request
+    {
+        debug!("sending request");
+        let request_bytes = postcard::to_stdvec(&request)?;
+        write_lp(&mut writer, &request_bytes).await?;
+    }
+    let (mut writer, bytes_written) = writer.into_parts();
+    writer.finish().await?;
+    drop(writer);
+
+    // 3. Read responses
+    debug!("reading response");
+    for (child, query) in ranges_iter {
+        // call start. The consumer is expected to call set_hash here
+        co.yield_(ResponseItem::Start { child }).await;
+
+        // get the hash. If the consumer has not set a hash, we stop.
+        // we have no other choice, since without the hash we can not validate
+        // the incoming data.
+        let hash_opt = cell.lock().unwrap().take();
+        let hash = if let Some(hash) = hash_opt {
+            hash.into()
+        } else {
+            break;
+        };
+
+        let chunk_ranges = query.to_chunk_ranges();
+        let mut stream =
+            DecodeResponseStreamRef::new(hash, &chunk_ranges, IROH_BLOCK_SIZE, &mut reader);
+        while let Some(item) = stream.next().await {
+            let item = item?;
+            co.yield_(match item {
+                DecodeResponseItem::Header { size } => ResponseItem::Size {
+                    child,
+                    size: size.0,
+                },
+                DecodeResponseItem::Parent {
+                    pair: (l_hash, r_hash),
+                    ..
+                } => ResponseItem::Parent {
+                    child,
+                    pair: (l_hash, r_hash),
+                },
+                DecodeResponseItem::Leaf { offset, data } => ResponseItem::Leaf {
+                    child,
+                    offset: offset.0,
+                    data,
+                },
+            })
+            .await;
+        }
+        co.yield_(ResponseItem::Done { child }).await;
+    }
+    // Shut down the stream
+    let (mut reader, bytes_read) = reader.into_parts();
+    if let Some(chunk) = reader.read_chunk(8, false).await? {
+        reader.stop(0u8.into()).ok();
+        error!("Received unexpected data from the provider: {chunk:?}");
+    }
+    // Send the finished message with the stats
+    co.yield_(ResponseItem::Finished {
+        stats: Stats {
+            bytes_written,
+            bytes_read,
+            elapsed: start.elapsed(),
+        },
+    })
+    .await;
+    Ok(())
+}
+
+/// Error when processing a response
+#[derive(thiserror::Error, Debug)]
+pub enum ResponseStreamError {
+    /// Error when opening a stream
+    #[error("connection: {0}")]
+    Connection(#[from] quinn::ConnectionError),
+    /// Error when writing the handshake or request to the stream
+    #[error("write: {0}")]
+    Write(#[from] quinn::WriteError),
+    /// Error when reading from the stream
+    #[error("read: {0}")]
+    Read(#[from] quinn::ReadError),
+    /// Error when decoding, e.g. hash mismatch
+    #[error("decode: {0}")]
+    Decode(bao_tree::io::error::DecodeError),
+    /// A generic error
+    #[error("generic: {0}")]
+    Generic(anyhow::Error),
+}
+
+/// An item from a response stream
+#[derive(Debug)]
+pub enum ResponseItem {
+    /// we are connected.
+    /// Next message will be a Start.
+    Connected,
+    /// we are starting to download a blob with the given offset in the query.
+    /// Next message will be a Size.
+    Start {
+        /// the offset of the blob in the query, 0 for the collection
+        child: u64,
+    },
+    /// we got the size header for the blob with the given offset in the query.
+    Size {
+        ///
+        child: u64,
+        ///
+        size: u64,
+    },
+    /// we got a parent hash for a blob
+    Parent {
+        ///
+        child: u64,
+        ///
+        pair: (blake3::Hash, blake3::Hash),
+    },
+    /// we got a leaf chunk for a blob
+    Leaf {
+        ///
+        child: u64,
+        ///
+        offset: u64,
+        ///
+        data: Bytes,
+    },
+    /// we are done with a blob
+    Done {
+        ///
+        child: u64,
+    },
+    /// we are done with everything
+    Finished {
+        /// stats about the interaction
+        stats: Stats,
+    },
+    /// An error
+    Error(ResponseStreamError),
+}
+
+impl<T: Into<ResponseStreamError>> From<T> for ResponseItem {
+    fn from(cause: T) -> Self {
+        Self::Error(cause.into())
+    }
+}
+
+impl From<postcard::Error> for ResponseStreamError {
+    fn from(cause: postcard::Error) -> Self {
+        Self::Generic(cause.into())
+    }
+}
+
+impl From<bao_tree::io::error::DecodeError> for ResponseStreamError {
+    fn from(cause: bao_tree::io::error::DecodeError) -> Self {
+        match cause {
+            bao_tree::io::error::DecodeError::Io(cause) => {
+                // try to downcast to specific quinn errors
+                if let Some(source) = cause.source() {
+                    if let Some(error) = source.downcast_ref::<quinn::ConnectionError>() {
+                        return Self::Connection(error.clone());
+                    }
+                    if let Some(error) = source.downcast_ref::<quinn::ReadError>() {
+                        return Self::Read(error.clone());
+                    }
+                    if let Some(error) = source.downcast_ref::<quinn::WriteError>() {
+                        return Self::Write(error.clone());
+                    }
+                }
+                Self::Generic(cause.into())
+            }
+            _ => Self::Decode(cause),
+        }
+    }
+}
+
+impl From<anyhow::Error> for ResponseStreamError {
+    fn from(cause: anyhow::Error) -> Self {
+        Self::Generic(cause)
     }
 }
 

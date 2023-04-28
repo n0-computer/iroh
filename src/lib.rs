@@ -30,6 +30,7 @@ pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::Arc,
@@ -37,16 +38,24 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::{AuthToken, Request};
-    use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
+    use crate::{
+        blobs::Collection,
+        get::{dial_peer, ResponseItem},
+        protocol::{AuthToken, Request},
+    };
+    use crate::{
+        get::{GetResponse, Stats},
+        provider::{create_collection, Event, Provider},
+    };
 
     use super::*;
 
@@ -404,7 +413,7 @@ mod tests {
             move |mut data| async move {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
-                    data.set_limit(collection.total_entries() as u64 + 1);
+                    data.set_limit(collection.total_entries() + 1);
                     data.user = collection.into_inner();
                 } else {
                     let hash = data.user[0].hash;
@@ -575,5 +584,106 @@ mod tests {
         assert!(on_connected);
         assert!(on_collection);
         assert!(on_blob);
+    }
+
+    /// Utility to validate that the children of a collection are correct
+    fn validate_children(
+        collection: Collection,
+        children: BTreeMap<u64, Bytes>,
+    ) -> anyhow::Result<()> {
+        let blobs = collection.into_inner();
+        anyhow::ensure!(blobs.len() == children.len());
+        for (child, blob) in blobs.into_iter().enumerate() {
+            let child = child as u64;
+            let data = children.get(&child).unwrap();
+            anyhow::ensure!(blob.hash == blake3::hash(data).into());
+        }
+        Ok(())
+    }
+
+    // helper to aggregate a get response and return all relevant data
+    async fn aggregate_get_response(
+        mut response: GetResponse,
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+        let mut current_data = Vec::new();
+        let mut collection = None;
+        let mut items = BTreeMap::new();
+        let mut stats = None;
+        while let Some(item) = response.next().await {
+            match item {
+                ResponseItem::Start { child } => {
+                    if child > 0 {
+                        // we need to set the hash so the validation can work
+                        let child_offset = (child - 1) as usize;
+                        let c: &Collection = collection.as_ref().unwrap();
+                        let hash = c.blobs().get(child_offset).map(|x| x.hash);
+                        response.set_hash(hash);
+                    }
+                }
+                ResponseItem::Size { size, .. } => {
+                    // reserve the space for the data
+                    current_data.reserve(size as usize);
+                }
+                ResponseItem::Leaf { data, offset, .. } => {
+                    // add the data. This assumes that we have requested the entire thing.
+                    anyhow::ensure!(offset == current_data.len() as u64);
+                    current_data.extend_from_slice(&data);
+                }
+                ResponseItem::Done { child } => {
+                    if child == 0 {
+                        // finished with the collection, init the hashes
+                        collection = Some(Collection::from_bytes(&current_data)?);
+                        current_data.clear();
+                    } else {
+                        // finished with a child, add it
+                        items.insert(child - 1, std::mem::take(&mut current_data).into());
+                    }
+                }
+                ResponseItem::Error(cause) => {
+                    return Err(cause.into());
+                }
+                ResponseItem::Finished { stats: s } => {
+                    stats = Some(s);
+                }
+                _ => {}
+            }
+        }
+        Ok((collection.unwrap(), items, stats.unwrap()))
+    }
+
+    #[tokio::test]
+    async fn test_run_stream() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addr,
+                peer_id,
+                keylog: true,
+            })
+            .await?;
+            let request = Request::all(hash);
+            let stream = get::run_get(connection, request, auth_token);
+            let (collection, children, _) = aggregate_get_response(stream).await?;
+            validate_children(collection, children)?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
     }
 }
