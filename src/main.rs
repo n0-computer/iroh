@@ -672,7 +672,9 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let response = client.rpc(IdRequest).await?;
 
-            println!("Listening address: {}", response.listen_addr);
+            for addr in response.listen_addrs.iter() {
+                println!("Listening address: {}", addr);
+            }
             println!("PeerID: {}", response.peer_id);
             println!("Auth token: {}", response.auth_token);
             Ok(())
@@ -716,7 +718,7 @@ async fn provide(
 
     let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
-        builder = builder.bind_addr(addr);
+        builder = builder.bind_addrs(vec![addr]);
     }
     if let Some(ref encoded) = auth_token {
         let auth_token = AuthToken::from_str(encoded)?;
@@ -732,7 +734,9 @@ async fn provide(
         builder.keypair(keypair).spawn()?
     };
 
-    println!("Listening address: {}", provider.local_address());
+    for addr in provider.local_addresses() {
+        println!("Listening address: {}", addr);
+    }
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();

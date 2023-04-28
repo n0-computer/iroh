@@ -131,7 +131,9 @@ mod tests {
 
         let (db, hash) =
             provider::create_collection(vec![provider::DataSource::File(path)]).await?;
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addrs(vec![addr])
+            .spawn()?;
 
         async fn run_client(
             hash: Hash,
@@ -177,7 +179,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address(),
+                provider.local_addresses()[0],
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -238,7 +240,9 @@ mod tests {
         let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addrs(vec![addr])
+            .spawn()?;
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
@@ -266,7 +270,7 @@ mod tests {
         });
 
         let opts = get::Options {
-            addr: dbg!(provider.local_address()),
+            addr: dbg!(provider.local_addresses()[0]),
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -358,11 +362,11 @@ mod tests {
         fs::write(&src, "hello there").await.unwrap();
         let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
         let mut provider = Provider::builder(db)
-            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .bind_addrs(vec!["127.0.0.1:0".parse().unwrap()])
             .spawn()
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_addresses()[0];
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -432,10 +436,10 @@ mod tests {
         fs::write(&src1, "hello world").await?;
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
-            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .bind_addrs(vec!["127.0.0.1:0".parse().unwrap()])
             .spawn()?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_addresses()[0];
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -471,7 +475,7 @@ mod tests {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
-            .bind_addr("[::1]:0".parse().unwrap())
+            .bind_addrs(vec!["[::1]:0".parse().unwrap()])
             .spawn()
         {
             Ok(provider) => provider,
@@ -482,7 +486,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.local_address();
+        let addr = provider.local_addresses()[0];
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),
@@ -512,7 +516,7 @@ mod tests {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_addrs(vec![(Ipv4Addr::UNSPECIFIED, 0).into()])
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();

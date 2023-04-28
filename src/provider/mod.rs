@@ -76,7 +76,7 @@ pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
 pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
-    bind_addr: SocketAddr,
+    bind_addrs: Vec<SocketAddr>,
     keypair: Keypair,
     auth_token: AuthToken,
     rpc_endpoint: E,
@@ -136,7 +136,7 @@ impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
     pub fn with_db(db: Database) -> Self {
         Self {
-            bind_addr: DEFAULT_BIND_ADDR.into(),
+            bind_addrs: vec![DEFAULT_BIND_ADDR.into()],
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
@@ -150,7 +150,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     ///
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
         Builder {
-            bind_addr: self.bind_addr,
+            bind_addrs: self.bind_addrs,
             keypair: self.keypair,
             auth_token: self.auth_token,
             db: self.db,
@@ -162,8 +162,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     /// Binds the provider service to a different socket.
     ///
     /// By default it binds to `127.0.0.1:4433`.
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
+    pub fn bind_addrs(mut self, addrs: Vec<SocketAddr>) -> Self {
+        self.bind_addrs = addrs;
         self
     }
 
@@ -210,8 +210,15 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             .transport_config(Arc::new(transport_config))
             .concurrent_connections(MAX_CONNECTIONS);
 
-        let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
-        let listen_addr = endpoint.local_addr().unwrap();
+        let endpoints = self
+            .bind_addrs
+            .iter()
+            .map(|addr| quinn::Endpoint::server(server_config.clone(), *addr))
+            .collect::<std::io::Result<Vec<quinn::Endpoint>>>()?;
+        let listen_addrs = endpoints
+            .iter()
+            .filter_map(|ep| ep.local_addr().ok())
+            .collect();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
@@ -219,7 +226,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(ProviderInner {
             db: self.db,
-            listen_addr,
+            listen_addrs,
             keypair: self.keypair,
             auth_token: self.auth_token,
             events,
@@ -232,7 +239,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             };
             tokio::spawn(async move {
                 Self::run(
-                    endpoint,
+                    endpoints,
                     events_sender,
                     handler,
                     self.rpc_endpoint,
@@ -250,7 +257,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     }
 
     async fn run(
-        server: quinn::Endpoint,
+        servers: Vec<quinn::Endpoint>,
         events: broadcast::Sender<Event>,
         handler: RpcHandler,
         rpc: E,
@@ -258,11 +265,16 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok(addr) = server.local_addr() {
-            debug!("listening at: {addr}");
+        for server in servers.iter() {
+            if let Ok(addr) = server.local_addr() {
+                debug!("listening at: {addr}");
+            }
         }
         let cancel_token = handler.inner.cancel_token.clone();
         loop {
+            // TODO: Reduce allocations here?
+            let accept_futs: Vec<_> = servers.iter().map(|s| Box::pin(s.accept())).collect();
+            let mut accept_any = futures::future::select_all(accept_futs);
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => break,
@@ -291,7 +303,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     }
                 },
                 // handle incoming p2p connections
-                Some(connecting) = server.accept() => {
+                (Some(connecting), _, _) = &mut accept_any => {
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let auth_token = handler.inner.auth_token;
@@ -306,7 +318,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
         let error_code = Closed::ProviderTerminating;
-        server.close(error_code.into(), error_code.reason());
+        for server in servers {
+            server.close(error_code.into(), error_code.reason());
+        }
     }
 }
 
@@ -329,7 +343,7 @@ pub struct Provider {
 #[derive(Debug)]
 struct ProviderInner {
     db: Database,
-    listen_addr: SocketAddr,
+    listen_addrs: Vec<SocketAddr>,
     keypair: Keypair,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
@@ -407,15 +421,20 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> SocketAddr {
-        self.inner.listen_addr
+    pub fn local_addresses(&self) -> &[SocketAddr] {
+        &self.inner.listen_addrs
     }
 
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
     pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.inner.listen_addr)
+        let mut addrs = Vec::new();
+        for addr in self.inner.listen_addrs.iter() {
+            let listen_addrs = find_local_addresses(*addr)?;
+            addrs.extend(listen_addrs);
+        }
+        Ok(addrs)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -569,14 +588,18 @@ impl RpcHandler {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
             auth_token: Box::new(self.inner.auth_token),
-            listen_addr: Box::new(self.inner.listen_addr),
+            listen_addrs: Box::new(self.inner.listen_addrs.clone()),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
-        AddrsResponse {
-            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
-        }
+        let addrs = self
+            .inner
+            .listen_addrs
+            .iter()
+            .flat_map(|addr| find_local_addresses(*addr).unwrap_or_default())
+            .collect();
+        AddrsResponse { addrs }
     }
     async fn shutdown(self, request: ShutdownRequest) {
         if request.force {
@@ -1184,7 +1207,7 @@ mod tests {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .bind_addrs(vec![(Ipv4Addr::UNSPECIFIED, 0).into()])
             .spawn()
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
