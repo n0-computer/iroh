@@ -830,6 +830,7 @@ impl ReportState {
                             report.pcp = None;
                         }
                     }
+                    port_mapping.inner = None;
                 }
                 probe_report = probes.next() => {
                     match probe_report {
