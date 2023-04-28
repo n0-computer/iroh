@@ -472,11 +472,6 @@ impl<U> OnBlobData<U> {
     }
 }
 
-#[derive(Debug)]
-struct StreamInfo {
-    hash: Option<Hash>,
-}
-
 /// Low level response for a get request
 ///
 /// This is a bit like a stream, but not really a stream. It is more like an
@@ -488,7 +483,7 @@ pub struct GetResponse {
     stream: BoxStream<'static, ResponseItem>,
     // todo: if we were doing thread per core we could get rid of this mutex
     // and instead just use a RefCell here, which would be much cheaper.
-    cell: Arc<Mutex<StreamInfo>>,
+    cell: Arc<Mutex<Option<Hash>>>,
 }
 
 impl Debug for GetResponse {
@@ -503,7 +498,7 @@ impl GetResponse {
     ///
     /// Setting this to None or not calling it at all will finish the response.
     pub fn set_hash(&mut self, hash: Option<Hash>) {
-        self.cell.lock().unwrap().hash = hash;
+        *self.cell.lock().unwrap() = hash;
     }
 
     /// Get the next response item
@@ -518,9 +513,7 @@ pub fn run_get(
     request: Request,
     auth_token: AuthToken,
 ) -> GetResponse {
-    let cell = Arc::new(Mutex::new(StreamInfo {
-        hash: Some(request.hash.into()),
-    }));
+    let cell = Arc::new(Mutex::new(Some(request.hash.into())));
 
     let stream =
         Gen::new(|co| run_get_handle_error(connection, request, auth_token, cell.clone(), co))
@@ -533,7 +526,7 @@ async fn run_get_handle_error(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
-    cell: Arc<Mutex<StreamInfo>>,
+    cell: Arc<Mutex<Option<Hash>>>,
     co: Co<ResponseItem>,
 ) {
     if let Err(cause) = run_get_inner(connection, request, auth_token, cell, &co).await {
@@ -549,7 +542,7 @@ async fn run_get_inner(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
-    cell: Arc<Mutex<StreamInfo>>,
+    cell: Arc<Mutex<Option<Hash>>>,
     co: &Co<ResponseItem>,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
@@ -591,7 +584,7 @@ async fn run_get_inner(
         // get the hash. If the consumer has not set a hash, we stop.
         // we have no other choice, since without the hash we can not validate
         // the incoming data.
-        let hash_opt = cell.lock().unwrap().hash.take();
+        let hash_opt = cell.lock().unwrap().take();
         let hash = if let Some(hash) = hash_opt {
             hash.into()
         } else {
@@ -609,7 +602,6 @@ async fn run_get_inner(
                     size: size.0,
                 },
                 DecodeResponseItem::Parent {
-                    node,
                     pair: (l_hash, r_hash),
                     ..
                 } => ResponseItem::Parent {
