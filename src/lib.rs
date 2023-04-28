@@ -49,7 +49,7 @@ mod tests {
     use crate::util::Hash;
     use crate::{
         blobs::Collection,
-        get::{dial_peer, ResponseStreamItem},
+        get::{dial_peer, ResponseItem},
         protocol::{AuthToken, Request},
     };
 
@@ -608,36 +608,36 @@ mod tests {
             })
             .await?;
             let request = Request::all(hash);
-            let mut stream = get::run_stream(connection, request, auth_token);
+            let mut stream = get::run_get(connection, request, auth_token);
             let mut collection = Vec::new();
             let mut hashes = Vec::<Hash>::new();
             while let Some(item) = stream.next().await {
                 match item {
-                    ResponseStreamItem::Start { child } => {
+                    ResponseItem::Start { child } => {
                         if child > 0 {
-                            // start with a child
-                            stream.set_hash(hashes[(child - 1) as usize].into());
+                            // we need to set the hash so the validation can work
+                            let child_offset = (child - 1) as usize;
+                            stream.set_hash(hashes.get(child_offset).copied());
                         }
                     }
-                    ResponseStreamItem::Leaf { child, data, .. } => {
+                    ResponseItem::Leaf { child, data, .. } => {
                         if child == 0 {
                             // got a piece of the collection
                             collection.extend_from_slice(&data);
                         }
                     }
-                    ResponseStreamItem::Done { child } => {
+                    ResponseItem::Done { child } => {
                         if child == 0 {
-                            // finished with the collection
+                            // finished with the collection, init the hashes
                             let collection = Collection::from_bytes(&collection)?;
-                            stream.set_limit(collection.total_entries() + 1);
                             hashes = collection.blobs().iter().map(|b| b.hash).collect();
                         }
                     }
-                    ResponseStreamItem::Error(cause) => {
+                    ResponseItem::Error(cause) => {
                         println!("{:?}", cause);
                         panic!();
                     }
-                    ResponseStreamItem::Finished { stats } => {
+                    ResponseItem::Finished { stats } => {
                         println!("{:?}", stats);
                     }
                     _ => {}

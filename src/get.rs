@@ -7,9 +7,7 @@ use std::error::Error;
 use std::fmt::{self, Debug};
 use std::io::{self, Cursor, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
@@ -28,7 +26,8 @@ use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::{Bytes, BytesMut};
 use default_net::Interface;
 use futures::stream::BoxStream;
-use futures::{Future, Stream, StreamExt};
+use futures::{Future, StreamExt};
+use genawaiter::sync::{Co, Gen};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -473,195 +472,176 @@ impl<U> OnBlobData<U> {
     }
 }
 
-use genawaiter::{sync::gen, yield_};
-
 #[derive(Debug)]
 struct StreamInfo {
-    hash: Option<blake3::Hash>,
-    limit: Option<u64>,
+    hash: Option<Hash>,
 }
 
+/// Low level response for a get request
 ///
-pub struct ResponseStream {
-    stream: BoxStream<'static, ResponseStreamItem>,
+/// This is a bit like a stream, but not really a stream. It is more like an
+/// async state machine that you can use to consume a get request.
+///
+/// A stream you can delay, transform and filter, but in this case you need to be
+/// able to call methods on the GetResponse.
+pub struct GetResponse {
+    stream: BoxStream<'static, ResponseItem>,
+    // todo: if we were doing thread per core we could get rid of this mutex
+    // and instead just use a RefCell here, which would be much cheaper.
     cell: Arc<Mutex<StreamInfo>>,
 }
 
-impl Debug for ResponseStream {
+impl Debug for GetResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResponseStream").finish()
     }
 }
 
-impl ResponseStream {
+impl GetResponse {
+    /// Set the hash. This must be called before each non root item, otherwise
+    /// we don't have a way to validate the data.
     ///
-    pub fn set_hash(&mut self, hash: blake3::Hash) {
-        self.cell.lock().unwrap().hash = Some(hash);
+    /// Setting this to None or not calling it at all will finish the response.
+    pub fn set_hash(&mut self, hash: Option<Hash>) {
+        self.cell.lock().unwrap().hash = hash;
     }
 
-    ///
-    pub fn set_limit(&mut self, limit: u64) {
-        self.cell.lock().unwrap().limit = Some(limit);
+    /// Get the next response item
+    pub async fn next(&mut self) -> Option<ResponseItem> {
+        self.stream.next().await
     }
 }
 
-impl Stream for ResponseStream {
-    type Item = ResponseStreamItem;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-    ) -> task::Poll<Option<Self::Item>> {
-        Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
-
-/// Do a request and return a stream of responses
-pub fn run_stream(
+/// Do a get request and return a stream of responses
+pub fn run_get(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
-) -> ResponseStream {
+) -> GetResponse {
     let cell = Arc::new(Mutex::new(StreamInfo {
         hash: Some(request.hash.into()),
-        limit: None,
     }));
-    let stream = run_stream_inner(connection, request, auth_token, cell.clone()).boxed();
-    ResponseStream { stream, cell }
+
+    let stream =
+        Gen::new(|co| run_get_handle_error(connection, request, auth_token, cell.clone(), co))
+            .boxed();
+    GetResponse { stream, cell }
 }
 
-fn run_stream_inner(
+/// Wrapper that calls run_get_inner and makes sure an error is sent
+async fn run_get_handle_error(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
     cell: Arc<Mutex<StreamInfo>>,
-) -> impl futures::Stream<Item = ResponseStreamItem> + Send + Sync + Unpin + 'static {
-    gen!({
-        let start = Instant::now();
-        // expect to get blob data in the order they appear in the collection
-        let ranges_iter = request.ranges.non_empty_iter();
+    co: Co<ResponseItem>,
+) {
+    if let Err(cause) = run_get_inner(connection, request, auth_token, cell, &co).await {
+        co.yield_(ResponseItem::Error(cause.into())).await;
+    }
+}
 
-        let (writer, reader) = match connection.open_bi().await {
-            Ok(stream) => stream,
-            Err(cause) => {
-                yield_!(cause.into());
-                return;
-            }
+/// The actual logic for the get request
+///
+/// An error within this function will cause the response to be ended with a
+/// single error item.
+async fn run_get_inner(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+    cell: Arc<Mutex<StreamInfo>>,
+    co: &Co<ResponseItem>,
+) -> anyhow::Result<()> {
+    let start = Instant::now();
+    // expect to get blob data in the order they appear in the collection
+    let ranges_iter = request.ranges.non_empty_iter();
+
+    let (writer, reader) = connection.open_bi().await?;
+    let mut reader = TrackingReader::new(reader);
+    let mut writer = TrackingWriter::new(writer);
+
+    co.yield_(ResponseItem::Connected).await;
+
+    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+    // 1. Send Handshake
+    {
+        debug!("sending handshake");
+        let handshake = Handshake::new(auth_token);
+        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
+
+    // 2. Send Request
+    {
+        debug!("sending request");
+        let request_bytes = postcard::to_stdvec(&request)?;
+        write_lp(&mut writer, &request_bytes).await?;
+    }
+    let (mut writer, bytes_written) = writer.into_parts();
+    writer.finish().await?;
+    drop(writer);
+
+    // 3. Read responses
+    debug!("reading response");
+    for (child, query) in ranges_iter {
+        // call start. The consumer is expected to call set_hash here
+        co.yield_(ResponseItem::Start { child }).await;
+
+        // get the hash. If the consumer has not set a hash, we stop.
+        // we have no other choice, since without the hash we can not validate
+        // the incoming data.
+        let hash_opt = cell.lock().unwrap().hash.take();
+        let hash = if let Some(hash) = hash_opt {
+            hash.into()
+        } else {
+            break;
         };
-        let mut reader = TrackingReader::new(reader);
-        let mut writer = TrackingWriter::new(writer);
 
-        yield_!(ResponseStreamItem::Connected);
-
-        let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
-
-        // 1. Send Handshake
-        {
-            debug!("sending handshake");
-            let handshake = Handshake::new(auth_token);
-            let used = match postcard::to_slice(&handshake, &mut out_buffer) {
-                Ok(used) => used,
-                Err(cause) => {
-                    yield_!(cause.into());
-                    return;
-                }
-            };
-            if let Err(cause) = write_lp(&mut writer, used).await {
-                yield_!(cause.into());
-                return;
-            }
+        let chunk_ranges = query.to_chunk_ranges();
+        let mut stream =
+            DecodeResponseStreamRef::new(hash, &chunk_ranges, IROH_BLOCK_SIZE, &mut reader);
+        while let Some(item) = stream.next().await {
+            let item = item?;
+            co.yield_(match item {
+                DecodeResponseItem::Header { size } => ResponseItem::Size {
+                    child,
+                    size: size.0,
+                },
+                DecodeResponseItem::Parent {
+                    node,
+                    pair: (l_hash, r_hash),
+                    ..
+                } => ResponseItem::Parent {
+                    child,
+                    pair: (l_hash, r_hash),
+                },
+                DecodeResponseItem::Leaf { offset, data } => ResponseItem::Leaf {
+                    child,
+                    offset: offset.0,
+                    data,
+                },
+            })
+            .await;
         }
-
-        // 2. Send Request
-        {
-            debug!("sending request");
-            let request_bytes = match postcard::to_stdvec(&request) {
-                Ok(bytes) => bytes,
-                Err(cause) => {
-                    yield_!(cause.into());
-                    return;
-                }
-            };
-            if let Err(cause) = write_lp(&mut writer, &request_bytes).await {
-                yield_!(cause.into());
-                return;
-            }
-        }
-        let (mut writer, bytes_written) = writer.into_parts();
-        if let Err(cause) = writer.finish().await {
-            yield_!(cause.into());
-            return;
-        }
-        drop(writer);
-
-        // 3. Read responses
-        debug!("reading response");
-        for (child, query) in ranges_iter {
-            let limit = cell.lock().unwrap().limit;
-            if let Some(limit) = limit {
-                if child >= limit {
-                    break;
-                }
-            }
-            yield_!(ResponseStreamItem::Start { child });
-
-            let hash_opt = cell.lock().unwrap().hash.take();
-            let hash = match hash_opt {
-                Some(hash) => hash,
-                None => {
-                    yield_!(anyhow!("missing hash").into());
-                    return;
-                }
-            };
-
-            let chunk_ranges = query.to_chunk_ranges();
-            let mut stream =
-                DecodeResponseStreamRef::new(hash, &chunk_ranges, IROH_BLOCK_SIZE, &mut reader);
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(item) => {
-                        yield_!(match item {
-                            DecodeResponseItem::Header { size } => {
-                                ResponseStreamItem::Size {
-                                    child,
-                                    size: size.0,
-                                }
-                            }
-                            DecodeResponseItem::Parent {
-                                node,
-                                pair: (l_hash, r_hash),
-                                ..
-                            } => {
-                                ResponseStreamItem::Parent {
-                                    child,
-                                    pair: (l_hash, r_hash),
-                                }
-                            }
-                            DecodeResponseItem::Leaf { offset, data } => {
-                                ResponseStreamItem::Leaf {
-                                    child,
-                                    offset: offset.0,
-                                    data,
-                                }
-                            }
-                        });
-                    }
-                    Err(cause) => {
-                        yield_!(cause.into());
-                        return;
-                    }
-                }
-            }
-            yield_!(ResponseStreamItem::Done { child });
-        }
-        yield_!(ResponseStreamItem::Finished {
-            stats: Stats {
-                bytes_written,
-                bytes_read: reader.bytes_read(),
-                elapsed: start.elapsed(),
-            }
-        });
+        co.yield_(ResponseItem::Done { child }).await;
+    }
+    // Shut down the stream
+    let (mut reader, bytes_read) = reader.into_parts();
+    if let Some(chunk) = reader.read_chunk(8, false).await? {
+        reader.stop(0u8.into()).ok();
+        error!("Received unexpected data from the provider: {chunk:?}");
+    }
+    // Send the finished message with the stats
+    co.yield_(ResponseItem::Finished {
+        stats: Stats {
+            bytes_written,
+            bytes_read,
+            elapsed: start.elapsed(),
+        },
     })
+    .await;
+    Ok(())
 }
 
 /// Error when processing a response
@@ -686,15 +666,17 @@ pub enum ResponseStreamError {
 
 /// An item from a response stream
 #[derive(Debug)]
-pub enum ResponseStreamItem {
-    /// we are connected
+pub enum ResponseItem {
+    /// we are connected.
+    /// Next message will be a Start.
     Connected,
-    /// we are starting to download a blob with the given offset in the query
+    /// we are starting to download a blob with the given offset in the query.
+    /// Next message will be a Size.
     Start {
         /// the offset of the blob in the query, 0 for the collection
         child: u64,
     },
-    /// we got the size header for the blob with the given offset in the query
+    /// we got the size header for the blob with the given offset in the query.
     Size {
         ///
         child: u64,
@@ -731,7 +713,7 @@ pub enum ResponseStreamItem {
     Error(ResponseStreamError),
 }
 
-impl<T: Into<ResponseStreamError>> From<T> for ResponseStreamItem {
+impl<T: Into<ResponseStreamError>> From<T> for ResponseItem {
     fn from(cause: T) -> Self {
         Self::Error(cause.into())
     }
