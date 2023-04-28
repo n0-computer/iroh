@@ -1739,7 +1739,7 @@ mod tests {
     //     assert_eq!(hs_r.lock().await.recv().await.unwrap(), src);
     // }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_basic() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
@@ -1786,257 +1786,253 @@ mod tests {
         Ok(())
     }
 
-    // #[tokio::test(flavor = "multi_thread")]
-    // async fn test_udp_tokio() -> Result<()> {
-    //     let local_addr = "127.0.0.1";
-    //     let bind_addr = "0.0.0.0";
+    #[tokio::test]
+    async fn test_udp_tokio() -> Result<()> {
+        let local_addr = "127.0.0.1";
+        let bind_addr = "0.0.0.0";
 
-    //     let server = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
-    //     let addr = server.local_addr()?;
+        let server = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
+        let addr = server.local_addr()?;
 
-    //     let server_task = tokio::task::spawn(async move {
-    //         let mut buf = vec![0u8; 32];
-    //         println!("server recv");
-    //         let (n, addr) = server.recv_from(&mut buf).await.unwrap();
-    //         println!("server send");
-    //         server.send_to(&buf[..n], addr).await.unwrap();
-    //     });
+        let server_task = tokio::task::spawn(async move {
+            let mut buf = vec![0u8; 32];
+            println!("server recv");
+            let (n, addr) = server.recv_from(&mut buf).await.unwrap();
+            println!("server send");
+            server.send_to(&buf[..n], addr).await.unwrap();
+        });
 
-    //     let client = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
-    //     let data = b"foobar";
-    //     println!("client: send");
-    //     let server_addr = format!("{local_addr}:{}", addr.port());
-    //     client.send_to(data, server_addr).await?;
-    //     let mut buf = vec![0u8; 32];
-    //     println!("client recv");
-    //     let (n, addr_r) = client.recv_from(&mut buf).await?;
-    //     assert_eq!(&buf[..n], data);
-    //     assert_eq!(addr_r.port(), addr.port());
+        let client = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
+        let data = b"foobar";
+        println!("client: send");
+        let server_addr = format!("{local_addr}:{}", addr.port());
+        client.send_to(data, server_addr).await?;
+        let mut buf = vec![0u8; 32];
+        println!("client recv");
+        let (n, addr_r) = client.recv_from(&mut buf).await?;
+        assert_eq!(&buf[..n], data);
+        assert_eq!(addr_r.port(), addr.port());
 
-    //     server_task.await?;
+        server_task.await?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[tokio::test(flavor = "multi_thread")]
-    // async fn test_udp_blocked() -> Result<()> {
-    //     tracing_subscriber::registry()
-    //         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-    //         .with(EnvFilter::from_default_env())
-    //         .try_init()
-    //         .ok();
+    #[tokio::test]
+    async fn test_udp_blocked() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
 
-    //     let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
-    //     let stun_addr = blackhole.local_addr()?;
-    //     let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
-    //     dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
+        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+        let stun_addr = blackhole.local_addr()?;
+        let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
+        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
 
-    //     let client = Client::new(None, None, None).await;
+        let mut client = Client::new(None, None, None).await;
 
-    //     let r = client.get_report(&dm).await?;
-    //     let mut r: Report = (&*r).clone();
-    //     r.upnp = None;
-    //     r.pmp = None;
-    //     r.pcp = None;
+        let r = client.get_report(&dm).await?;
+        let mut r: Report = (&*r).clone();
+        r.upnp = None;
+        r.pmp = None;
+        r.pcp = None;
 
-    //     let mut want = Report::default();
+        let mut want = Report::default();
 
-    //     // The ip_v4_can_send flag gets set differently across platforms.
-    //     // On Windows this test detects false, while on Linux detects true.
-    //     // That's not relevant to this test, so just accept what we're given.
-    //     want.ipv4_can_send = r.ipv4_can_send;
-    //     // OS IPv6 test is irrelevant here, accept whatever the current machine has.
-    //     want.os_has_ipv6 = r.os_has_ipv6;
-    //     // Captive portal test is irrelevant; accept what the current report has.
-    //     want.captive_portal = r.captive_portal;
+        // The ip_v4_can_send flag gets set differently across platforms.
+        // On Windows this test detects false, while on Linux detects true.
+        // That's not relevant to this test, so just accept what we're given.
+        want.ipv4_can_send = r.ipv4_can_send;
+        // OS IPv6 test is irrelevant here, accept whatever the current machine has.
+        want.os_has_ipv6 = r.os_has_ipv6;
+        // Captive portal test is irrelevant; accept what the current report has.
+        want.captive_portal = r.captive_portal;
 
-    //     assert_eq!(r, want);
+        assert_eq!(r, want);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[tokio::test(flavor = "multi_thread")]
-    // async fn test_add_reporrt_history_set_preferred_derp() -> Result<()> {
-    //     let clock = Clock::mock();
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_add_report_history_set_preferred_derp() -> Result<()> {
+        // report returns a *Report from (DERP host, Duration)+ pairs.
+        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
+            let mut report = Report::default();
+            for (s, d) in a {
+                assert!(s.starts_with("d"), "invalid derp server key");
+                let region_id: usize = s[1..].parse().unwrap();
+                report
+                    .region_latency
+                    .insert(region_id, Duration::from_secs(d));
+            }
 
-    //     // report returns a *Report from (DERP host, Duration)+ pairs.
-    //     fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
-    //         let mut report = Report::default();
-    //         for (s, d) in a {
-    //             assert!(s.starts_with("d"), "invalid derp server key");
-    //             let region_id: usize = s[1..].parse().unwrap();
-    //             report
-    //                 .region_latency
-    //                 .insert(region_id, Duration::from_secs(d));
-    //         }
+            Some(Arc::new(report))
+        }
+        struct Step {
+            /// Delay in seconds
+            after: u64,
+            r: Option<Arc<Report>>,
+        }
+        struct Test {
+            name: &'static str,
+            steps: Vec<Step>,
+            /// want PreferredDERP on final step
+            want_derp: usize,
+            // wanted len(c.prev)
+            want_prev_len: usize,
+        }
 
-    //         Some(Arc::new(report))
-    //     }
-    //     struct Step {
-    //         /// Delay in seconds
-    //         after: u64,
-    //         r: Option<Arc<Report>>,
-    //     }
-    //     struct Test {
-    //         name: &'static str,
-    //         steps: Vec<Step>,
-    //         /// want PreferredDERP on final step
-    //         want_derp: usize,
-    //         // wanted len(c.prev)
-    //         want_prev_len: usize,
-    //     }
+        let tests = [
+            Test {
+                name: "first_reading",
+                steps: vec![Step {
+                    after: 0,
+                    r: report([("d1", 2), ("d2", 3)]),
+                }],
+                want_prev_len: 1,
+                want_derp: 1,
+            },
+            Test {
+                name: "with_two",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 1, // t0's d1 of 2 is still best
+            },
+            Test {
+                name: "but_now_d1_gone",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 3,
+                want_derp: 2, // only option
+            },
+            Test {
+                name: "d1_is_back",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d2", 3)]),
+                    },
+                    Step {
+                        after: 3,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    }, // same as 2 seconds ago
+                ],
+                want_prev_len: 4,
+                want_derp: 1, // t0's d1 of 2 is still best
+            },
+            Test {
+                name: "things_clean_up",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 3,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 10 * 60,
+                        r: report([("d3", 3)]),
+                    },
+                ],
+                want_prev_len: 1, // t=[0123]s all gone. (too old, older than 10 min)
+                want_derp: 3,     // only option
+            },
+            Test {
+                name: "preferred_derp_hysteresis_no_switch",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 4), ("d2", 5)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 1, // 2 didn't get fast enough
+            },
+            Test {
+                name: "preferred_derp_hysteresis_do_switch",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 4), ("d2", 5)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 1)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 2, // 2 got fast enough
+            },
+        ];
+        for mut tt in tests {
+            println!("test: {}", tt.name);
+            let mut client = Client::new(None, None, None).await;
 
-    //     let tests = [
-    //         Test {
-    //             name: "first_reading",
-    //             steps: vec![Step {
-    //                 after: 0,
-    //                 r: report([("d1", 2), ("d2", 3)]),
-    //             }],
-    //             want_prev_len: 1,
-    //             want_derp: 1,
-    //         },
-    //         Test {
-    //             name: "with_two",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 2), ("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 4), ("d2", 3)]),
-    //                 },
-    //             ],
-    //             want_prev_len: 2,
-    //             want_derp: 1, // t0's d1 of 2 is still best
-    //         },
-    //         Test {
-    //             name: "but_now_d1_gone",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 2), ("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 4), ("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 2,
-    //                     r: report([("d2", 3)]),
-    //                 },
-    //             ],
-    //             want_prev_len: 3,
-    //             want_derp: 2, // only option
-    //         },
-    //         Test {
-    //             name: "d1_is_back",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 2), ("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 4), ("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 2,
-    //                     r: report([("d2", 3)]),
-    //                 },
-    //                 Step {
-    //                     after: 3,
-    //                     r: report([("d1", 4), ("d2", 3)]),
-    //                 }, // same as 2 seconds ago
-    //             ],
-    //             want_prev_len: 4,
-    //             want_derp: 1, // t0's d1 of 2 is still best
-    //         },
-    //         Test {
-    //             name: "things_clean_up",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 1), ("d2", 2)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 1), ("d2", 2)]),
-    //                 },
-    //                 Step {
-    //                     after: 2,
-    //                     r: report([("d1", 1), ("d2", 2)]),
-    //                 },
-    //                 Step {
-    //                     after: 3,
-    //                     r: report([("d1", 1), ("d2", 2)]),
-    //                 },
-    //                 Step {
-    //                     after: 10 * 60,
-    //                     r: report([("d3", 3)]),
-    //                 },
-    //             ],
-    //             want_prev_len: 1, // t=[0123]s all gone. (too old, older than 10 min)
-    //             want_derp: 3,     // only option
-    //         },
-    //         Test {
-    //             name: "preferred_derp_hysteresis_no_switch",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 4), ("d2", 5)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 4), ("d2", 3)]),
-    //                 },
-    //             ],
-    //             want_prev_len: 2,
-    //             want_derp: 1, // 2 didn't get fast enough
-    //         },
-    //         Test {
-    //             name: "preferred_derp_hysteresis_do_switch",
-    //             steps: vec![
-    //                 Step {
-    //                     after: 0,
-    //                     r: report([("d1", 4), ("d2", 5)]),
-    //                 },
-    //                 Step {
-    //                     after: 1,
-    //                     r: report([("d1", 4), ("d2", 1)]),
-    //                 },
-    //             ],
-    //             want_prev_len: 2,
-    //             want_derp: 2, // 2 got fast enough
-    //         },
-    //     ];
-    //     for mut tt in tests {
-    //         println!("test: {}", tt.name);
-    //         let mut client = Client::new(None, None, None).await;
-    //         client.clock = clock.clone();
+            for s in &mut tt.steps {
+                // trigger the timer
+                time::advance(Duration::from_secs(s.after)).await;
+                let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
+                s.r = Some(
+                    client
+                        .actor
+                        .add_report_history_and_set_preferred_derp(r)
+                        .await,
+                );
+            }
+            let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
+            let got = client.actor.reports.prev.len();
+            let want = tt.want_prev_len;
+            assert_eq!(got, want, "prev length");
+            let got = last_report.preferred_derp;
+            let want = tt.want_derp;
+            assert_eq!(got, want, "preferred_derp");
+        }
 
-    //         for s in &mut tt.steps {
-    //             let c = clock.clone();
-    //             tokio::task::spawn(async move { c.sleep(Duration::from_millis(10)).await }); // trigger the timer
-    //             clock
-    //                 .controller
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .advance_time(Duration::from_secs(s.after))
-    //                 .await;
-    //             let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-    //             s.r = Some(client.add_report_history_and_set_preferred_derp(r).await);
-    //         }
-    //         let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
-    //         let got = client.reports.lock().await.prev.len();
-    //         let want = tt.want_prev_len;
-    //         assert_eq!(got, want, "prev length");
-    //         let got = last_report.preferred_derp;
-    //         let want = tt.want_derp;
-    //         assert_eq!(got, want, "preferred_derp");
-    //     }
-
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }

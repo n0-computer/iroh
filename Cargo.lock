@@ -426,29 +426,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecc7ab41815b3c653ccd2978ec3255c81349336702dfdf62ee6f7069b12a3aae"
 
 [[package]]
-name = "async-time-mock-core"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6bb6abfcce804ca4deb45fca03d24c78d065868f033dd6306077bb507762e4"
-dependencies = [
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "event-listener",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-time-mock-tokio"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3ad75c297907142cc771718bbcbbb0be5b020baa60883ec550cc4728addbf24"
-dependencies = [
- "async-time-mock-core",
- "futures-core",
- "pin-project",
- "tokio",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2065,7 +2042,6 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-lock 2.7.0 (git+https://github.com/smol-rs/async-lock?branch=notgull/block-lock)",
- "async-time-mock-tokio",
  "backoff",
  "bao-tree",
  "base64 0.21.0",
