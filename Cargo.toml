@@ -92,10 +92,10 @@ rtnetlink = "0.12.0"
 wmi = "0.12.2"
 
 [dev-dependencies]
-async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }
 proptest = "1.0.0"
 rand = "0.8"
 testdir = "0.7.2"
+tokio = { version = "1", features = ["full", "test-util"] }
 regex = { version = "1.7.1", features = ["std"] }
 nix = "0.26.2"
 http-body = "0.4.5"
