@@ -38,6 +38,7 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
@@ -585,9 +586,10 @@ mod tests {
         assert!(on_blob);
     }
 
+    /// Utility to validate that the children of a collection are correct
     fn validate_children(
         collection: Collection,
-        children: BTreeMap<u64, Vec<u8>>,
+        children: BTreeMap<u64, Bytes>,
     ) -> anyhow::Result<()> {
         let blobs = collection.into_inner();
         anyhow::ensure!(blobs.len() == children.len());
@@ -602,7 +604,7 @@ mod tests {
     // helper to aggregate a get response and return all relevant data
     async fn aggregate_get_response(
         mut response: GetResponse,
-    ) -> anyhow::Result<(Collection, BTreeMap<u64, Vec<u8>>, Stats)> {
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
         let mut current_data = Vec::new();
         let mut collection = None;
         let mut items = BTreeMap::new();
@@ -618,6 +620,10 @@ mod tests {
                         response.set_hash(hash);
                     }
                 }
+                ResponseItem::Size { size, .. } => {
+                    // reserve the space for the data
+                    current_data.reserve(size as usize);
+                }
                 ResponseItem::Leaf { data, offset, .. } => {
                     // add the data. This assumes that we have requested the entire thing.
                     anyhow::ensure!(offset == current_data.len() as u64);
@@ -630,7 +636,7 @@ mod tests {
                         current_data.clear();
                     } else {
                         // finished with a child, add it
-                        items.insert(child - 1, std::mem::take(&mut current_data));
+                        items.insert(child - 1, std::mem::take(&mut current_data).into());
                     }
                 }
                 ResponseItem::Error(cause) => {
