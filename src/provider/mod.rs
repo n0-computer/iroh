@@ -780,7 +780,7 @@ async fn transfer_collection(
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
             // send the root
-            encode_ranges_validated(&mut data, outboard, &ranges.to_chunk_ranges(), &mut writer)
+            data = encode_ranges_validated(data, outboard, &ranges.to_chunk_ranges(), &mut writer)
                 .await?;
             debug!(
                 "finished writing ranges '{:?}' of collection {}",

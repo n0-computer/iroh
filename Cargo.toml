@@ -53,7 +53,7 @@ walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"
-bao-tree = { version = "0.2.0", features = ["tokio_io"], default-features = false }
+bao-tree = { version = "0.2.0", features = ["tokio_io"], default-features = false, path = "../bao-tree" }
 range-collections = "0.4.0"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 
@@ -62,6 +62,7 @@ prometheus-client = { version = "0.18.0", optional = true }
 paste = { version = "1.0.12", optional = true }
 hyper = { version = "0.14.16", features = ["server", "http1", "tcp"], optional = true }
 genawaiter = { version = "0.99.1", features = ["futures03"] }
+ouroboros = "0.15.6"
 [dev-dependencies]
 proptest = "1.0.0"
 rand = "0.7"

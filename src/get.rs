@@ -391,9 +391,9 @@ impl<U> OnBlobData<U> {
         }
         let mut stream = self.stream(hash);
         while let Some(chunk) = stream.next().await {
-            if let DecodeResponseItem::Leaf { data, offset, .. } = chunk? {
-                on_write(offset.0, data.len());
-                target.write_all(&data).await?;
+            if let DecodeResponseItem::Leaf(leaf) = chunk? {
+                on_write(leaf.offset.0, leaf.data.len());
+                target.write_all(&leaf.data).await?;
             }
         }
         drop(stream);
@@ -443,10 +443,10 @@ impl<U> OnBlobData<U> {
                     // we already read the header
                     unreachable!()
                 }
-                DecodeResponseItem::Parent {
+                DecodeResponseItem::Parent(bao_tree::io::Parent {
                     node,
                     pair: (l_hash, r_hash),
-                } => {
+                }) => {
                     let offset = tree.pre_order_offset(node).unwrap();
                     let byte_offset = offset * 64 + 8;
                     if let Some(outboard) = outboard.as_mut() {
@@ -460,7 +460,7 @@ impl<U> OnBlobData<U> {
                         outboard.write_all(r_hash.as_bytes()).await?;
                     }
                 }
-                DecodeResponseItem::Leaf { offset, data } => {
+                DecodeResponseItem::Leaf(bao_tree::io::Leaf { offset, data }) => {
                     on_write(offset.0, data.len());
                     target.seek(SeekFrom::Start(offset.0)).await?;
                     target.write_all(&data).await?;
@@ -469,6 +469,582 @@ impl<U> OnBlobData<U> {
         }
         self.completed = true;
         Ok(())
+    }
+}
+
+mod get_response_machine {
+    use super::*;
+
+    use bao_tree::io::fsm::{IterResult, ResponseDecoderReading, ResponseDecoderStart};
+    use derive_more::From;
+    use ouroboros::self_referencing;
+
+    #[self_referencing]
+    struct RangesIterInner {
+        owner: RangeSpecSeq,
+        #[borrows(owner)]
+        #[covariant]
+        iter: crate::protocol::NonEmptyRequestRangeSpecIter<'this>,
+    }
+
+    pub struct RangesIter(RangesIterInner);
+
+    impl RangesIter {
+        pub fn new(owner: RangeSpecSeq) -> Self {
+            Self(RangesIterInner::new(owner, |owner| owner.non_empty_iter()))
+        }
+    }
+
+    impl Iterator for RangesIter {
+        type Item = (u64, RangeSet2<ChunkNum>);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.with_iter_mut(|iter| {
+                iter.next()
+                    .map(|(offset, ranges)| (offset, ranges.to_chunk_ranges()))
+            })
+        }
+    }
+
+    /// Initial state of the get response machine
+    pub struct Initial {
+        connection: quinn::Connection,
+        request: Request,
+        auth_token: AuthToken,
+    }
+
+    impl Initial {
+        pub fn new(connection: quinn::Connection, request: Request, auth_token: AuthToken) -> Self {
+            Self {
+                connection,
+                request,
+                auth_token,
+            }
+        }
+
+        pub async fn next(self) -> Result<Connected, quinn::ConnectionError> {
+            let start = Instant::now();
+            let (writer, reader) = self.connection.open_bi().await?;
+            let reader = TrackingReader::new(reader);
+            let writer = TrackingWriter::new(writer);
+            Ok(Connected {
+                start,
+                reader,
+                writer,
+                request: self.request,
+                auth_token: self.auth_token,
+            })
+        }
+    }
+
+    /// State of the get response machine after the handshake has been sent
+    pub struct Connected {
+        start: Instant,
+        reader: TrackingReader<quinn::RecvStream>,
+        writer: TrackingWriter<quinn::SendStream>,
+        request: Request,
+        auth_token: AuthToken,
+    }
+
+    /// Possible next states after the handshake has been sent
+    #[derive(From)]
+    pub enum ConnectedNext {
+        Start(Start),
+        StartCollection(StartCollection),
+        Finished(Finishing),
+    }
+
+    impl Connected {
+        pub async fn next(self) -> Result<ConnectedNext, GetResponseError> {
+            let Self {
+                start,
+                reader,
+                mut writer,
+                request,
+                auth_token,
+            } = self;
+            let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+
+            // 1. Send Handshake
+            {
+                debug!("sending handshake");
+                let handshake = Handshake::new(auth_token);
+                let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+                write_lp(&mut writer, used).await?;
+            }
+
+            // 2. Send Request
+            {
+                debug!("sending request");
+                let request_bytes = postcard::to_stdvec(&request)?;
+                write_lp(&mut writer, &request_bytes).await?;
+            }
+            let (mut writer, bytes_written) = writer.into_parts();
+            writer.finish().await?;
+            let hash = request.hash;
+            let ranges_iter = RangesIter::new(request.ranges);
+            let mut misc = Box::new(Misc {
+                start,
+                bytes_written,
+                ranges_iter,
+            });
+            Ok(match misc.ranges_iter.next() {
+                Some((offset, ranges)) => {
+                    if offset == 0 {
+                        StartCollection {
+                            reader,
+                            ranges,
+                            misc,
+                            hash,
+                        }
+                        .into()
+                    } else {
+                        Start {
+                            reader,
+                            ranges,
+                            misc,
+                            offset: offset - 1,
+                        }
+                        .into()
+                    }
+                }
+                None => Finishing::new(misc, reader).into(),
+            })
+        }
+    }
+
+    /// Stuff we need to hold on to while going through the machine states
+    struct Misc {
+        /// start time for statistics
+        start: Instant,
+        /// bytes written for statistics
+        bytes_written: u64,
+        /// iterator over the ranges of the collection and the children
+        ranges_iter: RangesIter,
+    }
+
+    /// State of the get response when we start reading a collection
+    pub struct StartCollection {
+        ranges: RangeSet2<ChunkNum>,
+        reader: TrackingReader<quinn::RecvStream>,
+        misc: Box<Misc>,
+        hash: Hash,
+    }
+
+    /// State of the get response when we start reading a child
+    pub struct Start {
+        ranges: RangeSet2<ChunkNum>,
+        reader: TrackingReader<quinn::RecvStream>,
+        misc: Box<Misc>,
+        offset: u64,
+    }
+
+    impl Start {
+        /// The offset of the child we are currently reading
+        ///
+        /// This must be used to determine the hash needed to call next
+        pub fn child_offset(&self) -> u64 {
+            self.offset
+        }
+
+        /// The ranges we have requested for the child
+        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+            &self.ranges
+        }
+
+        /// Go into the next state, reading the header
+        ///
+        /// This requires passing in the hash of the child for validation
+        pub fn next(self, hash: Hash) -> Header {
+            let stream = ResponseDecoderStart::<TrackingReader<RecvStream>>::new(
+                hash.into(),
+                self.ranges,
+                IROH_BLOCK_SIZE,
+                self.reader,
+            );
+            Header {
+                stream,
+                misc: self.misc,
+            }
+        }
+
+        /// Finish the get response without reading further
+        pub fn finish(self) -> Finishing {
+            Finishing::new(self.misc, self.reader)
+        }
+    }
+
+    impl StartCollection {
+        /// The ranges we have requested for the child
+        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+            &self.ranges
+        }
+
+        /// Go into the next state, reading the header
+        ///
+        /// For the collection we already know the hash, since it was part of the request
+        pub fn next(self) -> Header {
+            let stream = ResponseDecoderStart::new(
+                self.hash.into(),
+                self.ranges,
+                IROH_BLOCK_SIZE,
+                self.reader,
+            );
+            Header {
+                stream,
+                misc: self.misc,
+            }
+        }
+
+        /// Finish the get response without reading further
+        pub fn finish(self) -> Finishing {
+            Finishing::new(self.misc, self.reader)
+        }
+    }
+
+    /// State before reading a size header
+    pub struct Header {
+        stream: ResponseDecoderStart<TrackingReader<RecvStream>>,
+        misc: Box<Misc>,
+    }
+
+    impl Header {
+        /// Read the size header
+        pub async fn next(self) -> Result<(Content, u64), io::Error> {
+            let (stream, size) = self.stream.next().await?;
+            Ok((
+                Content {
+                    stream,
+                    misc: self.misc,
+                },
+                size,
+            ))
+        }
+    }
+
+    /// State while we are reading content
+    pub struct Content {
+        stream: ResponseDecoderReading<TrackingReader<RecvStream>>,
+        misc: Box<Misc>,
+    }
+
+    #[derive(From)]
+    pub enum ContentNext {
+        More(
+            (
+                Content,
+                std::result::Result<DecodeResponseItem, DecodeError>,
+            ),
+        ),
+        Done(Done),
+    }
+
+    impl Content {
+        /// Read the next item, either content, an error, or the end of the blob
+        pub async fn next(self) -> ContentNext {
+            match self.stream.next().await {
+                IterResult::Next((stream, res)) => {
+                    let next = Self { stream, ..self };
+                    (next, res).into()
+                }
+                IterResult::Done(stream) => Done {
+                    stream,
+                    misc: self.misc,
+                }
+                .into(),
+            }
+        }
+    }
+
+    /// State after we have read all the content for a blob
+    pub struct Done {
+        stream: TrackingReader<RecvStream>,
+        misc: Box<Misc>,
+    }
+
+    #[derive(From)]
+    pub enum DoneNext {
+        NextChild(Start),
+        Finished(Finishing),
+    }
+
+    impl Done {
+        /// Read the next child, or finish
+        pub fn next(mut self) -> DoneNext {
+            if let Some((offset, ranges)) = self.misc.ranges_iter.next() {
+                Start {
+                    reader: self.stream,
+                    offset,
+                    ranges,
+                    misc: self.misc,
+                }
+                .into()
+            } else {
+                Finishing::new(self.misc, self.stream).into()
+            }
+        }
+    }
+
+    /// State when finishing the get response
+    pub struct Finishing {
+        misc: Box<Misc>,
+        reader: TrackingReader<RecvStream>,
+    }
+
+    impl Finishing {
+        fn new(misc: Box<Misc>, reader: TrackingReader<RecvStream>) -> Self {
+            Self { misc, reader }
+        }
+
+        /// Finish the get response, returning statistics
+        pub async fn next(self) -> std::result::Result<Stats, io::Error> {
+            // Shut down the stream
+            let (mut reader, bytes_read) = self.reader.into_parts();
+            if let Some(chunk) = reader.read_chunk(8, false).await? {
+                reader.stop(0u8.into()).ok();
+                error!("Received unexpected data from the provider: {chunk:?}");
+            }
+            Ok(Stats {
+                elapsed: self.misc.start.elapsed(),
+                bytes_written: self.misc.bytes_written,
+                bytes_read,
+            })
+        }
+    }
+}
+
+mod get_response_machine_2 {
+
+    use super::*;
+
+    pub struct Connected(GetResponse);
+
+    pub struct Start<const C: bool>(GetResponse, u64);
+
+    pub struct Header<const C: bool>(GetResponse, bao_tree::io::Header);
+
+    pub struct Parent<const C: bool>(GetResponse, bao_tree::io::Parent);
+
+    pub struct Leaf<const C: bool>(GetResponse, bao_tree::io::Leaf);
+
+    pub struct Done(GetResponse);
+
+    pub struct Finished(GetResponse, Stats);
+
+    pub enum InnerNext<const C: bool> {
+        Parent(Parent<C>),
+        Leaf(Leaf<C>),
+        Done(Done),
+    }
+
+    pub enum FinishedOrStart<const C: bool> {
+        Finished(Finished),
+        Start(Start<C>),
+    }
+
+    pub enum StartOrStartCollection {
+        Start(Start<false>),
+        StartCollection(Start<true>),
+    }
+
+    pub enum FinishedOrHeader<const C: bool> {
+        Finished(Finished),
+        Header(Header<C>),
+    }
+
+    impl Connected {
+        pub async fn next(
+            mut self,
+        ) -> std::result::Result<StartOrStartCollection, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Start { child: 0 }) => {
+                    Ok(StartOrStartCollection::StartCollection(Start(self.0, 0)))
+                }
+                Some(ResponseItem::Start { child }) => {
+                    Ok(StartOrStartCollection::Start(Start(self.0, child)))
+                }
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl Start<true> {
+        pub async fn next(mut self) -> std::result::Result<Header<true>, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Size { size, .. }) => Ok(Header(
+                    self.0,
+                    bao_tree::io::Header {
+                        size: ByteNum(size),
+                    },
+                )),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl Start<false> {
+        pub async fn next(
+            mut self,
+            hash: Hash,
+        ) -> std::result::Result<Header<false>, GetResponseError> {
+            self.0.set_hash(Some(hash));
+            match self.0.next().await {
+                Some(ResponseItem::Size { size, .. }) => Ok(Header(
+                    self.0,
+                    bao_tree::io::Header {
+                        size: ByteNum(size),
+                    },
+                )),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl<const C: bool> Start<C> {
+        pub async fn finish(mut self) -> std::result::Result<Finished, GetResponseError> {
+            self.0.set_hash(None);
+            match self.0.next().await {
+                Some(ResponseItem::Finished { stats }) => Ok(Finished(self.0, stats)),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl<const C: bool> Header<C> {
+        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
+                    self.0,
+                    bao_tree::io::Parent {
+                        node: todo!(),
+                        pair,
+                    },
+                ))),
+                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
+                    self.0,
+                    bao_tree::io::Leaf {
+                        offset: ByteNum(offset),
+                        data,
+                    },
+                ))),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl<const C: bool> Parent<C> {
+        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
+                    self.0,
+                    bao_tree::io::Parent {
+                        node: todo!(),
+                        pair,
+                    },
+                ))),
+                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
+                    self.0,
+                    bao_tree::io::Leaf {
+                        offset: ByteNum(offset),
+                        data,
+                    },
+                ))),
+                Some(ResponseItem::Done { child }) => Ok(InnerNext::Done(Done(self.0))),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl<const C: bool> Leaf<C> {
+        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
+                    self.0,
+                    bao_tree::io::Parent {
+                        node: todo!(),
+                        pair,
+                    },
+                ))),
+                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
+                    self.0,
+                    bao_tree::io::Leaf {
+                        offset: ByteNum(offset),
+                        data,
+                    },
+                ))),
+                Some(ResponseItem::Done { child }) => Ok(InnerNext::Done(Done(self.0))),
+                Some(ResponseItem::Error(e)) => Err(e),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl Done {
+        pub async fn next(
+            mut self,
+        ) -> std::result::Result<FinishedOrStart<false>, GetResponseError> {
+            match self.0.next().await {
+                Some(ResponseItem::Start { child }) => {
+                    Ok(FinishedOrStart::Start(Start(self.0, child)))
+                }
+                Some(ResponseItem::Error(e)) => Err(e),
+                Some(ResponseItem::Finished { stats }) => {
+                    Ok(FinishedOrStart::Finished(Finished(self.0, stats)))
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    async fn process_file<const C: bool>(
+        header: Header<C>,
+    ) -> std::result::Result<FinishedOrStart<false>, GetResponseError> {
+        let mut next = header.next().await?;
+        Ok(loop {
+            match next {
+                InnerNext::Parent(parent) => {
+                    // store parent
+                    next = parent.next().await?;
+                }
+                InnerNext::Leaf(leaf) => {
+                    // store leaf
+                    next = leaf.next().await?;
+                }
+                InnerNext::Done(done) => {
+                    // close file
+                    break done.next().await?;
+                }
+            }
+        })
+    }
+
+    async fn process(state: Connected) -> std::result::Result<(), GetResponseError> {
+        let mut res = match state.next().await? {
+            StartOrStartCollection::StartCollection(start_collection) => {
+                let header = start_collection.next().await?;
+                process_file(header).await?
+            }
+            StartOrStartCollection::Start(start) => FinishedOrStart::Start(start),
+        };
+        loop {
+            match res {
+                FinishedOrStart::Start(start) => {
+                    let hash = Hash::from([0; 32]);
+                    let header = start.next(hash).await?;
+                    res = process_file(header).await?;
+                }
+                FinishedOrStart::Finished(finished) => {
+                    /// print stats
+                    break Ok(());
+                }
+            }
+        }
     }
 }
 
@@ -597,22 +1173,24 @@ async fn run_get_inner(
         while let Some(item) = stream.next().await {
             let item = item?;
             co.yield_(match item {
-                DecodeResponseItem::Header { size } => ResponseItem::Size {
+                DecodeResponseItem::Header(bao_tree::io::Header { size }) => ResponseItem::Size {
                     child,
                     size: size.0,
                 },
-                DecodeResponseItem::Parent {
+                DecodeResponseItem::Parent(bao_tree::io::Parent {
                     pair: (l_hash, r_hash),
                     ..
-                } => ResponseItem::Parent {
+                }) => ResponseItem::Parent {
                     child,
                     pair: (l_hash, r_hash),
                 },
-                DecodeResponseItem::Leaf { offset, data } => ResponseItem::Leaf {
-                    child,
-                    offset: offset.0,
-                    data,
-                },
+                DecodeResponseItem::Leaf(bao_tree::io::Leaf { offset, data }) => {
+                    ResponseItem::Leaf {
+                        child,
+                        offset: offset.0,
+                        data,
+                    }
+                }
             })
             .await;
         }
@@ -638,7 +1216,7 @@ async fn run_get_inner(
 
 /// Error when processing a response
 #[derive(thiserror::Error, Debug)]
-pub enum ResponseStreamError {
+pub enum GetResponseError {
     /// Error when opening a stream
     #[error("connection: {0}")]
     Connection(#[from] quinn::ConnectionError),
@@ -702,22 +1280,22 @@ pub enum ResponseItem {
         stats: Stats,
     },
     /// An error
-    Error(ResponseStreamError),
+    Error(GetResponseError),
 }
 
-impl<T: Into<ResponseStreamError>> From<T> for ResponseItem {
+impl<T: Into<GetResponseError>> From<T> for ResponseItem {
     fn from(cause: T) -> Self {
         Self::Error(cause.into())
     }
 }
 
-impl From<postcard::Error> for ResponseStreamError {
+impl From<postcard::Error> for GetResponseError {
     fn from(cause: postcard::Error) -> Self {
         Self::Generic(cause.into())
     }
 }
 
-impl From<bao_tree::io::error::DecodeError> for ResponseStreamError {
+impl From<bao_tree::io::error::DecodeError> for GetResponseError {
     fn from(cause: bao_tree::io::error::DecodeError) -> Self {
         match cause {
             bao_tree::io::error::DecodeError::Io(cause) => {
@@ -740,7 +1318,7 @@ impl From<bao_tree::io::error::DecodeError> for ResponseStreamError {
     }
 }
 
-impl From<anyhow::Error> for ResponseStreamError {
+impl From<anyhow::Error> for GetResponseError {
     fn from(cause: anyhow::Error) -> Self {
         Self::Generic(cause)
     }

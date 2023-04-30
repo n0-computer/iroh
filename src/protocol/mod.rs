@@ -10,7 +10,7 @@ use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
-pub use range_spec::{RangeSpec, RangeSpecSeq};
+pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 
 use crate::util::{self, Hash};
 

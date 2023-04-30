@@ -162,8 +162,6 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0269d09622b162b68e1cafea0a70aa6d8f85ae2b0e65b98d583ba9b89bf8adf6"
 dependencies = [
  "blake3",
  "bytes",
@@ -1162,6 +1160,7 @@ dependencies = [
  "nix",
  "num_cpus",
  "once_cell",
+ "ouroboros",
  "paste",
  "portable-atomic 1.2.0",
  "postcard",
