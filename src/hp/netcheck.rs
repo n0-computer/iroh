@@ -60,12 +60,12 @@ const DEFAULT_ACTIVE_RETRANSMIT_TIME: Duration = Duration::from_millis(200);
 /// The retransmit interval used when netcheck first runs. We have no past context to work with,
 /// and we want answers relatively quickly, so it's biased slightly more aggressive than
 /// [`DEFAULT_ACTIVE_RETRANSMIT_TIME`]. A few extra packets at startup is fine.
-
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 const ENOUGH_REGIONS: usize = 3;
+
 // Chosen semi-arbitrarily
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
@@ -287,20 +287,20 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
         .build()?;
 
     // Note: the set of valid characters in a challenge and the total
-    // length is limited; see isChallengeChar in cmd/derper for more
+    // length is limited; see is_challenge_char in bin/derper for more
     // details.
-    let chal = format!("ts_{}", node.host_name);
+    let challenge = format!("ts_{}", node.host_name);
 
     let res = client
         .request(
             reqwest::Method::GET,
             format!("http://{}/generate_204", node.host_name),
         )
-        .header("X-Tailscale-Challenge", &chal)
+        .header("X-Tailscale-Challenge", &challenge)
         .send()
         .await?;
 
-    let expected_response = format!("response {chal}");
+    let expected_response = format!("response {challenge}");
     let is_valid_response = res
         .headers()
         .get("X-Tailscale-Response")
@@ -308,7 +308,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
         == Some(&expected_response);
 
     info!(
-        "[v2] checkCaptivePortal url={} status_code={} valid_response={}",
+        "check_captive_portal url={} status_code={} valid_response={}",
         res.url(),
         res.status(),
         is_valid_response,
@@ -317,6 +317,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
 
     Ok(has_captive)
 }
+
 async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {
     if reg.nodes.is_empty() {
         anyhow::bail!(
@@ -337,7 +338,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 
     // Use the unique node.name field as the packet data to reduce the
     // likelihood that we get a mismatched echo response.
-    p.send(node_addr, node.name.as_bytes()).await
+    p.send(node_addr.ip(), node.name.as_bytes()).await
 }
 
 async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {

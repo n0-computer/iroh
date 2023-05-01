@@ -82,6 +82,7 @@ zeroize = "1.5"
 bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
 range-collections = "0.4.0"
 async-lock = { git = "https://github.com/smol-rs/async-lock", branch = "notgull/block-lock" }
+surge-ping = "0.8.0"
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
