@@ -1414,6 +1414,8 @@ impl Actor {
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
         for content in contents {
+            info!("[UDP] -> {} ({}b)", region_id, content.len());
+
             match derp_client.send(peer.clone(), content).await {
                 Ok(_) => {
                     // TODO:
@@ -2882,9 +2884,14 @@ impl ReaderState {
                         // health.SetDERPRegionHealth(regionID, m.Problem);
                         (self, ReadResult::Continue, ReadAction::None)
                     }
-                    derp::ReceivedMessage::PeerGone(_key) => {
-                        // self.remove_derp_peer_route(key, region_id, &dc).await;
-                        (self, ReadResult::Continue, ReadAction::None)
+                    derp::ReceivedMessage::PeerGone(key) => {
+                        let read_action = ReadAction::RemovePeerRoute {
+                            peers: vec![key],
+                            region: self.region,
+                            derp_client: self.derp_client.clone(),
+                        };
+
+                        (self, ReadResult::Continue, read_action)
                     }
                     _ => {
                         // Ignore.
