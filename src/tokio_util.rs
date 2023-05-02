@@ -56,6 +56,7 @@ where
 }
 
 /// A writer that tracks the number of bytes written
+#[derive(Debug)]
 pub(crate) struct TrackingWriter<W> {
     inner: W,
     written: u64,

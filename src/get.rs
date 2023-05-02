@@ -472,10 +472,13 @@ impl<U> OnBlobData<U> {
     }
 }
 
-mod get_response_machine {
+///
+pub mod get_response_machine {
     use super::*;
 
-    use bao_tree::io::fsm::{IterResult, ResponseDecoderReading, ResponseDecoderStart};
+    use bao_tree::io::fsm::{
+        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+    };
     use derive_more::From;
     use ouroboros::self_referencing;
 
@@ -487,7 +490,17 @@ mod get_response_machine {
         iter: crate::protocol::NonEmptyRequestRangeSpecIter<'this>,
     }
 
-    pub struct RangesIter(RangesIterInner);
+    /// Owned iterator for the ranges in a request
+    ///
+    /// We need an owned iterator for a fsm style API, otherwise we would have
+    /// to drag a lifetime around every single state.
+    struct RangesIter(RangesIterInner);
+
+    impl fmt::Debug for RangesIter {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("RangesIter").finish()
+        }
+    }
 
     impl RangesIter {
         pub fn new(owner: RangeSpecSeq) -> Self {
@@ -507,6 +520,7 @@ mod get_response_machine {
     }
 
     /// Initial state of the get response machine
+    #[derive(Debug)]
     pub struct Initial {
         connection: quinn::Connection,
         request: Request,
@@ -514,6 +528,11 @@ mod get_response_machine {
     }
 
     impl Initial {
+        /// Create a new get response
+        ///
+        /// `connection` is an existing connection
+        /// `request` is the request to be sent
+        /// `auth_token` is the auth token for the request
         pub fn new(connection: quinn::Connection, request: Request, auth_token: AuthToken) -> Self {
             Self {
                 connection,
@@ -522,6 +541,7 @@ mod get_response_machine {
             }
         }
 
+        /// Initiate a new bidi stream to use for the get response
         pub async fn next(self) -> Result<Connected, quinn::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
@@ -538,6 +558,7 @@ mod get_response_machine {
     }
 
     /// State of the get response machine after the handshake has been sent
+    #[derive(Debug)]
     pub struct Connected {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
@@ -547,14 +568,23 @@ mod get_response_machine {
     }
 
     /// Possible next states after the handshake has been sent
-    #[derive(From)]
+    #[derive(Debug, From)]
     pub enum ConnectedNext {
+        ///
         Start(Start),
+        ///
         StartCollection(StartCollection),
+        ///
         Finished(Finishing),
     }
 
     impl Connected {
+        /// Send the request and move to the next state
+        ///
+        /// The next state will be either `Start` or `StartCollection` depending on whether
+        /// the request requests part of the collection or not.
+        ///
+        /// If the request is empty, this can also move directly to `Finished`.
         pub async fn next(self) -> Result<ConnectedNext, GetResponseError> {
             let Self {
                 start,
@@ -603,7 +633,7 @@ mod get_response_machine {
                             reader,
                             ranges,
                             misc,
-                            offset: offset - 1,
+                            child_offset: offset - 1,
                         }
                         .into()
                     }
@@ -614,6 +644,7 @@ mod get_response_machine {
     }
 
     /// Stuff we need to hold on to while going through the machine states
+    #[derive(Debug)]
     struct Misc {
         /// start time for statistics
         start: Instant,
@@ -624,6 +655,7 @@ mod get_response_machine {
     }
 
     /// State of the get response when we start reading a collection
+    #[derive(Debug)]
     pub struct StartCollection {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
@@ -632,11 +664,12 @@ mod get_response_machine {
     }
 
     /// State of the get response when we start reading a child
+    #[derive(Debug)]
     pub struct Start {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
-        offset: u64,
+        child_offset: u64,
     }
 
     impl Start {
@@ -644,7 +677,7 @@ mod get_response_machine {
         ///
         /// This must be used to determine the hash needed to call next
         pub fn child_offset(&self) -> u64 {
-            self.offset
+            self.child_offset
         }
 
         /// The ranges we have requested for the child
@@ -703,13 +736,14 @@ mod get_response_machine {
     }
 
     /// State before reading a size header
+    #[derive(Debug)]
     pub struct Header {
         stream: ResponseDecoderStart<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
     impl Header {
-        /// Read the size header
+        /// Read the size header, returning it and going into the `Content` state.
         pub async fn next(self) -> Result<(Content, u64), io::Error> {
             let (stream, size) = self.stream.next().await?;
             Ok((
@@ -723,19 +757,23 @@ mod get_response_machine {
     }
 
     /// State while we are reading content
+    #[derive(Debug)]
     pub struct Content {
         stream: ResponseDecoderReading<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
-    #[derive(From)]
+    ///
+    #[derive(Debug, From)]
     pub enum ContentNext {
+        ///
         More(
             (
                 Content,
                 std::result::Result<DecodeResponseItem, DecodeError>,
             ),
         ),
+        ///
         Done(Done),
     }
 
@@ -743,11 +781,11 @@ mod get_response_machine {
         /// Read the next item, either content, an error, or the end of the blob
         pub async fn next(self) -> ContentNext {
             match self.stream.next().await {
-                IterResult::Next((stream, res)) => {
+                ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
                     (next, res).into()
                 }
-                IterResult::Done(stream) => Done {
+                ResponseDecoderReadingNext::Done(stream) => Done {
                     stream,
                     misc: self.misc,
                 }
@@ -757,14 +795,18 @@ mod get_response_machine {
     }
 
     /// State after we have read all the content for a blob
+    #[derive(Debug)]
     pub struct Done {
         stream: TrackingReader<RecvStream>,
         misc: Box<Misc>,
     }
 
-    #[derive(From)]
+    ///
+    #[derive(Debug, From)]
     pub enum DoneNext {
-        NextChild(Start),
+        ///
+        MoreChildren(Start),
+        ///
         Finished(Finishing),
     }
 
@@ -774,7 +816,7 @@ mod get_response_machine {
             if let Some((offset, ranges)) = self.misc.ranges_iter.next() {
                 Start {
                     reader: self.stream,
-                    offset,
+                    child_offset: offset - 1,
                     ranges,
                     misc: self.misc,
                 }
@@ -786,6 +828,7 @@ mod get_response_machine {
     }
 
     /// State when finishing the get response
+    #[derive(Debug)]
     pub struct Finishing {
         misc: Box<Misc>,
         reader: TrackingReader<RecvStream>,
@@ -809,241 +852,6 @@ mod get_response_machine {
                 bytes_written: self.misc.bytes_written,
                 bytes_read,
             })
-        }
-    }
-}
-
-mod get_response_machine_2 {
-
-    use super::*;
-
-    pub struct Connected(GetResponse);
-
-    pub struct Start<const C: bool>(GetResponse, u64);
-
-    pub struct Header<const C: bool>(GetResponse, bao_tree::io::Header);
-
-    pub struct Parent<const C: bool>(GetResponse, bao_tree::io::Parent);
-
-    pub struct Leaf<const C: bool>(GetResponse, bao_tree::io::Leaf);
-
-    pub struct Done(GetResponse);
-
-    pub struct Finished(GetResponse, Stats);
-
-    pub enum InnerNext<const C: bool> {
-        Parent(Parent<C>),
-        Leaf(Leaf<C>),
-        Done(Done),
-    }
-
-    pub enum FinishedOrStart<const C: bool> {
-        Finished(Finished),
-        Start(Start<C>),
-    }
-
-    pub enum StartOrStartCollection {
-        Start(Start<false>),
-        StartCollection(Start<true>),
-    }
-
-    pub enum FinishedOrHeader<const C: bool> {
-        Finished(Finished),
-        Header(Header<C>),
-    }
-
-    impl Connected {
-        pub async fn next(
-            mut self,
-        ) -> std::result::Result<StartOrStartCollection, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Start { child: 0 }) => {
-                    Ok(StartOrStartCollection::StartCollection(Start(self.0, 0)))
-                }
-                Some(ResponseItem::Start { child }) => {
-                    Ok(StartOrStartCollection::Start(Start(self.0, child)))
-                }
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl Start<true> {
-        pub async fn next(mut self) -> std::result::Result<Header<true>, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Size { size, .. }) => Ok(Header(
-                    self.0,
-                    bao_tree::io::Header {
-                        size: ByteNum(size),
-                    },
-                )),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl Start<false> {
-        pub async fn next(
-            mut self,
-            hash: Hash,
-        ) -> std::result::Result<Header<false>, GetResponseError> {
-            self.0.set_hash(Some(hash));
-            match self.0.next().await {
-                Some(ResponseItem::Size { size, .. }) => Ok(Header(
-                    self.0,
-                    bao_tree::io::Header {
-                        size: ByteNum(size),
-                    },
-                )),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl<const C: bool> Start<C> {
-        pub async fn finish(mut self) -> std::result::Result<Finished, GetResponseError> {
-            self.0.set_hash(None);
-            match self.0.next().await {
-                Some(ResponseItem::Finished { stats }) => Ok(Finished(self.0, stats)),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl<const C: bool> Header<C> {
-        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
-                    self.0,
-                    bao_tree::io::Parent {
-                        node: todo!(),
-                        pair,
-                    },
-                ))),
-                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
-                    self.0,
-                    bao_tree::io::Leaf {
-                        offset: ByteNum(offset),
-                        data,
-                    },
-                ))),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl<const C: bool> Parent<C> {
-        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
-                    self.0,
-                    bao_tree::io::Parent {
-                        node: todo!(),
-                        pair,
-                    },
-                ))),
-                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
-                    self.0,
-                    bao_tree::io::Leaf {
-                        offset: ByteNum(offset),
-                        data,
-                    },
-                ))),
-                Some(ResponseItem::Done { child }) => Ok(InnerNext::Done(Done(self.0))),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl<const C: bool> Leaf<C> {
-        pub async fn next(mut self) -> std::result::Result<InnerNext<C>, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Parent { pair, .. }) => Ok(InnerNext::Parent(Parent(
-                    self.0,
-                    bao_tree::io::Parent {
-                        node: todo!(),
-                        pair,
-                    },
-                ))),
-                Some(ResponseItem::Leaf { offset, data, .. }) => Ok(InnerNext::Leaf(Leaf(
-                    self.0,
-                    bao_tree::io::Leaf {
-                        offset: ByteNum(offset),
-                        data,
-                    },
-                ))),
-                Some(ResponseItem::Done { child }) => Ok(InnerNext::Done(Done(self.0))),
-                Some(ResponseItem::Error(e)) => Err(e),
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    impl Done {
-        pub async fn next(
-            mut self,
-        ) -> std::result::Result<FinishedOrStart<false>, GetResponseError> {
-            match self.0.next().await {
-                Some(ResponseItem::Start { child }) => {
-                    Ok(FinishedOrStart::Start(Start(self.0, child)))
-                }
-                Some(ResponseItem::Error(e)) => Err(e),
-                Some(ResponseItem::Finished { stats }) => {
-                    Ok(FinishedOrStart::Finished(Finished(self.0, stats)))
-                }
-                _ => unreachable!(),
-            }
-        }
-    }
-
-    async fn process_file<const C: bool>(
-        header: Header<C>,
-    ) -> std::result::Result<FinishedOrStart<false>, GetResponseError> {
-        let mut next = header.next().await?;
-        Ok(loop {
-            match next {
-                InnerNext::Parent(parent) => {
-                    // store parent
-                    next = parent.next().await?;
-                }
-                InnerNext::Leaf(leaf) => {
-                    // store leaf
-                    next = leaf.next().await?;
-                }
-                InnerNext::Done(done) => {
-                    // close file
-                    break done.next().await?;
-                }
-            }
-        })
-    }
-
-    async fn process(state: Connected) -> std::result::Result<(), GetResponseError> {
-        let mut res = match state.next().await? {
-            StartOrStartCollection::StartCollection(start_collection) => {
-                let header = start_collection.next().await?;
-                process_file(header).await?
-            }
-            StartOrStartCollection::Start(start) => FinishedOrStart::Start(start),
-        };
-        loop {
-            match res {
-                FinishedOrStart::Start(start) => {
-                    let hash = Hash::from([0; 32]);
-                    let header = start.next(hash).await?;
-                    res = process_file(header).await?;
-                }
-                FinishedOrStart::Finished(finished) => {
-                    /// print stats
-                    break Ok(());
-                }
-            }
         }
     }
 }
@@ -1081,6 +889,15 @@ impl GetResponse {
     pub async fn next(&mut self) -> Option<ResponseItem> {
         self.stream.next().await
     }
+}
+
+/// Do a get request and return a stream of responses
+pub fn run_get_fsm(
+    connection: quinn::Connection,
+    request: Request,
+    auth_token: AuthToken,
+) -> get_response_machine::Initial {
+    get_response_machine::Initial::new(connection, request, auth_token)
 }
 
 /// Do a get request and return a stream of responses

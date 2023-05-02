@@ -38,6 +38,7 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bao_tree::io::DecodeResponseItem;
     use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
@@ -45,12 +46,15 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::tls::PeerId;
-    use crate::util::Hash;
     use crate::{
         blobs::Collection,
         get::{dial_peer, ResponseItem},
         protocol::{AuthToken, Request},
+    };
+    use crate::{get::get_response_machine, tls::PeerId};
+    use crate::{
+        get::get_response_machine::{ContentNext, Done},
+        util::Hash,
     };
     use crate::{
         get::{GetResponse, Stats},
@@ -651,6 +655,55 @@ mod tests {
         Ok((collection.unwrap(), items, stats.unwrap()))
     }
 
+    async fn read_single(header: get_response_machine::Header) -> anyhow::Result<(Done, Vec<u8>)> {
+        let (mut content, size) = header.next().await?;
+        let mut res = Vec::with_capacity(size as usize);
+        let done = loop {
+            let item;
+            (content, item) = match content.next().await {
+                ContentNext::More(x) => x,
+                ContentNext::Done(x) => break x,
+            };
+            if let DecodeResponseItem::Leaf(leaf) = item? {
+                res.extend_from_slice(&leaf.data);
+            }
+        };
+        Ok((done, res))
+    }
+
+    // helper to aggregate a get response and return all relevant data
+    async fn aggregate_get_response_fsm(
+        initial: get_response_machine::Initial,
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+        use get_response_machine::*;
+        let mut items = BTreeMap::new();
+        let connected = initial.next().await?;
+        // we assume that the request includes the entire collection
+        let (mut next, collection) = {
+            let ConnectedNext::StartCollection(sc) = connected.next().await? else {
+                panic!("request did not include collection");
+            };
+            let (done, data) = read_single(sc.next()).await?;
+            (done.next(), Collection::from_bytes(&data)?)
+        };
+        // read all the children
+        let finishing = loop {
+            let start = match next {
+                DoneNext::MoreChildren(start) => start,
+                DoneNext::Finished(finishing) => break finishing,
+            };
+            let child = start.child_offset();
+            let Some(blob) = collection.blobs().get(child as usize) else {
+                break start.finish();
+            };
+            let (done, data) = read_single(start.next(blob.hash)).await?;
+            items.insert(child, data.into());
+            next = done.next();
+        };
+        let stats = finishing.next().await?;
+        Ok((collection, items, stats))
+    }
+
     #[tokio::test]
     async fn test_run_stream() {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
@@ -679,6 +732,42 @@ mod tests {
             let request = Request::all(hash);
             let stream = get::run_get(connection, request, auth_token);
             let (collection, children, _) = aggregate_get_response(stream).await?;
+            validate_children(collection, children)?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_run_fsm() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addr,
+                peer_id,
+                keylog: true,
+            })
+            .await?;
+            let request = Request::all(hash);
+            let stream = get::run_get_fsm(connection, request, auth_token);
+            let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())
         })
