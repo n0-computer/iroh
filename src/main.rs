@@ -718,7 +718,7 @@ async fn provide(
 
     let mut builder = provider::Provider::builder(db).keylog(keylog);
     if let Some(addr) = addr {
-        builder = builder.bind_addrs(vec![addr])?;
+        builder = builder.bind_addrs(vec![addr]);
     }
     if let Some(ref encoded) = auth_token {
         let auth_token = AuthToken::from_str(encoded)?;

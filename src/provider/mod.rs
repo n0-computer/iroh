@@ -161,18 +161,16 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
 
     /// Sets the sockets to which the provider service should bind.
     ///
-    /// In case the provider should bind to multiple addresses.  This is needed e.g. when
-    /// you want to bind to both IPv4 and IPv6 at the same time as not all platforms will
-    /// accept IPv4 connections on an IPv6 wildcard address.
+    /// There must be at least one address, otherwise [`Builder::spawn`] will fail.
+    ///
+    /// Binding to multiple addresses is needed e.g. when you want to bind to both IPv4 and
+    /// IPv6 at the same time as not all platforms will accept IPv4 connections on an IPv6
+    /// wildcard address.
     ///
     /// By default it binds only to `127.0.0.1:4433`.
-    pub fn bind_addrs(mut self, addrs: Vec<SocketAddr>) -> Result<Self> {
-        ensure!(
-            !addrs.is_empty(),
-            "Provider must bind to at least one socket"
-        );
+    pub fn bind_addrs(mut self, addrs: Vec<SocketAddr>) -> Self {
         self.bind_addrs = addrs;
-        Ok(self)
+        self
     }
 
     /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
@@ -203,6 +201,10 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
+        ensure!(
+            !self.bind_addrs.is_empty(),
+            "Provider must bind to at least one socket"
+        );
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
