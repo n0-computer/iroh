@@ -159,12 +159,20 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         }
     }
 
-    /// Binds the provider service to a different socket.
+    /// Sets the sockets to which the provider service should bind.
     ///
-    /// By default it binds to `127.0.0.1:4433`.
-    pub fn bind_addrs(mut self, addrs: Vec<SocketAddr>) -> Self {
+    /// In case the provider should bind to multiple addresses.  This is needed e.g. when
+    /// you want to bind to both IPv4 and IPv6 at the same time as not all platforms will
+    /// accept IPv4 connections on an IPv6 wildcard address.
+    ///
+    /// By default it binds only to `127.0.0.1:4433`.
+    pub fn bind_addrs(mut self, addrs: Vec<SocketAddr>) -> Result<Self> {
+        ensure!(
+            !addrs.is_empty(),
+            "Provider must bind to at least one socket"
+        );
         self.bind_addrs = addrs;
-        self
+        Ok(self)
     }
 
     /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
