@@ -298,6 +298,7 @@ async fn main() -> Result<()> {
         };
         let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient> =
             derp::Server::new(cfg.private_key, mesh_key);
+        info!("DERP server configured");
         Some(derp_server)
     } else {
         None
@@ -425,8 +426,10 @@ impl Derper {
                             debug!("[DERP] Connection opened from {}", peer_addr);
                             let handler = handler.clone();
                             tokio::task::spawn(async move {
-                                if let Err(err) =
-                                    Http::new().serve_connection(stream, handler).await
+                                if let Err(err) = Http::new()
+                                    .serve_connection(stream, handler)
+                                    .with_upgrades()
+                                    .await
                                 {
                                     error!("[DERP] Failed to serve connection: {:?}", err);
                                 }
