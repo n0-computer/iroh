@@ -20,7 +20,7 @@ blake3 = "1.3.3"
 bytes = "1.4"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
-crypto_box = { version = "0.9.0-pre", features = ["serde"] }
+crypto_box = { version = "0.9.0-pre", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.2"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.14.1"
