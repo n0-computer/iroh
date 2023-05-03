@@ -398,15 +398,15 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub async fn local_address(&self) -> Result<SocketAddr> {
-        self.inner.conn.local_addr().await
+    pub async fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        self.inner.local_address().await
     }
 
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
     pub async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.local_address().await?)
+        self.inner.listen_addresses().await
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -455,6 +455,20 @@ impl Provider {
     /// Returns a token that can be used to cancel the provider.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
+    }
+}
+
+impl ProviderInner {
+    async fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        let (v4, v6) = self.conn.local_addr().await?;
+        let mut addrs = vec![v4];
+        if let Some(v6) = v6 {
+            addrs.push(v6);
+        }
+        Ok(addrs)
+    }
+    async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(&self.local_address().await?)
     }
 }
 
@@ -560,14 +574,13 @@ impl RpcHandler {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
             auth_token: Box::new(self.inner.auth_token),
-            listen_addr: Box::new(self.inner.conn.local_addr().await.unwrap()),
+            listen_addrs: self.inner.listen_addresses().await.unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.conn.local_addr().await.unwrap())
-                .unwrap_or_default(),
+            addrs: self.inner.listen_addresses().await.unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {

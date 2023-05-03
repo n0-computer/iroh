@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use anyhow::{ensure, Result};
+use tracing::debug;
 
 const IFF_UP: u32 = 0x1;
 const IFF_LOOPBACK: u32 = 0x8;
@@ -152,28 +153,54 @@ pub const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
 }
 
 /// Given a listen/bind address, finds all the local addresses for that address family.
-pub(crate) fn find_local_addresses(listen_addr: SocketAddr) -> Result<Vec<SocketAddr>> {
-    let listen_ip = listen_addr.ip();
-    let listen_port = listen_addr.port();
-    let addrs: Vec<SocketAddr> = match listen_ip.is_unspecified() {
-        true => {
+pub(crate) fn find_local_addresses(listen_addrs: &[SocketAddr]) -> Result<Vec<SocketAddr>> {
+    debug!("find_local_address: {:?}", listen_addrs);
+
+    let mut addrs = Vec::new();
+    let mut local_addrs = None;
+
+    for addr in listen_addrs {
+        if addr.ip().is_unspecified() {
             // Find all the local addresses for this address family.
-            let addrs = LocalAddresses::new();
-            addrs
-                .regular
-                .iter()
-                .filter(|addr| match addr {
-                    IpAddr::V4(_) if listen_ip.is_ipv4() => true,
-                    IpAddr::V6(_) if listen_ip.is_ipv6() => true,
-                    _ => false,
-                })
-                .copied()
-                .map(|addr| SocketAddr::from((addr, listen_port)))
-                .collect()
+            if local_addrs.is_none() {
+                local_addrs = Some(LocalAddresses::new());
+                debug!("found local addresses: {:?}", local_addrs);
+            }
+            let local_addrs = local_addrs.as_ref().unwrap();
+            let port = addr.port();
+
+            match addr.ip() {
+                IpAddr::V4(_) => {
+                    addrs.extend(
+                        local_addrs
+                            .regular
+                            .iter()
+                            .chain(local_addrs.loopback.iter())
+                            .filter(|a| a.is_ipv4())
+                            .map(|a| SocketAddr::new(*a, port)),
+                    );
+                }
+                IpAddr::V6(_) => {
+                    addrs.extend(
+                        local_addrs
+                            .regular
+                            .iter()
+                            .chain(local_addrs.loopback.iter())
+                            .filter(|a| a.is_ipv6())
+                            .map(|a| SocketAddr::new(*a, port)),
+                    );
+                }
+            }
+        } else {
+            addrs.push(*addr);
         }
-        false => vec![listen_addr],
-    };
+    }
+    // we might have added duplicates, make sure to remove them
+    addrs.sort();
+    addrs.dedup();
+
     ensure!(!addrs.is_empty(), "No local addresses found");
+
     Ok(addrs)
 }
 

@@ -642,7 +642,7 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let response = client.rpc(IdRequest).await?;
 
-            println!("Listening address: {}", response.listen_addr);
+            println!("Listening address: {:#?}", response.listen_addrs);
             println!("PeerID: {}", response.peer_id);
             println!("Auth token: {}", response.auth_token);
             Ok(())
@@ -696,7 +696,7 @@ async fn provide(
         builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {}", provider.local_address().await?);
+    println!("Listening address: {:#?}", provider.local_address().await?);
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();

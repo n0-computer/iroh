@@ -324,13 +324,16 @@ impl Conn {
         Ok(res)
     }
 
-    pub async fn local_addr(&self) -> Result<SocketAddr> {
+    pub async fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
             .send_async(ActorMessage::GetLocalAddr(s))
             .await?;
-        let res = r.await??;
-        Ok(res)
+        let (v4, v6) = r.await?;
+        if let Some(v6) = v6 {
+            return Ok((v4?, Some(v6?)));
+        }
+        Ok((v4?, None))
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
@@ -663,9 +666,13 @@ impl AsyncUdpSocket for Conn {
         self.actor_sender
             .send(ActorMessage::GetLocalAddr(s))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        let res = tokio::task::block_in_place(|| r.blocking_recv())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
-        Ok(res)
+        let (v4, v6) = tokio::task::block_in_place(|| r.blocking_recv())
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        // Default to v6 to pretend v6 for quinn in all cases (needs more thought)
+        if let Some(v6) = v6 {
+            return v6;
+        }
+        v4
     }
 }
 
@@ -715,7 +722,7 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 pub(super) enum ActorMessage {
-    GetLocalAddr(sync::oneshot::Sender<io::Result<SocketAddr>>),
+    GetLocalAddr(sync::oneshot::Sender<(io::Result<SocketAddr>, Option<io::Result<SocketAddr>>)>),
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     GetDerpRegion(usize, sync::oneshot::Sender<Option<DerpRegion>>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
@@ -1063,7 +1070,11 @@ impl Actor {
         }
 
         // Normalize local_ip
-        meta.dst_ip = self.local_addr().await.ok().map(|addr| addr.ip());
+        meta.dst_ip = self
+            .normalized_local_addr()
+            .await
+            .ok()
+            .map(|addr| addr.ip());
 
         // ep.noteRecvActivity();
         // if stats := c.stats.Load(); stats != nil {
@@ -1074,15 +1085,24 @@ impl Actor {
 
         true
     }
+    async fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
+        let (v4, v6) = self.local_addr().await;
+        if let Some(v6) = v6 {
+            return v6;
+        }
+        v4
+    }
 
-    async fn local_addr(&self) -> io::Result<SocketAddr> {
+    async fn local_addr(&self) -> (io::Result<SocketAddr>, Option<io::Result<SocketAddr>>) {
         // TODO: think more about this
         // needs to pretend ipv6 always as the fake addrs are ipv6
+        let mut ipv6_addr = None;
         if let Some(ref conn) = self.pconn6 {
-            return conn.local_addr().await;
+            ipv6_addr = Some(conn.local_addr().await);
         }
-        let addr = self.pconn4.local_addr().await?;
-        Ok(addr)
+        let ipv4_addr = self.pconn4.local_addr().await;
+
+        (ipv4_addr, ipv6_addr)
     }
 
     async fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
@@ -1125,7 +1145,11 @@ impl Actor {
             stride: dm.buf.len(),
             addr: ep_fake_wg_addr,
             // Normalize local_ip
-            dst_ip: self.local_addr().await.ok().map(|addr| addr.ip()),
+            dst_ip: self
+                .normalized_local_addr()
+                .await
+                .ok()
+                .map(|addr| addr.ip()),
             ecn: None,
         };
 

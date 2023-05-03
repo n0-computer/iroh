@@ -130,7 +130,7 @@ pub struct WatchResponse {
 pub struct IdResponse {
     pub peer_id: Box<PeerId>,
     pub auth_token: Box<AuthToken>,
-    pub listen_addr: Box<SocketAddr>,
+    pub listen_addrs: Vec<SocketAddr>,
     pub version: String,
 }
 

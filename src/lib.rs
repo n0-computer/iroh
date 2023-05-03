@@ -186,7 +186,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address().await.unwrap(),
+                provider.local_address().await.unwrap()[0],
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -409,7 +409,7 @@ mod tests {
             hash,
             auth_token,
             get::Options {
-                addr: provider_addr,
+                addr: provider_addr[0],
                 peer_id: None,
                 keylog: true,
             },
@@ -459,7 +459,7 @@ mod tests {
                 hash,
                 auth_token,
                 get::Options {
-                    addr: provider_addr,
+                    addr: provider_addr[0],
                     peer_id: None,
                     keylog: true,
                 },
@@ -507,7 +507,7 @@ mod tests {
                 hash,
                 auth_token,
                 get::Options {
-                    addr,
+                    addr: addr[0],
                     peer_id,
                     keylog: true,
                 },
