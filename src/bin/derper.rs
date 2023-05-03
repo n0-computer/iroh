@@ -16,7 +16,9 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
-use hyper::{server::conn::Http, Body, HeaderMap, Method, Request, Response, StatusCode};
+use hyper::{
+    server::conn::Http, service::Service, Body, HeaderMap, Method, Request, Response, StatusCode,
+};
 use iroh::hp::{derp, key, stun};
 use rustls_acme::AcmeConfig;
 use rustls_acme::{caches::DirCache, AcmeAcceptor};
@@ -339,7 +341,7 @@ async fn main() -> Result<()> {
         tls_config,
     };
 
-    server.run(cli.addr).await?;
+    server.run(cli.addr, cli.http_port).await?;
 
     // Shutdown all tasks
     tasks.abort_all();
@@ -377,50 +379,91 @@ struct Derper {
 }
 
 impl Derper {
-    async fn run(self, addr: SocketAddr) -> Result<()> {
-        let listener = TcpListener::bind(&addr)
-            .await
-            .context("failed to bind tcp")?;
-        // We need the assigned address for the client to send it messages.
-        let addr = listener.local_addr()?;
+    async fn run(self, addr: SocketAddr, http_port: u16) -> Result<()> {
+        if let Some((tls_config, tls_acceptor)) = self.tls_config.clone() {
+            let https_listener = TcpListener::bind(&addr)
+                .await
+                .context("failed to bind https")?;
+            let handler = HttpsService(self.clone());
+            tokio::task::spawn(async move {
+                loop {
+                    match https_listener.accept().await {
+                        Ok((stream, peer_addr)) => {
+                            debug!("Connection opened from {}", peer_addr);
+                            let tls_acceptor = tls_acceptor.clone();
+                            let tls_config = tls_config.clone();
+                            let handler = handler.clone();
 
-        let tls_acceptor = if let Some((ref tls_config, ref acceptor)) = self.tls_config {
-            info!("derper: serving on {} with TLS", addr);
-
-            Some((acceptor.clone(), tls_config.clone()))
-        } else {
-            info!("derper: serving on {}", addr);
-            None
-        };
-
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    debug!("Connection opened from {}", peer_addr);
-                    let tls_acceptor = tls_acceptor.clone();
-                    let handler = self.clone();
-
-                    tokio::task::spawn(async move {
-                        match tls_acceptor {
-                            Some((tls_acceptor, rustls_config)) => {
+                            tokio::task::spawn(async move {
                                 if let Err(err) =
-                                    handler.tls_serve(stream, tls_acceptor, rustls_config).await
+                                    handler.tls_serve(stream, tls_acceptor, tls_config).await
                                 {
                                     error!("Failed to serve connection: {:?}", err);
                                 }
-                            }
-                            None => {
+                            });
+                        }
+                        Err(err) => {
+                            error!("failed to accept connection: {:#?}", err);
+                        }
+                    }
+                }
+            });
+        } else {
+            // Derp server
+            let listener = TcpListener::bind(&addr)
+                .await
+                .context("failed to bind derp")?;
+            let addr = listener.local_addr()?;
+            info!("[DERP] derper: serving on {}", addr);
+
+            let handler = DerpService {
+                derper: self.clone(),
+                is_restricted: self.tls_config.is_some(),
+            };
+
+            tokio::task::spawn(async move {
+                loop {
+                    match listener.accept().await {
+                        Ok((stream, peer_addr)) => {
+                            debug!("[DERP] Connection opened from {}", peer_addr);
+                            let handler = handler.clone();
+                            tokio::task::spawn(async move {
                                 if let Err(err) =
                                     Http::new().serve_connection(stream, handler).await
                                 {
-                                    error!("Failed to serve connection: {:?}", err);
+                                    error!("[DERP] Failed to serve connection: {:?}", err);
                                 }
-                            }
+                            });
+                        }
+                        Err(err) => {
+                            error!("[DERP] failed to accept connection: {:#?}", err);
+                        }
+                    }
+                }
+            });
+        }
+
+        let http_addr = SocketAddr::new(addr.ip(), http_port);
+        let http_listener = TcpListener::bind(&http_addr)
+            .await
+            .context("failed to bind http")?;
+        let http_addr = http_listener.local_addr()?;
+        info!("[HTTP] derper: serving on {}", http_addr);
+
+        loop {
+            match http_listener.accept().await {
+                Ok((stream, peer_addr)) => {
+                    debug!("[HTTP] Connection opened from {}", peer_addr);
+                    let handler = HttpService(self.clone());
+
+                    tokio::task::spawn(async move {
+                        if let Err(err) = Http::new().serve_connection(stream, handler).await {
+                            error!("[HTTP] Failed to serve connection: {:?}", err);
                         }
                     });
                 }
                 Err(err) => {
-                    error!("failed to accept connection: {:#?}", err);
+                    error!("[HTTP] failed to accept connection: {:#?}", err);
                 }
             }
         }
@@ -442,7 +485,22 @@ impl Derper {
         }
         response
     }
+}
 
+#[derive(Clone)]
+struct HttpService(Derper);
+
+#[derive(Clone)]
+struct DerpService {
+    derper: Derper,
+    /// If set, this will not serve the routes that should be served over https.
+    is_restricted: bool,
+}
+
+#[derive(Clone)]
+struct HttpsService(Derper);
+
+impl HttpsService {
     async fn tls_serve(
         self,
         stream: TcpStream,
@@ -468,7 +526,35 @@ impl Derper {
     }
 }
 
-impl hyper::service::Service<Request<Body>> for Derper {
+impl hyper::service::Service<Request<Body>> for DerpService {
+    type Response = Response<Body>;
+    type Error = HyperError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        handle_request(&mut self.derper, req, self.is_restricted)
+    }
+}
+
+impl hyper::service::Service<Request<Body>> for HttpsService {
+    type Response = Response<Body>;
+    type Error = HyperError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        handle_request(&mut self.0, req, false)
+    }
+}
+
+impl hyper::service::Service<Request<Body>> for HttpService {
     type Response = Response<Body>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -479,24 +565,13 @@ impl hyper::service::Service<Request<Body>> for Derper {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         match (req.method(), req.uri().path()) {
-            (&Method::GET, "/") | (&Method::GET, "/index.html") => {
-                Box::pin(root_handler(self.default_response()))
-            }
-            (&Method::GET, "/derp") => match self.client_conn_handler.clone() {
-                Some(mut handler) => {
-                    Box::pin(async move { handler.call(req).await.map_err(Into::into) })
-                }
-                None => Box::pin(derp_disabled_handler(self.default_response())),
-            },
-            // Robots
-            (&Method::GET, "/robots.txt") => Box::pin(robots_handler(self.default_response())),
             // Captive Portal checker
             (&Method::GET, "/generate_204") => {
-                Box::pin(serve_no_content_handler(req, self.default_response()))
+                Box::pin(serve_no_content_handler(req, self.0.default_response()))
             }
             _ => {
                 // Return 404 not found response.
-                let response = self.default_response();
+                let response = self.0.default_response();
                 Box::pin(async move {
                     Ok(response
                         .status(StatusCode::NOT_FOUND)
@@ -508,18 +583,61 @@ impl hyper::service::Service<Request<Body>> for Derper {
     }
 }
 
+fn handle_request(
+    derper: &mut Derper,
+    req: Request<Body>,
+    is_restricted: bool,
+) -> Pin<Box<dyn Future<Output = Result<Response<Body>, HyperError>> + Send>> {
+    match (is_restricted, req.method(), req.uri().path()) {
+        (false, &Method::GET, "/") | (false, &Method::GET, "/index.html") => {
+            Box::pin(root_handler(derper.default_response()))
+        }
+        (false, &Method::GET | &Method::HEAD, "/derp/probe") => {
+            Box::pin(probe_handler(derper.default_response()))
+        }
+        (false, &Method::GET, "/derp") => match derper.client_conn_handler.clone() {
+            Some(mut handler) => {
+                Box::pin(async move { handler.call(req).await.map_err(Into::into) })
+            }
+            None => Box::pin(derp_disabled_handler(derper.default_response())),
+        },
+        // Robots
+        (false, &Method::GET, "/robots.txt") => Box::pin(robots_handler(derper.default_response())),
+        _ => {
+            // Return 404 not found response.
+            let response = derper.default_response();
+            Box::pin(async move {
+                Ok(response
+                    .status(StatusCode::NOT_FOUND)
+                    .body(NOTFOUND.into())
+                    .unwrap())
+            })
+        }
+    }
+}
+
 async fn derp_disabled_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
         .unwrap())
 }
-
 async fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(INDEX.into())
+        .unwrap();
+
+    Ok(response)
+}
+
+/// HTTP latency queries
+async fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+    let response = response
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Body::empty())
         .unwrap();
 
     Ok(response)

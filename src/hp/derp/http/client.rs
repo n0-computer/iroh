@@ -490,6 +490,7 @@ impl Client {
             443
         };
         let dst = format!("{host}:{port}");
+        debug!("dialing {}", dst);
         let tcp_stream =
             tokio::time::timeout(
                 DIAL_NODE_TIMEOUT,
