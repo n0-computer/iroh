@@ -9,7 +9,8 @@ pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
-mod tls;
+#[allow(missing_docs)]
+pub mod tls;
 mod util;
 
 #[allow(missing_docs)]

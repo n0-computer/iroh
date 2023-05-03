@@ -1,12 +1,15 @@
 //! Utility functions and types.
 use std::{
     env, fmt,
+    net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
-use iroh::Hash;
+use iroh::{tls, Hash, Keypair, PeerId};
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";
@@ -188,4 +191,23 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
         path.push(part);
     }
     path
+}
+
+pub fn create_quinn_client(
+    bind_addr: SocketAddr,
+    peer_id: Option<PeerId>,
+    alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
+) -> Result<quinn::Endpoint> {
+    let keypair = Keypair::generate();
+
+    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    client_config.transport_config(Arc::new(transport_config));
+
+    endpoint.set_default_client_config(client_config);
+    Ok(endpoint)
 }

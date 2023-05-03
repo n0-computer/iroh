@@ -25,7 +25,7 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::{iroh_data_root, pathbuf_from_name};
+use crate::main_util::{create_quinn_client, iroh_data_root, pathbuf_from_name};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -197,8 +197,7 @@ async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let (endpoint, _) =
-        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false).await?; // TODO: don't use magicsock
+    let endpoint = create_quinn_client(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
