@@ -33,7 +33,6 @@ mod tests {
         collections::BTreeMap,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
-        sync::Arc,
         time::Duration,
     };
 
@@ -48,16 +47,16 @@ mod tests {
 
     use crate::{
         blobs::Collection,
-        get::{dial_peer, ResponseItem},
+        get::dial_peer,
         protocol::{AuthToken, Request},
     };
     use crate::{get::get_response_machine, tls::PeerId};
     use crate::{
-        get::get_response_machine::{ContentNext, Done},
+        get::get_response_machine::{AtEnd, ContentNext},
         util::Hash,
     };
     use crate::{
-        get::{GetResponse, Stats},
+        get::Stats,
         provider::{create_collection, Event, Provider},
     };
 
@@ -164,26 +163,11 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            get::run(
-                Request::all(hash),
-                token,
-                opts,
-                || async { Ok(()) },
-                |mut info| async move {
-                    if info.is_root() {
-                        let collection = info.read_collection(hash).await?;
-                        let actual_name = &collection.blobs()[0].name;
-                        info.set_limit(collection.total_entries() + 1);
-                        assert_eq!(expected_name, actual_name);
-                    } else {
-                        let actual_data = info.read_blob(file_hash).await?;
-                        assert_eq!(expected_data, &actual_data);
-                    }
-                    info.end()
-                },
-                (),
-            )
-            .await?;
+            let response = get::run_fsm(Request::all(hash), token, opts).await?;
+            let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+            assert_eq!(expected_name, &collection.blobs()[0].name);
+            assert_eq!(&file_hash, &collection.blobs()[0].hash);
+            assert_eq!(expected_data, &children[&0]);
 
             Ok(())
         }
@@ -289,33 +273,18 @@ mod tests {
             keylog: true,
         };
 
-        let expects = Arc::new(expects);
-
-        get::run(
-            Request::all(collection_hash),
-            provider.auth_token(),
-            opts,
-            || async { Ok(()) },
-            |mut data| {
-                println!("got data: {:?}", data);
-                let expects = expects.clone();
-                async move {
-                    if let Some(offset) = data.child_offset() {
-                        let (_, path, hash) = &expects[offset as usize];
-                        let expect = tokio::fs::read(&path).await?;
-                        let got = data.read_blob(*hash).await?;
-                        assert_eq!(expect, got);
-                        data.end()
-                    } else {
-                        let collection = data.read_collection(collection_hash).await?;
-                        data.set_limit(collection.total_entries() + 1);
-                        data.end()
-                    }
-                }
-            },
-            (),
-        )
-        .await?;
+        let response =
+            get::run_fsm(Request::all(collection_hash), provider.auth_token(), opts).await?;
+        let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+        assert_eq!(num_blobs, collection.blobs().len());
+        for (i, (name, path, hash)) in expects.into_iter().enumerate() {
+            let blob = &collection.blobs()[i];
+            let expect = tokio::fs::read(&path).await?;
+            let got = &children[&(i as u64)];
+            assert_eq!(name, blob.name);
+            assert_eq!(hash, blob.hash);
+            assert_eq!(&expect, got);
+        }
 
         // We have to wait for the completed event before shutting down the provider.
         let events = tokio::time::timeout(Duration::from_secs(30), events_task)
@@ -405,7 +374,7 @@ mod tests {
             }
         });
 
-        get::run(
+        let response = get::run_fsm(
             Request::all(hash),
             auth_token,
             get::Options {
@@ -413,22 +382,10 @@ mod tests {
                 peer_id: None,
                 keylog: true,
             },
-            || async move { Ok(()) },
-            move |mut data| async move {
-                if data.is_root() {
-                    let collection = data.read_collection(hash).await?;
-                    data.set_limit(collection.total_entries() + 1);
-                    data.user = collection.into_inner();
-                } else {
-                    let hash = data.user[0].hash;
-                    data.drain(hash).await?;
-                }
-                data.end()
-            },
-            vec![],
         )
         .await
         .unwrap();
+        let (_collection, _children, _stats) = aggregate_get_response_fsm(response).await.unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
         tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -459,9 +416,8 @@ mod tests {
         let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
 
-        let timeout = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            get::run(
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+            let request = get::run_fsm(
                 Request::all(hash),
                 auth_token,
                 get::Options {
@@ -469,22 +425,21 @@ mod tests {
                     peer_id: None,
                     keylog: true,
                 },
-                || async move { Ok(()) },
-                |data| async move {
-                    // evil: do nothing with the stream!
-                    data.end_unchecked()
-                },
-                (),
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            // connect
+            let connected = request.next().await.unwrap();
+            // send the request
+            let _start = connected.next().await.unwrap();
+            // and then just hang
+        })
         .await;
         provider.shutdown();
 
-        let err = timeout.expect(
+        timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
         );
-
-        err.expect_err("expected an error when passing in a misbehaving `on_blob` function");
         Ok(())
     }
 
@@ -506,9 +461,8 @@ mod tests {
         let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run(
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request = get::run_fsm(
                 Request::all(hash),
                 auth_token,
                 get::Options {
@@ -516,21 +470,11 @@ mod tests {
                     peer_id,
                     keylog: true,
                 },
-                || async move { Ok(()) },
-                move |mut data| async move {
-                    if data.is_root() {
-                        let collection = data.read_collection(hash).await?;
-                        data.set_limit(collection.total_entries() + 1);
-                        data.user = collection.into_inner();
-                    } else {
-                        let hash = data.user[0].hash;
-                        data.drain(hash).await?;
-                    }
-                    data.end()
-                },
-                vec![],
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            aggregate_get_response_fsm(request).await
+        })
         .await
         .expect("timeout")
         .expect("get failed");
@@ -605,57 +549,9 @@ mod tests {
         Ok(())
     }
 
-    // helper to aggregate a get response and return all relevant data
-    async fn aggregate_get_response(
-        mut response: GetResponse,
-    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
-        let mut current_data = Vec::new();
-        let mut collection = None;
-        let mut items = BTreeMap::new();
-        let mut stats = None;
-        while let Some(item) = response.next().await {
-            match item {
-                ResponseItem::Start { child } => {
-                    if child > 0 {
-                        // we need to set the hash so the validation can work
-                        let child_offset = (child - 1) as usize;
-                        let c: &Collection = collection.as_ref().unwrap();
-                        let hash = c.blobs().get(child_offset).map(|x| x.hash);
-                        response.set_hash(hash);
-                    }
-                }
-                ResponseItem::Size { size, .. } => {
-                    // reserve the space for the data
-                    current_data.reserve(size as usize);
-                }
-                ResponseItem::Leaf { data, offset, .. } => {
-                    // add the data. This assumes that we have requested the entire thing.
-                    anyhow::ensure!(offset == current_data.len() as u64);
-                    current_data.extend_from_slice(&data);
-                }
-                ResponseItem::Done { child } => {
-                    if child == 0 {
-                        // finished with the collection, init the hashes
-                        collection = Some(Collection::from_bytes(&current_data)?);
-                        current_data.clear();
-                    } else {
-                        // finished with a child, add it
-                        items.insert(child - 1, std::mem::take(&mut current_data).into());
-                    }
-                }
-                ResponseItem::Error(cause) => {
-                    return Err(cause.into());
-                }
-                ResponseItem::Finished { stats: s } => {
-                    stats = Some(s);
-                }
-                _ => {}
-            }
-        }
-        Ok((collection.unwrap(), items, stats.unwrap()))
-    }
-
-    async fn read_single(header: get_response_machine::Header) -> anyhow::Result<(Done, Vec<u8>)> {
+    async fn read_single(
+        header: get_response_machine::AtHeader,
+    ) -> anyhow::Result<(AtEnd, Vec<u8>)> {
         let (mut content, size) = header.next().await?;
         let mut res = Vec::with_capacity(size as usize);
         let done = loop {
@@ -673,7 +569,7 @@ mod tests {
 
     // helper to aggregate a get response and return all relevant data
     async fn aggregate_get_response_fsm(
-        initial: get_response_machine::Initial,
+        initial: get_response_machine::AtInitial,
     ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
         use get_response_machine::*;
         let mut items = BTreeMap::new();
@@ -705,42 +601,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_stream() {
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-        let provider = match Provider::builder(db)
-            .bind_addr("[::1]:0".parse().unwrap())
-            .spawn()
-        {
-            Ok(provider) => provider,
-            Err(_) => {
-                // We assume the problem here is IPv6 on this host.  If the problem is
-                // not IPv6 then other tests will also fail.
-                return;
-            }
-        };
-        let auth_token = provider.auth_token();
-        let addr = provider.local_address();
-        let peer_id = Some(provider.peer_id());
-        tokio::time::timeout(Duration::from_secs(10), async move {
-            let connection = dial_peer(get::Options {
-                addr,
-                peer_id,
-                keylog: true,
-            })
-            .await?;
-            let request = Request::all(hash);
-            let stream = get::run_get(connection, request, auth_token);
-            let (collection, children, _) = aggregate_get_response(stream).await?;
-            validate_children(collection, children)?;
-            anyhow::Ok(())
-        })
-        .await
-        .expect("timeout")
-        .expect("get failed");
-    }
-
-    #[tokio::test]
     async fn test_run_fsm() {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
@@ -766,7 +626,7 @@ mod tests {
             })
             .await?;
             let request = Request::all(hash);
-            let stream = get::run_get_fsm(connection, request, auth_token);
+            let stream = get::run_connection_fsm(connection, request, auth_token);
             let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())

@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt::{self, Debug};
 use std::io::{self, Cursor, SeekFrom};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
@@ -23,11 +23,9 @@ use bao_tree::io::tokio::DecodeResponseStreamRef;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use default_net::Interface;
-use futures::stream::BoxStream;
 use futures::{Future, StreamExt};
-use genawaiter::sync::{Co, Gen};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -521,13 +519,13 @@ pub mod get_response_machine {
 
     /// Initial state of the get response machine
     #[derive(Debug)]
-    pub struct Initial {
+    pub struct AtInitial {
         connection: quinn::Connection,
         request: Request,
         auth_token: AuthToken,
     }
 
-    impl Initial {
+    impl AtInitial {
         /// Create a new get response
         ///
         /// `connection` is an existing connection
@@ -542,12 +540,12 @@ pub mod get_response_machine {
         }
 
         /// Initiate a new bidi stream to use for the get response
-        pub async fn next(self) -> Result<Connected, quinn::ConnectionError> {
+        pub async fn next(self) -> Result<AtConnected, quinn::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
             let reader = TrackingReader::new(reader);
             let writer = TrackingWriter::new(writer);
-            Ok(Connected {
+            Ok(AtConnected {
                 start,
                 reader,
                 writer,
@@ -559,7 +557,7 @@ pub mod get_response_machine {
 
     /// State of the get response machine after the handshake has been sent
     #[derive(Debug)]
-    pub struct Connected {
+    pub struct AtConnected {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
@@ -571,14 +569,14 @@ pub mod get_response_machine {
     #[derive(Debug, From)]
     pub enum ConnectedNext {
         ///
-        Start(Start),
+        StartChild(AtStartChild),
         ///
-        StartCollection(StartCollection),
+        StartCollection(AtStartCollection),
         ///
-        Finished(Finishing),
+        Finished(AtFinish),
     }
 
-    impl Connected {
+    impl AtConnected {
         /// Send the request and move to the next state
         ///
         /// The next state will be either `Start` or `StartCollection` depending on whether
@@ -613,6 +611,7 @@ pub mod get_response_machine {
             writer.finish().await?;
             let hash = request.hash;
             let ranges_iter = RangesIter::new(request.ranges);
+            // this is in a box so we don't have to memcpy it on every state transition
             let mut misc = Box::new(Misc {
                 start,
                 bytes_written,
@@ -621,7 +620,7 @@ pub mod get_response_machine {
             Ok(match misc.ranges_iter.next() {
                 Some((offset, ranges)) => {
                     if offset == 0 {
-                        StartCollection {
+                        AtStartCollection {
                             reader,
                             ranges,
                             misc,
@@ -629,7 +628,7 @@ pub mod get_response_machine {
                         }
                         .into()
                     } else {
-                        Start {
+                        AtStartChild {
                             reader,
                             ranges,
                             misc,
@@ -638,25 +637,14 @@ pub mod get_response_machine {
                         .into()
                     }
                 }
-                None => Finishing::new(misc, reader).into(),
+                None => AtFinish::new(misc, reader).into(),
             })
         }
     }
 
-    /// Stuff we need to hold on to while going through the machine states
-    #[derive(Debug)]
-    struct Misc {
-        /// start time for statistics
-        start: Instant,
-        /// bytes written for statistics
-        bytes_written: u64,
-        /// iterator over the ranges of the collection and the children
-        ranges_iter: RangesIter,
-    }
-
     /// State of the get response when we start reading a collection
     #[derive(Debug)]
-    pub struct StartCollection {
+    pub struct AtStartCollection {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
@@ -665,14 +653,14 @@ pub mod get_response_machine {
 
     /// State of the get response when we start reading a child
     #[derive(Debug)]
-    pub struct Start {
+    pub struct AtStartChild {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
         child_offset: u64,
     }
 
-    impl Start {
+    impl AtStartChild {
         /// The offset of the child we are currently reading
         ///
         /// This must be used to determine the hash needed to call next
@@ -688,26 +676,26 @@ pub mod get_response_machine {
         /// Go into the next state, reading the header
         ///
         /// This requires passing in the hash of the child for validation
-        pub fn next(self, hash: Hash) -> Header {
+        pub fn next(self, hash: Hash) -> AtHeader {
             let stream = ResponseDecoderStart::<TrackingReader<RecvStream>>::new(
                 hash.into(),
                 self.ranges,
                 IROH_BLOCK_SIZE,
                 self.reader,
             );
-            Header {
+            AtHeader {
                 stream,
                 misc: self.misc,
             }
         }
 
         /// Finish the get response without reading further
-        pub fn finish(self) -> Finishing {
-            Finishing::new(self.misc, self.reader)
+        pub fn finish(self) -> AtFinish {
+            AtFinish::new(self.misc, self.reader)
         }
     }
 
-    impl StartCollection {
+    impl AtStartCollection {
         /// The ranges we have requested for the child
         pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
             &self.ranges
@@ -716,49 +704,67 @@ pub mod get_response_machine {
         /// Go into the next state, reading the header
         ///
         /// For the collection we already know the hash, since it was part of the request
-        pub fn next(self) -> Header {
+        pub fn next(self) -> AtHeader {
             let stream = ResponseDecoderStart::new(
                 self.hash.into(),
                 self.ranges,
                 IROH_BLOCK_SIZE,
                 self.reader,
             );
-            Header {
+            AtHeader {
                 stream,
                 misc: self.misc,
             }
         }
 
         /// Finish the get response without reading further
-        pub fn finish(self) -> Finishing {
-            Finishing::new(self.misc, self.reader)
+        pub fn finish(self) -> AtFinish {
+            AtFinish::new(self.misc, self.reader)
         }
     }
 
     /// State before reading a size header
     #[derive(Debug)]
-    pub struct Header {
+    pub struct AtHeader {
         stream: ResponseDecoderStart<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
-    impl Header {
+    impl AtHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(Content, u64), io::Error> {
+        pub async fn next(self) -> Result<(AtContent, u64), io::Error> {
             let (stream, size) = self.stream.next().await?;
             Ok((
-                Content {
+                AtContent {
                     stream,
                     misc: self.misc,
                 },
                 size,
             ))
         }
+
+        /// Drain the response and throw away the result
+        pub async fn drain(self) -> std::result::Result<AtEnd, DecodeError> {
+            let (mut content, _size) = self.next().await?;
+            loop {
+                match content.next().await {
+                    ContentNext::More((content1, Ok(_))) => {
+                        content = content1;
+                    }
+                    ContentNext::More((_, Err(e))) => {
+                        return Err(e);
+                    }
+                    ContentNext::Done(end) => {
+                        return Ok(end);
+                    }
+                }
+            }
+        }
     }
 
     /// State while we are reading content
     #[derive(Debug)]
-    pub struct Content {
+    pub struct AtContent {
         stream: ResponseDecoderReading<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
@@ -769,15 +775,15 @@ pub mod get_response_machine {
         ///
         More(
             (
-                Content,
+                AtContent,
                 std::result::Result<DecodeResponseItem, DecodeError>,
             ),
         ),
         ///
-        Done(Done),
+        Done(AtEnd),
     }
 
-    impl Content {
+    impl AtContent {
         /// Read the next item, either content, an error, or the end of the blob
         pub async fn next(self) -> ContentNext {
             match self.stream.next().await {
@@ -785,7 +791,7 @@ pub mod get_response_machine {
                     let next = Self { stream, ..self };
                     (next, res).into()
                 }
-                ResponseDecoderReadingNext::Done(stream) => Done {
+                ResponseDecoderReadingNext::Done(stream) => AtEnd {
                     stream,
                     misc: self.misc,
                 }
@@ -796,7 +802,7 @@ pub mod get_response_machine {
 
     /// State after we have read all the content for a blob
     #[derive(Debug)]
-    pub struct Done {
+    pub struct AtEnd {
         stream: TrackingReader<RecvStream>,
         misc: Box<Misc>,
     }
@@ -805,16 +811,16 @@ pub mod get_response_machine {
     #[derive(Debug, From)]
     pub enum DoneNext {
         ///
-        MoreChildren(Start),
+        MoreChildren(AtStartChild),
         ///
-        Finished(Finishing),
+        Finished(AtFinish),
     }
 
-    impl Done {
+    impl AtEnd {
         /// Read the next child, or finish
         pub fn next(mut self) -> DoneNext {
             if let Some((offset, ranges)) = self.misc.ranges_iter.next() {
-                Start {
+                AtStartChild {
                     reader: self.stream,
                     child_offset: offset - 1,
                     ranges,
@@ -822,19 +828,19 @@ pub mod get_response_machine {
                 }
                 .into()
             } else {
-                Finishing::new(self.misc, self.stream).into()
+                AtFinish::new(self.misc, self.stream).into()
             }
         }
     }
 
     /// State when finishing the get response
     #[derive(Debug)]
-    pub struct Finishing {
+    pub struct AtFinish {
         misc: Box<Misc>,
         reader: TrackingReader<RecvStream>,
     }
 
-    impl Finishing {
+    impl AtFinish {
         fn new(misc: Box<Misc>, reader: TrackingReader<RecvStream>) -> Self {
             Self { misc, reader }
         }
@@ -854,181 +860,36 @@ pub mod get_response_machine {
             })
         }
     }
+
+    /// Stuff we need to hold on to while going through the machine states
+    #[derive(Debug)]
+    struct Misc {
+        /// start time for statistics
+        start: Instant,
+        /// bytes written for statistics
+        bytes_written: u64,
+        /// iterator over the ranges of the collection and the children
+        ranges_iter: RangesIter,
+    }
 }
 
-/// Low level response for a get request
 ///
-/// This is a bit like a stream, but not really a stream. It is more like an
-/// async state machine that you can use to consume a get request.
-///
-/// A stream you can delay, transform and filter, but in this case you need to be
-/// able to call methods on the GetResponse.
-pub struct GetResponse {
-    stream: BoxStream<'static, ResponseItem>,
-    // todo: if we were doing thread per core we could get rid of this mutex
-    // and instead just use a RefCell here, which would be much cheaper.
-    cell: Arc<Mutex<Option<Hash>>>,
-}
-
-impl Debug for GetResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ResponseStream").finish()
-    }
-}
-
-impl GetResponse {
-    /// Set the hash. This must be called before each non root item, otherwise
-    /// we don't have a way to validate the data.
-    ///
-    /// Setting this to None or not calling it at all will finish the response.
-    pub fn set_hash(&mut self, hash: Option<Hash>) {
-        *self.cell.lock().unwrap() = hash;
-    }
-
-    /// Get the next response item
-    pub async fn next(&mut self) -> Option<ResponseItem> {
-        self.stream.next().await
-    }
+pub async fn run_fsm(
+    request: Request,
+    auth_token: AuthToken,
+    opts: Options,
+) -> anyhow::Result<get_response_machine::AtInitial> {
+    let connection = dial_peer(opts).await?;
+    Ok(run_connection_fsm(connection, request, auth_token))
 }
 
 /// Do a get request and return a stream of responses
-pub fn run_get_fsm(
+pub fn run_connection_fsm(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,
-) -> get_response_machine::Initial {
-    get_response_machine::Initial::new(connection, request, auth_token)
-}
-
-/// Do a get request and return a stream of responses
-pub fn run_get(
-    connection: quinn::Connection,
-    request: Request,
-    auth_token: AuthToken,
-) -> GetResponse {
-    let cell = Arc::new(Mutex::new(Some(request.hash.into())));
-
-    let stream =
-        Gen::new(|co| run_get_handle_error(connection, request, auth_token, cell.clone(), co))
-            .boxed();
-    GetResponse { stream, cell }
-}
-
-/// Wrapper that calls run_get_inner and makes sure an error is sent
-async fn run_get_handle_error(
-    connection: quinn::Connection,
-    request: Request,
-    auth_token: AuthToken,
-    cell: Arc<Mutex<Option<Hash>>>,
-    co: Co<ResponseItem>,
-) {
-    if let Err(cause) = run_get_inner(connection, request, auth_token, cell, &co).await {
-        co.yield_(ResponseItem::Error(cause.into())).await;
-    }
-}
-
-/// The actual logic for the get request
-///
-/// An error within this function will cause the response to be ended with a
-/// single error item.
-async fn run_get_inner(
-    connection: quinn::Connection,
-    request: Request,
-    auth_token: AuthToken,
-    cell: Arc<Mutex<Option<Hash>>>,
-    co: &Co<ResponseItem>,
-) -> anyhow::Result<()> {
-    let start = Instant::now();
-    // expect to get blob data in the order they appear in the collection
-    let ranges_iter = request.ranges.non_empty_iter();
-
-    let (writer, reader) = connection.open_bi().await?;
-    let mut reader = TrackingReader::new(reader);
-    let mut writer = TrackingWriter::new(writer);
-
-    co.yield_(ResponseItem::Connected).await;
-
-    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
-
-    // 1. Send Handshake
-    {
-        debug!("sending handshake");
-        let handshake = Handshake::new(auth_token);
-        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
-    }
-
-    // 2. Send Request
-    {
-        debug!("sending request");
-        let request_bytes = postcard::to_stdvec(&request)?;
-        write_lp(&mut writer, &request_bytes).await?;
-    }
-    let (mut writer, bytes_written) = writer.into_parts();
-    writer.finish().await?;
-    drop(writer);
-
-    // 3. Read responses
-    debug!("reading response");
-    for (child, query) in ranges_iter {
-        // call start. The consumer is expected to call set_hash here
-        co.yield_(ResponseItem::Start { child }).await;
-
-        // get the hash. If the consumer has not set a hash, we stop.
-        // we have no other choice, since without the hash we can not validate
-        // the incoming data.
-        let hash_opt = cell.lock().unwrap().take();
-        let hash = if let Some(hash) = hash_opt {
-            hash.into()
-        } else {
-            break;
-        };
-
-        let chunk_ranges = query.to_chunk_ranges();
-        let mut stream =
-            DecodeResponseStreamRef::new(hash, &chunk_ranges, IROH_BLOCK_SIZE, &mut reader);
-        while let Some(item) = stream.next().await {
-            let item = item?;
-            co.yield_(match item {
-                DecodeResponseItem::Header(bao_tree::io::Header { size }) => ResponseItem::Size {
-                    child,
-                    size: size.0,
-                },
-                DecodeResponseItem::Parent(bao_tree::io::Parent {
-                    pair: (l_hash, r_hash),
-                    ..
-                }) => ResponseItem::Parent {
-                    child,
-                    pair: (l_hash, r_hash),
-                },
-                DecodeResponseItem::Leaf(bao_tree::io::Leaf { offset, data }) => {
-                    ResponseItem::Leaf {
-                        child,
-                        offset: offset.0,
-                        data,
-                    }
-                }
-            })
-            .await;
-        }
-        co.yield_(ResponseItem::Done { child }).await;
-    }
-    // Shut down the stream
-    let (mut reader, bytes_read) = reader.into_parts();
-    if let Some(chunk) = reader.read_chunk(8, false).await? {
-        reader.stop(0u8.into()).ok();
-        error!("Received unexpected data from the provider: {chunk:?}");
-    }
-    // Send the finished message with the stats
-    co.yield_(ResponseItem::Finished {
-        stats: Stats {
-            bytes_written,
-            bytes_read,
-            elapsed: start.elapsed(),
-        },
-    })
-    .await;
-    Ok(())
+) -> get_response_machine::AtInitial {
+    get_response_machine::AtInitial::new(connection, request, auth_token)
 }
 
 /// Error when processing a response
@@ -1049,61 +910,6 @@ pub enum GetResponseError {
     /// A generic error
     #[error("generic: {0}")]
     Generic(anyhow::Error),
-}
-
-/// An item from a response stream
-#[derive(Debug)]
-pub enum ResponseItem {
-    /// we are connected.
-    /// Next message will be a Start.
-    Connected,
-    /// we are starting to download a blob with the given offset in the query.
-    /// Next message will be a Size.
-    Start {
-        /// the offset of the blob in the query, 0 for the collection
-        child: u64,
-    },
-    /// we got the size header for the blob with the given offset in the query.
-    Size {
-        ///
-        child: u64,
-        ///
-        size: u64,
-    },
-    /// we got a parent hash for a blob
-    Parent {
-        ///
-        child: u64,
-        ///
-        pair: (blake3::Hash, blake3::Hash),
-    },
-    /// we got a leaf chunk for a blob
-    Leaf {
-        ///
-        child: u64,
-        ///
-        offset: u64,
-        ///
-        data: Bytes,
-    },
-    /// we are done with a blob
-    Done {
-        ///
-        child: u64,
-    },
-    /// we are done with everything
-    Finished {
-        /// stats about the interaction
-        stats: Stats,
-    },
-    /// An error
-    Error(GetResponseError),
-}
-
-impl<T: Into<GetResponseError>> From<T> for ResponseItem {
-    fn from(cause: T) -> Self {
-        Self::Error(cause.into())
-    }
 }
 
 impl From<postcard::Error> for GetResponseError {
