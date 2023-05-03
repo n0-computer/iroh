@@ -111,14 +111,14 @@ impl Stats {
 }
 
 /// Gets a collection and all its blobs using a [`Ticket`].
-pub async fn run_ticket_fsm(
+pub async fn run_ticket(
     ticket: &Ticket,
     request: Request,
     keylog: bool,
     max_concurrent: u8,
 ) -> Result<get_response_machine::AtInitial> {
     let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
-    Ok(run_connection_fsm(connection, request, ticket.token()))
+    Ok(run_connection(connection, request, ticket.token()))
 }
 
 async fn dial_ticket(
@@ -180,7 +180,7 @@ pub mod get_response_machine {
     use super::*;
 
     use bao_tree::io::fsm::{
-        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        Handle, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
     use ouroboros::self_referencing;
@@ -478,18 +478,18 @@ pub mod get_response_machine {
 
         ///
         pub async fn write_all_with_outboard<
-            D: bao_tree::io::tokio::AsyncSliceWriter,
-            O: bao_tree::io::tokio::AsyncSliceWriter,
+            D: bao_tree::io::fsm::AsyncSliceWriter,
+            O: bao_tree::io::fsm::AsyncSliceWriter,
             OW: FnMut(u64, usize),
         >(
             self,
-            mut outboard: Option<O>,
-            data: D,
+            outboard: &mut Option<Handle<O>>,
+            data: &mut Handle<D>,
             on_write: OW,
         ) -> std::result::Result<AtEnd, DecodeError> {
             let (content, size) = self.next().await?;
-            if let Some(outboard) = &mut outboard {
-                outboard.write_at(0, &size.to_le_bytes()).await?;
+            if let Some(o) = outboard.as_mut() {
+                o.write_array_at(0, size.to_le_bytes()).await?;
             }
             content
                 .write_all_with_outboard(outboard, data, on_write)
@@ -537,13 +537,13 @@ pub mod get_response_machine {
         ///
         pub async fn write_all_with_outboard<D, O, OW>(
             self,
-            mut outboard: Option<O>,
-            mut data: D,
+            outboard: &mut Option<Handle<O>>,
+            data: &mut Handle<D>,
             mut on_write: OW,
         ) -> std::result::Result<AtEnd, DecodeError>
         where
-            D: bao_tree::io::tokio::AsyncSliceWriter,
-            O: bao_tree::io::tokio::AsyncSliceWriter,
+            D: bao_tree::io::fsm::AsyncSliceWriter,
+            O: bao_tree::io::fsm::AsyncSliceWriter,
             OW: FnMut(u64, usize),
         {
             let mut content = self;
@@ -554,16 +554,18 @@ pub mod get_response_machine {
                         match item? {
                             DecodeResponseItem::Header(_) => unreachable!(),
                             DecodeResponseItem::Parent(parent) => {
-                                if let Some(outboard) = &mut outboard {
+                                if let Some(outboard) = outboard.as_mut() {
                                     let offset = parent.node.post_order_offset() * 64 + 8;
                                     let (l_hash, r_hash) = parent.pair;
-                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
-                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
+                                    outboard.write_array_at(offset, *l_hash.as_bytes()).await?;
+                                    outboard
+                                        .write_array_at(offset + 32, *r_hash.as_bytes())
+                                        .await?;
                                 }
                             }
                             DecodeResponseItem::Leaf(leaf) => {
                                 on_write(leaf.offset.0, leaf.data.len());
-                                data.write_at(leaf.offset.0, &leaf.data).await?;
+                                data.write_at(leaf.offset.0, leaf.data).await?;
                             }
                         }
                     }
@@ -670,17 +672,17 @@ pub mod get_response_machine {
 }
 
 ///
-pub async fn run_fsm(
+pub async fn run(
     request: Request,
     auth_token: AuthToken,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
     let connection = dial_peer(opts).await?;
-    Ok(run_connection_fsm(connection, request, auth_token))
+    Ok(run_connection(connection, request, auth_token))
 }
 
 /// Do a get request and return a stream of responses
-pub fn run_connection_fsm(
+pub fn run_connection(
     connection: quinn::Connection,
     request: Request,
     auth_token: AuthToken,

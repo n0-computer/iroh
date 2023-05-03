@@ -821,6 +821,7 @@ impl GetInteractive {
     }
 }
 
+/// Get into a file or directory
 async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     let hash = get.hash();
     let single = get.single();
@@ -876,9 +877,9 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     let request = Request::new(get.hash(), query);
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket_fsm(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
+            get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        GetInteractive::Hash { opts, token, .. } => get::run_fsm(request, token, opts).await?,
+        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -938,7 +939,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .create(true)
                 .open(&data_path)
                 .await?;
-            let mut data_file = SeekOptimized::new(data_file);
+            let mut data_file = SeekOptimized::new(data_file).into();
             tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
             let (curr, size) = header.next().await?;
             pb.set_length(size);
@@ -948,7 +949,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                     .create(true)
                     .open(&outboard_path)
                     .await?;
-                let outboard_file = SeekOptimized::new(outboard_file);
+                let outboard_file = SeekOptimized::new(outboard_file).into();
                 Some(outboard_file)
             } else {
                 None
@@ -958,7 +959,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 pb.set_position(offset);
             };
             let curr = curr
-                .write_all_with_outboard(outboard_file.as_mut(), &mut data_file, on_write)
+                .write_all_with_outboard(&mut outboard_file, &mut data_file, on_write)
                 .await?;
             tokio::fs::create_dir_all(
                 final_path
@@ -967,14 +968,13 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             )
             .await?;
             // Flush the data file first, it is the only thing that matters at this point
-            data_file.shutdown().await?;
-            drop(data_file);
+            data_file.into_inner().shutdown().await?;
             // Rename temp file, to target name
             // once this is done, the file is considered complete
             tokio::fs::rename(data_path, final_path).await?;
-            if let Some(mut outboard_file) = outboard_file.take() {
+            if let Some(outboard_file) = outboard_file.take() {
                 // not sure if we have to do this
-                outboard_file.shutdown().await?;
+                outboard_file.into_inner().shutdown().await?;
                 // delete the outboard file
                 tokio::fs::remove_file(outboard_path).await?;
             }
@@ -996,6 +996,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// get to stdout, no resume possible
 async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     let hash = get.hash();
     progress!("Fetching: {}", Blake3Cid::new(hash));
@@ -1016,24 +1017,12 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    let init_download_progress = |count: u64, missing_bytes: u64| {
-        progress!("{} Downloading ...", style("[3/3]").bold().dim());
-        progress!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        );
-        pb.set_length(missing_bytes);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
-    };
-
     let request = Request::new(get.hash(), query);
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket_fsm(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
+            get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        GetInteractive::Hash { opts, token, .. } => get::run_fsm(request, token, opts).await?,
+        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -1046,7 +1035,17 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         let mut collection_data = Vec::with_capacity(size as usize);
         let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
         let collection = Collection::from_bytes(&collection_data)?;
-        init_download_progress(collection.total_entries(), collection.total_blobs_size());
+        let count = collection.total_entries();
+        let missing_bytes = collection.total_blobs_size();
+        progress!("{} Downloading ...", style("[3/3]").bold().dim());
+        progress!(
+            "  {} file(s) with total transfer size {}",
+            count,
+            HumanBytes(missing_bytes)
+        );
+        pb.set_length(missing_bytes);
+        pb.reset();
+        pb.set_draw_target(ProgressDrawTarget::stderr());
         (curr.next(), collection.into_inner())
     };
     // read all the children

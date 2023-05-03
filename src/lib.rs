@@ -163,7 +163,7 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            let response = get::run_fsm(Request::all(hash), token, opts).await?;
+            let response = get::run(Request::all(hash), token, opts).await?;
             let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
@@ -273,8 +273,7 @@ mod tests {
             keylog: true,
         };
 
-        let response =
-            get::run_fsm(Request::all(collection_hash), provider.auth_token(), opts).await?;
+        let response = get::run(Request::all(collection_hash), provider.auth_token(), opts).await?;
         let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
         assert_eq!(num_blobs, collection.blobs().len());
         for (i, (name, path, hash)) in expects.into_iter().enumerate() {
@@ -374,7 +373,7 @@ mod tests {
             }
         });
 
-        let response = get::run_fsm(
+        let response = get::run(
             Request::all(hash),
             auth_token,
             get::Options {
@@ -417,7 +416,7 @@ mod tests {
         let provider_addr = provider.local_address();
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-            let request = get::run_fsm(
+            let request = get::run(
                 Request::all(hash),
                 auth_token,
                 get::Options {
@@ -462,7 +461,7 @@ mod tests {
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let request = get::run_fsm(
+            let request = get::run(
                 Request::all(hash),
                 auth_token,
                 get::Options {
@@ -491,8 +490,7 @@ mod tests {
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let response =
-                get::run_ticket_fsm(&ticket, Request::all(ticket.hash()), true, 16).await?;
+            let response = get::run_ticket(&ticket, Request::all(ticket.hash()), true, 16).await?;
             aggregate_get_response_fsm(response).await
         })
         .await
@@ -592,7 +590,7 @@ mod tests {
             })
             .await?;
             let request = Request::all(hash);
-            let stream = get::run_connection_fsm(connection, request, auth_token);
+            let stream = get::run_connection(connection, request, auth_token);
             let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())
