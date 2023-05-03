@@ -544,7 +544,7 @@ impl AsyncUdpSocket for Conn {
         let transmits: Vec<_> = transmits
             .iter()
             .map(|t| {
-                tracing::error!(
+                trace!(
                     "[QUINN] -> {} ({}b) {:?} ({})",
                     t.destination,
                     t.contents.len(),
@@ -626,12 +626,7 @@ impl AsyncUdpSocket for Conn {
                             bytes,
                             meta,
                         } => {
-                            tracing::error!(
-                                "[QUINN] <- {:?} {:?} ({}b)",
-                                source,
-                                meta,
-                                bytes.len()
-                            );
+                            trace!("[QUINN] <- {:?} {:?} ({}b)", source, meta, bytes.len());
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
                         }
@@ -660,7 +655,7 @@ impl AsyncUdpSocket for Conn {
                 num_msgs
             );
             for m in metas {
-                tracing::error!(
+                trace!(
                     "[QUINN] <- {} ({}b) ({}) ({:?})",
                     m.addr,
                     m.len,
@@ -1453,7 +1448,7 @@ impl Actor {
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
         for content in contents {
-            tracing::error!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
+            trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
 
             match derp_client.send(peer.clone(), content).await {
                 Ok(_) => {
@@ -2886,7 +2881,7 @@ impl ReaderState {
                         (self, ReadResult::Continue, ReadAction::None)
                     }
                     derp::ReceivedMessage::ReceivedPacket { source, data } => {
-                        tracing::error!("[DERP] <- {} ({}b)", self.region, data.len());
+                        trace!("[DERP] <- {} ({}b)", self.region, data.len());
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
                         let action = if self.last_packet_src.is_none()
@@ -3195,8 +3190,6 @@ mod tests {
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
-            let me = &eps[my_idx];
-
             let mut peers = Vec::new();
 
             for (i, peer) in ms.iter().enumerate() {

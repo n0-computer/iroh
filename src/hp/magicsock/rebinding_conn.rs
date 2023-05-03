@@ -11,7 +11,7 @@ use async_lock::RwLock;
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -205,7 +205,7 @@ impl AsyncUdpSocket for UdpSocket {
                 inner.send(io.into(), state, transmits)
             }) {
                 for t in transmits.iter().take(res) {
-                    tracing::error!(
+                    trace!(
                         "[UDP] -> {} src: {:?} ({}b)",
                         t.destination,
                         t.src_ip,
@@ -232,7 +232,7 @@ impl AsyncUdpSocket for UdpSocket {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
-                    tracing::error!(
+                    trace!(
                         "[UDP] <- {} dest: {:?} ({}b)",
                         meta.addr,
                         meta.dst_ip,
