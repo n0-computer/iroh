@@ -57,8 +57,8 @@ mod database;
 mod ticket;
 
 pub use database::Database;
-#[cfg(cli)]
-pub use database::Snapshot;
+#[cfg(feature = "cli")]
+pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;

@@ -22,6 +22,7 @@ use quic_rpc::{RpcClient, ServiceEndpoint};
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
 
+use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
@@ -542,10 +543,16 @@ async fn main_impl() -> Result<()> {
             rpc_port,
         } => {
             let iroh_data_root = iroh_data_root()?;
+            let marker = iroh_data_root.join(FNAME_PATHS);
             let db = {
-                if iroh_data_root.is_dir() {
+                if iroh_data_root.is_dir() && marker.exists() {
                     // try to load db
-                    Database::load(&iroh_data_root).await?
+                    Database::load(&iroh_data_root).await.with_context(|| {
+                        format!(
+                            "Failed to load iroh database from {}",
+                            iroh_data_root.display()
+                        )
+                    })?
                 } else {
                     // directory does not exist, create an empty db
                     Database::default()
@@ -862,7 +869,7 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
             if let Some(ref outpath) = out {
                 tokio::fs::create_dir_all(outpath)
                     .await
-                    .context("Unable to create directory {outpath}")?;
+                    .with_context(|| format!("Unable to create directory {}", outpath.display()))?;
                 let dirpath = std::path::PathBuf::from(outpath);
                 let filepath = dirpath.join(name);
 
@@ -884,9 +891,9 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
                 // Rename temp file, to target name
                 let filepath2 = filepath.clone();
                 if let Some(parent) = filepath2.parent() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .context("Unable to create directory {parent}")?;
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("Unable to create directory {}", parent.display())
+                    })?;
                 }
                 tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                     .await?

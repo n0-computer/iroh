@@ -16,6 +16,15 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+/// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
+const FNAME_OUTBOARDS: &str = "outboards";
+
+/// File name of directory inside `IROH_DATA_DIR` where collections are stored.
+const FNAME_COLLECTIONS: &str = "collections";
+
+/// File name inside `IROH_DATA_DIR` where paths to data are stored.
+pub const FNAME_PATHS: &str = "paths.bin";
+
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
@@ -66,9 +75,9 @@ struct DataPaths {
 impl DataPaths {
     fn new(data_dir: PathBuf) -> Self {
         Self {
-            outboards_dir: data_dir.join("outboards"),
-            collections_dir: data_dir.join("collections"),
-            paths_file: data_dir.join("paths.bin"),
+            outboards_dir: data_dir.join(FNAME_OUTBOARDS),
+            collections_dir: data_dir.join(FNAME_COLLECTIONS),
+            paths_file: data_dir.join(FNAME_PATHS),
             data_dir,
         }
     }
@@ -97,7 +106,8 @@ impl Snapshot<io::Error> {
             paths_file,
             ..
         } = DataPaths::new(data_dir.as_ref().to_path_buf());
-        let paths = fs::read(paths_file)?;
+        let paths = fs::read(&paths_file)
+            .with_context(|| format!("Failed reading {}", paths_file.display()))?;
         let paths = postcard::from_bytes::<Vec<(Hash, u64, Option<PathBuf>)>>(&paths)?;
         let hashes = paths
             .iter()
@@ -107,7 +117,13 @@ impl Snapshot<io::Error> {
             let path = outboards_dir.join(format_hash(&hash));
             fs::read(path).map(|x| (hash, Bytes::from(x)))
         });
-        let collections = fs::read_dir(collections_dir)?
+        let collections = fs::read_dir(&collections_dir)
+            .with_context(|| {
+                format!(
+                    "Failed reading collections directory {}",
+                    collections_dir.display()
+                )
+            })?
             .map(move |entry| {
                 let entry = entry?;
                 let path = entry.path();
@@ -237,7 +253,7 @@ impl Database {
     }
 
     /// Load a database from disk.
-    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> io::Result<Self> {
+    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> Result<Self> {
         let Snapshot {
             outboards,
             collections,
@@ -245,10 +261,12 @@ impl Database {
         } = snapshot;
         let outboards = outboards
             .collect::<result::Result<HashMap<_, _>, E>>()
-            .map_err(Into::into)?;
+            .map_err(Into::into)
+            .context("Failed reading outboards")?;
         let collections = collections
             .collect::<result::Result<HashMap<_, _>, E>>()
-            .map_err(Into::into)?;
+            .map_err(Into::into)
+            .context("Failed reading collections")?;
         let mut db = HashMap::new();
         for (hash, size, path) in paths {
             if let (Some(path), Some(outboard)) = (path, outboards.get(&hash)) {
