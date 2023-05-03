@@ -140,7 +140,7 @@ pub struct PingResult {
     /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
     pub derp_region_id: Option<usize>,
     /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
-    pub derp_region_code: String,
+    pub derp_region_code: Option<String>,
     /// Whether the ping request error is due to it being a ping to the local node.
     pub is_local_ip: Option<bool>,
 
@@ -150,17 +150,12 @@ pub struct PingResult {
 
 #[derive(Debug, PartialEq)]
 pub struct Node {
-    pub id: u64,
-    pub stable_id: String,
     // DNS name
     pub name: Option<String>,
 
     pub key: key::node::PublicKey,
-    pub disco_key: key::disco::PublicKey,
     /// IP addresses of this Node directly
     pub addresses: Vec<IpAddr>,
-    /// range of IP addresses to route to this node
-    pub allowed_ips: Vec<IpAddr>,
     // IP+port (public via STUN, and local LANs)
     pub endpoints: Vec<SocketAddr>,
     /// DERP-in-IP:port ("127.3.3.40:N") endpoint

@@ -111,6 +111,12 @@ impl From<PublicKey> for PeerId {
     }
 }
 
+impl From<PeerId> for PublicKey {
+    fn from(key: PeerId) -> Self {
+        key.0
+    }
+}
+
 impl Debug for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PeerId({})", util::encode(self.0.as_bytes()))

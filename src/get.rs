@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
+use crate::hp::cfg::DERP_MAGIC_IP;
+use crate::hp::{cfg, netmap};
 use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{
     read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
@@ -51,23 +53,37 @@ impl Default for Options {
 }
 
 /// Create a quinn client endpoint
-pub fn make_client_endpoint(
+pub async fn make_client_endpoint(
     bind_addr: SocketAddr,
     peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
-) -> Result<quinn::Endpoint> {
+) -> Result<(quinn::Endpoint, crate::hp::magicsock::Conn)> {
     let keypair = Keypair::generate();
 
     let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+
+    let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+        port: bind_addr.port(),
+        private_key: keypair.secret().clone().into(),
+        ..Default::default()
+    })
+    .await?;
+
+    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        None,
+        conn.clone(),
+        quinn::TokioRuntime,
+    )?;
+
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     client_config.transport_config(Arc::new(transport_config));
 
     endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+    Ok((endpoint, conn))
 }
 
 /// Establishes a QUIC connection to the provided peer.
@@ -76,11 +92,38 @@ async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
     };
-    let endpoint =
-        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false)?;
+    let (endpoint, magicsock) =
+        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false).await?;
 
-    debug!("connecting to {}", opts.addr);
-    let connect = endpoint.connect(opts.addr, "localhost")?;
+    // Only a single peer in our network currently.
+    let peer_id = opts.peer_id.expect("need peer");
+    let node_key: crate::hp::key::node::PublicKey = peer_id.into();
+    const DEFAULT_DERP_REGION: u16 = 1;
+
+    magicsock
+        .set_network_map(netmap::NetworkMap {
+            peers: vec![cfg::Node {
+                name: None,
+                addresses: vec![opts.addr.ip()],
+                key: node_key.clone(),
+                endpoints: vec![opts.addr],
+                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                created: Instant::now(),
+                hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                keep_alive: false,
+                expired: false,
+                online: None,
+                last_seen: None,
+            }],
+        })
+        .await?;
+
+    let addr = magicsock
+        .get_mapping_addr(&node_key)
+        .await
+        .expect("just inserted");
+    debug!("connecting to {}: (via {} - {})", peer_id, addr, opts.addr);
+    let connect = endpoint.connect(addr, "localhost")?;
     let connection = connect.await.context("failed connecting to provider")?;
 
     Ok(connection)

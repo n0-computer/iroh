@@ -2,19 +2,16 @@ use std::{
     fmt::Debug,
     io,
     net::SocketAddr,
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 use anyhow::bail;
-use futures::{ready, Future, FutureExt};
+use async_lock::RwLock;
+use futures::ready;
 use quinn::AsyncUdpSocket;
-use tokio::{
-    io::Interest,
-    sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
-};
-use tracing::{debug, info};
+use tokio::io::Interest;
+use tracing::{debug, info, warn};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -23,58 +20,21 @@ use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 #[derive(Clone)]
 pub struct RebindingUdpConn {
     pub(super) pconn: Arc<RwLock<UdpSocket>>,
-
-    /// Used to aquire a read lock to inner in poll functions.
-    /// Sad type
-    /// - std::sync::Mutex -> lock in poll methods, as poll_recv does not take &mut self, but rather &self.
-    /// - Option -> it needs to be taken out/might not exist.
-    /// - Box -> unameable Future
-    /// - Send + Sync -> so that this struct is still Send and Sync
-    /// - OwnedRwLock{Read|Write}Guard -> need 'static lifetime for the guard
-    read_mutex: Arc<
-        std::sync::Mutex<
-            Option<
-                Pin<
-                    Box<
-                        dyn Future<Output = OwnedRwLockReadGuard<UdpSocket>>
-                            + Send
-                            + Sync
-                            + 'static,
-                    >,
-                >,
-            >,
-        >,
-    >,
-    write_mutex: Arc<
-        std::sync::Mutex<
-            Option<
-                Pin<
-                    Box<
-                        dyn Future<Output = OwnedRwLockWriteGuard<UdpSocket>>
-                            + Send
-                            + Sync
-                            + 'static,
-                    >,
-                >,
-            >,
-        >,
-    >,
+    waker: Arc<std::sync::Mutex<Option<Waker>>>,
 }
 
 impl Debug for RebindingUdpConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RebindingUdpConn")
             .field("pconn", &self.pconn)
-            .field("read_mutex", &"..")
-            .field("write_mutex", &"..")
+            .field("wakers_mutex", &"..")
             .finish()
     }
 }
 
 impl RebindingUdpConn {
     pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
-        let pconn = tokio::task::block_in_place(|| (self.pconn.blocking_read()));
-
+        let pconn = self.pconn.read_blocking();
         pconn.io.clone()
     }
 
@@ -93,7 +53,18 @@ impl RebindingUdpConn {
         let mut inner = self.pconn.write().await;
         let pconn = bind(Some(&mut inner), port, network, cur_port_fate).await?;
         *inner = pconn;
+        drop(inner);
+
+        // wakeup wakers
+        self.wakeup();
+
         Ok(())
+    }
+
+    fn wakeup(&self) {
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
     }
 
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
@@ -122,29 +93,16 @@ impl RebindingUdpConn {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let mut writemutex = self.write_mutex.lock().unwrap();
-
-        if writemutex.is_none() {
-            // Fast path, see if we can just grab the lock
-            if let Ok(ref mut pconn) = self.pconn.try_write() {
-                return pconn.poll_send(state, cx, transmits);
-            }
-
-            // Otherwise prepare a lock.
-            let fut = Box::pin(self.pconn.clone().write_owned());
-            writemutex.replace(fut);
+        if let Some(ref mut pconn) = self.pconn.try_write() {
+            let res = pconn.poll_send(state, cx, transmits);
+            drop(pconn);
+            self.wakeup();
+            return res;
         }
 
-        // Waiting on aquiring the lock
-        let mut fut = writemutex.take().expect("just set");
-
-        match fut.poll_unpin(cx) {
-            Poll::Pending => {
-                writemutex.replace(fut);
-                Poll::Pending
-            }
-            Poll::Ready(mut pconn) => pconn.poll_send(state, cx, transmits),
-        }
+        // Store the waker and return pending
+        self.waker.lock().unwrap().replace(cx.waker().clone());
+        Poll::Pending
     }
 
     pub fn poll_recv(
@@ -153,28 +111,17 @@ impl RebindingUdpConn {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        let mut read_mutex = self.read_mutex.lock().unwrap();
-
-        if read_mutex.is_none() {
-            // Fast path, see if we can just grab the lock
-            if let Ok(ref mut pconn) = self.pconn.try_read() {
-                return pconn.poll_recv(cx, bufs, meta);
-            }
-
-            // Otherwise prepare a lock.
-            let fut = Box::pin(self.pconn.clone().read_owned());
-            read_mutex.replace(fut);
+        // Fast path, see if we can just grab the lock
+        if let Some(ref mut pconn) = self.pconn.try_read() {
+            let res = pconn.poll_recv(cx, bufs, meta);
+            drop(pconn);
+            self.wakeup();
+            return res;
         }
 
-        // Waiting on aquiring the lock
-        let mut fut = read_mutex.take().expect("just set");
-        match fut.poll_unpin(cx) {
-            Poll::Pending => {
-                read_mutex.replace(fut);
-                return Poll::Pending;
-            }
-            Poll::Ready(pconn) => pconn.poll_recv(cx, bufs, meta),
-        }
+        // Store the waker and return pending
+        self.waker.lock().unwrap().replace(cx.waker().clone());
+        Poll::Pending
     }
 
     pub async fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -182,16 +129,10 @@ impl RebindingUdpConn {
         Ok(addr)
     }
 
-    pub fn local_addr_blocking(&self) -> io::Result<SocketAddr> {
-        let addr = tokio::task::block_in_place(|| self.pconn.blocking_read()).local_addr()?;
-        Ok(addr)
-    }
-
     pub(super) fn from_socket(pconn: UdpSocket) -> Self {
         RebindingUdpConn {
             pconn: Arc::new(RwLock::new(pconn)),
-            read_mutex: Default::default(),
-            write_mutex: Default::default(),
+            waker: Default::default(),
         }
     }
 }
@@ -232,7 +173,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.local_addr_blocking()
+        self.pconn.read_blocking().local_addr()
     }
 }
 
@@ -247,9 +188,15 @@ impl AsyncUdpSocket for UdpSocket {
             "sending {:?} transmits",
             transmits
                 .iter()
-                .map(|t| format!("dest: {:?}, bytes: {}", t.destination, t.contents.len()))
+                .map(|t| format!(
+                    "dest: {:?}, src: {:?} bytes: {}",
+                    t.destination,
+                    t.src_ip,
+                    t.contents.len()
+                ))
                 .collect::<Vec<_>>()
         );
+
         let inner = &mut self.inner;
         let io = &self.io;
         loop {
@@ -257,7 +204,15 @@ impl AsyncUdpSocket for UdpSocket {
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
                 inner.send(io.into(), state, transmits)
             }) {
-                debug!("sent {:?}", res);
+                for t in transmits.iter().take(res) {
+                    info!(
+                        "[UDP] -> {} src: {:?} ({}b)",
+                        t.destination,
+                        t.src_ip,
+                        t.contents.len()
+                    );
+                }
+
                 return Poll::Ready(Ok(res));
             }
         }
@@ -276,7 +231,13 @@ impl AsyncUdpSocket for UdpSocket {
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
-                debug!("received {:?}", res);
+                for meta in meta.iter().take(res) {
+                    info!(
+                        "[UDP] <- {} dest: {:?} ({}b)",
+                        meta.addr, meta.dst_ip, meta.len
+                    );
+                }
+
                 return Poll::Ready(Ok(res));
             }
         }
@@ -333,7 +294,7 @@ async fn bind(
                 return Ok(pconn);
             }
             Err(err) => {
-                info!(
+                warn!(
                     "bind_socket: unable to bind {:?} port {}: {:?}",
                     network, port, err
                 );
@@ -356,13 +317,13 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket
     )?;
 
     if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-        info!(
+        warn!(
             "failed to set recv_buffer_size to {}: {:?}",
             SOCKET_BUFFER_SIZE, err
         );
     }
     if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-        info!(
+        warn!(
             "failed to set send_buffer_size to {}: {:?}",
             SOCKET_BUFFER_SIZE, err
         );
@@ -406,7 +367,7 @@ mod tests {
         Ok((quic_ep, key))
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_rebinding_conn_send_recv() -> Result<()> {
         let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
         let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);

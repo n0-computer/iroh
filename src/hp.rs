@@ -5,9 +5,8 @@ pub mod ping;
 pub mod portmapper;
 pub mod stun;
 
-mod cfg;
-mod clock;
+pub mod cfg;
 mod disco;
-mod hostinfo;
+pub mod hostinfo;
 pub mod key;
-mod netmap;
+pub mod netmap;

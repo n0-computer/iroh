@@ -288,17 +288,18 @@ impl Client {
         }
     }
 
-    async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
-        let region = {
-            if let Some(get_region) = &self.inner.get_region {
-                get_region()
-                    .await
-                    .expect("Cannot connection client: DERP region is unknown")
-            } else {
-                return Err(ClientError::DerpRegionNotAvail);
-            }
-        };
+    async fn current_region(&self) -> Result<DerpRegion, ClientError> {
+        if let Some(get_region) = &self.inner.get_region {
+            let region = get_region()
+                .await
+                .expect("Cannot connection client: DERP region is unknown");
+            return Ok(region);
+        }
+        Err(ClientError::DerpRegionNotAvail)
+    }
 
+    async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
+        let region = self.current_region().await?;
         let (tcp_stream, _node) = self.dial_region(region).await?;
 
         let local_addr = tcp_stream
@@ -564,6 +565,9 @@ impl Client {
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
+                    let region = self.current_region().await?;
+                    tracing::info!("[DERP] <- {} ({:?})", self.target_string(&region), msg);
+
                     if let ReceivedMessage::Pong(ping) = msg {
                         if let Some(chan) = self.unregister_ping(ping).await {
                             if let Err(_) = chan.send(()) {

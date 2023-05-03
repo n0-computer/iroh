@@ -2,44 +2,19 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 
-use std::collections::HashSet;
-use std::{net::SocketAddr, time::Duration};
-
-use tokio::time::Instant;
+use std::time::Duration;
 
 mod conn;
 mod endpoint;
 mod rebinding_conn;
 mod timer;
 
-pub use self::conn::Conn;
+pub use self::conn::{Conn, Options};
 pub use self::timer::Timer;
-
-use self::endpoint::Endpoint;
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
-
-/// All the information magicsock tracks about a particular peer.
-#[derive(Clone, Debug)]
-pub struct PeerInfo {
-    pub ep: Endpoint,
-    /// An inverted version of `PeerMap.by_ip_port` (below), so
-    /// that when we're deleting this node, we can rapidly find out the
-    /// keys that need deleting from `PeerMap::by_ip_port` without having to
-    /// iterate over every `SocketAddr known for any peer.
-    pub ip_ports: HashSet<SocketAddr>, // TODO: figure out clone behaviour
-}
-
-impl PeerInfo {
-    pub fn new(ep: Endpoint) -> Self {
-        PeerInfo {
-            ep,
-            ip_ports: Default::default(),
-        }
-    }
-}
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
 /// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
@@ -71,37 +46,10 @@ const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 /// resetting the counter, as the first pings likely didn't through the firewall)
 const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
 /// How many `PongReply` values we keep per `EndpointState`.
 const PONG_HISTORY_COUNT: usize = 64;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PongReply {
-    latency: Duration,
-    /// When we received the pong.
-    pong_at: Instant,
-    // The pong's src (usually same as endpoint map key).
-    from: SocketAddr,
-    // What they reported they heard.
-    pong_src: SocketAddr,
-}
-
-#[derive(Debug)]
-pub struct SentPing {
-    pub to: SocketAddr,
-    pub at: Instant,
-    // timeout timer
-    pub timer: Timer,
-    pub purpose: DiscoPingPurpose,
-}
-
-/// The reason why a discovery ping message was sent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiscoPingPurpose {
-    /// The purpose of a ping was to see if a path was valid.
-    Discovery,
-    /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
-    Cli,
-}
 
 // TODO: metrics
 // var (

@@ -197,8 +197,8 @@ async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint =
-        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
+    let (endpoint, _) =
+        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false).await?; // TODO: don't use magicsock
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
@@ -558,7 +558,7 @@ async fn main_impl() -> Result<()> {
                     let stream = controller.server_streaming(ProvideRequest { path }).await?;
                     let (hash, entries) = aggregate_add_response(stream).await?;
                     print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash)?;
+                    let ticket = provider.ticket(hash).await?;
                     println!("All-in-one ticket: {ticket}");
                     anyhow::Ok(tmp_path)
                 })
@@ -691,12 +691,13 @@ async fn provide(
         builder
             .rpc_endpoint(rpc_endpoint)
             .keypair(keypair)
-            .spawn()?
+            .spawn()
+            .await?
     } else {
-        builder.keypair(keypair).spawn()?
+        builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {}", provider.local_address());
+    println!("Listening address: {}", provider.local_address().await?);
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!();

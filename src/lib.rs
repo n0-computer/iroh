@@ -48,8 +48,14 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn basics() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
@@ -130,7 +136,10 @@ mod tests {
 
         let (db, hash) =
             provider::create_collection(vec![provider::DataSource::File(path)]).await?;
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
 
         async fn run_client(
             hash: Hash,
@@ -176,7 +185,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address(),
+                provider.local_address().await.unwrap(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -237,7 +246,10 @@ mod tests {
         let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
@@ -264,8 +276,10 @@ mod tests {
             events
         });
 
+        let addrs = dbg!(provider.listen_addresses().await?);
+        let addr = *addrs.first().unwrap();
         let opts = get::Options {
-            addr: dbg!(provider.local_address()),
+            addr,
             peer_id: Some(provider.peer_id()),
             keylog: true,
         };
@@ -359,9 +373,10 @@ mod tests {
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
+            .await
             .unwrap();
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_address().await.unwrap();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -432,9 +447,10 @@ mod tests {
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .spawn()?;
+            .spawn()
+            .await?;
         let auth_token = provider.auth_token();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_address().await?;
 
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -472,6 +488,7 @@ mod tests {
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
             .spawn()
+            .await
         {
             Ok(provider) => provider,
             Err(_) => {
@@ -481,7 +498,7 @@ mod tests {
             }
         };
         let auth_token = provider.auth_token();
-        let addr = provider.local_address();
+        let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(
             Duration::from_secs(10),
@@ -513,9 +530,10 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         let mut on_connected = false;
         let mut on_collection = false;
         let mut on_blob = false;

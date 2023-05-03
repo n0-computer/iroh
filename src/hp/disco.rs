@@ -69,7 +69,7 @@ impl TryFrom<u8> for MessageType {
 
 const MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;
 
-pub fn encode_message(sender: &key::disco::PublicKey, seal: Vec<u8>) -> Vec<u8> {
+pub fn encode_message(sender: &key::node::PublicKey, seal: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(MESSAGE_HEADER_LEN);
     out.extend_from_slice(MAGIC.as_bytes());
     out.extend_from_slice(sender.as_bytes());
@@ -385,23 +385,23 @@ mod tests {
             node_key: sender_node_key.clone(),
         });
 
-        let sender_disco_key = key::disco::SecretKey::generate();
-        let recv_disco_key = key::disco::SecretKey::generate();
-        let shared = sender_disco_key.shared(&recv_disco_key.public());
+        let sender_disco_key = key::node::SecretKey::generate();
+        let recv_disco_key = key::node::SecretKey::generate();
+        let shared = sender_disco_key.shared(&recv_disco_key.public_key());
         let seal = shared.seal(&msg.as_bytes());
-        let bytes = encode_message(&sender_disco_key.public(), seal.clone());
+        let bytes = encode_message(&sender_disco_key.public_key(), seal.clone());
 
         assert!(looks_like_disco_wrapper(&bytes));
         assert_eq!(
             source_and_box(&bytes).unwrap().0,
-            sender_disco_key.public().as_ref()
+            sender_disco_key.public_key().as_ref()
         );
 
         let (raw_key, seal_back) = source_and_box(&bytes).unwrap();
-        assert_eq!(raw_key, sender_disco_key.public().as_ref());
+        assert_eq!(raw_key, sender_disco_key.public_key().as_ref());
         assert_eq!(seal_back, seal);
 
-        let shared_recv = recv_disco_key.shared(&sender_disco_key.public());
+        let shared_recv = recv_disco_key.shared(&sender_disco_key.public_key());
         let open_seal = shared_recv.open(seal_back).unwrap();
         let msg_back = Message::from_bytes(&open_seal).unwrap();
         assert_eq!(msg_back, msg);

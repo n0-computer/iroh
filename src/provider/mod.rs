@@ -174,7 +174,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
-    pub fn spawn(self) -> Result<Provider> {
+    pub async fn spawn(self) -> Result<Provider> {
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -190,8 +190,19 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             .transport_config(Arc::new(transport_config))
             .concurrent_connections(MAX_CONNECTIONS);
 
-        let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
-        let listen_addr = endpoint.local_addr().unwrap();
+        let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+            port: self.bind_addr.port(),
+            private_key: self.keypair.secret().clone().into(),
+            ..Default::default()
+        })
+        .await?;
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            conn.clone(),
+            quinn::TokioRuntime,
+        )?;
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
@@ -199,7 +210,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(ProviderInner {
             db: self.db,
-            listen_addr,
+            conn,
             keypair: self.keypair,
             auth_token: self.auth_token,
             events,
@@ -309,7 +320,7 @@ pub struct Provider {
 #[derive(Debug)]
 struct ProviderInner {
     db: Database,
-    listen_addr: SocketAddr,
+    conn: crate::hp::magicsock::Conn,
     keypair: Keypair,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
@@ -387,15 +398,15 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> SocketAddr {
-        self.inner.listen_addr
+    pub async fn local_address(&self) -> Result<SocketAddr> {
+        self.inner.conn.local_addr().await
     }
 
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
-    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.inner.listen_addr)
+    pub async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(self.local_address().await?)
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -424,9 +435,9 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = self.listen_addresses()?;
+        let addrs = self.listen_addresses().await?;
         Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
     }
 
@@ -549,13 +560,14 @@ impl RpcHandler {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
             auth_token: Box::new(self.inner.auth_token),
-            listen_addr: Box::new(self.inner.listen_addr),
+            listen_addr: Box::new(self.inner.conn.local_addr().await.unwrap()),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
+            addrs: find_local_addresses(self.inner.conn.local_addr().await.unwrap())
+                .unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -1298,9 +1310,10 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }
