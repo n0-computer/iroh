@@ -5,7 +5,7 @@
 //! to store the received data.
 use std::error::Error;
 use std::fmt::{self, Debug};
-use std::io::{self, Cursor, SeekFrom};
+use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,24 +15,22 @@ use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
-use crate::tokio_util::{SeekOptimized, TrackingReader, TrackingWriter};
+use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, Context, Result};
 use bao_tree::io::error::DecodeError;
-use bao_tree::io::tokio::DecodeResponseStreamRef;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
-use bao_tree::{BaoTree, ByteNum, ChunkNum};
+use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
 use default_net::Interface;
-use futures::{Future, StreamExt};
+use futures::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, debug_span, error};
-use tracing_futures::Instrument;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tracing::{debug, error};
 
 pub use crate::util::Hash;
 
@@ -113,38 +111,14 @@ impl Stats {
 }
 
 /// Gets a collection and all its blobs using a [`Ticket`].
-pub async fn run_ticket<A, C, FutA, FutC, U>(
+pub async fn run_ticket_fsm(
     ticket: &Ticket,
     request: Request,
     keylog: bool,
     max_concurrent: u8,
-    on_connected: A,
-    on_blob: C,
-    user: U,
-) -> Result<(U, Stats)>
-where
-    A: FnOnce() -> FutA,
-    FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData<U>) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult<U>>>,
-{
-    let span = debug_span!("get", hash=%ticket.hash());
-    async move {
-        let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
-        let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection(
-            connection,
-            request,
-            ticket.token(),
-            on_connected,
-            on_blob,
-            user,
-        )
-        .instrument(span)
-        .await
-    }
-    .instrument(span)
-    .await
+) -> Result<get_response_machine::AtInitial> {
+    let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
+    Ok(run_connection_fsm(connection, request, ticket.token()))
 }
 
 async fn dial_ticket(
@@ -199,275 +173,6 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
         }
     }
     false
-}
-
-/// Get a collection and all its blobs from a provider
-pub async fn run<A, C, FutA, FutC, U>(
-    request: Request,
-    auth_token: AuthToken,
-    opts: Options,
-    on_connected: A,
-    on_blob: C,
-    user: U,
-) -> Result<(U, Stats)>
-where
-    A: FnOnce() -> FutA,
-    FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData<U>) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult<U>>>,
-{
-    let span = debug_span!("get", %request.hash);
-    async move {
-        let connection = dial_peer(opts).await?;
-        let span = debug_span!("connection", remote_addr=%connection.remote_address());
-        run_connection(connection, request, auth_token, on_connected, on_blob, user)
-            .instrument(span)
-            .await
-    }
-    .instrument(span)
-    .await
-}
-
-/// State that gets threaded through each async on_blob call.
-///
-/// This is guaranteed to be accessed sequentially, and therefore does not need
-/// to be synchronized. This state includes the (hidden) quinn RecvStream as well
-/// as custom user-provided state.
-#[derive(Debug)]
-pub struct OnBlobData<T> {
-    /// the offset of the current blob. 0 is for the item itself (the collection)
-    offset: u64,
-    /// the total size of the blob
-    size: u64,
-    /// the ranges we requested
-    ranges: RangeSet2<ChunkNum>,
-    /// out: limit on the collection
-    limit: Option<u64>,
-    /// check if the blob was consumed
-    completed: bool,
-    /// the reader for the encoded range
-    reader: TrackingReader<RecvStream>,
-    /// user data
-    pub user: T,
-}
-
-///
-#[derive(Debug)]
-pub struct OnBlobResult<T> {
-    reader: TrackingReader<RecvStream>,
-    user: T,
-    limit: Option<u64>,
-}
-
-impl<U> OnBlobData<U> {
-    /// the offset of the current blob. 0 is for the item itself (the collection)
-    /// child offsets start with 1
-    pub fn offset(&self) -> u64 {
-        self.offset
-    }
-
-    /// the total size of the blob
-    pub fn size(&self) -> u64 {
-        self.size
-    }
-
-    /// true if this is the root blob
-    pub fn is_root(&self) -> bool {
-        self.offset == 0
-    }
-
-    ///
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = Some(limit)
-    }
-
-    /// child offset
-    pub fn child_offset(&self) -> Option<u64> {
-        self.offset.checked_sub(1)
-    }
-
-    /// the bao tree for this blob
-    pub fn tree(&self) -> BaoTree {
-        BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE)
-    }
-
-    /// Read the entire blob into a `Vec<u8>`
-    ///
-    /// Make sure to check the size of the blob before calling this.
-    pub async fn read_blob(&mut self, hash: Hash) -> anyhow::Result<Vec<u8>> {
-        let mut target = Vec::new();
-        self.write_all(hash, Cursor::new(&mut target)).await?;
-        Ok(target)
-    }
-
-    /// Read the entire blob into a `Vec<u8>` and then decode it as a Collection
-    pub async fn read_collection(&mut self, hash: Hash) -> anyhow::Result<Collection> {
-        let data = self.read_blob(hash).await?;
-        Collection::from_bytes(&data)
-    }
-
-    /// The ranges we requested
-    pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
-        &self.ranges
-    }
-
-    /// End working with the blob
-    pub fn end(self) -> anyhow::Result<OnBlobResult<U>> {
-        anyhow::ensure!(self.completed, "blob was not fully consumed or drained");
-        Ok(OnBlobResult {
-            reader: self.reader,
-            user: self.user,
-            limit: self.limit,
-        })
-    }
-
-    /// for testing
-    #[cfg(test)]
-    pub fn end_unchecked(self) -> anyhow::Result<OnBlobResult<U>> {
-        Ok(OnBlobResult {
-            reader: self.reader,
-            user: self.user,
-            limit: self.limit,
-        })
-    }
-
-    /// Shortcut for `write_all_with_outboard` where outboard is None
-    pub async fn write_all<O>(
-        &mut self,
-        hash: Hash,
-        target: O,
-    ) -> std::result::Result<(), DecodeError>
-    where
-        O: AsyncWrite + AsyncSeek + Unpin,
-    {
-        self.write_all_with_outboard::<O, O, _>(hash, target, None, |_, _| {})
-            .await
-    }
-
-    fn stream(&mut self, hash: Hash) -> DecodeResponseStreamRef<&mut TrackingReader<RecvStream>> {
-        DecodeResponseStreamRef::new_with_tree(
-            hash.into(),
-            self.tree(),
-            &self.ranges,
-            &mut self.reader,
-        )
-    }
-
-    /// Just validate and drain the stream
-    pub async fn drain(&mut self, hash: Hash) -> std::result::Result<(), DecodeError> {
-        if self.completed {
-            return Err(DecodeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "already completed",
-            )));
-        }
-        let mut stream = self.stream(hash);
-        while let Some(msg) = stream.next().await {
-            msg?;
-        }
-        drop(stream);
-        self.completed = true;
-        Ok(())
-    }
-
-    /// concatenate all the data into a single writer
-    pub async fn concatenate<W, OW>(
-        &mut self,
-        hash: Hash,
-        mut target: W,
-        mut on_write: OW,
-    ) -> std::result::Result<(), DecodeError>
-    where
-        W: AsyncWrite + Unpin,
-        OW: FnMut(u64, usize),
-    {
-        if self.completed {
-            return Err(DecodeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "already completed",
-            )));
-        }
-        let mut stream = self.stream(hash);
-        while let Some(chunk) = stream.next().await {
-            if let DecodeResponseItem::Leaf(leaf) = chunk? {
-                on_write(leaf.offset.0, leaf.data.len());
-                target.write_all(&leaf.data).await?;
-            }
-        }
-        drop(stream);
-        self.completed = true;
-        Ok(())
-    }
-
-    /// write all the data to a file or buffer
-    ///
-    /// `target` is the main file
-    /// `outboard` is an optional outboard file
-    /// `on_write` is a callback for writes, e.g. to update a progress bar
-    pub async fn write_all_with_outboard<T, O, OW>(
-        &mut self,
-        hash: Hash,
-        target: T,
-        outboard: Option<O>,
-        mut on_write: OW,
-    ) -> std::result::Result<(), DecodeError>
-    where
-        T: AsyncWrite + AsyncSeek + Unpin,
-        O: AsyncWrite + AsyncSeek + Unpin,
-        OW: FnMut(u64, usize),
-    {
-        if self.completed {
-            return Err(DecodeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "already completed",
-            )));
-        }
-        let mut target = SeekOptimized::new(target);
-        let mut outboard = outboard.map(SeekOptimized::new);
-        let tree = self.tree();
-        let mut reader = DecodeResponseStreamRef::new_with_tree(
-            hash.into(),
-            tree,
-            &self.ranges,
-            &mut self.reader,
-        );
-        if let Some(outboard) = outboard.as_mut() {
-            outboard.seek(SeekFrom::Start(0)).await?;
-            outboard.write_all(&self.size.to_le_bytes()).await?;
-        }
-        while let Some(item) = reader.next().await {
-            match item? {
-                DecodeResponseItem::Header { .. } => {
-                    // we already read the header
-                    unreachable!()
-                }
-                DecodeResponseItem::Parent(bao_tree::io::Parent {
-                    node,
-                    pair: (l_hash, r_hash),
-                }) => {
-                    let offset = tree.pre_order_offset(node).unwrap();
-                    let byte_offset = offset * 64 + 8;
-                    if let Some(outboard) = outboard.as_mut() {
-                        // due to tokio, we need to call flush before seeking, or else
-                        // the call to start_seek will fail with "other file operation is pending".
-                        //
-                        // Just because a tokio write returns Ready(Ok(())) does not mean that the
-                        // underlying write has completed.
-                        outboard.seek(SeekFrom::Start(byte_offset)).await?;
-                        outboard.write_all(l_hash.as_bytes()).await?;
-                        outboard.write_all(r_hash.as_bytes()).await?;
-                    }
-                }
-                DecodeResponseItem::Leaf(bao_tree::io::Leaf { offset, data }) => {
-                    on_write(offset.0, data.len());
-                    target.seek(SeekFrom::Start(offset.0)).await?;
-                    target.write_all(&data).await?;
-                }
-            }
-        }
-        self.completed = true;
-        Ok(())
-    }
 }
 
 ///
@@ -760,6 +465,36 @@ pub mod get_response_machine {
                 }
             }
         }
+
+        /// Concatenate the response into a writer
+        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
+            self,
+            res: W,
+            on_write: OW,
+        ) -> std::result::Result<AtEnd, DecodeError> {
+            let (curr, _size) = self.next().await?;
+            curr.concatenate(res, on_write).await
+        }
+
+        ///
+        pub async fn write_all_with_outboard<
+            D: bao_tree::io::tokio::AsyncSliceWriter,
+            O: bao_tree::io::tokio::AsyncSliceWriter,
+            OW: FnMut(u64, usize),
+        >(
+            self,
+            mut outboard: Option<O>,
+            data: D,
+            on_write: OW,
+        ) -> std::result::Result<AtEnd, DecodeError> {
+            let (content, size) = self.next().await?;
+            if let Some(outboard) = &mut outboard {
+                outboard.write_at(0, &size.to_le_bytes()).await?;
+            }
+            content
+                .write_all_with_outboard(outboard, data, on_write)
+                .await
+        }
     }
 
     /// State while we are reading content
@@ -797,6 +532,67 @@ pub mod get_response_machine {
                 }
                 .into(),
             }
+        }
+
+        ///
+        pub async fn write_all_with_outboard<D, O, OW>(
+            self,
+            mut outboard: Option<O>,
+            mut data: D,
+            mut on_write: OW,
+        ) -> std::result::Result<AtEnd, DecodeError>
+        where
+            D: bao_tree::io::tokio::AsyncSliceWriter,
+            O: bao_tree::io::tokio::AsyncSliceWriter,
+            OW: FnMut(u64, usize),
+        {
+            let mut content = self;
+            loop {
+                match content.next().await {
+                    ContentNext::More((content1, item)) => {
+                        content = content1;
+                        match item? {
+                            DecodeResponseItem::Header(_) => unreachable!(),
+                            DecodeResponseItem::Parent(parent) => {
+                                if let Some(outboard) = &mut outboard {
+                                    let offset = parent.node.post_order_offset() * 64 + 8;
+                                    let (l_hash, r_hash) = parent.pair;
+                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
+                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
+                                }
+                            }
+                            DecodeResponseItem::Leaf(leaf) => {
+                                on_write(leaf.offset.0, leaf.data.len());
+                                data.write_at(leaf.offset.0, &leaf.data).await?;
+                            }
+                        }
+                    }
+                    ContentNext::Done(end) => {
+                        return Ok(end);
+                    }
+                }
+            }
+        }
+
+        /// Concatenate the response into a writer
+        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
+            self,
+            mut res: W,
+            mut on_write: OW,
+        ) -> std::result::Result<AtEnd, DecodeError> {
+            let mut content = self;
+            let done = loop {
+                let item;
+                (content, item) = match content.next().await {
+                    ContentNext::More(x) => x,
+                    ContentNext::Done(x) => break x,
+                };
+                if let DecodeResponseItem::Leaf(leaf) = item? {
+                    on_write(leaf.offset.0, leaf.data.len());
+                    res.write_all(&leaf.data).await?;
+                }
+            };
+            Ok(done)
         }
     }
 
@@ -945,93 +741,6 @@ impl From<anyhow::Error> for GetResponseError {
     fn from(cause: anyhow::Error) -> Self {
         Self::Generic(cause)
     }
-}
-
-/// Gets a collection and all its blobs from a provider on the established connection.
-async fn run_connection<A, C, FutA, FutC, U>(
-    connection: quinn::Connection,
-    request: Request,
-    auth_token: AuthToken,
-    on_connected: A,
-    mut on_blob: C,
-    mut user: U,
-) -> Result<(U, Stats)>
-where
-    A: FnOnce() -> FutA,
-    FutA: Future<Output = Result<()>>,
-    C: FnMut(OnBlobData<U>) -> FutC,
-    FutC: Future<Output = Result<OnBlobResult<U>>>,
-{
-    let start = Instant::now();
-    // expect to get blob data in the order they appear in the collection
-    let ranges_iter = request.ranges.non_empty_iter();
-    let (writer, reader) = connection.open_bi().await?;
-    let mut reader = TrackingReader::new(reader);
-    let mut writer = TrackingWriter::new(writer);
-
-    on_connected().await?;
-
-    let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
-
-    // 1. Send Handshake
-    {
-        debug!("sending handshake");
-        let handshake = Handshake::new(auth_token);
-        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
-    }
-
-    // 2. Send Request
-    {
-        debug!("sending request");
-        let request_bytes = postcard::to_stdvec(&request)?;
-        write_lp(&mut writer, &request_bytes).await?;
-    }
-    let (mut writer, bytes_written) = writer.into_parts();
-    writer.finish().await?;
-    drop(writer);
-
-    // 3. Read response
-    debug!("reading response");
-    let mut limit = None;
-    for (offset, query) in ranges_iter {
-        if let Some(limit) = limit {
-            if offset >= limit {
-                break;
-            }
-        }
-        let size = reader.read_u64_le().await?;
-        debug!("reading item {} {:?} size {}", offset, query, size);
-        let res = on_blob(OnBlobData {
-            user,
-            offset,
-            size,
-            ranges: query.to_chunk_ranges(),
-            reader,
-            limit,
-            completed: false,
-        })
-        .await?;
-        reader = res.reader;
-        user = res.user;
-        limit = res.limit;
-    }
-
-    // Shut down the stream
-    let (mut reader, bytes_read) = reader.into_parts();
-    if let Some(chunk) = reader.read_chunk(8, false).await? {
-        reader.stop(0u8.into()).ok();
-        error!("Received unexpected data from the provider: {chunk:?}");
-    }
-    drop(reader);
-    Ok((
-        user,
-        Stats {
-            elapsed: start.elapsed(),
-            bytes_written,
-            bytes_read,
-        },
-    ))
 }
 
 /// Given a directory, make a partial download of it.

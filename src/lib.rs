@@ -490,48 +490,14 @@ mod tests {
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();
-        let mut on_connected = false;
-        let mut on_collection = false;
-        let mut on_blob = false;
-        let hash = ticket.hash();
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run_ticket(
-                &ticket,
-                Request::all(ticket.hash()),
-                true,
-                16,
-                || {
-                    on_connected = true;
-                    async { Ok(()) }
-                },
-                |mut data| {
-                    if data.is_root() {
-                        on_collection = true;
-                    } else {
-                        on_blob = true;
-                    }
-                    async move {
-                        if data.is_root() {
-                            let collection = data.read_collection(hash).await?;
-                            data.set_limit(collection.total_entries() + 1);
-                            data.user = Some(collection);
-                        } else {
-                            let hash = data.user.as_ref().unwrap().blobs()[0].hash;
-                            data.drain(hash).await?;
-                        }
-                        data.end()
-                    }
-                },
-                None,
-            ),
-        )
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let response =
+                get::run_ticket_fsm(&ticket, Request::all(ticket.hash()), true, 16).await?;
+            aggregate_get_response_fsm(response).await
+        })
         .await
         .expect("timeout")
         .expect("get ticket failed");
-        assert!(on_connected);
-        assert!(on_collection);
-        assert!(on_blob);
     }
 
     /// Utility to validate that the children of a collection are correct

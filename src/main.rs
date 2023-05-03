@@ -12,9 +12,8 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
-use iroh::get::{
-    get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name, OnBlobData,
-};
+use iroh::get::get_response_machine::{ConnectedNext, DoneNext};
+use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -821,34 +820,23 @@ impl GetInteractive {
     }
 }
 
-async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Result<()> {
+async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     let hash = get.hash();
     let single = get.single();
     progress!("Fetching: {}", Blake3Cid::new(hash));
-
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
-    let temp_dir = out_dir.as_ref().map(|out| out.join(".iroh-tmp"));
+    let temp_dir = out_dir.join(".iroh-tmp");
     let (query, collection) = if single {
-        match (&out_dir, &temp_dir) {
-            (Some(out), Some(temp_dir)) => {
-                let name = Blake3Cid::new(hash).to_string();
-                let query = get_missing_range(&get.hash(), name.as_str(), temp_dir, out)?;
-                (query, vec![Blob { hash, name }])
-            }
-            _ => (RangeSpecSeq::all(), vec![]),
-        }
+        let name = Blake3Cid::new(hash).to_string();
+        let query = get_missing_range(&get.hash(), name.as_str(), &temp_dir, &out_dir)?;
+        (query, vec![Blob { hash, name }])
     } else {
-        match (&out_dir, &temp_dir) {
-            (Some(out), Some(temp_dir)) => {
-                let (query, collection) = get_missing_ranges(get.hash(), out, temp_dir)?;
-                (
-                    query,
-                    collection.map(|x| x.into_inner()).unwrap_or_default(),
-                )
-            }
-            _ => (RangeSpecSeq::all(), vec![]),
-        }
+        let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
+        (
+            query,
+            collection.map(|x| x.into_inner()).unwrap_or_default(),
+        )
     };
 
     let pb = ProgressBar::hidden();
@@ -883,147 +871,117 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
     } else {
         Some((collection.len() as u64, 0))
     };
-    let on_connected = || async move {
-        progress!("{} Requesting ...", style("[2/3]").bold().dim());
-        // we need to init the download progress bar here, since we are resuming a download
-        // and already know the collection.
-        if let Some((count, missing_bytes)) = collection_info {
-            init_download_progress(count, missing_bytes);
+
+    let request = Request::new(get.hash(), query);
+    let response = match get {
+        GetInteractive::Ticket { ticket, keylog } => {
+            get::run_ticket_fsm(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        Ok(())
+        GetInteractive::Hash { opts, token, .. } => get::run_fsm(request, token, opts).await?,
     };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    if let Some((count, missing_bytes)) = collection_info {
+        init_download_progress(count, missing_bytes);
+    }
+    let (mut next, collection) = match connected.next().await? {
+        ConnectedNext::StartCollection(curr) => {
+            tokio::fs::create_dir_all(&temp_dir)
+                .await
+                .context("unable to create directory {temp_dir}")?;
+            tokio::fs::create_dir_all(&out_dir)
+                .await
+                .context("Unable to create directory {out_dir}")?;
+            let curr = curr.next();
+            let (curr, size) = curr.next().await?;
+            let mut collection_data = Vec::with_capacity(size as usize);
+            let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+            let collection = Collection::from_bytes(&collection_data)?;
+            init_download_progress(collection.total_entries(), collection.total_blobs_size());
+            tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
+            (curr.next(), collection.into_inner())
+        }
+        ConnectedNext::StartChild(start_child) => (DoneNext::MoreChildren(start_child), collection),
+        ConnectedNext::Finished(finish) => (DoneNext::Finished(finish), collection),
+    };
+    // read all the children
+    let finishing = loop {
+        let start = match next {
+            DoneNext::MoreChildren(sc) => sc,
+            DoneNext::Finished(finish) => break finish,
+        };
+        let child_offset = start.child_offset() as usize;
+        let blob = match collection.get(child_offset) {
+            Some(blob) => blob,
+            None => break start.finish(),
+        };
 
-    let on_blob = |mut data: OnBlobData<Vec<Blob>>| {
-        let out = &out_dir;
-        let temp_dir = &temp_dir;
-        let out_dir = &out_dir;
-        let pb = &pb;
-        async move {
-            if data.is_root() {
-                // create temp and out directories in any case if out is set
-                if let (Some(ref temp_dir), Some(ref out_dir)) = (temp_dir, out_dir) {
-                    tokio::fs::create_dir_all(temp_dir)
-                        .await
-                        .context("unable to create directory {temp_dir}")?;
-                    tokio::fs::create_dir_all(out_dir)
-                        .await
-                        .context("Unable to create directory {out_dir}")?;
-                };
-                if single {
-                    init_download_progress(0, data.size());
-                } else {
-                    // setup for when we are not in single file mode
-                    let collection_data = data.read_blob(hash).await?;
-                    let collection = Collection::from_bytes(&collection_data)?;
-                    init_download_progress(
-                        collection.total_entries(),
-                        collection.total_blobs_size(),
-                    );
-                    if let Some(ref temp_dir) = temp_dir {
-                        tokio::fs::write(get_data_path(temp_dir, hash), collection_data).await?;
-                    };
+        let hash = blob.hash;
+        let name = &blob.name;
+        let name = if name.is_empty() {
+            PathBuf::from(hash.to_string())
+        } else {
+            pathbuf_from_name(name)
+        };
+        pb.set_message(format!("Receiving '{}'...", name.display()));
+        pb.reset();
+        let header = start.next(blob.hash);
 
-                    data.set_limit(collection.total_entries() + 1);
-                    data.user = collection.into_inner();
-                    return data.end();
-                }
-            }
-            let offset = data.offset() - ((!single) as u64);
-            let collection = &data.user;
-            let blob = collection.get(offset as usize).unwrap();
-            let hash = blob.hash;
-            let name = &blob.name;
-            let name = if name.is_empty() {
-                PathBuf::from(hash.to_string())
-            } else {
-                pathbuf_from_name(name)
-            };
-            pb.set_message(format!("Receiving '{}'...", name.display()));
-            pb.reset();
-            if let (Some(ref outpath), Some(ref temp_dir)) = (out, temp_dir) {
-                let final_path = outpath.join(name);
-                let tempname = blake3::Hash::from(hash).to_hex();
-                let data_path = temp_dir.join(format!("{}.data.part", tempname));
-                let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
-                let mut data_file = tokio::fs::OpenOptions::new()
+        let curr = {
+            let final_path = out_dir.join(&name);
+            let tempname = blake3::Hash::from(hash).to_hex();
+            let data_path = temp_dir.join(format!("{}.data.part", tempname));
+            let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+            let mut data_file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&data_path)
+                .await?;
+            tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+            let (curr, size) = header.next().await?;
+            pb.set_length(size);
+            let mut outboard_file = if size > 0 {
+                let outboard_file = tokio::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(&data_path)
+                    .open(&outboard_path)
                     .await?;
-                tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
-                pb.set_length(data.size());
-                let mut outboard_file = if data.size() > 0 {
-                    let outboard_file = tokio::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(&outboard_path)
-                        .await?;
-                    Some(outboard_file)
-                } else {
-                    None
-                };
-                let on_write = |offset, _size| {
-                    // println!("offset: {}/{}", offset, pb.length().unwrap());
-                    pb.set_position(offset);
-                };
-                data.write_all_with_outboard(
-                    hash,
-                    &mut data_file,
-                    outboard_file.as_mut(),
-                    on_write,
-                )
-                .await?;
-                tokio::fs::create_dir_all(
-                    final_path
-                        .parent()
-                        .context("final path should have parent")?,
-                )
-                .await?;
-                // Flush the data file first, it is the only thing that matters at this point
-                data_file.shutdown().await?;
-                drop(data_file);
-                // Rename temp file, to target name
-                // once this is done, the file is considered complete
-                tokio::fs::rename(data_path, final_path).await?;
-                if let Some(mut outboard_file) = outboard_file.take() {
-                    // not sure if we have to do this
-                    outboard_file.shutdown().await?;
-                    // delete the outboard file
-                    tokio::fs::remove_file(outboard_path).await?;
-                }
+                Some(outboard_file)
             } else {
-                // Write to OUT_WRITER
-                data.concatenate(hash, tokio::io::stdout(), |_offset, size| {
-                    pb.inc(size as u64);
-                })
+                None
+            };
+            let on_write = |offset, _size| {
+                // println!("offset: {}/{}", offset, pb.length().unwrap());
+                pb.set_position(offset);
+            };
+            let curr = curr
+                .write_all_with_outboard(outboard_file.as_mut(), &mut data_file, on_write)
                 .await?;
-            }
-            pb.finish();
-            data.end()
-        }
-    };
-    let request = Request::new(get.hash(), query);
-    let (_, stats) = match get {
-        GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket(
-                &ticket,
-                request,
-                keylog,
-                MAX_CONCURRENT_DIALS,
-                on_connected,
-                on_blob,
-                collection,
+            tokio::fs::create_dir_all(
+                final_path
+                    .parent()
+                    .context("final path should have parent")?,
             )
-            .await?
-        }
-        GetInteractive::Hash { opts, token, .. } => {
-            get::run(request, token, opts, on_connected, on_blob, collection).await?
-        }
+            .await?;
+            // Flush the data file first, it is the only thing that matters at this point
+            data_file.shutdown().await?;
+            drop(data_file);
+            // Rename temp file, to target name
+            // once this is done, the file is considered complete
+            tokio::fs::rename(data_path, final_path).await?;
+            if let Some(mut outboard_file) = outboard_file.take() {
+                // not sure if we have to do this
+                outboard_file.shutdown().await?;
+                // delete the outboard file
+                tokio::fs::remove_file(outboard_path).await?;
+            }
+            curr
+        };
+        pb.finish();
+        next = curr.next();
     };
-
-    if let Some(temp_dir) = &temp_dir {
-        tokio::fs::remove_dir_all(temp_dir).await?;
-    }
+    let stats = finishing.next().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
     pb.finish_and_clear();
     progress!(
         "Transferred {} in {}, {}/s",
@@ -1033,4 +991,108 @@ async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Resul
     );
 
     Ok(())
+}
+
+async fn get_to_stdout(get: GetInteractive) -> Result<()> {
+    let hash = get.hash();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    let query = RangeSpecSeq::all();
+
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+
+    let init_download_progress = |count: u64, missing_bytes: u64| {
+        progress!("{} Downloading ...", style("[3/3]").bold().dim());
+        progress!(
+            "  {} file(s) with total transfer size {}",
+            count,
+            HumanBytes(missing_bytes)
+        );
+        pb.set_length(missing_bytes);
+        pb.reset();
+        pb.set_draw_target(ProgressDrawTarget::stderr());
+    };
+
+    let request = Request::new(get.hash(), query);
+    let response = match get {
+        GetInteractive::Ticket { ticket, keylog } => {
+            get::run_ticket_fsm(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
+        }
+        GetInteractive::Hash { opts, token, .. } => get::run_fsm(request, token, opts).await?,
+    };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    let ConnectedNext::StartCollection(curr) = connected.next().await? else {
+        anyhow::bail!("expected a collection");
+    };
+    let (mut next, collection) = {
+        let curr = curr.next();
+        let (curr, size) = curr.next().await?;
+        let mut collection_data = Vec::with_capacity(size as usize);
+        let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+        let collection = Collection::from_bytes(&collection_data)?;
+        init_download_progress(collection.total_entries(), collection.total_blobs_size());
+        (curr.next(), collection.into_inner())
+    };
+    // read all the children
+    let finishing = loop {
+        let start = match next {
+            DoneNext::MoreChildren(sc) => sc,
+            DoneNext::Finished(finish) => break finish,
+        };
+        let child_offset = start.child_offset() as usize;
+        let blob = match collection.get(child_offset) {
+            Some(blob) => blob,
+            None => break start.finish(),
+        };
+
+        let hash = blob.hash;
+        let name = &blob.name;
+        let name = if name.is_empty() {
+            PathBuf::from(hash.to_string())
+        } else {
+            pathbuf_from_name(name)
+        };
+        pb.set_message(format!("Receiving '{}'...", name.display()));
+        pb.reset();
+        let header = start.next(blob.hash);
+        let curr = {
+            let on_write = |offset, _size| {
+                pb.set_position(offset);
+            };
+            header.concatenate(tokio::io::stdout(), on_write).await?
+        };
+        pb.finish();
+        next = curr.next();
+    };
+    let stats = finishing.next().await?;
+    pb.finish_and_clear();
+    progress!(
+        "Transferred {} in {}, {}/s",
+        HumanBytes(stats.bytes_read),
+        HumanDuration(stats.elapsed),
+        HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
+    );
+
+    Ok(())
+}
+
+async fn get_interactive(get: GetInteractive, out_dir: Option<PathBuf>) -> Result<()> {
+    if let Some(out_dir) = out_dir {
+        get_to_dir(get, out_dir).await
+    } else {
+        get_to_stdout(get).await
+    }
 }
