@@ -111,7 +111,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     // turn the output into a partial download
     let _hash = make_partial_download(&out)?;
     // resume the download
-    test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
+    test_provide_get_loop(&dir, Input::Path, Output::Custom(out))?;
 
     Ok(())
 }
