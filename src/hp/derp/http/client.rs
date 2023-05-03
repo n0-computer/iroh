@@ -322,6 +322,7 @@ impl Client {
         });
 
         let req = Request::builder()
+            .uri("/derp")
             .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
             .body(Body::empty())
             .unwrap();

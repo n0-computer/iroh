@@ -681,7 +681,7 @@ async fn provide(
 
     let mut builder = provider::Provider::builder(db).keylog(keylog);
     let dm = configure_derp_map(); // TODO: pass what is needed.
-    builder = builder.derp_map(dbg!(dm));
+    builder = builder.derp_map(dm);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
