@@ -745,41 +745,6 @@ impl From<anyhow::Error> for GetResponseError {
     }
 }
 
-/// Given a directory, make a partial download of it.
-#[cfg(any(test, feature = "cli"))]
-pub fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<crate::Hash> {
-    use crate::provider::{create_collection, create_data_sources, BlobOrCollection};
-
-    let out_dir: &Path = out_dir.as_ref();
-    let temp_dir = out_dir.join(".iroh-tmp");
-    anyhow::ensure!(!temp_dir.exists());
-    std::fs::create_dir_all(&temp_dir)?;
-    let sources = create_data_sources(out_dir.to_owned())?;
-    println!("{:?}", sources);
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let (db, hash) = rt.block_on(create_collection(sources))?;
-    let db = db.to_inner();
-    for (hash, boc) in db {
-        let text = blake3::Hash::from(hash).to_hex();
-        let mut outboard_path = temp_dir.join(text.as_str());
-        outboard_path.set_extension("outboard.part");
-        let mut data_path = temp_dir.join(text.as_str());
-        match boc {
-            BlobOrCollection::Blob { outboard, path, .. } => {
-                data_path.set_extension("data.part");
-                std::fs::write(outboard_path, outboard)?;
-                std::fs::rename(path, data_path)?;
-            }
-            BlobOrCollection::Collection { outboard, data } => {
-                data_path.set_extension("data");
-                std::fs::write(outboard_path, outboard)?;
-                std::fs::write(data_path, data)?;
-            }
-        }
-    }
-    Ok(hash)
-}
-
 /// Create a pathbuf from a name.
 pub fn pathbuf_from_name(name: &str) -> PathBuf {
     let mut path = PathBuf::new();

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
-use iroh::get::make_partial_download;
 use rand::{RngCore, SeedableRng};
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -19,6 +18,40 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
     rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
     std::fs::write(path, content)?;
     Ok(())
+}
+
+/// Given a directory, make a partial download of it.
+fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<iroh::Hash> {
+    use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
+
+    let out_dir: &Path = out_dir.as_ref();
+    let temp_dir = out_dir.join(".iroh-tmp");
+    anyhow::ensure!(!temp_dir.exists());
+    std::fs::create_dir_all(&temp_dir)?;
+    let sources = create_data_sources(out_dir.to_owned())?;
+    println!("{:?}", sources);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (db, hash) = rt.block_on(create_collection(sources))?;
+    let db = db.to_inner();
+    for (hash, boc) in db {
+        let text = blake3::Hash::from(hash).to_hex();
+        let mut outboard_path = temp_dir.join(text.as_str());
+        outboard_path.set_extension("outboard.part");
+        let mut data_path = temp_dir.join(text.as_str());
+        match boc {
+            BlobOrCollection::Blob { outboard, path, .. } => {
+                data_path.set_extension("data.part");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::rename(path, data_path)?;
+            }
+            BlobOrCollection::Collection { outboard, data } => {
+                data_path.set_extension("data");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::write(data_path, data)?;
+            }
+        }
+    }
+    Ok(hash)
 }
 
 #[test]

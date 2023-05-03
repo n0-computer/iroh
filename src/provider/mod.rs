@@ -84,7 +84,8 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
 
 /// A [`Database`] entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BlobOrCollection {
+pub enum BlobOrCollection {
+    /// A blob.
     Blob {
         /// The bao outboard data.
         outboard: Bytes,
@@ -98,6 +99,7 @@ pub(crate) enum BlobOrCollection {
         /// Size of the original data.
         size: u64,
     },
+    /// A collection.
     Collection {
         /// The bao outboard data of the serialised [`Collection`].
         outboard: Bytes,
@@ -107,11 +109,11 @@ pub(crate) enum BlobOrCollection {
 }
 
 impl BlobOrCollection {
-    pub fn is_blob(&self) -> bool {
+    pub(crate) fn is_blob(&self) -> bool {
         matches!(self, BlobOrCollection::Blob { .. })
     }
 
-    pub fn blob_path(&self) -> Option<&Path> {
+    pub(crate) fn blob_path(&self) -> Option<&Path> {
         match self {
             BlobOrCollection::Blob { path, .. } => Some(path),
             BlobOrCollection::Collection { .. } => None,
@@ -119,7 +121,7 @@ impl BlobOrCollection {
     }
 
     #[allow(dead_code)]
-    pub fn outboard(&self) -> &Bytes {
+    pub(crate) fn outboard(&self) -> &Bytes {
         match self {
             BlobOrCollection::Blob { outboard, .. } => outboard,
             BlobOrCollection::Collection { outboard, .. } => outboard,
