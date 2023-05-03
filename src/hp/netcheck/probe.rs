@@ -218,19 +218,21 @@ impl ProbePlan {
             for tr in 0..3 {
                 let n = &reg.nodes[tr % reg.nodes.len()];
                 let delay = DEFAULT_INITIAL_RETRANSMIT * tr as u32;
-                if if_state.have_v4 && node_might4(n) {
+                let have_v4 = if_state.have_v4 && node_might4(n);
+                let have_v6 = if_state.have_v6 && node_might6(n);
+                if have_v4 {
                     p4.push(Probe::Ipv4 {
                         delay,
                         node: n.name.clone(),
                     });
                 }
-                if if_state.have_v6 && node_might6(n) {
+                if have_v6 {
                     p6.push(Probe::Ipv6 {
                         delay,
                         node: n.name.clone(),
                     })
                 }
-                if region_has_derp_node(reg) {
+                if region_has_derp_node(reg) || (!have_v6 && !have_v4) {
                     https.push(Probe::Https {
                         delay,
                         reg: reg.clone(),

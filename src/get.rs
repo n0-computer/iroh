@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
 use crate::hp::cfg::DERP_MAGIC_IP;
+use crate::hp::derp::DerpMap;
 use crate::hp::{cfg, netmap};
 use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{
@@ -40,6 +41,8 @@ pub struct Options {
     pub peer_id: Option<PeerId>,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
     pub keylog: bool,
+    /// The configuration of the derp services.
+    pub derp_map: Option<DerpMap>,
 }
 
 impl Default for Options {
@@ -48,6 +51,7 @@ impl Default for Options {
             addr: "127.0.0.1:4433".parse().unwrap(),
             peer_id: None,
             keylog: false,
+            derp_map: None,
         }
     }
 }
@@ -58,6 +62,7 @@ pub async fn make_client_endpoint(
     peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
+    derp_map: Option<DerpMap>,
 ) -> Result<(quinn::Endpoint, crate::hp::magicsock::Conn)> {
     let keypair = Keypair::generate();
 
@@ -70,6 +75,7 @@ pub async fn make_client_endpoint(
         ..Default::default()
     })
     .await?;
+    conn.set_derp_map(derp_map).await?;
 
     let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
         quinn::EndpointConfig::default(),
@@ -92,8 +98,14 @@ async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
         true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
         false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
     };
-    let (endpoint, magicsock) =
-        make_client_endpoint(bind_addr, opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false).await?;
+    let (endpoint, magicsock) = make_client_endpoint(
+        bind_addr,
+        opts.peer_id,
+        vec![tls::P2P_ALPN.to_vec()],
+        false,
+        opts.derp_map,
+    )
+    .await?;
 
     // Only a single peer in our network currently.
     let peer_id = opts.peer_id.expect("need peer");
@@ -184,6 +196,7 @@ pub async fn run_ticket<A, B, C, FutA, FutB, FutC>(
     ticket: &Ticket,
     keylog: bool,
     max_concurrent: u8,
+    derp_map: Option<DerpMap>,
     on_connected: A,
     on_collection: B,
     on_blob: C,
@@ -197,7 +210,7 @@ where
     FutC: Future<Output = Result<DataStream>>,
 {
     let start = Instant::now();
-    let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
+    let connection = dial_ticket(ticket, keylog, max_concurrent.into(), derp_map).await?;
     run_connection(
         connection,
         ticket.hash(),
@@ -214,6 +227,7 @@ async fn dial_ticket(
     ticket: &Ticket,
     keylog: bool,
     max_concurrent: usize,
+    derp_map: Option<DerpMap>,
 ) -> Result<quinn::Connection> {
     // Sort the interfaces to make sure local ones are at the front of the list.
     let interfaces = default_net::get_interfaces();
@@ -229,6 +243,7 @@ async fn dial_ticket(
                 addr,
                 peer_id: Some(ticket.peer()),
                 keylog,
+                derp_map: derp_map.clone(),
             };
             dial_peer(opts)
         })

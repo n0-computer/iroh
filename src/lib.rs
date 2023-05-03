@@ -155,6 +155,7 @@ mod tests {
                 addr,
                 peer_id: Some(peer_id),
                 keylog: true,
+                derp_map: None,
             };
             let content = &content;
             let name = &name;
@@ -283,6 +284,7 @@ mod tests {
             addr,
             peer_id: Some(provider.peer_id()),
             keylog: true,
+            derp_map: None,
         };
 
         let i = AtomicUsize::new(0);
@@ -412,6 +414,7 @@ mod tests {
                 addr: provider_addr[0],
                 peer_id: None,
                 keylog: true,
+                derp_map: None,
             },
             || async move { Ok(()) },
             |_collection| async move { Ok(()) },
@@ -462,6 +465,7 @@ mod tests {
                     addr: provider_addr[0],
                     peer_id: None,
                     keylog: true,
+                    derp_map: None,
                 },
                 || async move { Ok(()) },
                 |_collection| async move { Ok(()) },
@@ -510,6 +514,7 @@ mod tests {
                     addr: addr[0],
                     peer_id,
                     keylog: true,
+                    derp_map: None,
                 },
                 || async move { Ok(()) },
                 |_collection| async move { Ok(()) },
@@ -544,6 +549,7 @@ mod tests {
                 &ticket,
                 true,
                 16,
+                None,
                 || {
                     on_connected = true;
                     async { Ok(()) }

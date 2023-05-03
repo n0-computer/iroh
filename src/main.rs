@@ -25,7 +25,9 @@ mod main_util;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
-use crate::main_util::{create_quinn_client, iroh_data_root, pathbuf_from_name};
+use crate::main_util::{
+    configure_derp_map, create_quinn_client, iroh_data_root, pathbuf_from_name,
+};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -678,6 +680,8 @@ async fn provide(
     let keypair = get_keypair(key).await?;
 
     let mut builder = provider::Provider::builder(db).keylog(keylog);
+    let dm = configure_derp_map(); // TODO: pass what is needed.
+    builder = builder.derp_map(dbg!(dm));
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
@@ -866,17 +870,24 @@ async fn get_interactive(get: GetInteractive, out: Option<PathBuf>) -> Result<()
     };
     let stats = match get {
         GetInteractive::Ticket { ticket, keylog } => {
+            let dm = configure_derp_map(); // TODO: pass what is needed.
             get::run_ticket(
                 &ticket,
                 keylog,
                 MAX_CONCURRENT_DIALS,
+                Some(dm),
                 on_connected,
                 on_collection,
                 on_blob,
             )
             .await?
         }
-        GetInteractive::Hash { hash, opts, token } => {
+        GetInteractive::Hash {
+            hash,
+            mut opts,
+            token,
+        } => {
+            opts.derp_map = Some(configure_derp_map()); // TODO: pass what is needed.
             get::run(hash, token, opts, on_connected, on_collection, on_blob).await?
         }
     };

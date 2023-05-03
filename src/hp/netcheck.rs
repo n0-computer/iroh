@@ -23,6 +23,7 @@ use tokio::{
     time::{self, Duration, Instant},
 };
 use tracing::{debug, info, trace, warn};
+use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::net::{interfaces, ip::to_canonical};
 
@@ -147,11 +148,13 @@ impl Client {
         port_mapper: Option<portmapper::Client>,
         get_stun_conn4: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
         get_stun_conn6: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
-    ) -> Self {
+    ) -> Result<Self> {
         let last_full = Instant::now();
         let (got_hair_stun, _) = broadcast::channel(1);
 
         let (msg_sender, msg_receiver) = mpsc::channel(32);
+
+        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()?;
 
         let actor = Actor {
             receiver: msg_receiver,
@@ -168,9 +171,10 @@ impl Client {
             got_hair_stun,
             get_stun_conn4,
             get_stun_conn6,
+            dns_resolver,
         };
 
-        Client { msg_sender, actor }
+        Ok(Client { msg_sender, actor })
     }
 
     pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
@@ -193,8 +197,8 @@ impl Client {
     }
 }
 
-async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr), ()> {
-    todo!()
+async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
+    anyhow::bail!("not implemented");
     // TODO:
     // - needs derphttp::Client
     // - measurement hooks to measure server processing time
@@ -306,7 +310,11 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     Ok(has_captive)
 }
 
-async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {
+async fn measure_icmp_latency(
+    resolver: &TokioAsyncResolver,
+    reg: &DerpRegion,
+    p: &Pinger,
+) -> Result<Duration> {
     if reg.nodes.is_empty() {
         anyhow::bail!(
             "no nodes for region {} ({})",
@@ -320,16 +328,35 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 
     // Get the IPAddr by asking for the UDP address that we would use for
     // STUN and then using that IP.
-    let node_addr = get_node_addr(node, ProbeProto::Ipv4)
+    let node_addr = get_node_addr(resolver, node, ProbeProto::Ipv4)
         .await
         .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
 
+    debug!(
+        "ICMP ping start to {} with payload len {} - derp {} {}",
+        node_addr,
+        node.name.as_bytes().len(),
+        node.name,
+        reg.region_id
+    );
     // Use the unique node.name field as the packet data to reduce the
     // likelihood that we get a mismatched echo response.
-    p.send(node_addr.ip(), node.name.as_bytes()).await
+    let d = p.send(node_addr.ip(), node.name.as_bytes()).await?;
+    debug!(
+        "ICMP ping done {} with latency {}ms - derp {} {}",
+        node_addr,
+        d.as_millis(),
+        node.name,
+        reg.region_id
+    );
+    Ok(d)
 }
 
-async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
+async fn get_node_addr(
+    resolver: &TokioAsyncResolver,
+    n: &DerpNode,
+    proto: ProbeProto,
+) -> Option<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
         port = 3478;
@@ -355,16 +382,21 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
                 return Some(SocketAddr::new(IpAddr::V6(ip), port));
             }
         }
-        _ => {
-            return None;
-        }
+        _ => {}
     }
 
     // TODO: add singleflight+dnscache here.
-    if let Ok(addrs) = dns_lookup(&n.host_name).await {
+    if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
         for addr in addrs {
             if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
                 let addr = to_canonical(addr);
+                return Some(SocketAddr::new(addr, port));
+            }
+            if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
+                return Some(SocketAddr::new(addr, port));
+            }
+            if proto == ProbeProto::Https {
+                // For now just return the first one
                 return Some(SocketAddr::new(addr, port));
             }
         }
@@ -373,12 +405,10 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
     None
 }
 
-async fn dns_lookup(host: &str) -> Result<trust_dns_resolver::lookup_ip::LookupIp> {
-    // TODO: dnscache
-
-    use trust_dns_resolver::TokioAsyncResolver;
-
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
+async fn dns_lookup(
+    resolver: &TokioAsyncResolver,
+    host: &str,
+) -> Result<trust_dns_resolver::lookup_ip::LookupIp> {
     let response = resolver.lookup_ip(host).await?;
 
     Ok(response)
@@ -420,6 +450,7 @@ impl ReportState {
         dm: DerpMap,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
+        resolver: &TokioAsyncResolver,
     ) -> Result<(Report, DerpMap)> {
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
@@ -488,7 +519,7 @@ impl ReportState {
                 let pinger = pinger.clone();
 
                 set.push(Box::pin(async move {
-                    run_probe(report, pc4, pc6, node, probe, in_flight, pinger).await
+                    run_probe(report, resolver, pc4, pc6, node, probe, in_flight, pinger).await
                 }));
             }
 
@@ -758,6 +789,7 @@ enum ProbeError {
 
 async fn run_probe(
     report: Arc<RwLock<Report>>,
+    resolver: &TokioAsyncResolver,
     pc4: Option<Arc<net::UdpSocket>>,
     pc6: Option<Arc<net::UdpSocket>>,
     node: DerpNode,
@@ -775,12 +807,11 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help")));
     }
 
-    let addr = get_node_addr(&node, probe.proto()).await;
+    let addr = get_node_addr(resolver, &node, probe.proto()).await;
     if addr.is_none() {
         return Err(ProbeError::Transient(anyhow!("no node addr")));
     }
     let addr = addr.unwrap();
-
     let txid = stun::TransactionId::default();
     let req = stun::request(txid);
     let sent = Instant::now(); // after DNS lookup above
@@ -802,7 +833,7 @@ async fn run_probe(
             // metricSTUNSend4.Add(1)
             if let Some(ref pc4) = pc4 {
                 let n = pc4.send_to(&req, addr).await;
-                debug!("sending probe IPV4: {:?}", n);
+                debug!("sending probe IPV4: {:?} to {}", n, addr);
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
@@ -817,8 +848,8 @@ async fn run_probe(
             if let Some(ref pc6) = pc6 {
                 // TODO:
                 // metricSTUNSend6.Add(1)
-                debug!("sending probe IPV6");
                 let n = pc6.send_to(&req, addr).await;
+                debug!("sending probe IPV6: {:?} to {}", n, addr);
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
@@ -830,13 +861,13 @@ async fn run_probe(
             }
         }
         Probe::Https { reg, .. } => {
-            debug!("sending probe HTTPS");
+            debug!("sending probe HTTPS (icmp: {})", pinger.is_some());
 
             let res = if let Some(ref pinger) = pinger {
                 tokio::join!(
                     time::timeout(
                         ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(&reg, pinger).map(Some)
+                        measure_icmp_latency(resolver, &reg, pinger).map(Some)
                     ),
                     measure_https_latency(&reg)
                 )
@@ -882,8 +913,7 @@ async fn run_probe(
 
 fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
     // If the probe is for a region we don't yet know about, that would help.
-
-    if report.region_latency.contains_key(&node.region_id) {
+    if !report.region_latency.contains_key(&node.region_id) {
         return true;
     }
 
@@ -970,6 +1000,8 @@ struct Actor {
     get_stun_conn6: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
 
     got_hair_stun: broadcast::Sender<SocketAddr>,
+
+    dns_resolver: TokioAsyncResolver,
 }
 
 impl Debug for Actor {
@@ -999,9 +1031,10 @@ impl Actor {
         let (in_flight_s, mut in_flight_r) = sync::mpsc::channel(8);
         let pc4 = report_state.pc4.clone();
         let pc6 = report_state.pc6.clone();
+        let resolver = self.dns_resolver.clone();
         let mut running = Box::pin(time::timeout(OVERALL_PROBE_TIMEOUT, async move {
             report_state
-                .run(in_flight_s, dm, port_mapper, skip_external)
+                .run(in_flight_s, dm, port_mapper, skip_external, &resolver)
                 .await
         }));
         let mut buf4 = vec![0u8; 64 << 10];
@@ -1086,7 +1119,6 @@ impl Actor {
             None
         };
         let plan = ProbePlan::new(&dm, &if_state, last.as_deref()).await;
-
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
@@ -1439,7 +1471,7 @@ mod tests {
 
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None, None, None).await;
+        let mut client = Client::new(None, None, None).await?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
 
         for i in 0..5 {
@@ -1471,6 +1503,46 @@ mod tests {
             stun_stats.total().await >= 5,
             "expected at least 5 stun, got {}",
             stun_stats.total().await,
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_google_stun() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        let mut client = Client::new(None, None, None).await?;
+        let stun_port = 19302;
+        let host_name = "stun.l.google.com".into();
+
+        let derp_port = 0;
+        let derp_ipv4 = UseIpv4::None;
+        let derp_ipv6 = UseIpv6::None;
+        let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
+
+        let r = client.get_report(&dm).await?;
+        assert!(r.udp, "want UDP");
+        assert_eq!(
+            r.region_latency.len(),
+            1,
+            "expected 1 key in DERPLatency; got {}",
+            r.region_latency.len()
+        );
+        assert!(
+            r.region_latency.get(&1).is_some(),
+            "expected key 1 in DERPLatency; got {:?}",
+            r.region_latency
+        );
+        assert!(r.global_v4.is_some(), "expected globalV4 set");
+        assert_eq!(
+            r.preferred_derp, 1,
+            "preferred_derp = {}; want 1",
+            r.preferred_derp
         );
 
         Ok(())
@@ -1521,7 +1593,7 @@ mod tests {
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
         dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
 
-        let mut client = Client::new(None, None, None).await;
+        let mut client = Client::new(None, None, None).await?;
 
         let r = client.get_report(&dm).await?;
         let mut r: Report = (&*r).clone();
@@ -1701,7 +1773,7 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(None, None, None).await;
+            let mut client = Client::new(None, None, None).await?;
 
             for s in &mut tt.steps {
                 // trigger the timer

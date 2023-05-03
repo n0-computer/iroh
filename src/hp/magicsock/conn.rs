@@ -26,7 +26,7 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
     hp::{
@@ -251,7 +251,8 @@ impl Conn {
             None
         };
         let net_checker =
-            netcheck::Client::new(Some(port_mapper.clone()), get_stun_conn4, get_stun_conn6).await;
+            netcheck::Client::new(Some(port_mapper.clone()), get_stun_conn4, get_stun_conn6)
+                .await?;
         let (actor_sender, actor_receiver) = flume::bounded(128);
         let (network_sender, network_receiver) = flume::bounded(128);
 
@@ -586,7 +587,7 @@ impl AsyncUdpSocket for Conn {
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        debug!("trying to receive up to {} packets", bufs.len());
+        trace!("trying to receive up to {} packets", bufs.len());
         if self.is_closed() {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -1747,13 +1748,14 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
         if self.derp_map.is_none() {
+            debug!("skipping netcheck, no Derp Map");
             return Ok(Default::default());
         }
 
         self.enable_stun_packets = true;
         let dm = self.derp_map.as_ref().unwrap();
         let net_checker = &mut self.net_checker;
-        let report = time::timeout(Duration::from_secs(4), async move {
+        let report = time::timeout(Duration::from_secs(10), async move {
             net_checker.get_report(&dm).await
         })
         .await??;
@@ -2397,6 +2399,8 @@ impl Actor {
             return;
         }
 
+        debug!("setting new derp map: {:?}", dm);
+
         let old = std::mem::replace(&mut self.derp_map, dm);
         if self.derp_map.is_none() {
             self.close_all_derp("derp-disabled").await;
@@ -2829,7 +2833,10 @@ impl ReaderState {
                     derp_client: self.derp_client.clone(),
                 };
 
-                if matches!(err, derp::http::ClientError::Closed) {
+                if matches!(
+                    err,
+                    derp::http::ClientError::Closed | derp::http::ClientError::IPDisabled
+                ) {
                     // drop client
                     return (self, ReadResult::Break, action);
                 }

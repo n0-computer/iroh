@@ -17,6 +17,40 @@ impl DerpMap {
         ids.sort();
         ids
     }
+
+    pub fn default_from_node(
+        host_name: String,
+        stun_port: u16,
+        derp_port: u16,
+        derp_ipv4: UseIpv4,
+        derp_ipv6: UseIpv6,
+    ) -> Self {
+        let mut dm = DerpMap {
+            regions: HashMap::new(),
+        };
+
+        dm.regions.insert(
+            1,
+            DerpRegion {
+                region_id: 1,
+                nodes: vec![DerpNode {
+                    name: "default-1".into(),
+                    region_id: 1,
+                    host_name,
+                    stun_only: !derp_ipv4.is_enabled() && !derp_ipv6.is_enabled(),
+                    stun_port,
+                    ipv4: derp_ipv4,
+                    ipv6: derp_ipv6,
+                    derp_port,
+                    stun_test_ip: None,
+                }],
+                avoid: false,
+                region_code: "default".into(),
+            },
+        );
+
+        dm
+    }
 }
 
 /// A geographic region running DERP relay node(s).

@@ -11,7 +11,7 @@ use async_lock::RwLock;
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
@@ -184,7 +184,7 @@ impl AsyncUdpSocket for UdpSocket {
         cx: &mut Context,
         transmits: &[quinn_proto::Transmit],
     ) -> Poll<io::Result<usize>> {
-        debug!(
+        trace!(
             "sending {:?} transmits",
             transmits
                 .iter()
@@ -224,7 +224,7 @@ impl AsyncUdpSocket for UdpSocket {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        debug!("trying to recv {}: {:?}", bufs.len(), meta.len());
+        trace!("trying to recv {}: {:?}", bufs.len(), meta.len());
 
         loop {
             ready!(self.io.poll_recv_ready(cx))?;

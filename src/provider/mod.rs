@@ -37,6 +37,7 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::{Blob, Collection};
+use crate::hp::derp::DerpMap;
 use crate::net::ip::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
@@ -80,6 +81,7 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     rpc_endpoint: E,
     db: Database,
     keylog: bool,
+    derp_map: Option<DerpMap>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +124,7 @@ impl Builder {
             rpc_endpoint: Default::default(),
             db,
             keylog: false,
+            derp_map: None,
         }
     }
 }
@@ -136,7 +139,14 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             db: self.db,
             keylog: self.keylog,
             rpc_endpoint: value,
+            derp_map: self.derp_map,
         }
+    }
+
+    /// Sets the `[DerpMap]`
+    pub fn derp_map(mut self, dm: DerpMap) -> Self {
+        self.derp_map = Some(dm);
+        self
     }
 
     /// Binds the provider service to a different socket.
@@ -196,6 +206,9 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             ..Default::default()
         })
         .await?;
+        conn.set_derp_map(self.derp_map)
+            .await
+            .context("setting derp map")?;
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
