@@ -10,10 +10,10 @@ pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
+pub mod tokio_util;
 
 mod subnet;
 mod tls;
-mod tokio_util;
 mod util;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};

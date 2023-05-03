@@ -25,6 +25,7 @@ use quic_rpc::{RpcClient, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
+use iroh::tokio_util::SeekOptimized;
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
@@ -932,11 +933,12 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             let tempname = blake3::Hash::from(hash).to_hex();
             let data_path = temp_dir.join(format!("{}.data.part", tempname));
             let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
-            let mut data_file = tokio::fs::OpenOptions::new()
+            let data_file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(&data_path)
                 .await?;
+            let mut data_file = SeekOptimized::new(data_file);
             tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
             let (curr, size) = header.next().await?;
             pb.set_length(size);
@@ -946,6 +948,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                     .create(true)
                     .open(&outboard_path)
                     .await?;
+                let outboard_file = SeekOptimized::new(outboard_file);
                 Some(outboard_file)
             } else {
                 None

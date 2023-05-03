@@ -115,7 +115,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for TrackingWriter<W> {
 ///
 /// The chunk downloader uses this to avoid noop seeks when writing to a file.
 #[derive(Debug)]
-pub(crate) struct SeekOptimized<T> {
+pub struct SeekOptimized<T> {
     inner: T,
     state: SeekOptimizedState,
 }
@@ -257,7 +257,7 @@ impl<T: AsyncSeek + Unpin> AsyncSeek for SeekOptimized<T> {
     }
 }
 
-pub async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> io::Result<Bytes> {
+pub(crate) async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> io::Result<Bytes> {
     match reader {
         Either::Left(cursor) => Ok(cursor.get_ref().clone()),
         Either::Right(file) => {
