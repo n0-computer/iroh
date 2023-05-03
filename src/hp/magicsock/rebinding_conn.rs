@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fmt::Debug,
     io,
     net::SocketAddr,
@@ -205,7 +206,7 @@ impl AsyncUdpSocket for UdpSocket {
                 inner.send(io.into(), state, transmits)
             }) {
                 for t in transmits.iter().take(res) {
-                    info!(
+                    tracing::error!(
                         "[UDP] -> {} src: {:?} ({}b)",
                         t.destination,
                         t.src_ip,
@@ -232,9 +233,11 @@ impl AsyncUdpSocket for UdpSocket {
                 self.inner.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
-                    info!(
+                    tracing::error!(
                         "[UDP] <- {} dest: {:?} ({}b)",
-                        meta.addr, meta.dst_ip, meta.len
+                        meta.addr,
+                        meta.dst_ip,
+                        meta.len
                     );
                 }
 

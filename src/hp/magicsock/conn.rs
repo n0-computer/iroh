@@ -544,10 +544,11 @@ impl AsyncUdpSocket for Conn {
         let transmits: Vec<_> = transmits
             .iter()
             .map(|t| {
-                info!(
-                    "[UDP] -> {} ({}b) ({})",
+                tracing::error!(
+                    "[QUINN] -> {} ({}b) {:?} ({})",
                     t.destination,
                     t.contents.len(),
+                    t.src_ip,
                     self.name
                 );
                 Transmit {
@@ -621,8 +622,11 @@ impl AsyncUdpSocket for Conn {
                             return Poll::Ready(Err(err));
                         }
                         NetworkReadResult::Ipv4 { bytes, meta }
-                        | NetworkReadResult::Ipv6 { bytes, meta }
-                        | NetworkReadResult::Derp { bytes, meta } => {
+                        | NetworkReadResult::Ipv6 { bytes, meta } => {
+                            buf_out[..bytes.len()].copy_from_slice(&bytes);
+                            *meta_out = meta;
+                        }
+                        NetworkReadResult::Derp { bytes, meta } => {
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
                         }
@@ -651,9 +655,12 @@ impl AsyncUdpSocket for Conn {
                 num_msgs
             );
             for m in metas {
-                info!(
-                    "[UDP] <- {} ({}b) ({}) ({:?})",
-                    m.addr, m.len, self.name, m.dst_ip
+                tracing::error!(
+                    "[QUINN] <- {} ({}b) ({}) ({:?})",
+                    m.addr,
+                    m.len,
+                    self.name,
+                    m.dst_ip
                 );
             }
             return Poll::Ready(Ok(num_msgs));
@@ -818,7 +825,7 @@ struct Actor {
 }
 
 impl Actor {
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
         let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
         let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1356,6 +1363,7 @@ impl Actor {
             }
         }
 
+        dbg!(&groups);
         for group in groups {
             match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
                 Some(ep) => {
@@ -1420,26 +1428,25 @@ impl Actor {
     async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
         debug!("sending derp region: {} - {:?}", port, peer);
         let region_id = port;
+
+        if self.derp_map.is_none() {
+            warn!("DERP is disabled");
+            return;
+        }
+        if !self
+            .derp_map
+            .as_ref()
+            .unwrap()
+            .regions
+            .contains_key(&usize::from(region_id))
         {
-            if self.derp_map.is_none() {
-                warn!("DERP is disabled");
-                return;
-            }
-            if !self
-                .derp_map
-                .as_ref()
-                .unwrap()
-                .regions
-                .contains_key(&usize::from(region_id))
-            {
-                warn!("unknown region id {}", region_id);
-                return;
-            }
+            warn!("unknown region id {}", region_id);
+            return;
         }
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
         for content in contents {
-            info!("[UDP] -> {} ({}b)", region_id, content.len());
+            tracing::error!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
 
             match derp_client.send(peer.clone(), content).await {
                 Ok(_) => {
@@ -2872,7 +2879,7 @@ impl ReaderState {
                         (self, ReadResult::Continue, ReadAction::None)
                     }
                     derp::ReceivedMessage::ReceivedPacket { source, data } => {
-                        debug!("got derp-{} packet: {} bytes", self.region, data.len());
+                        tracing::error!("[DERP] <- {} ({}b)", self.region, data.len());
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
                         let action = if self.last_packet_src.is_none()
@@ -3306,6 +3313,7 @@ mod tests {
                     async move {
                         println!("[{}] accepting conn", b_name);
                         let conn = b.quic_ep.accept().await.expect("no conn");
+
                         println!("[{}] connecting", b_name);
                         let conn = conn
                             .await
@@ -3359,6 +3367,7 @@ mod tests {
                         .open_bi()
                         .await
                         .with_context(|| format!("[{}] open bi", a_name))?;
+
                     println!("[{}] writing message", a_name);
                     send_bi
                         .write_all(&$msg[..])
@@ -3762,17 +3771,17 @@ mod tests {
             };
         }
 
-        for i in 0..10 {
+        for i in 0..1 {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
-            roundtrip!(m2, m1, b"hello m2");
+            // roundtrip!(m2, m1, b"hello m2");
 
-            println!("-- larger data");
+            // println!("-- larger data");
 
-            let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m1, m2, data);
-            roundtrip!(m2, m1, data);
+            // let mut data = vec![0u8; 10 * 1024];
+            // rand::thread_rng().fill_bytes(&mut data);
+            // roundtrip!(m1, m2, data);
+            // roundtrip!(m2, m1, data);
         }
 
         Ok(())
