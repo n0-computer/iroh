@@ -416,10 +416,7 @@ impl Derper {
             let addr = listener.local_addr()?;
             info!("[DERP] derper: serving on {}", addr);
 
-            let handler = DerpService {
-                derper: self.clone(),
-                is_restricted: self.tls_config.is_some(),
-            };
+            let handler = DerpService(self.clone());
 
             tokio::task::spawn(async move {
                 loop {
@@ -491,11 +488,7 @@ impl Derper {
 struct HttpService(Derper);
 
 #[derive(Clone)]
-struct DerpService {
-    derper: Derper,
-    /// If set, this will not serve the routes that should be served over https.
-    is_restricted: bool,
-}
+struct DerpService(Derper);
 
 #[derive(Clone)]
 struct HttpsService(Derper);
@@ -536,7 +529,7 @@ impl hyper::service::Service<Request<Body>> for DerpService {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        handle_request(&mut self.derper, req, self.is_restricted)
+        handle_request(&mut self.0, req)
     }
 }
 
@@ -550,7 +543,7 @@ impl hyper::service::Service<Request<Body>> for HttpsService {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        handle_request(&mut self.0, req, false)
+        handle_request(&mut self.0, req)
     }
 }
 
@@ -586,23 +579,20 @@ impl hyper::service::Service<Request<Body>> for HttpService {
 fn handle_request(
     derper: &mut Derper,
     req: Request<Body>,
-    is_restricted: bool,
 ) -> Pin<Box<dyn Future<Output = Result<Response<Body>, HyperError>> + Send>> {
-    match (is_restricted, req.method(), req.uri().path()) {
-        (false, &Method::GET, "/") | (false, &Method::GET, "/index.html") => {
-            Box::pin(root_handler(derper.default_response()))
-        }
-        (false, &Method::GET | &Method::HEAD, "/derp/probe") => {
+    match (req.method(), req.uri().path()) {
+        (&Method::GET, "/" | "/index.html") => Box::pin(root_handler(derper.default_response())),
+        (&Method::GET | &Method::HEAD, "/derp/probe") => {
             Box::pin(probe_handler(derper.default_response()))
         }
-        (false, &Method::GET, "/derp") => match derper.client_conn_handler.clone() {
+        (&Method::GET, "/derp") => match derper.client_conn_handler.clone() {
             Some(mut handler) => {
                 Box::pin(async move { handler.call(req).await.map_err(Into::into) })
             }
             None => Box::pin(derp_disabled_handler(derper.default_response())),
         },
         // Robots
-        (false, &Method::GET, "/robots.txt") => Box::pin(robots_handler(derper.default_response())),
+        (&Method::GET, "/robots.txt") => Box::pin(robots_handler(derper.default_response())),
         _ => {
             // Return 404 not found response.
             let response = derper.default_response();
