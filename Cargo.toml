@@ -14,21 +14,20 @@ rust-version = "1.63"
 [dependencies]
 # abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
 anyhow = { version = "1", features = ["backtrace"] }
-async-time-mock-tokio = "0.0.1"
 backoff = "0.4.0"
 base64 = "0.21.0"
 blake3 = "1.3.3"
 bytes = "1.4"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
-crypto_box = { version = "0.8", features = ["serde"] }
-curve25519-dalek = "=4.0.0-rc.1"
+crypto_box = { version = "0.9.0-pre", features = ["serde", "chacha20"] }
+curve25519-dalek = "=4.0.0-rc.2"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.14.1"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = "0.99.17"
 dirs-next = "2.0.0"
-ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
+ed25519-dalek = { version = "=2.0.0-rc.2", features = ["serde", "rand_core"] }
 flume = "0.10.14"
 futures = "0.3.25"
 governor = "0.5.1"
@@ -82,6 +81,9 @@ x509-parser = "0.14"
 zeroize = "1.5"
 bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
 range-collections = "0.4.0"
+async-lock = { git = "https://github.com/smol-rs/async-lock", branch = "notgull/block-lock" }
+surge-ping = "0.8.0"
+
 
 [target.'cfg(target_os = "linux")'.dependencies]
 netlink-packet-route = "0.15.0"
@@ -91,10 +93,10 @@ rtnetlink = "0.12.0"
 wmi = "0.12.2"
 
 [dev-dependencies]
-async-time-mock-tokio = { version = "0.0.1", features = ["mock"] }
 proptest = "1.0.0"
 rand = "0.8"
 testdir = "0.7.2"
+tokio = { version = "1", features = ["full", "test-util"] }
 regex = { version = "1.7.1", features = ["std"] }
 nix = "0.26.2"
 http-body = "0.4.5"
@@ -124,3 +126,6 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
+[patch.crates-io]
+crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
+ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
