@@ -621,12 +621,17 @@ impl AsyncUdpSocket for Conn {
                         NetworkReadResult::Error(err) => {
                             return Poll::Ready(Err(err));
                         }
-                        NetworkReadResult::Ipv4 { bytes, meta }
-                        | NetworkReadResult::Ipv6 { bytes, meta } => {
-                            buf_out[..bytes.len()].copy_from_slice(&bytes);
-                            *meta_out = meta;
-                        }
-                        NetworkReadResult::Derp { bytes, meta } => {
+                        NetworkReadResult::Ok {
+                            source,
+                            bytes,
+                            meta,
+                        } => {
+                            tracing::error!(
+                                "[QUINN] <- {:?} {:?} ({}b)",
+                                source,
+                                meta,
+                                bytes.len()
+                            );
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
                         }
@@ -687,18 +692,18 @@ impl AsyncUdpSocket for Conn {
 #[derive(Debug)]
 enum NetworkReadResult {
     Error(io::Error),
-    Ipv4 {
-        bytes: BytesMut,
+    Ok {
+        source: NetworkSource,
         meta: quinn_udp::RecvMeta,
-    },
-    Ipv6 {
         bytes: BytesMut,
-        meta: quinn_udp::RecvMeta,
     },
-    Derp {
-        bytes: BytesMut,
-        meta: quinn_udp::RecvMeta,
-    },
+}
+
+#[derive(Debug)]
+enum NetworkSource {
+    Ipv4,
+    Ipv6,
+    Derp,
 }
 
 #[derive(Debug)]
@@ -970,13 +975,15 @@ impl Actor {
                                 if self.receive_ip(&bytes, &mut meta, network).await {
                                     match network {
                                         Network::Ipv4 => {
-                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv4 {
+                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
+                                                source: NetworkSource::Ipv4,
                                                 bytes,
                                                 meta,
                                             }).await;
                                         }
                                         Network::Ipv6 => {
-                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ipv6 {
+                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
+                                                source: NetworkSource::Ipv6,
                                                 bytes,
                                                 meta,
                                             }).await;
@@ -1164,7 +1171,8 @@ impl Actor {
         // if stats := c.stats.Load(); stats != nil {
         // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
         // }
-        Some(NetworkReadResult::Derp {
+        Some(NetworkReadResult::Ok {
+            source: NetworkSource::Derp,
             bytes: dm.buf,
             meta,
         })
@@ -1363,7 +1371,6 @@ impl Actor {
             }
         }
 
-        dbg!(&groups);
         for group in groups {
             match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
                 Some(ep) => {
@@ -3184,10 +3191,12 @@ mod tests {
         let eps = Arc::new(Mutex::new(vec![Vec::new(); stacks.len()]));
 
         async fn build_netmap(
-            eps: &[cfg::Endpoint],
+            eps: &[Vec<cfg::Endpoint>],
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
+            let me = &eps[my_idx];
+
             let mut peers = Vec::new();
 
             for (i, peer) in ms.iter().enumerate() {
@@ -3200,7 +3209,7 @@ mod tests {
                     addresses: addresses.clone(),
                     name: Some(format!("node{}", i + 1)),
                     key: peer.key.public_key().into(),
-                    endpoints: eps.iter().map(|ep| ep.addr).collect(),
+                    endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),
                     hostinfo: crate::hp::hostinfo::Hostinfo::new(),
@@ -3217,17 +3226,15 @@ mod tests {
         async fn update_eps(
             eps: Arc<Mutex<Vec<Vec<cfg::Endpoint>>>>,
             ms: &[MagicStack],
-            idx: usize,
+            my_idx: usize,
             new_eps: Vec<cfg::Endpoint>,
         ) {
             let eps = &mut *eps.lock().await;
-            eps[idx] = new_eps;
+            eps[my_idx] = new_eps;
 
             for (i, m) in ms.iter().enumerate() {
-                if !eps[i].is_empty() {
-                    let nm = build_netmap(&eps[i], ms, i).await;
-                    let _ = m.conn.set_network_map(nm).await;
-                }
+                let nm = build_netmap(&eps, ms, i).await;
+                let _ = m.conn.set_network_map(nm).await;
             }
         }
 
@@ -3242,7 +3249,7 @@ mod tests {
                     tokio::select! {
                         res = m.ep_ch.recv_async() => match res {
                             Ok(new_eps) => {
-                                debug!("conn{} endpoints update", my_idx + 1);
+                                debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                                 update_eps(eps.clone(), &stacks, my_idx, new_eps).await;
                             }
                             Err(err) => {
@@ -3302,6 +3309,8 @@ mod tests {
                 let a_name = stringify!($a);
                 let b_name = stringify!($b);
                 println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
+                println!("[{}] {:?}", a_name, a.conn.local_addr().await);
+                println!("[{}] {:?}", b_name, b.conn.local_addr().await);
 
                 let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
                 let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();
