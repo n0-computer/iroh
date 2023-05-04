@@ -168,6 +168,7 @@ enum Commands {
         /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
         #[clap(long, short)]
         out: Option<PathBuf>,
+        /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
     },

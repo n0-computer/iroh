@@ -40,20 +40,17 @@ mod tests {
     use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::io::AsyncWriteExt;
-    use tokio::{fs, sync::broadcast};
+    use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::util::Hash;
     use crate::{
         blobs::Collection,
-        get::dial_peer,
-        protocol::{AuthToken, Request},
-    };
-    use crate::{get::get_response_machine, tls::PeerId};
-    use crate::{
         get::Stats,
+        get::{dial_peer, get_response_machine},
+        protocol::{AuthToken, Request},
         provider::{create_collection, Event, Provider},
+        tls::PeerId,
+        util::Hash,
     };
 
     use super::*;
