@@ -793,6 +793,9 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
 }
 
 /// Get missing range for a single file, given a temp and target directory
+///
+/// This will check missing ranges from the outboard, but for the data file itself
+/// just use the length of the file.
 pub fn get_missing_range(
     hash: &Hash,
     name: &str,
@@ -859,21 +862,23 @@ fn get_missing_range_impl(
 }
 
 /// Given a target directory and a temp directory, get a set of ranges that we are missing
+///
+/// Assumes that the temp directory contains at least the data for the collection.
+/// Also assumes that partial data files do not contain gaps.
 pub fn get_missing_ranges(
     hash: Hash,
     target_dir: &Path,
     temp_dir: &Path,
-) -> io::Result<(RangeSpecSeq, Option<Collection>)> {
+) -> anyhow::Result<(RangeSpecSeq, Option<Collection>)> {
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Target directory exists but does not contain temp directory",
-        ));
+        anyhow::bail!("Target directory exists but does not contain temp directory");
     }
     // try to load the collection from the temp directory
-    let collection = load_collection(temp_dir, hash)?;
+    //
+    // if the collection can not be deserialized, we treat it as if it does not exist
+    let collection = load_collection(temp_dir, hash).ok().flatten();
     let collection = match collection {
         Some(collection) => collection,
         None => return Ok((RangeSpecSeq::all(), None)),
@@ -937,12 +942,11 @@ pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
 }
 
 /// Load a collection from a data path
-fn load_collection(data_path: &Path, hash: Hash) -> io::Result<Option<Collection>> {
+fn load_collection(data_path: &Path, hash: Hash) -> anyhow::Result<Option<Collection>> {
     let collection_path = get_data_path(data_path, hash);
     Ok(if collection_path.exists() {
         let collection = std::fs::read(&collection_path)?;
-        // todo: error
-        let collection = Collection::from_bytes(&collection).unwrap();
+        let collection = Collection::from_bytes(&collection)?;
         Some(collection)
     } else {
         None
