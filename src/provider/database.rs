@@ -421,7 +421,7 @@ impl Database {
         items.into_iter()
     }
 
-    ///
+    /// Unwrap into the inner HashMap
     pub fn to_inner(&self) -> HashMap<Hash, BlobOrCollection> {
         self.0.read().unwrap().clone()
     }

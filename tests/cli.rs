@@ -23,7 +23,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
-fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<iroh::Hash> {
+fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
     use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
 
     let out_dir: &Path = out_dir.as_ref();

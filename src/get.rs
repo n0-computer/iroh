@@ -215,7 +215,7 @@ pub mod get_response_machine {
 
     impl RangesIter {
         pub fn new(owner: RangeSpecSeq) -> Self {
-            Self(RangesIterInner::new(owner, |owner| owner.non_empty_iter()))
+            Self(RangesIterInner::new(owner, |owner| owner.iter_non_empty()))
         }
     }
 
@@ -286,7 +286,7 @@ pub mod get_response_machine {
         /// First response is a child
         StartChild(AtStartChild),
         /// Request is empty
-        Finished(AtClosing),
+        Closing(AtClosing),
     }
 
     impl AtConnected {
@@ -481,6 +481,12 @@ pub mod get_response_machine {
         }
 
         /// Concatenate the response into a writer
+        ///
+        /// When requesting an entire blob, this is identical to writing the blob
+        /// to the writer.
+        ///
+        /// When requesting only ranges, this concatenates the ranges without
+        /// keeping gaps.
         pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
             self,
             res: W,
@@ -790,11 +796,9 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
 pub fn get_missing_range(
     hash: &Hash,
     name: &str,
-    temp_dir: impl AsRef<Path>,
-    target_dir: impl AsRef<Path>,
+    temp_dir: &Path,
+    target_dir: &Path,
 ) -> io::Result<RangeSpecSeq> {
-    let target_dir = target_dir.as_ref();
-    let temp_dir = temp_dir.as_ref();
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
@@ -812,8 +816,8 @@ pub fn get_missing_range(
 fn get_missing_range_impl(
     hash: &Hash,
     name: &str,
-    temp_dir: impl AsRef<Path>,
-    target_dir: impl AsRef<Path>,
+    temp_dir: &Path,
+    target_dir: &Path,
 ) -> io::Result<RangeSet2<ChunkNum>> {
     let paths = FilePaths::new(hash, name, temp_dir, target_dir);
     Ok(if paths.is_final() {
@@ -857,11 +861,9 @@ fn get_missing_range_impl(
 /// Given a target directory and a temp directory, get a set of ranges that we are missing
 pub fn get_missing_ranges(
     hash: Hash,
-    target_dir: impl AsRef<Path>,
-    temp_dir: impl AsRef<Path>,
+    target_dir: &Path,
+    temp_dir: &Path,
 ) -> io::Result<(RangeSpecSeq, Option<Collection>)> {
-    let target_dir = target_dir.as_ref();
-    let temp_dir = temp_dir.as_ref();
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
@@ -907,16 +909,11 @@ struct FilePaths {
 }
 
 impl FilePaths {
-    fn new(
-        hash: &Hash,
-        name: &str,
-        temp_dir: impl AsRef<Path>,
-        target_dir: impl AsRef<Path>,
-    ) -> Self {
-        let target = target_dir.as_ref().join(pathbuf_from_name(name));
+    fn new(hash: &Hash, name: &str, temp_dir: &Path, target_dir: &Path) -> Self {
+        let target = target_dir.join(pathbuf_from_name(name));
         let hash = blake3::Hash::from(*hash).to_hex();
-        let temp = temp_dir.as_ref().join(format!("{}.data.part", hash));
-        let outboard = temp_dir.as_ref().join(format!("{}.outboard.part", hash));
+        let temp = temp_dir.join(format!("{}.data.part", hash));
+        let outboard = temp_dir.join(format!("{}.outboard.part", hash));
         Self {
             target,
             temp,
@@ -934,14 +931,13 @@ impl FilePaths {
 }
 
 /// get data path for a hash
-pub fn get_data_path(dir: impl AsRef<Path>, hash: Hash) -> PathBuf {
-    let data_path = dir.as_ref();
+pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
     let hash = blake3::Hash::from(hash).to_hex();
     data_path.join(format!("{}.data", hash))
 }
 
 /// Load a collection from a data path
-fn load_collection(data_path: impl AsRef<Path>, hash: Hash) -> io::Result<Option<Collection>> {
+fn load_collection(data_path: &Path, hash: Hash) -> io::Result<Option<Collection>> {
     let collection_path = get_data_path(data_path, hash);
     Ok(if collection_path.exists() {
         let collection = std::fs::read(&collection_path)?;

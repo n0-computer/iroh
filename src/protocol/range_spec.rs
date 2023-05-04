@@ -180,13 +180,9 @@ impl RangeSpecSeq {
     /// An iterator over non empty range specs
     ///
     /// This iterator is infinite if the range spec is infinite
-    pub fn non_empty_iter(&self) -> NonEmptyRequestRangeSpecIter<'_> {
+    pub fn iter_non_empty(&self) -> NonEmptyRequestRangeSpecIter<'_> {
         NonEmptyRequestRangeSpecIter::new(self.iter())
     }
-
-    // pub fn non_empty_iter(&self) -> impl Iterator<Item = (usize, &RangeSpec)> {
-    //     self.iter().enumerate().filter(|(_, r)| !r.is_empty())
-    // }
 }
 
 static EMPTY_RANGE_SPEC: RangeSpec = RangeSpec::EMPTY;

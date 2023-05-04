@@ -906,7 +906,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         ConnectedNext::StartChild(start_child) => {
             (EndBlobNext::MoreChildren(start_child), collection)
         }
-        ConnectedNext::Finished(finish) => (EndBlobNext::Closing(finish), collection),
+        ConnectedNext::Closing(finish) => (EndBlobNext::Closing(finish), collection),
     };
     // read all the children
     let finishing = loop {

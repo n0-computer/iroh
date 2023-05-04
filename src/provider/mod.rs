@@ -120,7 +120,6 @@ impl BlobOrCollection {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn outboard(&self) -> &Bytes {
         match self {
             BlobOrCollection::Blob { outboard, .. } => outboard,
@@ -779,7 +778,7 @@ async fn transfer_collection(
         None
     };
 
-    for (offset, ranges) in request.ranges.non_empty_iter() {
+    for (offset, ranges) in request.ranges.iter_non_empty() {
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
             // send the root
