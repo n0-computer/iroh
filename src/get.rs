@@ -175,15 +175,18 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
     false
 }
 
-///
+/// Finite state machine for get responses
 pub mod get_response_machine {
     use std::result;
 
     use super::*;
 
-    use bao_tree::io::fsm::{
-        AsyncSliceWriter, Handle, ResponseDecoderReading, ResponseDecoderReadingNext,
-        ResponseDecoderStart,
+    use bao_tree::io::{
+        fsm::{
+            AsyncSliceWriter, Handle, ResponseDecoderReading, ResponseDecoderReadingNext,
+            ResponseDecoderStart,
+        },
+        Leaf, Parent,
     };
     use derive_more::From;
     use ouroboros::self_referencing;
@@ -508,16 +511,32 @@ pub mod get_response_machine {
         misc: Box<Misc>,
     }
 
-    ///
+    /// Bao content item
+    #[derive(Debug)]
+    pub enum BaoContentItem {
+        /// A parent node
+        Parent(Parent),
+        /// A leaf node containing data
+        Leaf(Leaf),
+    }
+
+    impl TryFrom<DecodeResponseItem> for BaoContentItem {
+        type Error = bao_tree::io::Header;
+
+        fn try_from(item: DecodeResponseItem) -> result::Result<Self, Self::Error> {
+            match item {
+                DecodeResponseItem::Parent(p) => Ok(BaoContentItem::Parent(p)),
+                DecodeResponseItem::Leaf(l) => Ok(BaoContentItem::Leaf(l)),
+                DecodeResponseItem::Header(h) => Err(h),
+            }
+        }
+    }
+
+    /// The next state after reading a content item
     #[derive(Debug, From)]
     pub enum BlobContentNext {
         /// We expect more content
-        More(
-            (
-                AtBlobContent,
-                result::Result<DecodeResponseItem, DecodeError>,
-            ),
-        ),
+        More((AtBlobContent, result::Result<BaoContentItem, DecodeError>)),
         /// We are done with this blob
         Done(AtEndBlob),
     }
@@ -528,6 +547,7 @@ pub mod get_response_machine {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
+                    let res = res.map(|x| x.try_into().unwrap());
                     (next, res).into()
                 }
                 ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
@@ -557,8 +577,7 @@ pub mod get_response_machine {
                     BlobContentNext::More((content1, item)) => {
                         content = content1;
                         match item? {
-                            DecodeResponseItem::Header(_) => unreachable!(),
-                            DecodeResponseItem::Parent(parent) => {
+                            BaoContentItem::Parent(parent) => {
                                 if let Some(outboard) = outboard.as_mut() {
                                     let offset = parent.node.post_order_offset() * 64 + 8;
                                     let (l_hash, r_hash) = parent.pair;
@@ -568,7 +587,7 @@ pub mod get_response_machine {
                                         .await?;
                                 }
                             }
-                            DecodeResponseItem::Leaf(leaf) => {
+                            BaoContentItem::Leaf(leaf) => {
                                 on_write(leaf.offset.0, leaf.data.len());
                                 data.write_at(leaf.offset.0, leaf.data).await?;
                             }
@@ -594,7 +613,7 @@ pub mod get_response_machine {
                     BlobContentNext::More(x) => x,
                     BlobContentNext::Done(x) => break x,
                 };
-                if let DecodeResponseItem::Leaf(leaf) = item? {
+                if let BaoContentItem::Leaf(leaf) = item? {
                     on_write(leaf.offset.0, leaf.data.len());
                     res.write_all(&leaf.data).await?;
                 }
@@ -610,7 +629,7 @@ pub mod get_response_machine {
         misc: Box<Misc>,
     }
 
-    ///
+    /// The next state after the end of a blob
     #[derive(Debug, From)]
     pub enum EndBlobNext {
         /// Response is expected to have more children

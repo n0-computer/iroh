@@ -54,7 +54,7 @@ impl Collection {
     }
 }
 
-///
+/// A blob entry of a collection
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Blob {
     /// The name of this blob of data

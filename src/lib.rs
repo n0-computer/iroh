@@ -37,7 +37,6 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
-    use bao_tree::io::DecodeResponseItem;
     use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
@@ -47,7 +46,7 @@ mod tests {
 
     use crate::{
         blobs::Collection,
-        get::dial_peer,
+        get::{dial_peer, get_response_machine::BaoContentItem},
         protocol::{AuthToken, Request},
     };
     use crate::{get::get_response_machine, tls::PeerId};
@@ -524,7 +523,7 @@ mod tests {
                 BlobContentNext::More(x) => x,
                 BlobContentNext::Done(x) => break x,
             };
-            if let DecodeResponseItem::Leaf(leaf) = item? {
+            if let BaoContentItem::Leaf(leaf) = item? {
                 res.extend_from_slice(&leaf.data);
             }
         };
