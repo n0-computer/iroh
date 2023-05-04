@@ -12,7 +12,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
-use iroh::get::get_response_machine::{ConnectedNext, DoneNext};
+use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
 use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
 use iroh::provider::{Database, Provider, Ticket};
@@ -903,14 +903,16 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
             (curr.next(), collection.into_inner())
         }
-        ConnectedNext::StartChild(start_child) => (DoneNext::MoreChildren(start_child), collection),
-        ConnectedNext::Finished(finish) => (DoneNext::Finished(finish), collection),
+        ConnectedNext::StartChild(start_child) => {
+            (EndBlobNext::MoreChildren(start_child), collection)
+        }
+        ConnectedNext::Finished(finish) => (EndBlobNext::Closing(finish), collection),
     };
     // read all the children
     let finishing = loop {
         let start = match next {
-            DoneNext::MoreChildren(sc) => sc,
-            DoneNext::Finished(finish) => break finish,
+            EndBlobNext::MoreChildren(sc) => sc,
+            EndBlobNext::Closing(finish) => break finish,
         };
         let child_offset = start.child_offset() as usize;
         let blob = match collection.get(child_offset) {
@@ -1051,8 +1053,8 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     // read all the children
     let finishing = loop {
         let start = match next {
-            DoneNext::MoreChildren(sc) => sc,
-            DoneNext::Finished(finish) => break finish,
+            EndBlobNext::MoreChildren(sc) => sc,
+            EndBlobNext::Closing(finish) => break finish,
         };
         let child_offset = start.child_offset() as usize;
         let blob = match collection.get(child_offset) {

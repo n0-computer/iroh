@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -21,6 +21,8 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
 }
 
 /// Given a directory, make a partial download of it.
+///
+/// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<iroh::Hash> {
     use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
 
@@ -29,7 +31,6 @@ fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<iroh::Hash
     anyhow::ensure!(!temp_dir.exists());
     std::fs::create_dir_all(&temp_dir)?;
     let sources = create_data_sources(out_dir.to_owned())?;
-    println!("{:?}", sources);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (db, hash) = rt.block_on(create_collection(sources))?;
     let db = db.to_inner();
@@ -42,7 +43,11 @@ fn make_partial_download(out_dir: impl AsRef<Path>) -> anyhow::Result<iroh::Hash
             BlobOrCollection::Blob { outboard, path, .. } => {
                 data_path.set_extension("data.part");
                 std::fs::write(outboard_path, outboard)?;
-                std::fs::rename(path, data_path)?;
+                std::fs::rename(path, &data_path)?;
+                let file = OpenOptions::new().write(true).open(&data_path)?;
+                let len = file.metadata()?.len();
+                file.set_len(len / 2)?;
+                drop(file);
             }
             BlobOrCollection::Collection { outboard, data } => {
                 data_path.set_extension("data");

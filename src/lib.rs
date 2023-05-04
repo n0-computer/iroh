@@ -52,7 +52,7 @@ mod tests {
     };
     use crate::{get::get_response_machine, tls::PeerId};
     use crate::{
-        get::get_response_machine::{AtEnd, ContentNext},
+        get::get_response_machine::{AtEndBlob, BlobContentNext},
         util::Hash,
     };
     use crate::{
@@ -514,15 +514,15 @@ mod tests {
     }
 
     async fn read_single(
-        header: get_response_machine::AtHeader,
-    ) -> anyhow::Result<(AtEnd, Vec<u8>)> {
+        header: get_response_machine::AtBlobHeader,
+    ) -> anyhow::Result<(AtEndBlob, Vec<u8>)> {
         let (mut content, size) = header.next().await?;
         let mut res = Vec::with_capacity(size as usize);
         let done = loop {
             let item;
             (content, item) = match content.next().await {
-                ContentNext::More(x) => x,
-                ContentNext::Done(x) => break x,
+                BlobContentNext::More(x) => x,
+                BlobContentNext::Done(x) => break x,
             };
             if let DecodeResponseItem::Leaf(leaf) = item? {
                 res.extend_from_slice(&leaf.data);
@@ -549,8 +549,8 @@ mod tests {
         // read all the children
         let finishing = loop {
             let start = match next {
-                DoneNext::MoreChildren(start) => start,
-                DoneNext::Finished(finishing) => break finishing,
+                EndBlobNext::MoreChildren(start) => start,
+                EndBlobNext::Closing(finishing) => break finishing,
             };
             let child = start.child_offset();
             let Some(blob) = collection.blobs().get(child as usize) else {

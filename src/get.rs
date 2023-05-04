@@ -177,10 +177,13 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
 
 ///
 pub mod get_response_machine {
+    use std::result;
+
     use super::*;
 
     use bao_tree::io::fsm::{
-        Handle, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        AsyncSliceWriter, Handle, ResponseDecoderReading, ResponseDecoderReadingNext,
+        ResponseDecoderStart,
     };
     use derive_more::From;
     use ouroboros::self_referencing;
@@ -273,12 +276,12 @@ pub mod get_response_machine {
     /// Possible next states after the handshake has been sent
     #[derive(Debug, From)]
     pub enum ConnectedNext {
-        ///
-        StartChild(AtStartChild),
-        ///
+        /// First response is a collection
         StartCollection(AtStartCollection),
-        ///
-        Finished(AtFinish),
+        /// First response is a child
+        StartChild(AtStartChild),
+        /// Request is empty
+        Finished(AtClosing),
     }
 
     impl AtConnected {
@@ -342,7 +345,7 @@ pub mod get_response_machine {
                         .into()
                     }
                 }
-                None => AtFinish::new(misc, reader).into(),
+                None => AtClosing::new(misc, reader).into(),
             })
         }
     }
@@ -381,22 +384,22 @@ pub mod get_response_machine {
         /// Go into the next state, reading the header
         ///
         /// This requires passing in the hash of the child for validation
-        pub fn next(self, hash: Hash) -> AtHeader {
+        pub fn next(self, hash: Hash) -> AtBlobHeader {
             let stream = ResponseDecoderStart::<TrackingReader<RecvStream>>::new(
                 hash.into(),
                 self.ranges,
                 IROH_BLOCK_SIZE,
                 self.reader,
             );
-            AtHeader {
+            AtBlobHeader {
                 stream,
                 misc: self.misc,
             }
         }
 
         /// Finish the get response without reading further
-        pub fn finish(self) -> AtFinish {
-            AtFinish::new(self.misc, self.reader)
+        pub fn finish(self) -> AtClosing {
+            AtClosing::new(self.misc, self.reader)
         }
     }
 
@@ -409,38 +412,38 @@ pub mod get_response_machine {
         /// Go into the next state, reading the header
         ///
         /// For the collection we already know the hash, since it was part of the request
-        pub fn next(self) -> AtHeader {
+        pub fn next(self) -> AtBlobHeader {
             let stream = ResponseDecoderStart::new(
                 self.hash.into(),
                 self.ranges,
                 IROH_BLOCK_SIZE,
                 self.reader,
             );
-            AtHeader {
+            AtBlobHeader {
                 stream,
                 misc: self.misc,
             }
         }
 
         /// Finish the get response without reading further
-        pub fn finish(self) -> AtFinish {
-            AtFinish::new(self.misc, self.reader)
+        pub fn finish(self) -> AtClosing {
+            AtClosing::new(self.misc, self.reader)
         }
     }
 
     /// State before reading a size header
     #[derive(Debug)]
-    pub struct AtHeader {
+    pub struct AtBlobHeader {
         stream: ResponseDecoderStart<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
-    impl AtHeader {
+    impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtContent, u64), io::Error> {
+        pub async fn next(self) -> Result<(AtBlobContent, u64), io::Error> {
             let (stream, size) = self.stream.next().await?;
             Ok((
-                AtContent {
+                AtBlobContent {
                     stream,
                     misc: self.misc,
                 },
@@ -449,17 +452,17 @@ pub mod get_response_machine {
         }
 
         /// Drain the response and throw away the result
-        pub async fn drain(self) -> std::result::Result<AtEnd, DecodeError> {
+        pub async fn drain(self) -> result::Result<AtEndBlob, DecodeError> {
             let (mut content, _size) = self.next().await?;
             loop {
                 match content.next().await {
-                    ContentNext::More((content1, Ok(_))) => {
+                    BlobContentNext::More((content1, Ok(_))) => {
                         content = content1;
                     }
-                    ContentNext::More((_, Err(e))) => {
+                    BlobContentNext::More((_, Err(e))) => {
                         return Err(e);
                     }
-                    ContentNext::Done(end) => {
+                    BlobContentNext::Done(end) => {
                         return Ok(end);
                     }
                 }
@@ -471,22 +474,23 @@ pub mod get_response_machine {
             self,
             res: W,
             on_write: OW,
-        ) -> std::result::Result<AtEnd, DecodeError> {
+        ) -> result::Result<AtEndBlob, DecodeError> {
             let (curr, _size) = self.next().await?;
             curr.concatenate(res, on_write).await
         }
 
-        ///
+        /// Write the entire blob to a slice writer, optionally also writing
+        /// an outboard.
         pub async fn write_all_with_outboard<
-            D: bao_tree::io::fsm::AsyncSliceWriter,
-            O: bao_tree::io::fsm::AsyncSliceWriter,
+            D: AsyncSliceWriter,
+            O: AsyncSliceWriter,
             OW: FnMut(u64, usize),
         >(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
             on_write: OW,
-        ) -> std::result::Result<AtEnd, DecodeError> {
+        ) -> result::Result<AtEndBlob, DecodeError> {
             let (content, size) = self.next().await?;
             if let Some(o) = outboard.as_mut() {
                 o.write_array_at(0, size.to_le_bytes()).await?;
@@ -499,34 +503,34 @@ pub mod get_response_machine {
 
     /// State while we are reading content
     #[derive(Debug)]
-    pub struct AtContent {
+    pub struct AtBlobContent {
         stream: ResponseDecoderReading<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
     ///
     #[derive(Debug, From)]
-    pub enum ContentNext {
-        ///
+    pub enum BlobContentNext {
+        /// We expect more content
         More(
             (
-                AtContent,
-                std::result::Result<DecodeResponseItem, DecodeError>,
+                AtBlobContent,
+                result::Result<DecodeResponseItem, DecodeError>,
             ),
         ),
-        ///
-        Done(AtEnd),
+        /// We are done with this blob
+        Done(AtEndBlob),
     }
 
-    impl AtContent {
+    impl AtBlobContent {
         /// Read the next item, either content, an error, or the end of the blob
-        pub async fn next(self) -> ContentNext {
+        pub async fn next(self) -> BlobContentNext {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
                     (next, res).into()
                 }
-                ResponseDecoderReadingNext::Done(stream) => AtEnd {
+                ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
                     stream,
                     misc: self.misc,
                 }
@@ -534,22 +538,23 @@ pub mod get_response_machine {
             }
         }
 
-        ///
+        /// Write the entire blob to a slice writer, optionally also writing
+        /// an outboard.
         pub async fn write_all_with_outboard<D, O, OW>(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
             mut on_write: OW,
-        ) -> std::result::Result<AtEnd, DecodeError>
+        ) -> result::Result<AtEndBlob, DecodeError>
         where
-            D: bao_tree::io::fsm::AsyncSliceWriter,
-            O: bao_tree::io::fsm::AsyncSliceWriter,
+            D: AsyncSliceWriter,
+            O: AsyncSliceWriter,
             OW: FnMut(u64, usize),
         {
             let mut content = self;
             loop {
                 match content.next().await {
-                    ContentNext::More((content1, item)) => {
+                    BlobContentNext::More((content1, item)) => {
                         content = content1;
                         match item? {
                             DecodeResponseItem::Header(_) => unreachable!(),
@@ -569,25 +574,25 @@ pub mod get_response_machine {
                             }
                         }
                     }
-                    ContentNext::Done(end) => {
+                    BlobContentNext::Done(end) => {
                         return Ok(end);
                     }
                 }
             }
         }
 
-        /// Concatenate the response into a writer
+        /// Concatenate the entire blob into a writer
         pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
             self,
             mut res: W,
             mut on_write: OW,
-        ) -> std::result::Result<AtEnd, DecodeError> {
+        ) -> result::Result<AtEndBlob, DecodeError> {
             let mut content = self;
             let done = loop {
                 let item;
                 (content, item) = match content.next().await {
-                    ContentNext::More(x) => x,
-                    ContentNext::Done(x) => break x,
+                    BlobContentNext::More(x) => x,
+                    BlobContentNext::Done(x) => break x,
                 };
                 if let DecodeResponseItem::Leaf(leaf) = item? {
                     on_write(leaf.offset.0, leaf.data.len());
@@ -600,23 +605,23 @@ pub mod get_response_machine {
 
     /// State after we have read all the content for a blob
     #[derive(Debug)]
-    pub struct AtEnd {
+    pub struct AtEndBlob {
         stream: TrackingReader<RecvStream>,
         misc: Box<Misc>,
     }
 
     ///
     #[derive(Debug, From)]
-    pub enum DoneNext {
-        ///
+    pub enum EndBlobNext {
+        /// Response is expected to have more children
         MoreChildren(AtStartChild),
-        ///
-        Finished(AtFinish),
+        /// No more children expected
+        Closing(AtClosing),
     }
 
-    impl AtEnd {
+    impl AtEndBlob {
         /// Read the next child, or finish
-        pub fn next(mut self) -> DoneNext {
+        pub fn next(mut self) -> EndBlobNext {
             if let Some((offset, ranges)) = self.misc.ranges_iter.next() {
                 AtStartChild {
                     reader: self.stream,
@@ -626,25 +631,25 @@ pub mod get_response_machine {
                 }
                 .into()
             } else {
-                AtFinish::new(self.misc, self.stream).into()
+                AtClosing::new(self.misc, self.stream).into()
             }
         }
     }
 
     /// State when finishing the get response
     #[derive(Debug)]
-    pub struct AtFinish {
+    pub struct AtClosing {
         misc: Box<Misc>,
         reader: TrackingReader<RecvStream>,
     }
 
-    impl AtFinish {
+    impl AtClosing {
         fn new(misc: Box<Misc>, reader: TrackingReader<RecvStream>) -> Self {
             Self { misc, reader }
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> std::result::Result<Stats, io::Error> {
+        pub async fn next(self) -> result::Result<Stats, io::Error> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
             if let Some(chunk) = reader.read_chunk(8, false).await? {
@@ -671,7 +676,7 @@ pub mod get_response_machine {
     }
 }
 
-///
+/// Dial a peer and run a get request
 pub async fn run(
     request: Request,
     auth_token: AuthToken,
