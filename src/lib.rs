@@ -44,16 +44,13 @@ mod tests {
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
+    use crate::util::Hash;
     use crate::{
         blobs::Collection,
-        get::{dial_peer, get_response_machine::BaoContentItem},
+        get::dial_peer,
         protocol::{AuthToken, Request},
     };
     use crate::{get::get_response_machine, tls::PeerId};
-    use crate::{
-        get::get_response_machine::{AtEndBlob, BlobContentNext},
-        util::Hash,
-    };
     use crate::{
         get::Stats,
         provider::{create_collection, Event, Provider},
@@ -512,24 +509,6 @@ mod tests {
         Ok(())
     }
 
-    async fn read_single(
-        header: get_response_machine::AtBlobHeader,
-    ) -> anyhow::Result<(AtEndBlob, Vec<u8>)> {
-        let (mut content, size) = header.next().await?;
-        let mut res = Vec::with_capacity(size as usize);
-        let done = loop {
-            let item;
-            (content, item) = match content.next().await {
-                BlobContentNext::More(x) => x,
-                BlobContentNext::Done(x) => break x,
-            };
-            if let BaoContentItem::Leaf(leaf) = item? {
-                res.extend_from_slice(&leaf.data);
-            }
-        };
-        Ok((done, res))
-    }
-
     // helper to aggregate a get response and return all relevant data
     async fn aggregate_get_response_fsm(
         initial: get_response_machine::AtInitial,
@@ -542,7 +521,8 @@ mod tests {
             let ConnectedNext::StartCollection(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
-            let (done, data) = read_single(sc.next()).await?;
+            let mut data = Vec::new();
+            let done = sc.next().concatenate(&mut data, |_, _| {}).await?;
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children
@@ -555,7 +535,11 @@ mod tests {
             let Some(blob) = collection.blobs().get(child as usize) else {
                 break start.finish();
             };
-            let (done, data) = read_single(start.next(blob.hash)).await?;
+            let mut data = Vec::new();
+            let done = start
+                .next(blob.hash)
+                .concatenate(&mut data, |_, _| {})
+                .await?;
             items.insert(child, data.into());
             next = done.next();
         };
