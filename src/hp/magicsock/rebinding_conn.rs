@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::bail;
-use async_lock::RwLock;
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
@@ -17,29 +16,19 @@ use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RebindingUdpConn {
-    pub(super) pconn: Arc<RwLock<UdpSocket>>,
+    pub(super) pconn: Arc<UdpSocket>,
     waker: Arc<std::sync::Mutex<Option<Waker>>>,
-}
-
-impl Debug for RebindingUdpConn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RebindingUdpConn")
-            .field("pconn", &self.pconn)
-            .field("wakers_mutex", &"..")
-            .finish()
-    }
 }
 
 impl RebindingUdpConn {
     pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
-        let pconn = self.pconn.read_blocking();
-        pconn.io.clone()
+        self.pconn.io.clone()
     }
 
     pub(super) async fn rebind(
-        &self,
+        &mut self,
         port: u16,
         network: Network,
         cur_port_fate: CurrentPortFate,
@@ -49,11 +38,8 @@ impl RebindingUdpConn {
             return Ok(());
         }
 
-        // Hold the lock the entire time, so that the close+bind is atomic.
-        let mut inner = self.pconn.write().await;
-        let pconn = bind(Some(&mut inner), port, network, cur_port_fate).await?;
-        *inner = pconn;
-        drop(inner);
+        let pconn = bind(Some(&mut self.pconn), port, network, cur_port_fate).await?;
+        self.pconn = Arc::new(pconn);
 
         // wakeup wakers
         self.wakeup();
@@ -74,10 +60,8 @@ impl RebindingUdpConn {
     }
 
     pub async fn port(&self) -> u16 {
-        self.pconn
-            .read()
+        self.local_addr()
             .await
-            .local_addr()
             .map(|p| p.port())
             .unwrap_or_default()
     }
@@ -91,18 +75,15 @@ impl RebindingUdpConn {
         &self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
+        transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
-        if let Some(ref mut pconn) = self.pconn.try_write() {
-            let res = pconn.poll_send(state, cx, transmits);
-            drop(pconn);
-            self.wakeup();
-            return res;
-        }
+        let res = self.pconn.poll_send(state, cx, transmits);
+        self.wakeup();
+        return res;
 
         // Store the waker and return pending
-        self.waker.lock().unwrap().replace(cx.waker().clone());
-        Poll::Pending
+        // self.waker.lock().unwrap().replace(cx.waker().clone());
+        // Poll::Pending
     }
 
     pub fn poll_recv(
@@ -112,26 +93,19 @@ impl RebindingUdpConn {
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         // Fast path, see if we can just grab the lock
-        if let Some(ref mut pconn) = self.pconn.try_read() {
-            let res = pconn.poll_recv(cx, bufs, meta);
-            drop(pconn);
-            self.wakeup();
-            return res;
-        }
-
-        // Store the waker and return pending
-        self.waker.lock().unwrap().replace(cx.waker().clone());
-        Poll::Pending
+        let res = self.pconn.poll_recv(cx, bufs, meta);
+        self.wakeup();
+        return res;
     }
 
     pub async fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addr = self.pconn.read().await.local_addr()?;
+        let addr = self.pconn.local_addr()?;
         Ok(addr)
     }
 
     pub(super) fn from_socket(pconn: UdpSocket) -> Self {
         RebindingUdpConn {
-            pconn: Arc::new(RwLock::new(pconn)),
+            pconn: Arc::new(pconn),
             waker: Default::default(),
         }
     }
@@ -155,10 +129,10 @@ impl UdpSocket {
 
 impl AsyncUdpSocket for RebindingUdpConn {
     fn poll_send(
-        &mut self,
+        &self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
+        transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         (&*self).poll_send(state, cx, transmits)
     }
@@ -173,16 +147,16 @@ impl AsyncUdpSocket for RebindingUdpConn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.pconn.read_blocking().local_addr()
+        self.pconn.local_addr()
     }
 }
 
 impl AsyncUdpSocket for UdpSocket {
     fn poll_send(
-        &mut self,
+        &self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
+        transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         trace!(
             "sending {:?} transmits",
@@ -197,7 +171,7 @@ impl AsyncUdpSocket for UdpSocket {
                 .collect::<Vec<_>>()
         );
 
-        let inner = &mut self.inner;
+        let inner = &self.inner;
         let io = &self.io;
         loop {
             ready!(io.poll_send_ready(cx))?;
@@ -251,7 +225,7 @@ impl AsyncUdpSocket for UdpSocket {
 }
 
 async fn bind(
-    mut inner: Option<&mut UdpSocket>,
+    inner: Option<&UdpSocket>,
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
@@ -283,7 +257,7 @@ async fn bind(
 
     for port in &ports {
         // Close the existing conn, in case it is sitting on the port we want.
-        if let Some(ref mut _inner) = inner {
+        if let Some(ref _inner) = inner {
             // TODO: inner.close()
         }
         // Open a new one with the desired port.
@@ -355,7 +329,7 @@ mod tests {
             quinn::EndpointConfig::default(),
             Some(server_config),
             conn,
-            quinn::TokioRuntime,
+            Arc::new(quinn::TokioRuntime),
         )?;
 
         let tls_client_config = tls::make_client_config(
@@ -385,7 +359,7 @@ mod tests {
         let m1_task = tokio::task::spawn(async move {
             while let Some(conn) = m1.accept().await {
                 let conn = conn.await?;
-                let (mut send_bi, recv_bi) = conn.accept_bi().await?;
+                let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
                 let val = recv_bi.read_to_end(usize::MAX).await?;
                 m1_send.send_async(val).await?;
@@ -398,7 +372,7 @@ mod tests {
 
         let conn = m2.connect(m1_addr, "localhost")?.await?;
 
-        let (mut send_bi, recv_bi) = conn.open_bi().await?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await?;
         send_bi.write_all(b"hello").await?;
         send_bi.finish().await?;
 

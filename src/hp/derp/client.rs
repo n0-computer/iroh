@@ -72,7 +72,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&self, dstkey: PublicKey, packet: Vec<u8>) -> Result<()> {
+    pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
         debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
 
         self.inner
@@ -307,7 +307,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
 #[derive(Debug)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
-    Packet((PublicKey, Vec<u8>)),
+    Packet((PublicKey, Bytes)),
     /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
     /// Should only be used for mesh clients.
     FwdPacket((PublicKey, PublicKey, Bytes)),

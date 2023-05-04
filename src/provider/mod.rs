@@ -214,7 +214,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             quinn::EndpointConfig::default(),
             Some(server_config),
             conn.clone(),
-            quinn::TokioRuntime,
+            Arc::new(quinn::TokioRuntime),
         )?;
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();

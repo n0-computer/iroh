@@ -14,7 +14,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use anyhow::Result;
-    use bytes::BytesMut;
+    use bytes::{Bytes, BytesMut};
     use hyper::server::conn::Http;
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::TcpListener;
@@ -129,7 +129,7 @@ mod tests {
         client_b.ping().await?;
 
         println!("sending message from a to b");
-        let msg = b"hi there, client b!".to_vec();
+        let msg = Bytes::from_static(b"hi there, client b!");
         client_a.send(b_key.clone(), msg.clone()).await?;
         println!("waiting for message from a on b");
         let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
@@ -137,7 +137,7 @@ mod tests {
         assert_eq!(msg, got_msg);
 
         println!("sending message from b to a");
-        let msg = b"right back at ya, client b!".to_vec();
+        let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b.send(a_key.clone(), msg.clone()).await?;
         println!("waiting for message b on a");
         let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
