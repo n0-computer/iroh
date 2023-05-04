@@ -183,27 +183,11 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 
 [[package]]
 name = "asn1-rs"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30ff05a702273012438132f449575dbc804e27b2f3cbe3069aa237d26c98fa33"
-dependencies = [
- "asn1-rs-derive 0.1.0",
- "asn1-rs-impl",
- "displaydoc",
- "nom",
- "num-traits",
- "rusticata-macros",
- "thiserror",
- "time 0.3.20",
-]
-
-[[package]]
-name = "asn1-rs"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f6fd5ddaf0351dff5b8da21b2fb4ff8e08ddd02857f0bf69c47639106c0fff0"
 dependencies = [
- "asn1-rs-derive 0.4.0",
+ "asn1-rs-derive",
  "asn1-rs-impl",
  "displaydoc",
  "nom",
@@ -211,18 +195,6 @@ dependencies = [
  "rusticata-macros",
  "thiserror",
  "time 0.3.20",
-]
-
-[[package]]
-name = "asn1-rs-derive"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db8b7511298d5b7784b40b092d9e9dcd3a627a5707e4b5e507931ab0d44eeebf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "synstructure",
 ]
 
 [[package]]
@@ -1160,25 +1132,11 @@ dependencies = [
 
 [[package]]
 name = "der-parser"
-version = "7.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe398ac75057914d7d07307bf67dc7f3f574a26783b4fc7805a20ffa9f506e82"
-dependencies = [
- "asn1-rs 0.3.1",
- "displaydoc",
- "nom",
- "num-bigint",
- "num-traits",
- "rusticata-macros",
-]
-
-[[package]]
-name = "der-parser"
 version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbd676fbbab537128ef0278adb5576cf363cff6aa22a7b24effe97347cfab61e"
 dependencies = [
- "asn1-rs 0.5.2",
+ "asn1-rs",
  "displaydoc",
  "nom",
  "num-bigint",
@@ -1564,13 +1522,12 @@ dependencies = [
 
 [[package]]
 name = "futures-rustls"
-version = "0.22.2"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2411eed028cdf8c8034eaf21f9915f956b6c3abec4d4c7949ee67f0721127bd"
+checksum = "35bd3cf68c183738046838e300353e4716c674dc5e56890de4826801a6622a28"
 dependencies = [
  "futures-io",
- "rustls 0.20.8",
- "webpki 0.22.0",
+ "rustls 0.21.1",
 ]
 
 [[package]]
@@ -1910,7 +1867,7 @@ dependencies = [
  "hyper",
  "rustls 0.20.8",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.23.4",
 ]
 
 [[package]]
@@ -2085,9 +2042,9 @@ dependencies = [
  "postcard",
  "proptest",
  "quic-rpc",
- "quinn 0.10.0",
- "quinn-proto 0.10.0",
- "quinn-udp 0.4.0",
+ "quinn",
+ "quinn-proto",
+ "quinn-udp",
  "rand 0.8.5",
  "range-collections",
  "rcgen 0.10.0",
@@ -2111,7 +2068,7 @@ dependencies = [
  "thiserror",
  "time 0.3.20",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.24.0",
  "tokio-stream",
  "tokio-util",
  "toml",
@@ -2120,7 +2077,7 @@ dependencies = [
  "tracing-subscriber",
  "trust-dns-resolver",
  "walkdir",
- "webpki 0.22.0",
+ "webpki",
  "wg",
  "wmi",
  "x509-parser 0.14.0",
@@ -2563,20 +2520,11 @@ dependencies = [
 
 [[package]]
 name = "oid-registry"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e20717fa0541f39bd146692035c37bedfa532b3e5071b35761082407546b2a"
-dependencies = [
- "asn1-rs 0.3.1",
-]
-
-[[package]]
-name = "oid-registry"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9bedf36ffb6ba96c2eb7144ef6270557b52e54b20c0a8e1eb2ff99a6c6959bff"
 dependencies = [
- "asn1-rs 0.5.2",
+ "asn1-rs",
 ]
 
 [[package]]
@@ -2713,6 +2661,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8835c273a76a90455d7344889b0964598e3316e2a79ede8e36f16bdcf2228b8"
 dependencies = [
  "base64 0.13.1",
+]
+
+[[package]]
+name = "pem"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b13fe415cdf3c8e44518e18a7c95a13431d9bdf6d15367d82b23c377fdd441a"
+dependencies = [
+ "base64 0.21.0",
+ "serde",
 ]
 
 [[package]]
@@ -3076,14 +3034,13 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d453504fc3e456160ae3b9ebe4d83c1f6477af167aa9b67e2d7bf11a096f179d"
+source = "git+https://github.com/n0-computer/quic-rpc?branch=feat-quinn-010#20679f938d1c257cb51d64f46ba39cc46c580a73"
 dependencies = [
  "bincode",
  "flume",
  "futures",
  "pin-project",
- "quinn 0.9.3",
+ "quinn",
  "serde",
  "tokio",
  "tokio-serde",
@@ -3105,56 +3062,19 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quinn"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "445cbfe2382fa023c4f2f3c7e1c95c03dcc1df2bf23cebcb2b13e1402c4394d1"
-dependencies = [
- "bytes",
- "pin-project-lite",
- "quinn-proto 0.9.3",
- "quinn-udp 0.3.2",
- "rustc-hash",
- "rustls 0.20.8",
- "thiserror",
- "tokio",
- "tracing",
- "webpki 0.22.0",
-]
-
-[[package]]
-name = "quinn"
 version = "0.10.0"
 source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#47205e0a4b09e1583e1c7b50db24930d00f527d4"
 dependencies = [
  "bytes",
  "pin-project-lite",
- "quinn-proto 0.10.0",
- "quinn-udp 0.4.0",
+ "quinn-proto",
+ "quinn-udp",
  "rustc-hash",
  "rustls 0.21.1",
  "thiserror",
  "tokio",
  "tracing",
- "webpki 0.22.0",
-]
-
-[[package]]
-name = "quinn-proto"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c10f662eee9c94ddd7135043e544f3c82fa839a1e7b865911331961b53186c"
-dependencies = [
- "bytes",
- "rand 0.8.5",
- "ring",
- "rustc-hash",
- "rustls 0.20.8",
- "rustls-native-certs",
- "slab",
- "thiserror",
- "tinyvec",
- "tracing",
- "webpki 0.22.0",
+ "webpki",
 ]
 
 [[package]]
@@ -3172,20 +3092,7 @@ dependencies = [
  "thiserror",
  "tinyvec",
  "tracing",
- "webpki 0.22.0",
-]
-
-[[package]]
-name = "quinn-udp"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "641538578b21f5e5c8ea733b736895576d0fe329bb883b937db6f4d163dbaaf4"
-dependencies = [
- "libc",
- "quinn-proto 0.9.3",
- "socket2 0.4.9",
- "tracing",
- "windows-sys 0.42.0",
+ "webpki",
 ]
 
 [[package]]
@@ -3326,7 +3233,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6413f3de1edee53342e6138e75b56d32e7bc6e332b3bd62d497b1929d4cfbcdd"
 dependencies = [
- "pem",
+ "pem 1.1.1",
  "ring",
  "time 0.3.20",
  "yasna",
@@ -3338,7 +3245,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffbe84efe2f38dea12e9bfc1f65377fdf03e53a18cb3b995faedf7934c7e785b"
 dependencies = [
- "pem",
+ "pem 1.1.1",
  "ring",
  "time 0.3.20",
  "yasna",
@@ -3454,7 +3361,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.23.4",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -3600,7 +3507,7 @@ dependencies = [
  "log",
  "ring",
  "sct",
- "webpki 0.22.0",
+ "webpki",
 ]
 
 [[package]]
@@ -3609,6 +3516,7 @@ version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c911ba11bc8433e811ce56fde130ccf32f5127cab0e0194e9c68c5a5b671791e"
 dependencies = [
+ "log",
  "ring",
  "rustls-webpki",
  "sct",
@@ -3617,8 +3525,7 @@ dependencies = [
 [[package]]
 name = "rustls-acme"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01be93c9190b1c62d16f99512f86c2b171667c675806452f744669bd5e1ec6ae"
+source = "git+https://github.com/dignifiedquire/rustls-acme?branch=rustls-21#8c400a7ae15ae0634792738dbac0b5ffe36f37aa"
 dependencies = [
  "async-h1",
  "async-io",
@@ -3629,11 +3536,11 @@ dependencies = [
  "futures-rustls",
  "http-types",
  "log",
- "pem",
+ "pem 2.0.1",
  "pin-project",
  "rcgen 0.9.3",
  "ring",
- "rustls 0.20.8",
+ "rustls 0.21.1",
  "serde",
  "serde_json",
  "smol",
@@ -3641,8 +3548,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
- "webpki-roots 0.21.1",
- "x509-parser 0.13.2",
+ "webpki-roots 0.23.0",
+ "x509-parser 0.15.0",
 ]
 
 [[package]]
@@ -4521,7 +4428,17 @@ checksum = "c43ee83903113e03984cb9e5cebe6c04a5116269e900e3ddba8f068a62adda59"
 dependencies = [
  "rustls 0.20.8",
  "tokio",
- "webpki 0.22.0",
+ "webpki",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0d409377ff5b1e3ca6437aa86c1eb7d40c134bfec254e44c830defa92669db5"
+dependencies = [
+ "rustls 0.21.1",
+ "tokio",
 ]
 
 [[package]]
@@ -4997,16 +4914,6 @@ dependencies = [
 
 [[package]]
 name = "webpki"
-version = "0.21.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e38c0608262c46d4a56202ebabdeb094cef7e560ca7a226c6bf055188aa4ea"
-dependencies = [
- "ring",
- "untrusted",
-]
-
-[[package]]
-name = "webpki"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f095d78192e208183081cc07bc5515ef55216397af48b873e5edcd72637fa1bd"
@@ -5017,20 +4924,20 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aabe153544e473b775453675851ecc86863d2a81d786d741f6b76778f2a48940"
-dependencies = [
- "webpki 0.21.4",
-]
-
-[[package]]
-name = "webpki-roots"
 version = "0.22.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c71e40d7d2c34a5106301fb632274ca37242cd0c9d3e64dbece371a40a2d87"
 dependencies = [
- "webpki 0.22.0",
+ "webpki",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa54963694b65584e170cf5dc46aeb4dcaa5584e652ff5f3952e56d66aff0125"
+dependencies = [
+ "rustls-webpki",
 ]
 
 [[package]]
@@ -5347,17 +5254,17 @@ dependencies = [
 
 [[package]]
 name = "x509-parser"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fb9bace5b5589ffead1afb76e43e34cff39cd0f3ce7e170ae0c29e53b88eb1c"
+checksum = "e0ecbeb7b67ce215e40e3cc7f2ff902f94a223acf44995934763467e7b1febc8"
 dependencies = [
- "asn1-rs 0.3.1",
+ "asn1-rs",
  "base64 0.13.1",
  "data-encoding",
- "der-parser 7.0.0",
+ "der-parser",
  "lazy_static",
  "nom",
- "oid-registry 0.4.0",
+ "oid-registry",
  "rusticata-macros",
  "thiserror",
  "time 0.3.20",
@@ -5365,17 +5272,16 @@ dependencies = [
 
 [[package]]
 name = "x509-parser"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0ecbeb7b67ce215e40e3cc7f2ff902f94a223acf44995934763467e7b1febc8"
+checksum = "bab0c2f54ae1d92f4fcb99c0b7ccf0b1e3451cbd395e5f115ccbdbcb18d4f634"
 dependencies = [
- "asn1-rs 0.5.2",
- "base64 0.13.1",
+ "asn1-rs",
  "data-encoding",
- "der-parser 8.2.0",
+ "der-parser",
  "lazy_static",
  "nom",
- "oid-registry 0.6.1",
+ "oid-registry",
  "rusticata-macros",
  "thiserror",
  "time 0.3.20",

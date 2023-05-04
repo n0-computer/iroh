@@ -66,7 +66,7 @@ tempfile = "3.4"
 thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["full"] }
-tokio-rustls = { version = "0.23.4", optional = true }
+tokio-rustls = { version = "0.24", optional = true }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 toml = { version = "0.7.3", optional = true }
@@ -136,3 +136,5 @@ ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", b
 quinn = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
 quinn-udp = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
 quinn-proto = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
+quic-rpc = { git = "https://github.com/n0-computer/quic-rpc", branch = "feat-quinn-010" }
+rustls-acme = { git = "https://github.com/dignifiedquire/rustls-acme", branch = "rustls-21" }
