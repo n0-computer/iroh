@@ -18,7 +18,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::tokio::encode_ranges_validated;
+use bao_tree::io::fsm::encode_ranges_validated;
 use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
@@ -754,18 +754,19 @@ async fn transfer_collection(
     mut writer: quinn::SendStream,
     // the collection to transfer
     outboard: &Bytes,
-    mut data: Either<Cursor<Bytes>, tokio::fs::File>,
+    data: Either<Cursor<Bytes>, tokio::fs::File>,
     events: broadcast::Sender<Event>,
     connection_id: u64,
     request_id: u64,
 ) -> Result<SentStatus> {
+    let mut data = bao_tree::io::fsm::Handle::new(data);
     let hash = request.hash;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
     let c = if !just_root {
-        let bytes = read_as_bytes(&mut data).await?;
+        let bytes = read_as_bytes(data.as_mut()).await?;
         let c: Collection = postcard::from_bytes(&bytes)?;
         let _ = events.send(Event::TransferCollectionStarted {
             connection_id,
@@ -928,9 +929,10 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         }) => {
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
-            let file_reader = tokio::fs::File::open(&path).await?;
-            let res = bao_tree::io::tokio::encode_ranges_validated(
-                file_reader,
+            let mut file_reader =
+                bao_tree::io::fsm::Handle::new(tokio::fs::File::open(&path).await?);
+            let res = bao_tree::io::fsm::encode_ranges_validated(
+                &mut file_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer,
