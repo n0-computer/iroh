@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -18,6 +18,44 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
     rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
     std::fs::write(path, content)?;
     Ok(())
+}
+
+/// Given a directory, make a partial download of it.
+///
+/// Takes all files and splits them in half, and leaves the collection alone.
+fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
+    use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
+
+    let temp_dir = out_dir.join(".iroh-tmp");
+    anyhow::ensure!(!temp_dir.exists());
+    std::fs::create_dir_all(&temp_dir)?;
+    let sources = create_data_sources(out_dir.to_owned())?;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (db, hash) = rt.block_on(create_collection(sources))?;
+    let db = db.to_inner();
+    for (hash, boc) in db {
+        let text = blake3::Hash::from(hash).to_hex();
+        let mut outboard_path = temp_dir.join(text.as_str());
+        outboard_path.set_extension("outboard.part");
+        let mut data_path = temp_dir.join(text.as_str());
+        match boc {
+            BlobOrCollection::Blob { outboard, path, .. } => {
+                data_path.set_extension("data.part");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::rename(path, &data_path)?;
+                let file = OpenOptions::new().write(true).open(&data_path)?;
+                let len = file.metadata()?.len();
+                file.set_len(len / 2)?;
+                drop(file);
+            }
+            BlobOrCollection::Collection { outboard, data } => {
+                data_path.set_extension("data");
+                std::fs::write(outboard_path, outboard)?;
+                std::fs::write(data_path, data)?;
+            }
+        }
+    }
+    Ok(hash)
 }
 
 #[test]
@@ -55,6 +93,31 @@ fn cli_provide_tree() -> Result<()> {
     make_rand_file(5000, &file3)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&dir, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_tree_resume() -> Result<()> {
+    let dir = testdir!();
+    let foo_path = dir.join("foo");
+    let bar_path = dir.join("bar");
+    let file1 = foo_path.join("file1");
+    let file2 = bar_path.join("file2");
+    let file3 = bar_path.join("file3");
+    std::fs::create_dir(&foo_path)?;
+    std::fs::create_dir(&bar_path)?;
+    make_rand_file(1000, &file1)?;
+    make_rand_file(10000, &file2)?;
+    make_rand_file(5000, &file3)?;
+    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+    let tmp = testdir!();
+    let out = tmp.join("out");
+    test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
+    // turn the output into a partial download
+    let _hash = make_partial_download(&out)?;
+    // resume the download
+    test_provide_get_loop(&dir, Input::Path, Output::Custom(out))?;
+
+    Ok(())
 }
 
 #[test]
@@ -197,6 +260,8 @@ enum Output {
     Path,
     /// Indicates we should pipe the content to `stdout` of the `iroh get` process
     Stdout,
+    /// Custom output
+    Custom(PathBuf),
 }
 
 /// Parameter for `test_provide_get_loop`, that determines how we send the data to the `provide`
@@ -259,11 +324,13 @@ fn make_provider(
 /// checks the output of the "provide" and "get" processes against expected regex output. Finally,
 /// test the content fetched from the "get" process is the same as the "provided" content.
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
-    let out = if output == Output::Stdout {
-        None
-    } else {
-        let dir = testdir!();
-        Some(dir.join("out"))
+    let out = match output {
+        Output::Stdout => None,
+        Output::Path => {
+            let dir = testdir!();
+            Some(dir.join("out"))
+        }
+        Output::Custom(out) => Some(out),
     };
 
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -301,6 +368,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // test get stderr output
     let get_output = cmd.output()?;
+    // std::io::copy(&mut std::io::Cursor::new(&get_output.stderr), &mut std::io::stderr())?;
     assert!(get_output.status.success());
 
     // test output
