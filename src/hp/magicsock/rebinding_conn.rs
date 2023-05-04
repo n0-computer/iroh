@@ -3,7 +3,7 @@ use std::{
     io,
     net::SocketAddr,
     sync::Arc,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
 use anyhow::bail;
@@ -19,7 +19,6 @@ use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 #[derive(Clone, Debug)]
 pub struct RebindingUdpConn {
     pub(super) pconn: Arc<UdpSocket>,
-    waker: Arc<std::sync::Mutex<Option<Waker>>>,
 }
 
 impl RebindingUdpConn {
@@ -34,23 +33,14 @@ impl RebindingUdpConn {
         cur_port_fate: CurrentPortFate,
     ) -> anyhow::Result<()> {
         // Do not bother rebinding if we are keeping the port.
-        if self.port().await == port && cur_port_fate == CurrentPortFate::Keep {
+        if self.port() == port && cur_port_fate == CurrentPortFate::Keep {
             return Ok(());
         }
 
         let pconn = bind(Some(&mut self.pconn), port, network, cur_port_fate).await?;
         self.pconn = Arc::new(pconn);
 
-        // wakeup wakers
-        self.wakeup();
-
         Ok(())
-    }
-
-    fn wakeup(&self) {
-        if let Some(waker) = self.waker.lock().unwrap().take() {
-            waker.wake();
-        }
     }
 
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
@@ -59,11 +49,8 @@ impl RebindingUdpConn {
         Ok(Self::from_socket(pconn))
     }
 
-    pub async fn port(&self) -> u16 {
-        self.local_addr()
-            .await
-            .map(|p| p.port())
-            .unwrap_or_default()
+    pub fn port(&self) -> u16 {
+        self.local_addr().map(|p| p.port()).unwrap_or_default()
     }
 
     pub async fn close(&self) -> Result<(), io::Error> {
@@ -77,13 +64,7 @@ impl RebindingUdpConn {
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
-        let res = self.pconn.poll_send(state, cx, transmits);
-        self.wakeup();
-        return res;
-
-        // Store the waker and return pending
-        // self.waker.lock().unwrap().replace(cx.waker().clone());
-        // Poll::Pending
+        self.pconn.poll_send(state, cx, transmits)
     }
 
     pub fn poll_recv(
@@ -92,13 +73,10 @@ impl RebindingUdpConn {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        // Fast path, see if we can just grab the lock
-        let res = self.pconn.poll_recv(cx, bufs, meta);
-        self.wakeup();
-        return res;
+        self.pconn.poll_recv(cx, bufs, meta)
     }
 
-    pub async fn local_addr(&self) -> io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         let addr = self.pconn.local_addr()?;
         Ok(addr)
     }
@@ -106,7 +84,6 @@ impl RebindingUdpConn {
     pub(super) fn from_socket(pconn: UdpSocket) -> Self {
         RebindingUdpConn {
             pconn: Arc::new(pconn),
-            waker: Default::default(),
         }
     }
 }

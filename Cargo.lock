@@ -247,7 +247,7 @@ version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fa3dc5f2a8564f07759c008b9109dc0d39de92a88d5588b8a5036d286383afb"
 dependencies = [
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "async-task",
  "concurrent-queue",
  "fastrand",
@@ -261,7 +261,7 @@ version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "279cf904654eeebfa37ac9bb1598880884924aab82e290aa65c9e77a0e142e06"
 dependencies = [
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "autocfg",
  "blocking",
  "futures-lite",
@@ -276,7 +276,7 @@ dependencies = [
  "async-channel",
  "async-executor",
  "async-io",
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "blocking",
  "futures-lite",
  "once_cell",
@@ -304,7 +304,7 @@ version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fc5b45d93ef0529756f812ca52e44c221b35341892d3dcc34132ac02f3dd2af"
 dependencies = [
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "autocfg",
  "cfg-if",
  "concurrent-queue",
@@ -328,14 +328,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-lock"
-version = "2.7.0"
-source = "git+https://github.com/smol-rs/async-lock?branch=notgull/block-lock#301ebaeec77637f07af190bb367b0c6c5c1ad8aa"
-dependencies = [
- "event-listener",
-]
-
-[[package]]
 name = "async-net"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -354,7 +346,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a9d28b1d97e08915212e2e45310d47854eafa69600756fc735fb788f75199c9"
 dependencies = [
  "async-io",
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "autocfg",
  "blocking",
  "cfg-if",
@@ -374,7 +366,7 @@ dependencies = [
  "async-channel",
  "async-global-executor",
  "async-io",
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "crossbeam-utils",
  "futures-channel",
  "futures-core",
@@ -566,7 +558,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77231a1c8f801696fc0123ec6150ce92cffb8e164a02afb9c8ddee0e9b65ad65"
 dependencies = [
  "async-channel",
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "async-task",
  "atomic-waker",
  "fastrand",
@@ -2005,7 +1997,6 @@ name = "iroh"
 version = "0.4.1"
 dependencies = [
  "anyhow",
- "async-lock 2.7.0 (git+https://github.com/smol-rs/async-lock?branch=notgull/block-lock)",
  "backoff",
  "bao-tree",
  "base64 0.21.0",
@@ -3063,7 +3054,7 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 [[package]]
 name = "quinn"
 version = "0.10.0"
-source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#47205e0a4b09e1583e1c7b50db24930d00f527d4"
+source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#da41e0ab8b85a1ba7dda317f098a9c2c257f4412"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3080,7 +3071,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.10.0"
-source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#47205e0a4b09e1583e1c7b50db24930d00f527d4"
+source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#da41e0ab8b85a1ba7dda317f098a9c2c257f4412"
 dependencies = [
  "bytes",
  "rand 0.8.5",
@@ -3098,7 +3089,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.4.0"
-source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#47205e0a4b09e1583e1c7b50db24930d00f527d4"
+source = "git+http://github.com/dignifiedquire/quinn?branch=feat-bytes-transmit#da41e0ab8b85a1ba7dda317f098a9c2c257f4412"
 dependencies = [
  "bytes",
  "libc",
@@ -3963,7 +3954,7 @@ dependencies = [
  "async-executor",
  "async-fs",
  "async-io",
- "async-lock 2.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "async-lock",
  "async-net",
  "async-process",
  "blocking",
