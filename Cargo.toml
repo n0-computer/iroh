@@ -9,11 +9,11 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
-# abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
 anyhow = { version = "1", features = ["backtrace"] }
+bao-tree = { version = "0.3.1", features = ["tokio_fsm"], default-features = false }
 base64 = "0.21.0"
 blake3 = "1.3.3"
 bytes = "1.4"
@@ -27,19 +27,26 @@ dirs-next = "2.0.0"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 futures = "0.3.25"
 hex = "0.4.3"
+hyper = { version = "0.14.16", features = ["server", "http1", "tcp"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
 num_cpus = "1.15.0"
+once_cell = { version = "1.17.1", optional = true }
+ouroboros = "0.15.6"
+paste = { version = "1.0.12", optional = true }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+prometheus-client = { version = "0.18.0", optional = true }
 quic-rpc = { version = "0.5", default-features = false, features = ["quinn-transport", "flume-transport"] }
 quinn = "0.9.3"
 rand = "0.7"
+range-collections = "0.4.0"
 rcgen = "0.10"
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
+smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
 tempfile = "3.4"
 thiserror = "1"
@@ -53,12 +60,6 @@ walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
 zeroize = "1.5"
-bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
-range-collections = "0.4.0"
-once_cell = { version = "1.17.1", optional = true }
-prometheus-client = { version = "0.18.0", optional = true }
-paste = { version = "1.0.12", optional = true }
-hyper = { version = "0.14.16", features = ["server", "http1", "tcp"], optional = true }
 [dev-dependencies]
 proptest = "1.0.0"
 rand = "0.7"
