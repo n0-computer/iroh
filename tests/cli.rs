@@ -26,7 +26,6 @@ fn make_rand_file(size: usize, path: &Path) -> Result<()> {
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
     use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
 
-    let out_dir: &Path = out_dir.as_ref();
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
     std::fs::create_dir_all(&temp_dir)?;
