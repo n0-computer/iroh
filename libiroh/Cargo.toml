@@ -3,6 +3,7 @@ name = "libiroh"
 version = "0.1.0"
 edition = "2021"
 publish = false
+rust-version = "1.64"
 
 [profile.release]
 strip = "symbols"
@@ -22,7 +23,7 @@ c-headers = ["safer-ffi/headers"]
 [dependencies]
 safer-ffi = { version = "0.0.10", features = ["proc_macros"] }
 anyhow = "1.0.69"
-iroh = { path = "../" }
+iroh = { path = "../", default-features = false }
 libc = "0.2.141"
 tempfile = "3.4"
 tokio = "1.25.0"
