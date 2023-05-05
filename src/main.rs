@@ -898,7 +898,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         init_download_progress(count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
-        ConnectedNext::StartCollection(curr) => {
+        ConnectedNext::StartRoot(curr) => {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
                 .context("unable to create directory {temp_dir}")?;
@@ -1045,7 +1045,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
-    let ConnectedNext::StartCollection(curr) = connected.next().await? else {
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("expected a collection");
     };
     let (mut next, collection) = {

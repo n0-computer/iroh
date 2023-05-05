@@ -522,7 +522,7 @@ mod tests {
         let connected = initial.next().await?;
         // we assume that the request includes the entire collection
         let (mut next, collection) = {
-            let ConnectedNext::StartCollection(sc) = connected.next().await? else {
+            let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
             let (done, data) = sc.next().concatenate_into_vec().await?;
@@ -657,7 +657,7 @@ mod tests {
             )
             .await?;
             let connected = response.next().await?;
-            let ConnectedNext::StartCollection(start) = connected.next().await? else { panic!() };
+            let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
             let header = start.next();
             let (_, actual) = header.concatenate_into_vec().await?;
             let expected = tokio::fs::read(readme_path()).await?;
