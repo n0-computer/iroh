@@ -38,7 +38,9 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, write_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -65,6 +67,30 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Default bind address for the provider.
 pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 
+///
+pub trait CustomHandler: Send + Sync + Clone + 'static {
+    ///
+    fn handle(
+        &self,
+        data: Bytes,
+        database: &Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
+}
+
+///
+#[derive(Debug, Clone)]
+pub struct DefaultCustomHandler;
+
+impl CustomHandler for DefaultCustomHandler {
+    fn handle(
+        &self,
+        _data: Bytes,
+        _db: &Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom handler")) }.boxed()
+    }
+}
+
 /// Builder for the [`Provider`].
 ///
 /// You must supply a database which can be created using [`create_collection`], everything else is
@@ -73,13 +99,18 @@ pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
+pub struct Builder<E = DummyServerEndpoint, C = DefaultCustomHandler>
+where
+    E: ServiceEndpoint<ProviderService>,
+    C: CustomHandler,
+{
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
     rpc_endpoint: E,
     db: Database,
     keylog: bool,
+    custom_handler: C,
 }
 
 /// A [`Database`] entry.
@@ -156,13 +187,14 @@ impl Builder {
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             rpc_endpoint: Default::default(),
+            custom_handler: DefaultCustomHandler,
             db,
             keylog: false,
         }
     }
 }
 
-impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
+impl<E: ServiceEndpoint<ProviderService>, C: CustomHandler> Builder<E, C> {
     ///
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
         Builder {
@@ -172,6 +204,20 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             db: self.db,
             keylog: self.keylog,
             rpc_endpoint: value,
+            custom_handler: DefaultCustomHandler,
+        }
+    }
+
+    ///
+    pub fn custom_handler<C2: CustomHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_handler,
         }
     }
 
@@ -253,6 +299,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     handler,
                     self.rpc_endpoint,
                     internal_rpc,
+                    self.custom_handler,
                 )
                 .await
             })
@@ -271,6 +318,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
+        custom_handler: C,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -311,7 +359,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let auth_token = handler.inner.auth_token;
-                    tokio::spawn(handle_connection(connecting, db, auth_token, events));
+                    tokio::spawn(handle_connection(connecting, db, auth_token, events, custom_handler.clone()));
                 }
                 else => break,
             }
@@ -649,6 +697,7 @@ async fn handle_connection(
     db: Database,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
+    custom_handler: impl CustomHandler,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -666,10 +715,18 @@ async fn handle_connection(
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
             let events = events.clone();
+            let custom_handler = custom_handler.clone();
             tokio::spawn(
                 async move {
-                    if let Err(err) =
-                        handle_stream(db, auth_token, connection_id, stream, events).await
+                    if let Err(err) = handle_stream(
+                        db,
+                        auth_token,
+                        connection_id,
+                        stream,
+                        events,
+                        custom_handler,
+                    )
+                    .await
                     {
                         warn!("error: {err:#?}",);
                     }
@@ -740,7 +797,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    request: Request,
+    request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
@@ -826,6 +883,7 @@ async fn handle_stream(
     connection_id: u64,
     (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
     events: broadcast::Sender<Event>,
+    custom_handler: impl CustomHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -850,13 +908,28 @@ async fn handle_stream(
         }
     };
 
+    let request = match request {
+        Request::Get(request) => {
+            let hash = request.name;
+            debug!(%hash, "received request");
+            let _ = events.send(Event::RequestReceived {
+                connection_id,
+                hash,
+                request_id,
+            });
+            request
+        }
+        Request::Custom(bytes) => {
+            let request = custom_handler.handle(bytes, &db).await?;
+            let blob = postcard::to_stdvec(&request)?;
+            // write the response
+            write_lp(&mut writer, &blob).await?;
+            // send it
+            request
+        }
+    };
+
     let hash = request.name;
-    debug!(%hash, "received request");
-    let _ = events.send(Event::RequestReceived {
-        connection_id,
-        hash,
-        request_id,
-    });
 
     // 4. Attempt to find hash
     match db.get(&hash) {

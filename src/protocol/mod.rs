@@ -5,8 +5,10 @@ use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
+use derive_more::From;
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
@@ -36,8 +38,21 @@ impl Handshake {
 }
 
 /// A request
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
+pub enum Request {
+    /// Request data for known collection
+    Get(GetRequest),
+    /// A custom request to be handled by the iroh user
+    ///
+    /// Response will be a postcard encoded `GetRequest` followed by the
+    /// concatenated bao streams for each non-empty item in the collection or its
+    /// children.
+    Custom(Bytes),
+}
+
+/// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub struct Request {
+pub struct GetRequest {
     /// blake3 hash
     pub name: Hash,
     /// The range of data to request
@@ -46,10 +61,17 @@ pub struct Request {
     pub ranges: RangeSpecSeq,
 }
 
-impl Request {
+impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(name: Hash, ranges: RangeSpecSeq) -> Self {
         Self { name, ranges }
+    }
+
+    pub fn just(name: Hash) -> Self {
+        Self {
+            name,
+            ranges: RangeSpecSeq::new([RangeSet2::all()]),
+        }
     }
 
     /// Request a collection and all its children

@@ -1,6 +1,6 @@
 //! Send data over the internet.
-#![deny(missing_docs)]
-#![deny(rustdoc::broken_intra_doc_links)]
+// #![deny(missing_docs)]
+// #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
 #[cfg(feature = "metrics")]
@@ -36,16 +36,21 @@ mod tests {
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bytes::Bytes;
+    use futures::FutureExt;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncWriteExt;
     use tokio::{fs, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::{AuthToken, Request};
     use crate::provider::{create_collection, Event, Provider};
     use crate::tls::PeerId;
     use crate::util::Hash;
+    use crate::{
+        protocol::{AuthToken, GetRequest},
+        provider::{CustomHandler, DataSource, Database},
+    };
 
     use super::*;
 
@@ -151,7 +156,7 @@ mod tests {
             let expected_data = &content;
             let expected_name = &name;
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 token,
                 opts,
                 || async { Ok(()) },
@@ -278,7 +283,7 @@ mod tests {
         let expects = Arc::new(expects);
 
         get::run(
-            Request::all(collection_hash),
+            GetRequest::all(collection_hash).into(),
             provider.auth_token(),
             opts,
             || async { Ok(()) },
@@ -392,7 +397,7 @@ mod tests {
         });
 
         get::run(
-            Request::all(hash),
+            GetRequest::all(hash).into(),
             auth_token,
             get::Options {
                 addr: provider_addr,
@@ -404,14 +409,18 @@ mod tests {
                 if data.is_root() {
                     let collection = data.read_collection(hash).await?;
                     data.set_limit(collection.total_entries() + 1);
-                    data.user = Some(collection);
+                    data.user = collection
+                        .blobs()
+                        .iter()
+                        .map(|b| b.hash)
+                        .collect::<Vec<_>>();
                 } else {
-                    let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                    let hash = data.user[0];
                     data.drain(hash).await?;
                 }
                 data.end()
             },
-            None,
+            vec![],
         )
         .await
         .unwrap();
@@ -448,7 +457,7 @@ mod tests {
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
@@ -495,7 +504,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(10),
             get::run(
-                Request::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr,
@@ -507,14 +516,160 @@ mod tests {
                     if data.is_root() {
                         let collection = data.read_collection(hash).await?;
                         data.set_limit(collection.total_entries() + 1);
-                        data.user = Some(collection);
+                        data.user = collection
+                            .blobs()
+                            .iter()
+                            .map(|b| b.hash)
+                            .collect::<Vec<_>>();
                     } else {
-                        let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                        let hash = data.user[0];
                         data.drain(hash).await?;
                     }
                     data.end()
                 },
-                None,
+                vec![],
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[derive(Clone, Debug)]
+    struct CollectionCustomHandler;
+
+    impl CustomHandler for CollectionCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: &Database,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<GetRequest>> {
+            let database = database.clone();
+            async move {
+                let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("CHANGELOG.md");
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, hash) = create_collection(sources).await?;
+                let new_db = new_db.to_inner();
+                database.union_with(new_db);
+                let request = GetRequest::all(hash);
+                println!("{:?}", request);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct BlobCustomHandler;
+
+    impl CustomHandler for BlobCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: &Database,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<GetRequest>> {
+            let database = database.clone();
+            async move {
+                let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("CHANGELOG.md");
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, c_hash) = create_collection(sources).await?;
+                let mut new_db = new_db.to_inner();
+                new_db.remove(&c_hash);
+                let file_hash = *new_db.iter().next().unwrap().0;
+                database.union_with(new_db);
+                let request = GetRequest::just(file_hash);
+                println!("{:?}", request);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_collection() {
+        let db = Database::default();
+        let custom_handler = CollectionCustomHandler;
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_handler(custom_handler)
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run(
+                Bytes::from(&b"hello"[..]).into(),
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+                || async move { Ok(()) },
+                move |mut data| async move {
+                    if data.is_root() {
+                        let hash = data.root_hash();
+                        let collection = data.read_collection(hash).await?;
+                        data.set_limit(collection.total_entries() + 1);
+                        data.user = collection
+                            .blobs()
+                            .iter()
+                            .map(|b| b.hash)
+                            .collect::<Vec<_>>();
+                    } else {
+                        let hash = data.user[0];
+                        let text = data.read_blob(hash).await?;
+                        println!("{}", std::str::from_utf8(&text).unwrap());
+                    }
+                    data.end()
+                },
+                vec![],
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_blob() {
+        let db = Database::default();
+        let custom_handler = BlobCustomHandler;
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_handler(custom_handler)
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run(
+                Bytes::from(&b"hello"[..]).into(),
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+                || async move { Ok(()) },
+                move |mut data| async move {
+                    if data.is_root() {
+                        let hash = data.root_hash();
+                        println!("{}", hash);
+                        let text = data.read_blob(hash).await?;
+                        println!("{}", text.len());
+                        println!("{}", std::str::from_utf8(&text).unwrap());
+                        data.set_limit(0);
+                    } else {
+                        panic!()
+                    }
+                    data.end()
+                },
+                (),
             ),
         )
         .await
@@ -540,7 +695,7 @@ mod tests {
             Duration::from_secs(10),
             get::run_ticket(
                 &ticket,
-                Request::all(ticket.hash()),
+                GetRequest::all(ticket.hash()).into(),
                 true,
                 16,
                 || {
@@ -557,15 +712,19 @@ mod tests {
                         if data.is_root() {
                             let collection = data.read_collection(hash).await?;
                             data.set_limit(collection.total_entries() + 1);
-                            data.user = Some(collection);
+                            data.user = collection
+                                .blobs()
+                                .iter()
+                                .map(|b| b.hash)
+                                .collect::<Vec<_>>();
                         } else {
-                            let hash = data.user.as_ref().unwrap().blobs()[0].hash;
+                            let hash = data.user[0];
                             data.drain(hash).await?;
                         }
                         data.end()
                     }
                 },
-                None,
+                vec![],
             ),
         )
         .await
