@@ -1,5 +1,5 @@
 [package]
-name = "libiroh"
+name = "iroh"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -14,6 +14,11 @@ crate-type = ["staticlib", "cdylib"]
 
 [features]
 c-headers = ["safer-ffi/headers"]
+
+# ios build flags:
+# export RUSTFLAGS="-C lto=on -C embed-bitcode=yes"
+# export LIBRARY_PATH="/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib"
+# cargo lipo --release
 
 # needed when building for unreal engine...
 # [target.x86_64-apple-darwin]
