@@ -161,9 +161,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.1.5"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f475e39fc0ee53faefa68805aa234de8034e1317a7fabd15f4b908db55285396"
+checksum = "0087d7a5fd51c1f1daaf1d5978f52146020642a54d9dd169f70196aeca167da1"
 dependencies = [
  "blake3",
  "bytes",
@@ -1130,6 +1130,7 @@ dependencies = [
  "nix",
  "num_cpus",
  "once_cell",
+ "ouroboros",
  "paste",
  "portable-atomic 1.2.0",
  "postcard",
@@ -1145,6 +1146,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde-error",
+ "smallvec",
  "ssh-key",
  "tempfile",
  "testdir",
@@ -2388,6 +2390,9 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "socket2"

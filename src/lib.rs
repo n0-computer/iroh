@@ -10,6 +10,7 @@ pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
+pub mod tokio_util;
 
 mod subnet;
 mod tls;
@@ -20,7 +21,8 @@ pub use util::Hash;
 
 use bao_tree::BlockSize;
 
-pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
+/// Block size used by iroh, 2^4*1024 = 16KiB
+pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
     Some(bs) => bs,
     None => panic!(),
 };
@@ -28,23 +30,28 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Arc},
         time::Duration,
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bytes::Bytes;
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
-    use tokio::{fs, sync::broadcast};
+    use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::AuthToken;
-    use crate::provider::{create_collection, Event, Provider};
-    use crate::tls::PeerId;
-    use crate::util::Hash;
+    use crate::{
+        blobs::Collection,
+        get::Stats,
+        get::{dial_peer, get_response_machine},
+        protocol::{AuthToken, Request},
+        provider::{create_collection, Event, Provider},
+        tls::PeerId,
+        util::Hash,
+    };
 
     use super::*;
 
@@ -125,8 +132,8 @@ mod tests {
 
         tokio::fs::write(&path, content).await?;
         // hash of the transfer file
-        let data = tokio::fs::read(&path).await?;
-        let expect_hash = blake3::hash(&data);
+        let expect_data = tokio::fs::read(&path).await?;
+        let expect_hash = blake3::hash(&expect_data);
         let expect_name = filename.to_string();
 
         let (db, hash) =
@@ -147,25 +154,13 @@ mod tests {
                 peer_id: Some(peer_id),
                 keylog: true,
             };
-            let content = &content;
-            let name = &name;
-            get::run(
-                hash,
-                token,
-                opts,
-                || async { Ok(()) },
-                |_collection| async { Ok(()) },
-                |got_hash, mut reader, got_name| async move {
-                    assert_eq!(file_hash, got_hash);
-                    let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
-                    assert_eq!(content, &got);
-                    assert_eq!(*name, got_name);
-
-                    Ok(reader)
-                },
-            )
-            .await?;
+            let expected_data = &content;
+            let expected_name = &name;
+            let response = get::run(Request::all(hash), token, opts).await?;
+            let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+            assert_eq!(expected_name, &collection.blobs()[0].name);
+            assert_eq!(&file_hash, &collection.blobs()[0].hash);
+            assert_eq!(expected_data, &children[&0]);
 
             Ok(())
         }
@@ -271,36 +266,17 @@ mod tests {
             keylog: true,
         };
 
-        let i = AtomicUsize::new(0);
-        let expects = Arc::new(expects);
-
-        get::run(
-            collection_hash,
-            provider.auth_token(),
-            opts,
-            || async { Ok(()) },
-            |collection| {
-                assert_eq!(collection.blobs().len(), num_blobs);
-                async { Ok(()) }
-            },
-            |got_hash, mut reader, got_name| {
-                let i = &i;
-                let expects = expects.clone();
-                async move {
-                    let iv = i.load(std::sync::atomic::Ordering::SeqCst);
-                    let (expect_name, path, expect_hash) = expects.get(iv).unwrap();
-                    assert_eq!(*expect_hash, got_hash);
-                    let expect = tokio::fs::read(&path).await?;
-                    let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
-                    assert_eq!(expect, got);
-                    assert_eq!(*expect_name, got_name);
-                    i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Ok(reader)
-                }
-            },
-        )
-        .await?;
+        let response = get::run(Request::all(collection_hash), provider.auth_token(), opts).await?;
+        let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+        assert_eq!(num_blobs, collection.blobs().len());
+        for (i, (name, path, hash)) in expects.into_iter().enumerate() {
+            let blob = &collection.blobs()[i];
+            let expect = tokio::fs::read(&path).await?;
+            let got = &children[&(i as u64)];
+            assert_eq!(name, blob.name);
+            assert_eq!(hash, blob.hash);
+            assert_eq!(&expect, got);
+        }
 
         // We have to wait for the completed event before shutting down the provider.
         let events = tokio::time::timeout(Duration::from_secs(30), events_task)
@@ -390,23 +366,18 @@ mod tests {
             }
         });
 
-        get::run(
-            hash,
+        let response = get::run(
+            Request::all(hash),
             auth_token,
             get::Options {
                 addr: provider_addr,
                 peer_id: None,
                 keylog: true,
             },
-            || async move { Ok(()) },
-            |_collection| async move { Ok(()) },
-            |_hash, mut stream, _name| async move {
-                io::copy(&mut stream, &mut io::sink()).await?;
-                Ok(stream)
-            },
         )
         .await
         .unwrap();
+        let (_collection, _children, _stats) = aggregate_get_response_fsm(response).await.unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
         tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -437,32 +408,30 @@ mod tests {
         let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
 
-        let timeout = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            get::run(
-                hash,
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+            let request = get::run(
+                Request::all(hash),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
                     peer_id: None,
                     keylog: true,
                 },
-                || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
-                |_hash, stream, _name| async move {
-                    // evil: do nothing with the stream!
-                    Ok(stream)
-                },
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            // connect
+            let connected = request.next().await.unwrap();
+            // send the request
+            let _start = connected.next().await.unwrap();
+            // and then just hang
+        })
         .await;
         provider.shutdown();
 
-        let err = timeout.expect(
+        timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
         );
-
-        err.expect_err("expected an error when passing in a misbehaving `on_blob` function");
         Ok(())
     }
 
@@ -484,24 +453,20 @@ mod tests {
         let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run(
-                hash,
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request = get::run(
+                Request::all(hash),
                 auth_token,
                 get::Options {
                     addr,
                     peer_id,
                     keylog: true,
                 },
-                || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
-                |_hash, mut stream, _name| async move {
-                    io::copy(&mut stream, &mut io::sink()).await?;
-                    Ok(stream)
-                },
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            aggregate_get_response_fsm(request).await
+        })
         .await
         .expect("timeout")
         .expect("get failed");
@@ -517,37 +482,101 @@ mod tests {
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();
-        let mut on_connected = false;
-        let mut on_collection = false;
-        let mut on_blob = false;
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run_ticket(
-                &ticket,
-                true,
-                16,
-                || {
-                    on_connected = true;
-                    async { Ok(()) }
-                },
-                |_| {
-                    on_collection = true;
-                    async { Ok(()) }
-                },
-                |_hash, mut stream, _name| {
-                    on_blob = true;
-                    async move {
-                        io::copy(&mut stream, &mut io::sink()).await?;
-                        Ok(stream)
-                    }
-                },
-            ),
-        )
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let response = get::run_ticket(&ticket, Request::all(ticket.hash()), true, 16).await?;
+            aggregate_get_response_fsm(response).await
+        })
         .await
         .expect("timeout")
         .expect("get ticket failed");
-        assert!(on_connected);
-        assert!(on_collection);
-        assert!(on_blob);
+    }
+
+    /// Utility to validate that the children of a collection are correct
+    fn validate_children(
+        collection: Collection,
+        children: BTreeMap<u64, Bytes>,
+    ) -> anyhow::Result<()> {
+        let blobs = collection.into_inner();
+        anyhow::ensure!(blobs.len() == children.len());
+        for (child, blob) in blobs.into_iter().enumerate() {
+            let child = child as u64;
+            let data = children.get(&child).unwrap();
+            anyhow::ensure!(blob.hash == blake3::hash(data).into());
+        }
+        Ok(())
+    }
+
+    // helper to aggregate a get response and return all relevant data
+    async fn aggregate_get_response_fsm(
+        initial: get_response_machine::AtInitial,
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+        use get_response_machine::*;
+        let mut items = BTreeMap::new();
+        let connected = initial.next().await?;
+        // we assume that the request includes the entire collection
+        let (mut next, collection) = {
+            let ConnectedNext::StartCollection(sc) = connected.next().await? else {
+                panic!("request did not include collection");
+            };
+            let mut data = Vec::new();
+            let done = sc.next().concatenate(&mut data, |_, _| {}).await?;
+            (done.next(), Collection::from_bytes(&data)?)
+        };
+        // read all the children
+        let finishing = loop {
+            let start = match next {
+                EndBlobNext::MoreChildren(start) => start,
+                EndBlobNext::Closing(finishing) => break finishing,
+            };
+            let child = start.child_offset();
+            let Some(blob) = collection.blobs().get(child as usize) else {
+                break start.finish();
+            };
+            let mut data = Vec::new();
+            let done = start
+                .next(blob.hash)
+                .concatenate(&mut data, |_, _| {})
+                .await?;
+            items.insert(child, data.into());
+            next = done.next();
+        };
+        let stats = finishing.next().await?;
+        Ok((collection, items, stats))
+    }
+
+    #[tokio::test]
+    async fn test_run_fsm() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addr,
+                peer_id,
+                keylog: true,
+            })
+            .await?;
+            let request = Request::all(hash);
+            let stream = get::run_connection(connection, request, auth_token);
+            let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
+            validate_children(collection, children)?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
     }
 }

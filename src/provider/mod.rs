@@ -9,7 +9,7 @@
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::borrow::Cow;
 use std::future::Future;
-use std::io::Cursor;
+use std::io::{self, Cursor};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -18,30 +18,27 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::sync::encode_ranges_validated;
+use bao_tree::io::fsm::encode_ranges_validated;
 use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use postcard::experimental::max_size::MaxSize;
+use futures::{FutureExt, Stream, TryFutureExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, trace, warn};
+use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
-};
+use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -49,6 +46,7 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
+use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress};
 use crate::IROH_BLOCK_SIZE;
 
@@ -86,7 +84,8 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
 
 /// A [`Database`] entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BlobOrCollection {
+pub enum BlobOrCollection {
+    /// A blob.
     Blob {
         /// The bao outboard data.
         outboard: Bytes,
@@ -100,6 +99,7 @@ pub(crate) enum BlobOrCollection {
         /// Size of the original data.
         size: u64,
     },
+    /// A collection.
     Collection {
         /// The bao outboard data of the serialised [`Collection`].
         outboard: Bytes,
@@ -109,15 +109,32 @@ pub(crate) enum BlobOrCollection {
 }
 
 impl BlobOrCollection {
-    pub fn is_blob(&self) -> bool {
+    pub(crate) fn is_blob(&self) -> bool {
         matches!(self, BlobOrCollection::Blob { .. })
     }
 
-    pub fn blob_path(&self) -> Option<&Path> {
+    pub(crate) fn blob_path(&self) -> Option<&Path> {
         match self {
             BlobOrCollection::Blob { path, .. } => Some(path),
             BlobOrCollection::Collection { .. } => None,
         }
+    }
+
+    pub(crate) fn outboard(&self) -> &Bytes {
+        match self {
+            BlobOrCollection::Blob { outboard, .. } => outboard,
+            BlobOrCollection::Collection { outboard, .. } => outboard,
+        }
+    }
+
+    /// A reader for the data
+    async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
+        Ok(match self {
+            BlobOrCollection::Blob { path, .. } => {
+                Either::Right(tokio::fs::File::open(path).await?)
+            }
+            BlobOrCollection::Collection { data, .. } => Either::Left(Cursor::new(data.clone())),
+        })
     }
 
     /// Returns the size of the blob or collection.
@@ -527,32 +544,7 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = if root.is_dir() {
-            let files = futures::stream::iter(WalkDir::new(&root));
-            let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
-                let root = root.clone();
-                async move {
-                    if !entry.file_type().is_file() {
-                        // Skip symlinks. Directories are handled by WalkDir.
-                        return Ok(None);
-                    }
-                    let path = entry.into_path();
-                    let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                    anyhow::Ok(Some(DataSource::NamedFile { name, path }))
-                }
-            });
-            let data_sources: Vec<anyhow::Result<DataSource>> =
-                data_sources.collect::<Vec<_>>().await;
-            data_sources
-                .into_iter()
-                .collect::<anyhow::Result<Vec<_>>>()?
-        } else {
-            // A single file, use the file name as the name of the blob.
-            vec![DataSource::NamedFile {
-                name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-                path: root,
-            }]
-        };
+        let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
         let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
@@ -599,6 +591,36 @@ impl RpcHandler {
             ))
         })
     }
+}
+
+/// Create data sources from a path.
+pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
+    Ok(if root.is_dir() {
+        let files = WalkDir::new(&root).into_iter();
+        let data_sources = files
+            .map(|entry| {
+                let entry = entry?;
+                let root = root.clone();
+                if !entry.file_type().is_file() {
+                    // Skip symlinks. Directories are handled by WalkDir.
+                    return Ok(None);
+                }
+                let path = entry.into_path();
+                let name = canonicalize_path(path.strip_prefix(&root)?)?;
+                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+            })
+            .filter_map(Result::transpose);
+        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
+        data_sources
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+    } else {
+        // A single file, use the file name as the name of the blob.
+        vec![DataSource::NamedFile {
+            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
+            path: root,
+        }]
+    })
 }
 
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
@@ -724,69 +746,76 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    hash: Hash,
+    request: Request,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
     mut writer: quinn::SendStream,
-    // Buffer used when writing to writer.
-    buffer: &mut BytesMut,
-    // The bao outboard encoded data.
+    // the collection to transfer
     outboard: &Bytes,
-    // The actual blob data.
-    data: &Bytes,
+    data: Either<Cursor<Bytes>, tokio::fs::File>,
     events: broadcast::Sender<Event>,
     connection_id: u64,
     request_id: u64,
 ) -> Result<SentStatus> {
-    // We only respond to requests for collections, not individual blobs
-    let encoded_size: usize = bao_tree::encoded_size(data.len() as u64, IROH_BLOCK_SIZE)
-        .try_into()
-        .unwrap();
-    let mut encoded = Vec::with_capacity(encoded_size);
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
-    encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
+    let mut data = bao_tree::io::fsm::Handle::new(data);
+    let hash = request.hash;
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
-    let c: Collection = postcard::from_bytes(data)?;
-
-    let _ = events.send(Event::TransferCollectionStarted {
-        connection_id,
-        request_id,
-        num_blobs: c.blobs().len() as u64,
-        total_blobs_size: c.total_blobs_size(),
-    });
-
-    // TODO: we should check if the blobs referenced in this container
-    // actually exist in this provider before returning `FoundCollection`
-    write_response(
-        &mut writer,
-        buffer,
-        Res::FoundCollection {
-            total_blobs_size: c.total_blobs_size(),
-        },
-    )
-    .await?;
-
-    writer.write_all(&encoded).await?;
-    for (i, blob) in c.blobs().iter().enumerate() {
-        trace!("writing blob {}/{}", i, c.blobs().len());
-        tokio::task::yield_now().await;
-        let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
-        writer = writer1;
-        if SentStatus::NotFound == status {
-            writer.finish().await?;
-            return Ok(status);
-        }
-
-        let _ = events.send(Event::TransferBlobCompleted {
+    // if the request is just for the root, we don't need to deserialize the collection
+    let just_root = matches!(request.ranges.single(), Some((0, _)));
+    let c = if !just_root {
+        let bytes = read_as_bytes(data.as_mut()).await?;
+        let c: Collection = postcard::from_bytes(&bytes)?;
+        let _ = events.send(Event::TransferCollectionStarted {
             connection_id,
             request_id,
-            hash: blob.hash,
-            index: i as u64,
-            size,
+            num_blobs: c.blobs().len() as u64,
+            total_blobs_size: c.total_blobs_size(),
         });
+        Some(c)
+    } else {
+        None
+    };
+
+    for (offset, ranges) in request.ranges.iter_non_empty() {
+        if offset == 0 {
+            debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            // send the root
+            encode_ranges_validated(&mut data, outboard, &ranges.to_chunk_ranges(), &mut writer)
+                .await?;
+            debug!(
+                "finished writing ranges '{:?}' of collection {}",
+                ranges, hash
+            );
+        } else {
+            debug!("wrtiting ranges '{:?}' of child {}", ranges, offset);
+            let c = c.as_ref().unwrap();
+            if offset < c.total_entries() + 1 {
+                tokio::task::yield_now().await;
+                let hash = c.blobs()[(offset - 1) as usize].hash;
+                let (status, writer1, size) = send_blob(db, hash, ranges, writer).await?;
+                writer = writer1;
+                if SentStatus::NotFound == status {
+                    writer.finish().await?;
+                    return Ok(status);
+                }
+
+                let _ = events.send(Event::TransferBlobCompleted {
+                    connection_id,
+                    request_id,
+                    hash,
+                    index: offset - 1,
+                    size,
+                });
+            } else {
+                // nothing more we can send
+                break;
+            }
+        }
     }
 
+    debug!("done writing");
     writer.finish().await?;
     Ok(SentStatus::Sent)
 }
@@ -805,7 +834,6 @@ async fn handle_stream(
     (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
     events: broadcast::Sender<Event>,
 ) -> Result<()> {
-    let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
 
     // The stream ID index is used to identify this request.  Requests only arrive in
@@ -838,49 +866,46 @@ async fn handle_stream(
     });
 
     // 4. Attempt to find hash
-    let (outboard, data) = match db.get(&hash) {
-        // We only respond to requests for collections, not individual blobs
-        Some(BlobOrCollection::Collection { outboard, data }) => (outboard, data),
-        _ => {
-            debug!("not found");
-            notify_transfer_aborted(events, connection_id, request_id);
-            write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
-            writer.finish().await?;
+    match db.get(&hash) {
+        // Collection or blob request
+        Some(entry) => {
+            // 5. Transfer data!
+            match transfer_collection(
+                request,
+                &db,
+                writer,
+                entry.outboard(),
+                entry.data_reader().await?,
+                events.clone(),
+                connection_id,
+                request_id,
+            )
+            .await
+            {
+                Ok(SentStatus::Sent) => {
+                    let _ = events.send(Event::TransferCollectionCompleted {
+                        connection_id,
+                        request_id,
+                    });
+                }
+                Ok(SentStatus::NotFound) => {
+                    notify_transfer_aborted(events, connection_id, request_id);
+                }
+                Err(e) => {
+                    notify_transfer_aborted(events, connection_id, request_id);
+                    return Err(e);
+                }
+            }
 
-            return Ok(());
+            debug!("finished response");
+        }
+        None => {
+            debug!("not found {}", hash);
+            notify_transfer_aborted(events, connection_id, request_id);
+            writer.finish().await?;
         }
     };
 
-    // 5. Transfer data!
-    match transfer_collection(
-        hash,
-        &db,
-        writer,
-        &mut out_buffer,
-        &outboard,
-        &data,
-        events.clone(),
-        connection_id,
-        request_id,
-    )
-    .await
-    {
-        Ok(SentStatus::Sent) => {
-            let _ = events.send(Event::TransferCollectionCompleted {
-                connection_id,
-                request_id,
-            });
-        }
-        Ok(SentStatus::NotFound) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-        }
-        Err(e) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-            return Err(e);
-        }
-    }
-
-    debug!("finished response");
     Ok(())
 }
 
@@ -891,10 +916,10 @@ enum SentStatus {
 }
 
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
-    db: Database,
+    db: &Database,
     name: Hash,
+    ranges: &RangeSpec,
     mut writer: W,
-    buffer: &mut BytesMut,
 ) -> Result<(SentStatus, W, u64)> {
     match db.get(&name) {
         Some(BlobOrCollection::Blob {
@@ -902,29 +927,30 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             path,
             size,
         }) => {
-            write_response(&mut writer, buffer, Res::Found).await?;
-
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
-            let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::io::tokio::encode_ranges_validated(
-                file_reader,
+            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
+            let mut file_reader =
+                bao_tree::io::fsm::Handle::new(tokio::fs::File::open(&path).await?);
+            let res = bao_tree::io::fsm::encode_ranges_validated(
+                &mut file_reader,
                 outboard,
-                &RangeSet2::all(),
+                &ranges.to_chunk_ranges(),
                 &mut writer,
             )
-            .await?;
+            .await;
+            debug!("done sending blob {} {:?}", name, res);
+            res?;
 
             Ok((SentStatus::Sent, writer, size))
         }
         _ => {
-            write_response(&mut writer, buffer, Res::NotFound).await?;
+            debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, writer, 0))
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Data {
+pub(crate) struct BlobData {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -1002,25 +1028,6 @@ impl From<&std::path::Path> for DataSource {
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
-}
-
-async fn write_response<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    buffer: &mut BytesMut,
-    res: Res,
-) -> Result<()> {
-    let response = Response { data: res };
-
-    // TODO: do not transfer blob data as part of the responses
-    if buffer.len() < Response::POSTCARD_MAX_SIZE {
-        buffer.resize(Response::POSTCARD_MAX_SIZE, 0u8);
-    }
-    let used = postcard::to_slice(&response, buffer)?;
-
-    write_lp(&mut writer, used).await?;
-
-    trace!(len = used.len(), "wrote response message frame");
-    Ok(())
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.

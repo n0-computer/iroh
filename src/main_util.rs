@@ -34,7 +34,7 @@ pub fn iroh_config_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh config directory.
 #[allow(dead_code)]
-pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
+pub fn iroh_config_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
     Ok(path)
 }
@@ -62,7 +62,7 @@ pub fn iroh_data_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh data directory.
 #[allow(dead_code)]
-pub fn iroh_data_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
+pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_data_root()?.join(file_name);
     Ok(path)
 }
@@ -91,7 +91,7 @@ pub fn iroh_cache_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh cache directory.
 #[allow(dead_code)]
-pub fn iroh_cache_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
+pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_cache_root()?.join(file_name);
     Ok(path)
 }
@@ -179,13 +179,4 @@ impl FromStr for Blake3Cid {
             Self::from_bytes(bytes.as_ref())
         }
     }
-}
-
-/// Create a pathbuf from a name.
-pub fn pathbuf_from_name(name: &str) -> PathBuf {
-    let mut path = PathBuf::new();
-    for part in name.split('/') {
-        path.push(part);
-    }
-    path
 }
