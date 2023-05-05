@@ -39,7 +39,7 @@ use walkdir::WalkDir;
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
 use crate::protocol::{
-    read_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+    read_lp, write_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
@@ -75,13 +75,40 @@ pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
+pub struct Builder<E = DummyServerEndpoint, C = ()>
+where
+    E: ServiceEndpoint<ProviderService>,
+    C: CustomGetHandler,
+{
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
     rpc_endpoint: E,
     db: Database,
     keylog: bool,
+    custom_get_handler: C,
+}
+
+/// A custom get request handler that allows the user to make up a get request
+/// on the fly.
+pub trait CustomGetHandler: Send + Sync + Clone + 'static {
+    /// Handle the custom request, given an opaque data blob from the requester.
+    fn handle(
+        &self,
+        request: Bytes,
+        db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
+}
+
+/// Define CustomGetHandler for () so we can use it as a no-op default.
+impl CustomGetHandler for () {
+    fn handle(
+        &self,
+        _request: Bytes,
+        _db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+    }
 }
 
 /// A [`Database`] entry.
@@ -158,23 +185,44 @@ impl Builder {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
-            rpc_endpoint: Default::default(),
             db,
             keylog: false,
+            rpc_endpoint: Default::default(),
+            custom_get_handler: Default::default(),
         }
     }
 }
 
-impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
-    ///
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
+impl<E, C> Builder<E, C>
+where
+    E: ServiceEndpoint<ProviderService>,
+    C: CustomGetHandler,
+{
+    /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+        // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
             db: self.db,
             keylog: self.keylog,
+            custom_get_handler: self.custom_get_handler,
             rpc_endpoint: value,
+        }
+    }
+
+    /// Configure the custom get handler, changing the type of the builder to the new handler type.
+    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: custom_handler,
         }
     }
 
@@ -256,6 +304,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     handler,
                     self.rpc_endpoint,
                     internal_rpc,
+                    self.custom_get_handler,
                 )
                 .await
             })
@@ -274,6 +323,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
+        custom_get_handler: C,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -314,7 +364,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let auth_token = handler.inner.auth_token;
-                    tokio::spawn(handle_connection(connecting, db, auth_token, events));
+                    let custom_get_handler = custom_get_handler.clone();
+                    tokio::spawn(handle_connection(connecting, db, auth_token, events, custom_get_handler));
                 }
                 else => break,
             }
@@ -652,11 +703,12 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     });
 }
 
-async fn handle_connection(
+async fn handle_connection<C: CustomGetHandler>(
     connecting: quinn::Connecting,
     db: Database,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
+    custom_get_handler: C,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -682,9 +734,12 @@ async fn handle_connection(
             };
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
+            let custom_get_handler = custom_get_handler.clone();
             tokio::spawn(
                 async move {
-                    if let Err(err) = handle_stream(db, auth_token, reader, writer).await {
+                    if let Err(err) =
+                        handle_stream(db, auth_token, reader, writer, custom_get_handler).await
+                    {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -840,6 +895,7 @@ async fn handle_stream(
     token: AuthToken,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter,
+    custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -862,7 +918,25 @@ async fn handle_stream(
 
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,
+        Request::CustomGet(request) => {
+            handle_custom_get(db, request, writer, custom_get_handler).await
+        }
     }
+}
+
+async fn handle_custom_get(
+    db: Database,
+    request: Bytes,
+    mut writer: ResponseWriter,
+    custom_get_handler: impl CustomGetHandler,
+) -> Result<()> {
+    // try to make a GetRequest from the custom bytes
+    let request = custom_get_handler.handle(request, db.clone()).await?;
+    // write it to the requester as the first thing
+    let data = postcard::to_stdvec(&request)?;
+    write_lp(&mut writer.inner, &data).await?;
+    // from now on just handle it like a normal get request
+    handle_get(db, request, writer).await
 }
 
 async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWriter) -> Result<()> {

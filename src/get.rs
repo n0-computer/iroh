@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AuthToken, GetRequest, Handshake, RangeSpecSeq};
+use crate::protocol::{write_lp, AnyGetRequest, AuthToken, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
@@ -113,7 +113,7 @@ impl Stats {
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket(
     ticket: &Ticket,
-    request: GetRequest,
+    request: AnyGetRequest,
     keylog: bool,
     max_concurrent: u8,
 ) -> Result<get_response_machine::AtInitial> {
@@ -181,7 +181,7 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
 pub mod get_response_machine {
     use std::result;
 
-    use crate::protocol::Request;
+    use crate::protocol::{read_lp, GetRequest};
 
     use super::*;
 
@@ -236,7 +236,7 @@ pub mod get_response_machine {
     #[derive(Debug)]
     pub struct AtInitial {
         connection: quinn::Connection,
-        request: GetRequest,
+        request: AnyGetRequest,
         auth_token: AuthToken,
     }
 
@@ -248,7 +248,7 @@ pub mod get_response_machine {
         /// `auth_token` is the auth token for the request
         pub fn new(
             connection: quinn::Connection,
-            request: GetRequest,
+            request: AnyGetRequest,
             auth_token: AuthToken,
         ) -> Self {
             Self {
@@ -280,7 +280,7 @@ pub mod get_response_machine {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
-        request: GetRequest,
+        request: AnyGetRequest,
         auth_token: AuthToken,
     }
 
@@ -305,9 +305,9 @@ pub mod get_response_machine {
         pub async fn next(self) -> Result<ConnectedNext, GetResponseError> {
             let Self {
                 start,
-                reader,
+                mut reader,
                 mut writer,
-                mut request,
+                request,
                 auth_token,
             } = self;
             let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
@@ -323,15 +323,31 @@ pub mod get_response_machine {
             // 2. Send Request
             {
                 debug!("sending request");
-                // wrap the get request in a request so we can serialize it
-                let r = Request::Get(request);
-                let request_bytes = postcard::to_stdvec(&r)?;
+                let request_bytes = postcard::to_stdvec(&request)?;
                 write_lp(&mut writer, &request_bytes).await?;
-                // unwrap again to get the request back
-                Request::Get(request) = r;
             }
+
+            // 3. Finish writing before expecting a response
             let (mut writer, bytes_written) = writer.into_parts();
             writer.finish().await?;
+
+            // 3. Turn a possible custom request into a get request
+            let request = match request {
+                AnyGetRequest::Get(get_request) => {
+                    // we already have a get request, just return it
+                    get_request
+                }
+                AnyGetRequest::CustomGet(_) => {
+                    // we sent a custom request, so we need the actual GetRequest from the response
+                    let mut buffer = BytesMut::new();
+                    let response = read_lp(&mut reader, &mut buffer)
+                        .await?
+                        .context("unexpected EOF when reading response to custom get request")?;
+                    postcard::from_bytes::<GetRequest>(&response).context(
+                        "unable to deserialize response to custom get request as get request",
+                    )?
+                }
+            };
             let hash = request.hash;
             let ranges_iter = RangesIter::new(request.ranges);
             // this is in a box so we don't have to memcpy it on every state transition
@@ -721,7 +737,7 @@ pub mod get_response_machine {
 
 /// Dial a peer and run a get request
 pub async fn run(
-    request: GetRequest,
+    request: AnyGetRequest,
     auth_token: AuthToken,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
@@ -732,7 +748,7 @@ pub async fn run(
 /// Do a get request and return a stream of responses
 pub fn run_connection(
     connection: quinn::Connection,
-    request: GetRequest,
+    request: AnyGetRequest,
     auth_token: AuthToken,
 ) -> get_response_machine::AtInitial {
     get_response_machine::AtInitial::new(connection, request, auth_token)
