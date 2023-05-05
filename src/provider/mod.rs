@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::future::Future;
 use std::io::{self, Cursor};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -64,8 +64,9 @@ pub use ticket::Ticket;
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+
 /// Default bind address for the provider.
-pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
 
 /// Builder for the [`Provider`].
 ///
