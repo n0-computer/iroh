@@ -600,7 +600,6 @@ mod tests {
             _data: Bytes,
             database: Database,
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            let database = database.clone();
             async move {
                 let readme = readme_path();
                 let sources = vec![DataSource::File(readme)];
@@ -623,7 +622,6 @@ mod tests {
             _data: Bytes,
             database: Database,
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            let database = database.clone();
             async move {
                 let readme = readme_path();
                 let sources = vec![DataSource::File(readme)];
