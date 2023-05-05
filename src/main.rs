@@ -27,6 +27,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
 use iroh::tokio_util::SeekOptimized;
 
+use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
 
@@ -555,10 +556,16 @@ async fn main_impl() -> Result<()> {
             rpc_port,
         } => {
             let iroh_data_root = iroh_data_root()?;
+            let marker = iroh_data_root.join(FNAME_PATHS);
             let db = {
-                if iroh_data_root.is_dir() {
+                if iroh_data_root.is_dir() && marker.exists() {
                     // try to load db
-                    Database::load(&iroh_data_root).await?
+                    Database::load(&iroh_data_root).await.with_context(|| {
+                        format!(
+                            "Failed to load iroh database from {}",
+                            iroh_data_root.display()
+                        )
+                    })?
                 } else {
                     // directory does not exist, create an empty db
                     Database::default()
