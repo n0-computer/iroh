@@ -28,7 +28,11 @@ c-headers = ["safer-ffi/headers"]
 [dependencies]
 safer-ffi = { version = "0.0.10", features = ["proc_macros"] }
 anyhow = "1.0.69"
+blake3 = "1.3.3"
 iroh = { path = "../", default-features = false }
+indicatif = { version = "0.17", features = ["tokio"] }
+data-encoding = { version = "2.3.3" }
+multibase = { version = "0.9.1"}
 libc = "0.2.141"
 tempfile = "3.4"
 tokio = "1.25.0"
