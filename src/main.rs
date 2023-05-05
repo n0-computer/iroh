@@ -12,9 +12,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
-use iroh::get::get_response_machine::{
-    BaoContentItem, BlobContentNext, ConnectedNext, EndBlobNext,
-};
+use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
 use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
@@ -28,7 +26,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
-use iroh::tokio_util::{ProgressSliceWriter, SeekOptimized};
+use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
 use main_util::Blake3Cid;
@@ -901,9 +899,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .await
                 .context("Unable to create directory {out_dir}")?;
             let curr = curr.next();
-            let (curr, size) = curr.next().await?;
-            let mut collection_data = Vec::with_capacity(size as usize);
-            let curr = curr.concatenate(&mut collection_data).await?;
+            let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
             init_download_progress(collection.total_entries(), collection.total_blobs_size());
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
@@ -1047,9 +1043,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     };
     let (mut next, collection) = {
         let curr = curr.next();
-        let (curr, size) = curr.next().await?;
-        let mut collection_data = Vec::with_capacity(size as usize);
-        let curr = curr.concatenate(&mut collection_data).await?;
+        let (curr, collection_data) = curr.concatenate_into_vec().await?;
         let collection = Collection::from_bytes(&collection_data)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
@@ -1086,21 +1080,21 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         pb.set_message(format!("Receiving '{}'...", name.display()));
         pb.reset();
         let header = start.next(blob.hash);
-        let curr = {
-            let (mut curr, _size) = header.next().await?;
-            loop {
-                curr = match curr.next().await {
-                    BlobContentNext::More((curr1, item)) => {
-                        if let BaoContentItem::Leaf(leaf) = item? {
-                            pb.set_position(leaf.offset.0);
-                            tokio::io::stdout().write_all(&leaf.data).await?;
-                        }
-                        curr1
-                    }
-                    BlobContentNext::Done(finish) => break finish,
-                }
+        let (on_write, mut receive_on_write) = mpsc::channel(1);
+        let pb2 = pb.clone();
+        // create task that updates the progress bar
+        let progress_task = tokio::task::spawn(async move {
+            while let Some((offset, _)) = receive_on_write.recv().await {
+                pb2.set_position(offset);
             }
-        };
+        });
+        let mut writer =
+            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write)
+                .into();
+        let curr = header.write_all(&mut writer).await?;
+        drop(writer);
+        // wait for the progress task to finish, only after dropping the writer
+        progress_task.await.ok();
         pb.finish();
         next = curr.next();
     };

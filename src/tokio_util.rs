@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures::{future::BoxFuture, ready, FutureExt};
 use tokio::{
     fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
 };
 use tokio_util::either::Either;
@@ -57,6 +57,42 @@ where
     }
 }
 
+/// Converts an AsyncWrite into an AsyncSliceWriter by just ignoring the offsets
+#[derive(Debug)]
+pub struct ConcatenateSliceWriter<W>(W);
+
+impl<W> ConcatenateSliceWriter<W> {
+    /// Create a new `ConcatenateSliceWriter` from an inner writer
+    pub fn new(inner: W) -> Self {
+        Self(inner)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncWrite + Send + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWriter<W> {
+    type WriteFuture = BoxFuture<'static, (Self, io::Result<()>)>;
+
+    fn write_at(mut self, _offset: u64, data: Bytes) -> Self::WriteFuture {
+        async move {
+            let res = self.0.write_all(&data).await;
+            (self, res)
+        }
+        .boxed()
+    }
+
+    fn write_array_at<const N: usize>(mut self, _offset: u64, bytes: [u8; N]) -> Self::WriteFuture {
+        async move {
+            let res = self.0.write_all(&bytes).await;
+            (self, res)
+        }
+        .boxed()
+    }
+}
+
 /// A slice writer that adds a synchronous progress callback
 #[derive(Debug)]
 pub struct ProgressSliceWriter<W>(W, mpsc::Sender<(u64, usize)>);
@@ -77,6 +113,7 @@ impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWri
     type WriteFuture = BoxFuture<'static, (Self, io::Result<()>)>;
 
     fn write_at(self, offset: u64, data: Bytes) -> Self::WriteFuture {
+        // use try_send so we don't block if updating the progress bar is slow
         self.1.try_send((offset, data.len())).ok();
         async move {
             let (this, res) = self.0.write_at(offset, data).await;
@@ -86,6 +123,7 @@ impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWri
     }
 
     fn write_array_at<const N: usize>(self, offset: u64, bytes: [u8; N]) -> Self::WriteFuture {
+        // use try_send so we don't block if updating the progress bar is slow
         self.1.try_send((offset, bytes.len())).ok();
         async move {
             let (this, res) = self.0.write_array_at(offset, bytes).await;

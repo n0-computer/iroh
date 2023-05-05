@@ -29,7 +29,6 @@ use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -187,7 +186,10 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
 pub mod get_response_machine {
     use std::result;
 
-    use crate::protocol::{read_lp, GetRequest};
+    use crate::{
+        protocol::{read_lp, GetRequest},
+        tokio_util::ConcatenateSliceWriter,
+    };
 
     use super::*;
 
@@ -513,19 +515,27 @@ pub mod get_response_machine {
             }
         }
 
-        /// Concatenate the response into a writer
+        /// Concatenate the entire response into a vec
         ///
-        /// When requesting an entire blob, this is identical to writing the blob
-        /// to the writer.
-        ///
-        /// When requesting only ranges, this concatenates the ranges without
-        /// keeping gaps.
-        pub async fn concatenate<W: AsyncWrite + Unpin>(
+        /// For a request that does not request the complete blob, this will just
+        /// concatenate the ranges that were requested.
+        pub async fn concatenate_into_vec(
             self,
-            res: W,
+        ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
+            let (curr, size) = self.next().await?;
+            let res = Vec::with_capacity(size as usize);
+            let mut handle = ConcatenateSliceWriter::new(res).into();
+            let res = curr.write_all(&mut handle).await?;
+            Ok((res, handle.into_inner().into_inner()))
+        }
+
+        /// Write the entire blob to a slice writer, optionally also writing
+        /// an outboard.
+        pub async fn write_all<D: AsyncSliceWriter>(
+            self,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            let (curr, _size) = self.next().await?;
-            curr.concatenate(res).await
+            self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
@@ -603,6 +613,15 @@ pub mod get_response_machine {
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
+        pub async fn write_all<D: AsyncSliceWriter>(
+            self,
+            data: &mut Handle<D>,
+        ) -> result::Result<AtEndBlob, DecodeError> {
+            self.write_all_with_outboard::<D, D>(&mut None, data).await
+        }
+
+        /// Write the entire blob to a slice writer, optionally also writing
+        /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: &mut Option<Handle<O>>,
@@ -638,25 +657,6 @@ pub mod get_response_machine {
                     }
                 }
             }
-        }
-
-        /// Concatenate the entire blob into a writer
-        pub async fn concatenate<W: AsyncWrite + Unpin>(
-            self,
-            mut res: W,
-        ) -> result::Result<AtEndBlob, DecodeError> {
-            let mut content = self;
-            let done = loop {
-                let item;
-                (content, item) = match content.next().await {
-                    BlobContentNext::More(x) => x,
-                    BlobContentNext::Done(x) => break x,
-                };
-                if let BaoContentItem::Leaf(leaf) = item? {
-                    res.write_all(&leaf.data).await?;
-                }
-            };
-            Ok(done)
         }
     }
 

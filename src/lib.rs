@@ -525,8 +525,7 @@ mod tests {
             let ConnectedNext::StartCollection(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
-            let mut data = Vec::new();
-            let done = sc.next().concatenate(&mut data).await?;
+            let (done, data) = sc.next().concatenate_into_vec().await?;
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children
@@ -539,8 +538,7 @@ mod tests {
             let Some(blob) = collection.blobs().get(child as usize) else {
                 break start.finish();
             };
-            let mut data = Vec::new();
-            let done = start.next(blob.hash).concatenate(&mut data).await?;
+            let (done, data) = start.next(blob.hash).concatenate_into_vec().await?;
             items.insert(child, data.into());
             next = done.next();
         };
@@ -661,8 +659,7 @@ mod tests {
             let connected = response.next().await?;
             let ConnectedNext::StartCollection(start) = connected.next().await? else { panic!() };
             let header = start.next();
-            let mut actual = Vec::new();
-            header.concatenate(&mut actual).await?;
+            let (_, actual) = header.concatenate_into_vec().await?;
             let expected = tokio::fs::read(readme_path()).await?;
             assert_eq!(actual, expected);
             anyhow::Ok(())
