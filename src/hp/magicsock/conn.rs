@@ -243,16 +243,7 @@ impl Conn {
         let port = pconn4.port();
         port_mapper.set_local_port(port).await;
 
-        let conn4 = pconn4.clone();
-        let get_stun_conn4 = Some(Arc::new(Box::new(move || conn4.as_socket()) as _));
-        let get_stun_conn6 = if let Some(conn6) = pconn6.clone() {
-            Some(Arc::new(Box::new(move || conn6.as_socket()) as _))
-        } else {
-            None
-        };
-        let net_checker =
-            netcheck::Client::new(Some(port_mapper.clone()), get_stun_conn4, get_stun_conn6)
-                .await?;
+        let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
         let (actor_sender, actor_receiver) = flume::bounded(128);
         let (network_sender, network_receiver) = flume::bounded(128);
 
@@ -1742,8 +1733,11 @@ impl Actor {
         self.enable_stun_packets = true;
         let dm = self.derp_map.as_ref().unwrap();
         let net_checker = &mut self.net_checker;
+        let pconn4 = Some(self.pconn4.as_socket());
+        let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
+
         let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(&dm).await
+            net_checker.get_report(&dm, pconn4, pconn6).await
         })
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);

@@ -18,12 +18,13 @@ use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
 #[derive(Clone, Debug)]
 pub struct RebindingUdpConn {
-    pub(super) pconn: Arc<UdpSocket>,
+    io: Arc<tokio::net::UdpSocket>,
+    state: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl RebindingUdpConn {
     pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
-        self.pconn.io.clone()
+        self.io.clone()
     }
 
     pub(super) async fn rebind(
@@ -37,16 +38,19 @@ impl RebindingUdpConn {
             return Ok(());
         }
 
-        let pconn = bind(Some(&mut self.pconn), port, network, cur_port_fate).await?;
-        self.pconn = Arc::new(pconn);
+        let sock = bind(Some(&self.io), port, network, cur_port_fate).await?;
+        self.io = Arc::new(tokio::net::UdpSocket::from_std(sock)?);
+        self.state = Default::default();
 
         Ok(())
     }
 
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
-        let pconn = bind(None, port, network, CurrentPortFate::Keep).await?;
-
-        Ok(Self::from_socket(pconn))
+        let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
+        Ok(Self {
+            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
+            state: Default::default(),
+        })
     }
 
     pub fn port(&self) -> u16 {
@@ -57,78 +61,9 @@ impl RebindingUdpConn {
         // Nothing to do atm
         Ok(())
     }
-
-    pub fn poll_send(
-        &self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        self.pconn.poll_send(state, cx, transmits)
-    }
-
-    pub fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        self.pconn.poll_recv(cx, bufs, meta)
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addr = self.pconn.local_addr()?;
-        Ok(addr)
-    }
-
-    pub(super) fn from_socket(pconn: UdpSocket) -> Self {
-        RebindingUdpConn {
-            pconn: Arc::new(pconn),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct UdpSocket {
-    io: Arc<tokio::net::UdpSocket>,
-    inner: quinn_udp::UdpSocketState,
-}
-
-impl UdpSocket {
-    pub fn from_std(sock: std::net::UdpSocket) -> io::Result<Self> {
-        quinn_udp::UdpSocketState::configure((&sock).into())?;
-        Ok(UdpSocket {
-            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
-            inner: quinn_udp::UdpSocketState::new(),
-        })
-    }
 }
 
 impl AsyncUdpSocket for RebindingUdpConn {
-    fn poll_send(
-        &self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        (&*self).poll_send(state, cx, transmits)
-    }
-
-    fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        self.poll_recv(cx, bufs, meta)
-    }
-
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.pconn.local_addr()
-    }
-}
-
-impl AsyncUdpSocket for UdpSocket {
     fn poll_send(
         &self,
         state: &quinn_udp::UdpState,
@@ -148,7 +83,7 @@ impl AsyncUdpSocket for UdpSocket {
                 .collect::<Vec<_>>()
         );
 
-        let inner = &self.inner;
+        let inner = &self.state;
         let io = &self.io;
         loop {
             ready!(io.poll_send_ready(cx))?;
@@ -180,7 +115,7 @@ impl AsyncUdpSocket for UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.inner.recv((&self.io).into(), bufs, meta)
+                self.state.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
@@ -196,17 +131,17 @@ impl AsyncUdpSocket for UdpSocket {
         }
     }
 
-    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
     }
 }
 
 async fn bind(
-    inner: Option<&UdpSocket>,
+    inner: Option<&tokio::net::UdpSocket>,
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
-) -> anyhow::Result<UdpSocket> {
+) -> anyhow::Result<std::net::UdpSocket> {
     debug!(
         "bind_socket: network={:?} cur_port_fate={:?}",
         network, cur_port_fate
@@ -261,7 +196,7 @@ async fn bind(
 }
 
 /// Opens a packet listener.
-async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket> {
+async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net::UdpSocket> {
     let addr = SocketAddr::new(network.default_addr(), port);
     let socket = socket2::Socket::new(
         network.into(),
@@ -283,9 +218,9 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket
     }
     socket.set_nonblocking(true)?;
     socket.bind(&addr.into())?;
-    let socket = UdpSocket::from_std(socket.into())?;
+    let socket: std::net::UdpSocket = socket.into();
 
-    debug!("bound to {}", socket.local_addr()?);
+    quinn_udp::UdpSocketState::configure((&socket).into())?;
 
     Ok(socket)
 }
@@ -322,12 +257,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv() -> Result<()> {
-        let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
-        let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);
+        let m1 = RebindingUdpConn::bind(0, Network::Ipv4).await?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = std::net::UdpSocket::bind("127.0.0.1:0")?;
-        let m2 = RebindingUdpConn::from_socket(UdpSocket::from_std(m2)?);
+        let m2 = RebindingUdpConn::bind(0, Network::Ipv6).await?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m1.local_addr()?.port());
