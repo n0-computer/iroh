@@ -296,7 +296,7 @@ pub mod get_response_machine {
     #[derive(Debug, From)]
     pub enum ConnectedNext {
         /// First response is a collection
-        StartCollection(AtStartCollection),
+        StartRoot(AtStartRoot),
         /// First response is a child
         StartChild(AtStartChild),
         /// Request is empty
@@ -368,7 +368,7 @@ pub mod get_response_machine {
             Ok(match misc.ranges_iter.next() {
                 Some((offset, ranges)) => {
                     if offset == 0 {
-                        AtStartCollection {
+                        AtStartRoot {
                             reader,
                             ranges,
                             misc,
@@ -392,7 +392,7 @@ pub mod get_response_machine {
 
     /// State of the get response when we start reading a collection
     #[derive(Debug)]
-    pub struct AtStartCollection {
+    pub struct AtStartRoot {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
@@ -449,7 +449,7 @@ pub mod get_response_machine {
         }
     }
 
-    impl AtStartCollection {
+    impl AtStartRoot {
         /// The ranges we have requested for the child
         pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
             &self.ranges
