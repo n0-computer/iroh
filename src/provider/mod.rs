@@ -38,7 +38,9 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -364,7 +366,7 @@ pub enum Event {
         connection_id: u64,
     },
     /// A request was received from a client.
-    RequestReceived {
+    GetRequestReceived {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
@@ -668,16 +670,22 @@ async fn handle_connection(
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {
-        while let Ok(stream) = connection.accept_bi().await {
-            let span = debug_span!("stream", stream_id = %stream.0.id());
+        while let Ok((writer, reader)) = connection.accept_bi().await {
+            // The stream ID index is used to identify this request.  Requests only arrive in
+            // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
+            let request_id = reader.id().index();
+            let span = debug_span!("stream", stream_id = %request_id);
+            let writer = ResponseWriter {
+                connection_id,
+                request_id,
+                events: events.clone(),
+                inner: writer,
+            };
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
-            let events = events.clone();
             tokio::spawn(
                 async move {
-                    if let Err(err) =
-                        handle_stream(db, auth_token, connection_id, stream, events).await
-                    {
+                    if let Err(err) = handle_stream(db, auth_token, reader, writer).await {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -745,19 +753,15 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-#[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    request: Request,
+    request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
-    // Quinn stream.
-    mut writer: quinn::SendStream,
+    // Response writer, containing the quinn stream.
+    writer: &mut ResponseWriter,
     // the collection to transfer
     outboard: &Bytes,
     data: Either<Cursor<Bytes>, tokio::fs::File>,
-    events: broadcast::Sender<Event>,
-    connection_id: u64,
-    request_id: u64,
 ) -> Result<SentStatus> {
     let mut data = bao_tree::io::fsm::Handle::new(data);
     let hash = request.hash;
@@ -768,9 +772,9 @@ async fn transfer_collection(
     let c = if !just_root {
         let bytes = read_as_bytes(data.as_mut()).await?;
         let c: Collection = postcard::from_bytes(&bytes)?;
-        let _ = events.send(Event::TransferCollectionStarted {
-            connection_id,
-            request_id,
+        let _ = writer.events.send(Event::TransferCollectionStarted {
+            connection_id: writer.connection_id,
+            request_id: writer.request_id,
             num_blobs: c.blobs().len() as u64,
             total_blobs_size: c.total_blobs_size(),
         });
@@ -783,8 +787,13 @@ async fn transfer_collection(
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
             // send the root
-            encode_ranges_validated(&mut data, outboard, &ranges.to_chunk_ranges(), &mut writer)
-                .await?;
+            encode_ranges_validated(
+                &mut data,
+                outboard,
+                &ranges.to_chunk_ranges(),
+                &mut writer.inner,
+            )
+            .await?;
             debug!(
                 "finished writing ranges '{:?}' of collection {}",
                 ranges, hash
@@ -795,16 +804,15 @@ async fn transfer_collection(
             if offset < c.total_entries() + 1 {
                 tokio::task::yield_now().await;
                 let hash = c.blobs()[(offset - 1) as usize].hash;
-                let (status, writer1, size) = send_blob(db, hash, ranges, writer).await?;
-                writer = writer1;
+                let (status, size) = send_blob(db, hash, ranges, &mut writer.inner).await?;
                 if SentStatus::NotFound == status {
-                    writer.finish().await?;
+                    writer.inner.finish().await?;
                     return Ok(status);
                 }
 
-                let _ = events.send(Event::TransferBlobCompleted {
-                    connection_id,
-                    request_id,
+                let _ = writer.events.send(Event::TransferBlobCompleted {
+                    connection_id: writer.connection_id,
+                    request_id: writer.request_id,
                     hash,
                     index: offset - 1,
                     size,
@@ -817,34 +825,29 @@ async fn transfer_collection(
     }
 
     debug!("done writing");
-    writer.finish().await?;
+    writer.inner.finish().await?;
     Ok(SentStatus::Sent)
 }
 
-fn notify_transfer_aborted(events: broadcast::Sender<Event>, connection_id: u64, request_id: u64) {
-    let _ = events.send(Event::TransferAborted {
-        connection_id,
-        request_id,
+fn notify_transfer_aborted(writer: &ResponseWriter) {
+    let _ = writer.events.send(Event::TransferAborted {
+        connection_id: writer.connection_id,
+        request_id: writer.request_id,
     });
 }
 
 async fn handle_stream(
     db: Database,
     token: AuthToken,
-    connection_id: u64,
-    (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
-    events: broadcast::Sender<Event>,
+    mut reader: quinn::RecvStream,
+    writer: ResponseWriter,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
-
-    // The stream ID index is used to identify this request.  Requests only arrive in
-    // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
-    let request_id = reader.id().index();
 
     // 1. Read Handshake
     debug!("reading handshake");
     if let Err(e) = read_handshake(&mut reader, &mut in_buffer, token).await {
-        notify_transfer_aborted(events, connection_id, request_id);
+        notify_transfer_aborted(&writer);
         return Err(e);
     }
 
@@ -853,17 +856,23 @@ async fn handle_stream(
     let request = match read_request(reader, &mut in_buffer).await {
         Ok(r) => r,
         Err(e) => {
-            notify_transfer_aborted(events, connection_id, request_id);
+            notify_transfer_aborted(&writer);
             return Err(e);
         }
     };
 
+    match request {
+        Request::Get(request) => handle_get(db, request, writer).await,
+    }
+}
+
+async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWriter) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
-    let _ = events.send(Event::RequestReceived {
-        connection_id,
+    let _ = writer.events.send(Event::GetRequestReceived {
         hash,
-        request_id,
+        connection_id: writer.connection_id,
+        request_id: writer.request_id,
     });
 
     // 4. Attempt to find hash
@@ -874,26 +883,23 @@ async fn handle_stream(
             match transfer_collection(
                 request,
                 &db,
-                writer,
+                &mut writer,
                 entry.outboard(),
                 entry.data_reader().await?,
-                events.clone(),
-                connection_id,
-                request_id,
             )
             .await
             {
                 Ok(SentStatus::Sent) => {
-                    let _ = events.send(Event::TransferCollectionCompleted {
-                        connection_id,
-                        request_id,
+                    let _ = writer.events.send(Event::TransferCollectionCompleted {
+                        connection_id: writer.connection_id,
+                        request_id: writer.request_id,
                     });
                 }
                 Ok(SentStatus::NotFound) => {
-                    notify_transfer_aborted(events, connection_id, request_id);
+                    notify_transfer_aborted(&writer);
                 }
                 Err(e) => {
-                    notify_transfer_aborted(events, connection_id, request_id);
+                    notify_transfer_aborted(&writer);
                     return Err(e);
                 }
             }
@@ -902,12 +908,20 @@ async fn handle_stream(
         }
         None => {
             debug!("not found {}", hash);
-            notify_transfer_aborted(events, connection_id, request_id);
-            writer.finish().await?;
+            notify_transfer_aborted(&writer);
+            writer.inner.finish().await?;
         }
     };
 
     Ok(())
+}
+
+/// A helper struct that combines a quinn::SendStream with auxiliary information
+struct ResponseWriter {
+    inner: quinn::SendStream,
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+    request_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -920,8 +934,8 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: &Database,
     name: Hash,
     ranges: &RangeSpec,
-    mut writer: W,
-) -> Result<(SentStatus, W, u64)> {
+    writer: &mut W,
+) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
         Some(BlobOrCollection::Blob {
             outboard,
@@ -935,17 +949,17 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 &mut file_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
-                &mut writer,
+                writer,
             )
             .await;
             debug!("done sending blob {} {:?}", name, res);
             res?;
 
-            Ok((SentStatus::Sent, writer, size))
+            Ok((SentStatus::Sent, size))
         }
         _ => {
             debug!("blob not found {}", name);
-            Ok((SentStatus::NotFound, writer, 0))
+            Ok((SentStatus::NotFound, 0))
         }
     }
 }

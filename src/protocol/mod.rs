@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
+use derive_more::From;
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
 use serde::{Deserialize, Serialize};
@@ -35,9 +36,16 @@ impl Handshake {
     }
 }
 
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
+/// A request to the provider
+pub enum Request {
+    /// A get request for a blob or collection
+    Get(GetRequest),
+}
+
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub struct Request {
+pub struct GetRequest {
     /// blake3 hash
     pub hash: Hash,
     /// The range of data to request
@@ -46,7 +54,7 @@ pub struct Request {
     pub ranges: RangeSpecSeq,
 }
 
-impl Request {
+impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
         Self { hash, ranges }

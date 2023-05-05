@@ -14,7 +14,7 @@ use indicatif::{
 use iroh::blobs::{Blob, Collection};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
-use iroh::protocol::{AuthToken, RangeSpecSeq, Request};
+use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -877,7 +877,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         Some((collection.len() as u64, 0))
     };
 
-    let request = Request::new(get.hash(), query);
+    let request = GetRequest::new(get.hash(), query);
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
@@ -1022,7 +1022,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    let request = Request::new(get.hash(), query);
+    let request = GetRequest::new(get.hash(), query);
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?

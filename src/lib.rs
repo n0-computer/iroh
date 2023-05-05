@@ -47,7 +47,7 @@ mod tests {
         blobs::Collection,
         get::Stats,
         get::{dial_peer, get_response_machine},
-        protocol::{AuthToken, Request},
+        protocol::{AuthToken, GetRequest},
         provider::{create_collection, Event, Provider},
         tls::PeerId,
         util::Hash,
@@ -156,7 +156,7 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            let response = get::run(Request::all(hash), token, opts).await?;
+            let response = get::run(GetRequest::all(hash), token, opts).await?;
             let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
@@ -266,7 +266,12 @@ mod tests {
             keylog: true,
         };
 
-        let response = get::run(Request::all(collection_hash), provider.auth_token(), opts).await?;
+        let response = get::run(
+            GetRequest::all(collection_hash),
+            provider.auth_token(),
+            opts,
+        )
+        .await?;
         let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
         assert_eq!(num_blobs, collection.blobs().len());
         for (i, (name, path, hash)) in expects.into_iter().enumerate() {
@@ -301,7 +306,7 @@ mod tests {
             events
         );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
-        assert!(matches!(events[1], Event::RequestReceived { .. }));
+        assert!(matches!(events[1], Event::GetRequestReceived { .. }));
         assert!(matches!(events[2], Event::TransferCollectionStarted { .. }));
         for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
             match event {
@@ -367,7 +372,7 @@ mod tests {
         });
 
         let response = get::run(
-            Request::all(hash),
+            GetRequest::all(hash),
             auth_token,
             get::Options {
                 addr: provider_addr,
@@ -410,7 +415,7 @@ mod tests {
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
-                Request::all(hash),
+                GetRequest::all(hash),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
@@ -455,7 +460,7 @@ mod tests {
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
-                Request::all(hash),
+                GetRequest::all(hash),
                 auth_token,
                 get::Options {
                     addr,
@@ -483,7 +488,8 @@ mod tests {
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let response = get::run_ticket(&ticket, Request::all(ticket.hash()), true, 16).await?;
+            let response =
+                get::run_ticket(&ticket, GetRequest::all(ticket.hash()), true, 16).await?;
             aggregate_get_response_fsm(response).await
         })
         .await
@@ -569,7 +575,7 @@ mod tests {
                 keylog: true,
             })
             .await?;
-            let request = Request::all(hash);
+            let request = GetRequest::all(hash);
             let stream = get::run_connection(connection, request, auth_token);
             let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
             validate_children(collection, children)?;
