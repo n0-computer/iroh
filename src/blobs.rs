@@ -29,17 +29,17 @@ impl Collection {
     /// Deserialize a collection from a byte slice
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
-            postcard::from_bytes(data).context("failed to serialize Collection data")?;
+            postcard::from_bytes(data).context("failed to deserialize Collection data")?;
         Ok(c)
     }
 
     /// Blobs in this collection
-    pub(crate) fn blobs(&self) -> &[Blob] {
+    pub fn blobs(&self) -> &[Blob] {
         &self.blobs
     }
 
     /// Take ownership of the blobs in this collection
-    pub(crate) fn into_inner(self) -> Vec<Blob> {
+    pub fn into_inner(self) -> Vec<Blob> {
         self.blobs
     }
 
@@ -54,12 +54,13 @@ impl Collection {
     }
 }
 
+/// A blob entry of a collection
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Blob {
+pub struct Blob {
     /// The name of this blob of data
-    pub(crate) name: String,
+    pub name: String,
     /// The hash of the blob of data
-    pub(crate) hash: Hash,
+    pub hash: Hash,
 }
 
 #[cfg(test)]

@@ -4,24 +4,21 @@ use std::io;
 use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::io::tokio::AsyncResponseDecoder;
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
-use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+mod range_spec;
+pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 
-use crate::{
-    util::{self, Hash},
-    IROH_BLOCK_SIZE,
-};
+use crate::util::{self, Hash};
 
 /// Maximum message size is limited to 100MiB for now.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
@@ -38,29 +35,30 @@ impl Handshake {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) struct Request {
+/// A request
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+pub struct Request {
     /// blake3 hash
     pub hash: Hash,
+    /// The range of data to request
+    ///
+    /// The first element is the parent, all subsequent elements are children.
+    pub ranges: RangeSpecSeq,
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) struct Response {
-    pub data: Res,
-}
+impl Request {
+    /// Request a blob or collection with specified ranges
+    pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
+        Self { hash, ranges }
+    }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) enum Res {
-    NotFound,
-    // If found, a stream of bao data is sent as next message.
-    Found,
-    /// Indicates that the given hash referred to a collection of multiple blobs
-    /// A stream of boa data that decodes to a `Collection` is sent as the next message,
-    /// followed by `Res::Found` responses, send in the order indicated in the `Collection`.
-    FoundCollection {
-        /// The size of the raw data we are planning to transfer
-        total_blobs_size: u64,
-    },
+    /// Request a collection and all its children
+    pub fn all(hash: Hash) -> Self {
+        Self {
+            hash,
+            ranges: RangeSpecSeq::all(),
+        }
+    }
 }
 
 /// Write the given data to the provider sink, with a unsigned varint length prefix.
@@ -107,22 +105,6 @@ pub(crate) async fn read_lp(
         }
     }
     Ok(Some(buffer.split_to(size).freeze()))
-}
-
-/// Read and decode the given bao encoded data from the provided source.
-///
-/// After the data is read successfully, the reader will be at the end of the data.
-/// If there is an error, the reader can be anywhere, so it is recommended to discard it.
-pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
-    reader: R,
-    hash: Hash,
-) -> Result<Vec<u8>> {
-    let mut decoder =
-        AsyncResponseDecoder::new(hash.into(), RangeSet2::all(), IROH_BLOCK_SIZE, reader);
-    // we don't know the size yet, so we just allocate a reasonable amount
-    let mut decoded = Vec::with_capacity(4096);
-    decoder.read_to_end(&mut decoded).await?;
-    Ok(decoded)
 }
 
 /// A token used to authenticate a handshake.

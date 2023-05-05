@@ -181,7 +181,7 @@ pub fn validate_bao<F: Fn(u64)>(
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard =
-        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard);
+        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard)?;
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
     encode_ranges_validated(
@@ -239,7 +239,7 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(parts.join("/"))
 }
 
-pub struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
     cb: F,
