@@ -295,7 +295,7 @@ pub mod get_response_machine {
     /// Possible next states after the handshake has been sent
     #[derive(Debug, From)]
     pub enum ConnectedNext {
-        /// First response is a collection
+        /// First response is either a collection or a single blob
         StartRoot(AtStartRoot),
         /// First response is a child
         StartChild(AtStartChild),
@@ -306,7 +306,7 @@ pub mod get_response_machine {
     impl AtConnected {
         /// Send the request and move to the next state
         ///
-        /// The next state will be either `Start` or `StartCollection` depending on whether
+        /// The next state will be either `StartRoot` or `StartChild` depending on whether
         /// the request requests part of the collection or not.
         ///
         /// If the request is empty, this can also move directly to `Finished`.
