@@ -77,7 +77,7 @@ impl GetRequest {
     }
 
     /// Request just a single blob
-    pub fn just(hash: Hash) -> Self {
+    pub fn single(hash: Hash) -> Self {
         Self {
             hash,
             ranges: RangeSpecSeq::new([RangeSet2::all()]),

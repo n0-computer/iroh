@@ -44,9 +44,20 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 const MAX_CONCURRENT_DIALS: u8 = 16;
 
+/// Send data.
+///
+/// The iroh command line tool has two modes: provide and get.
+///
+/// The provide mode is a long-running process binding to a socket which the get mode
+/// contacts to request data.  By default the provide process also binds to an RPC port
+/// which allows adding additional data to be provided as well as a few other maintenance
+/// commands.
+///
+/// The get mode retrieves data from the provider, for this it needs the hash, provider
+/// address and PeerID as well as an authentication code.  The get-ticket subcommand is a
+/// shortcut to provide all this information conveniently in a single ticket.
 #[derive(Parser, Debug, Clone)]
-#[clap(version, about, long_about = None)]
-#[clap(about = "Send data.")]
+#[clap(version)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -98,102 +109,97 @@ impl FromStr for ProviderRpcPort {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Serve the data from the given path. If it is a folder, all files in that folder will be served. If none is specified reads from STDIN.
-    #[clap(about = "Serve the data from the given path")]
+    /// Serve data from the given path.
+    ///
+    /// If PATH is a folder all files in that folder will be served.  If no PATH is
+    /// specified reads from STDIN.
     Provide {
+        /// Path to initial file or directory to provide
         path: Option<PathBuf>,
         #[clap(long, short)]
-        /// Optional listening address, defaults to 127.0.0.1:4433.
-        #[clap(long, short)]
-        addr: Option<SocketAddr>,
-        /// Auth token, defaults to random generated.
+        /// Listening address to bind to
+        #[clap(long, short, default_value_t = SocketAddr::from(provider::DEFAULT_BIND_ADDR))]
+        addr: SocketAddr,
+        /// Auth token, defaults to random generated
         #[clap(long)]
         auth_token: Option<String>,
-        /// Optional rpc port, defaults to 4919. Set to 0 to disable RPC.
+        /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
     },
-    /// List hashes
-    #[clap(about = "List hashes")]
+    /// List hashes on the running provider.
     List {
-        /// Optional rpc port, defaults to 4919
+        /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Validate hashes
-    #[clap(about = "Validate hashes")]
+    /// Validate hashes on the running provider.
     Validate {
-        /// Optional rpc port, defaults to 4919
+        /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Shutdown
-    #[clap(about = "Shutdown provider")]
+    /// Shutdown provider.
     Shutdown {
         /// Shutdown mode.
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait for all connections to close.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
         #[clap(long, default_value_t = false)]
         force: bool,
-        /// Optional rpc port, defaults to 4919
+        /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Identity
-    #[clap(about = "Identify provider")]
+    /// Identify the running provider.
     Id {
-        /// Optional rpc port, defaults to 4919
+        /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Add some data to the database.
-    #[clap(about = "Add data from the given path")]
+    /// Add data from PATH to the running provider's database.
     Add {
-        /// The path to the file or folder to add.
+        /// The path to the file or folder to add
         path: PathBuf,
-        /// Optional rpc port, defaults to 4919
+        /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Fetch some data by hash.
-    #[clap(about = "Fetch the data from the hash")]
+    /// Fetch the data identified by HASH from a provider.
     Get {
-        /// The root hash to retrieve.
+        /// The hash to retrieve, as a Blake3 CID
         hash: Blake3Cid,
-        /// PeerId of the provider.
+        /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// The authentication token to present to the server.
+        /// The authentication token to present to the server
         #[clap(long)]
         auth_token: String,
-        /// Optional address of the provider, defaults to 127.0.0.1:4433.
-        #[clap(long, short)]
-        addr: Option<SocketAddr>,
-        /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
+        /// Address of the provider
+        #[clap(long, short, default_value_t = SocketAddr::from(get::DEFAULT_PROVIDER_ADDR))]
+        addr: SocketAddr,
+        /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
     },
-    /// Fetches some data from a ticket,
+    /// Fetch data from a provider using a ticket.
     ///
     /// The ticket contains all hash, authentication and connection information to connect
     /// to the provider.  It is a simpler, but slightly less flexible alternative to the
     /// `get` subcommand.
-    #[clap(
-        about = "Fetch the data using a ticket for all provider information and authentication."
-    )]
     GetTicket {
-        /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
+        /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
-        /// Ticket containing everything to retrieve a hash from provider.
+        /// Ticket containing everything to retrieve the data from a provider.
         ticket: Ticket,
     },
-    /// List Provide Addresses
-    #[clap(about = "List addresses")]
+    /// List listening addresses of the provider.
     Addresses {
-        /// Optional rpc port, defaults to 4919
+        /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
@@ -509,14 +515,11 @@ async fn main_impl() -> Result<()> {
             out,
             single,
         } => {
-            let mut opts = get::Options {
+            let opts = get::Options {
+                addr,
                 peer_id: Some(peer),
                 keylog: cli.keylog,
-                ..Default::default()
             };
-            if let Some(addr) = addr {
-                opts.addr = addr;
-            }
             let token = AuthToken::from_str(&auth_token)
                 .context("Wrong format for authentication token")?;
             let get = GetInteractive::Hash {
@@ -719,7 +722,7 @@ async fn main_impl() -> Result<()> {
 
 async fn provide(
     db: Database,
-    addr: Option<SocketAddr>,
+    addr: SocketAddr,
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
@@ -727,10 +730,9 @@ async fn provide(
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = provider::Provider::builder(db).keylog(keylog);
-    if let Some(addr) = addr {
-        builder = builder.bind_addr(addr);
-    }
+    let mut builder = provider::Provider::builder(db)
+        .keylog(keylog)
+        .bind_addr(addr);
     if let Some(ref encoded) = auth_token {
         let auth_token = AuthToken::from_str(encoded)?;
         builder = builder.auth_token(auth_token);

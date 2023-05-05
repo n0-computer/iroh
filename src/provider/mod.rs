@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::future::Future;
 use std::io::{self, Cursor};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -64,8 +64,9 @@ pub use ticket::Ticket;
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+
 /// Default bind address for the provider.
-pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -424,6 +425,15 @@ pub enum Event {
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
+    /// A request was received from a client.
+    CustomGetRequestReceived {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// The size of the custom get request.
+        len: usize,
+    },
     /// A collection has been found and is being transferred.
     TransferCollectionStarted {
         /// An unique connection id.
@@ -728,7 +738,6 @@ async fn handle_connection<C: CustomGetHandler>(
             let span = debug_span!("stream", stream_id = %request_id);
             let writer = ResponseWriter {
                 connection_id,
-                request_id,
                 events: events.clone(),
                 inner: writer,
             };
@@ -827,8 +836,8 @@ async fn transfer_collection(
         let bytes = read_as_bytes(data.as_mut()).await?;
         let c: Collection = postcard::from_bytes(&bytes)?;
         let _ = writer.events.send(Event::TransferCollectionStarted {
-            connection_id: writer.connection_id,
-            request_id: writer.request_id,
+            connection_id: writer.connection_id(),
+            request_id: writer.request_id(),
             num_blobs: c.blobs().len() as u64,
             total_blobs_size: c.total_blobs_size(),
         });
@@ -865,8 +874,8 @@ async fn transfer_collection(
                 }
 
                 let _ = writer.events.send(Event::TransferBlobCompleted {
-                    connection_id: writer.connection_id,
-                    request_id: writer.request_id,
+                    connection_id: writer.connection_id(),
+                    request_id: writer.request_id(),
                     hash,
                     index: offset - 1,
                     size,
@@ -883,13 +892,6 @@ async fn transfer_collection(
     Ok(SentStatus::Sent)
 }
 
-fn notify_transfer_aborted(writer: &ResponseWriter) {
-    let _ = writer.events.send(Event::TransferAborted {
-        connection_id: writer.connection_id,
-        request_id: writer.request_id,
-    });
-}
-
 async fn handle_stream(
     db: Database,
     token: AuthToken,
@@ -902,7 +904,7 @@ async fn handle_stream(
     // 1. Read Handshake
     debug!("reading handshake");
     if let Err(e) = read_handshake(&mut reader, &mut in_buffer, token).await {
-        notify_transfer_aborted(&writer);
+        writer.notify_transfer_aborted();
         return Err(e);
     }
 
@@ -911,7 +913,7 @@ async fn handle_stream(
     let request = match read_request(reader, &mut in_buffer).await {
         Ok(r) => r,
         Err(e) => {
-            notify_transfer_aborted(&writer);
+            writer.notify_transfer_aborted();
             return Err(e);
         }
     };
@@ -930,6 +932,11 @@ async fn handle_custom_get(
     mut writer: ResponseWriter,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
+    let _ = writer.events.send(Event::CustomGetRequestReceived {
+        len: request.len(),
+        connection_id: writer.connection_id(),
+        request_id: writer.request_id(),
+    });
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler.handle(request, db.clone()).await?;
     // write it to the requester as the first thing
@@ -944,8 +951,8 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
     debug!(%hash, "received request");
     let _ = writer.events.send(Event::GetRequestReceived {
         hash,
-        connection_id: writer.connection_id,
-        request_id: writer.request_id,
+        connection_id: writer.connection_id(),
+        request_id: writer.request_id(),
     });
 
     // 4. Attempt to find hash
@@ -963,16 +970,13 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
             .await
             {
                 Ok(SentStatus::Sent) => {
-                    let _ = writer.events.send(Event::TransferCollectionCompleted {
-                        connection_id: writer.connection_id,
-                        request_id: writer.request_id,
-                    });
+                    writer.notify_transfer_completed();
                 }
                 Ok(SentStatus::NotFound) => {
-                    notify_transfer_aborted(&writer);
+                    writer.notify_transfer_aborted();
                 }
                 Err(e) => {
-                    notify_transfer_aborted(&writer);
+                    writer.notify_transfer_aborted();
                     return Err(e);
                 }
             }
@@ -981,7 +985,7 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
         }
         None => {
             debug!("not found {}", hash);
-            notify_transfer_aborted(&writer);
+            writer.notify_transfer_aborted();
             writer.inner.finish().await?;
         }
     };
@@ -994,7 +998,30 @@ struct ResponseWriter {
     inner: quinn::SendStream,
     events: broadcast::Sender<Event>,
     connection_id: u64,
-    request_id: u64,
+}
+
+impl ResponseWriter {
+    fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
+
+    fn request_id(&self) -> u64 {
+        self.inner.id().index()
+    }
+
+    fn notify_transfer_completed(&self) {
+        let _ = self.events.send(Event::TransferCollectionCompleted {
+            connection_id: self.connection_id(),
+            request_id: self.request_id(),
+        });
+    }
+
+    fn notify_transfer_aborted(&self) {
+        let _ = self.events.send(Event::TransferAborted {
+            connection_id: self.connection_id(),
+            request_id: self.request_id(),
+        });
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -627,7 +627,7 @@ mod tests {
                 new_db.remove(&c_hash);
                 let file_hash = *new_db.iter().next().unwrap().0;
                 database.union_with(new_db);
-                let request = GetRequest::just(file_hash);
+                let request = GetRequest::single(file_hash);
                 println!("{:?}", request);
                 Ok(request)
             }
