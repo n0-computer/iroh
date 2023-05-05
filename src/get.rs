@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AuthToken, Handshake, RangeSpecSeq, Request};
+use crate::protocol::{write_lp, AuthToken, GetRequest, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
@@ -113,7 +113,7 @@ impl Stats {
 /// Gets a collection and all its blobs using a [`Ticket`].
 pub async fn run_ticket(
     ticket: &Ticket,
-    request: Request,
+    request: GetRequest,
     keylog: bool,
     max_concurrent: u8,
 ) -> Result<get_response_machine::AtInitial> {
@@ -181,6 +181,8 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
 pub mod get_response_machine {
     use std::result;
 
+    use crate::protocol::Request;
+
     use super::*;
 
     use bao_tree::io::{
@@ -234,7 +236,7 @@ pub mod get_response_machine {
     #[derive(Debug)]
     pub struct AtInitial {
         connection: quinn::Connection,
-        request: Request,
+        request: GetRequest,
         auth_token: AuthToken,
     }
 
@@ -244,7 +246,11 @@ pub mod get_response_machine {
         /// `connection` is an existing connection
         /// `request` is the request to be sent
         /// `auth_token` is the auth token for the request
-        pub fn new(connection: quinn::Connection, request: Request, auth_token: AuthToken) -> Self {
+        pub fn new(
+            connection: quinn::Connection,
+            request: GetRequest,
+            auth_token: AuthToken,
+        ) -> Self {
             Self {
                 connection,
                 request,
@@ -274,7 +280,7 @@ pub mod get_response_machine {
         start: Instant,
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
-        request: Request,
+        request: GetRequest,
         auth_token: AuthToken,
     }
 
@@ -301,7 +307,7 @@ pub mod get_response_machine {
                 start,
                 reader,
                 mut writer,
-                request,
+                mut request,
                 auth_token,
             } = self;
             let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
@@ -317,8 +323,12 @@ pub mod get_response_machine {
             // 2. Send Request
             {
                 debug!("sending request");
-                let request_bytes = postcard::to_stdvec(&request)?;
+                // wrap the get request in a request so we can serialize it
+                let r = Request::Get(request);
+                let request_bytes = postcard::to_stdvec(&r)?;
                 write_lp(&mut writer, &request_bytes).await?;
+                // unwrap again to get the request back
+                Request::Get(request) = r;
             }
             let (mut writer, bytes_written) = writer.into_parts();
             writer.finish().await?;
@@ -711,7 +721,7 @@ pub mod get_response_machine {
 
 /// Dial a peer and run a get request
 pub async fn run(
-    request: Request,
+    request: GetRequest,
     auth_token: AuthToken,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
@@ -722,7 +732,7 @@ pub async fn run(
 /// Do a get request and return a stream of responses
 pub fn run_connection(
     connection: quinn::Connection,
-    request: Request,
+    request: GetRequest,
     auth_token: AuthToken,
 ) -> get_response_machine::AtInitial {
     get_response_machine::AtInitial::new(connection, request, auth_token)

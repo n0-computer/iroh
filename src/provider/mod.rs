@@ -38,7 +38,9 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
-use crate::protocol::{read_lp, AuthToken, Closed, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
@@ -746,7 +748,7 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
 #[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    request: Request,
+    request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
     // Quinn stream.
@@ -831,7 +833,7 @@ async fn handle_stream(
     db: Database,
     token: AuthToken,
     connection_id: u64,
-    (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
+    (writer, mut reader): (quinn::SendStream, quinn::RecvStream),
     events: broadcast::Sender<Event>,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -857,6 +859,21 @@ async fn handle_stream(
         }
     };
 
+    match request {
+        Request::Get(request) => {
+            handle_get(db, request, events, connection_id, request_id, writer).await
+        }
+    }
+}
+
+async fn handle_get(
+    db: Database,
+    request: GetRequest,
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+    request_id: u64,
+    mut writer: quinn::SendStream,
+) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
     let _ = events.send(Event::RequestReceived {
