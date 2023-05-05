@@ -365,7 +365,7 @@ pub enum Event {
         connection_id: u64,
     },
     /// A request was received from a client.
-    RequestReceived {
+    GetRequestReceived {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
@@ -868,7 +868,7 @@ async fn handle_stream(
 async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWriter) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
-    let _ = writer.events.send(Event::RequestReceived {
+    let _ = writer.events.send(Event::GetRequestReceived {
         hash,
         connection_id: writer.connection_id,
         request_id: writer.request_id,

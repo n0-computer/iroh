@@ -306,7 +306,7 @@ mod tests {
             events
         );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
-        assert!(matches!(events[1], Event::RequestReceived { .. }));
+        assert!(matches!(events[1], Event::GetRequestReceived { .. }));
         assert!(matches!(events[2], Event::TransferCollectionStarted { .. }));
         for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
             match event {
