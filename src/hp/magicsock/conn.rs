@@ -16,9 +16,9 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, Stream, StreamExt};
-use quinn::{AsyncUdpSocket, Transmit};
+use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     sync::{self, Mutex},
@@ -153,7 +153,7 @@ impl Debug for Inner {
 pub struct Inner {
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
-    network_sender: flume::Sender<Vec<Transmit>>,
+    network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
@@ -240,19 +240,10 @@ impl Conn {
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port).await?;
-        let port = pconn4.port().await;
+        let port = pconn4.port();
         port_mapper.set_local_port(port).await;
 
-        let conn4 = pconn4.clone();
-        let get_stun_conn4 = Some(Arc::new(Box::new(move || conn4.as_socket()) as _));
-        let get_stun_conn6 = if let Some(conn6) = pconn6.clone() {
-            Some(Arc::new(Box::new(move || conn6.as_socket()) as _))
-        } else {
-            None
-        };
-        let net_checker =
-            netcheck::Client::new(Some(port_mapper.clone()), get_stun_conn4, get_stun_conn6)
-                .await?;
+        let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
         let (actor_sender, actor_receiver) = flume::bounded(128);
         let (network_sender, network_receiver) = flume::bounded(128);
 
@@ -529,10 +520,10 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
 impl AsyncUdpSocket for Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     fn poll_send(
-        &mut self,
+        &self,
         _udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmits: &[Transmit],
+        transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         if self.is_closed() {
             return Poll::Ready(Err(io::Error::new(
@@ -540,27 +531,8 @@ impl AsyncUdpSocket for Conn {
                 "connection closed",
             )));
         }
-        // :(  no (cheap) clone for Transmit yet
-        let transmits: Vec<_> = transmits
-            .iter()
-            .map(|t| {
-                trace!(
-                    "[QUINN] -> {} ({}b) {:?} ({})",
-                    t.destination,
-                    t.contents.len(),
-                    t.src_ip,
-                    self.name
-                );
-                Transmit {
-                    destination: t.destination,
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                }
-            })
-            .collect();
 
+        let transmits = transmits.to_vec();
         let n = transmits.len();
         match self.network_sender.try_send(transmits) {
             Ok(_) => Poll::Ready(Ok(n)),
@@ -761,7 +733,7 @@ struct Actor {
     net_map: Option<netmap::NetworkMap>,
     msg_receiver: flume::Receiver<ActorMessage>,
     msg_sender: flume::Sender<ActorMessage>,
-    network_receiver: flume::Receiver<Vec<Transmit>>,
+    network_receiver: flume::Receiver<Vec<quinn_udp::Transmit>>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<NetworkReadResult>,
     /// DERP regionID -> connection to a node in that region
@@ -851,7 +823,7 @@ impl Actor {
                 msg = self.msg_receiver.recv_async() => {
                     match msg? {
                         ActorMessage::GetLocalAddr(s) => {
-                            let addr = self.local_addr().await;
+                            let addr = self.local_addr();
                             let _ = s.send(addr);
                         }
                         ActorMessage::SetDerpMap(dm, s) => {
@@ -1080,11 +1052,7 @@ impl Actor {
         }
 
         // Normalize local_ip
-        meta.dst_ip = self
-            .normalized_local_addr()
-            .await
-            .ok()
-            .map(|addr| addr.ip());
+        meta.dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
 
         // ep.noteRecvActivity();
         // if stats := c.stats.Load(); stats != nil {
@@ -1095,22 +1063,23 @@ impl Actor {
 
         true
     }
-    async fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (v4, v6) = self.local_addr().await;
+
+    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
+        let (v4, v6) = self.local_addr();
         if let Some(v6) = v6 {
             return v6;
         }
         v4
     }
 
-    async fn local_addr(&self) -> (io::Result<SocketAddr>, Option<io::Result<SocketAddr>>) {
+    fn local_addr(&self) -> (io::Result<SocketAddr>, Option<io::Result<SocketAddr>>) {
         // TODO: think more about this
         // needs to pretend ipv6 always as the fake addrs are ipv6
         let mut ipv6_addr = None;
         if let Some(ref conn) = self.pconn6 {
-            ipv6_addr = Some(conn.local_addr().await);
+            ipv6_addr = Some(conn.local_addr());
         }
-        let ipv4_addr = self.pconn4.local_addr().await;
+        let ipv4_addr = self.pconn4.local_addr();
 
         (ipv4_addr, ipv6_addr)
     }
@@ -1155,11 +1124,7 @@ impl Actor {
             stride: dm.buf.len(),
             addr: ep_fake_wg_addr,
             // Normalize local_ip
-            dst_ip: self
-                .normalized_local_addr()
-                .await
-                .ok()
-                .map(|addr| addr.ip()),
+            dst_ip: self.normalized_local_addr().ok().map(|addr| addr.ip()),
             ecn: None,
         };
 
@@ -1336,7 +1301,11 @@ impl Actor {
         dc
     }
 
-    async fn send_network(&mut self, udp_state: &quinn_udp::UdpState, transmits: Vec<Transmit>) {
+    async fn send_network(
+        &mut self,
+        udp_state: &quinn_udp::UdpState,
+        transmits: Vec<quinn_udp::Transmit>,
+    ) {
         debug!(
             "sending:\n{}",
             transmits
@@ -1373,7 +1342,7 @@ impl Actor {
                     match ep.get_send_addrs().await {
                         Ok((Some(udp_addr), Some(derp_addr))) => {
                             let res = if let Some(public_key) = public_key {
-                                let res = self.send_raw(udp_state, udp_addr, &group).await;
+                                let res = self.send_raw(udp_state, udp_addr, group.clone()).await;
                                 self.send_derp(
                                     derp_addr.port(),
                                     public_key,
@@ -1382,7 +1351,7 @@ impl Actor {
                                 .await;
                                 res
                             } else {
-                                self.send_raw(udp_state, udp_addr, &group).await
+                                self.send_raw(udp_state, udp_addr, group).await
                             };
                             if let Err(err) = res {
                                 warn!("failed to send UDP: {:?}", err);
@@ -1403,7 +1372,7 @@ impl Actor {
                             }
                         }
                         Ok((Some(udp_addr), None)) => {
-                            if let Err(err) = self.send_raw(udp_state, udp_addr, &group).await {
+                            if let Err(err) = self.send_raw(udp_state, udp_addr, group).await {
                                 warn!("failed to send UDP: {:?}", err);
                             }
                         }
@@ -1427,7 +1396,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Vec<u8>>) {
+    async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
         debug!("sending derp region: {} - {:?}", port, peer);
         let region_id = port;
 
@@ -1672,7 +1641,7 @@ impl Actor {
 
         self.ignore_stun_packets().await;
 
-        if let Ok(local_addr) = self.pconn4.local_addr().await {
+        if let Ok(local_addr) = self.pconn4.local_addr() {
             if local_addr.ip().is_unspecified() {
                 let LocalAddresses {
                     regular: mut ips,
@@ -1764,8 +1733,11 @@ impl Actor {
         self.enable_stun_packets = true;
         let dm = self.derp_map.as_ref().unwrap();
         let net_checker = &mut self.net_checker;
+        let pconn4 = Some(self.pconn4.as_socket());
+        let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
+
         let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(&dm).await
+            net_checker.get_report(&dm, pconn4, pconn6).await
         })
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
@@ -1962,9 +1934,9 @@ impl Actor {
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn rebind(&self, cur_port_fate: CurrentPortFate) -> Result<()> {
-        let port = self.local_port().await;
-        if let Some(ref conn) = self.pconn6 {
+    async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
+        let port = self.local_port();
+        if let Some(ref mut conn) = self.pconn6 {
             // If we were not able to bind ipv6 at program start, dont retry
             if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
@@ -1976,7 +1948,7 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port().await;
+        let port = self.local_port();
         self.port_mapper.set_local_port(port).await;
 
         Ok(())
@@ -2064,7 +2036,7 @@ impl Actor {
         // }
 
         let pkt = disco::encode_message(&self.conn.public_key, seal);
-        let sent = self.send_addr(dst, Some(&dst_key), pkt).await;
+        let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
@@ -2100,18 +2072,18 @@ impl Actor {
         &mut self,
         addr: SocketAddr,
         pub_key: Option<&key::node::PublicKey>,
-        pkt: Vec<u8>,
+        pkt: Bytes,
     ) -> io::Result<usize> {
         if addr.ip() != DERP_MAGIC_IP {
             let udp_state = quinn_udp::UdpState::default(); // TODO: store
-            let transmits = [Transmit {
+            let transmits = vec![quinn_udp::Transmit {
                 destination: addr,
                 contents: pkt,
                 ecn: None,
                 segment_size: None, // TODO: make sure this is correct
                 src_ip: None,       // TODO
             }];
-            return self.send_raw(&udp_state, addr, &transmits).await;
+            return self.send_raw(&udp_state, addr, transmits).await;
         }
 
         match pub_key {
@@ -2529,8 +2501,8 @@ impl Actor {
     }
 
     /// Returns the current IPv4 listener's port number.
-    async fn local_port(&self) -> u16 {
-        self.pconn4.port().await
+    fn local_port(&self) -> u16 {
+        self.pconn4.port()
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
@@ -2538,7 +2510,7 @@ impl Actor {
         &self,
         state: &quinn_udp::UdpState,
         addr: SocketAddr,
-        transmits: &[Transmit],
+        mut transmits: Vec<quinn_udp::Transmit>,
     ) -> io::Result<usize> {
         debug!("send_raw: {} packets", transmits.len());
 
@@ -2554,20 +2526,13 @@ impl Actor {
 
         let sum = if transmits.iter().any(|t| t.destination != addr) {
             // :(
-            let g: Vec<Transmit> = transmits
-                .iter()
-                .map(|t| Transmit {
-                    destination: addr, // update destination
-                    ecn: t.ecn,
-                    contents: t.contents.clone(),
-                    segment_size: t.segment_size,
-                    src_ip: t.src_ip,
-                })
-                .collect();
+            for t in &mut transmits {
+                t.destination = addr;
+            }
 
-            futures::future::poll_fn(|cx| conn.poll_send(state, cx, &g[..])).await
+            futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await
         } else {
-            futures::future::poll_fn(|cx| conn.poll_send(state, cx, transmits)).await
+            futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await
         }?;
 
         debug!("sent {} packets", sum);
@@ -3148,7 +3113,7 @@ mod tests {
                 quinn::EndpointConfig::default(),
                 Some(server_config),
                 conn.clone(),
-                quinn::TokioRuntime,
+                Arc::new(quinn::TokioRuntime),
             )?;
 
             let tls_client_config = tls::make_client_config(
@@ -3321,7 +3286,7 @@ mod tests {
                             .await
                             .with_context(|| format!("[{}] connecting", b_name))?;
                         println!("[{}] accepting bi", b_name);
-                        let (mut send_bi, recv_bi) = conn
+                        let (mut send_bi, mut recv_bi) = conn
                             .accept_bi()
                             .await
                             .with_context(|| format!("[{}] accepting bi", b_name))?;
@@ -3365,7 +3330,7 @@ mod tests {
                         .with_context(|| format!("[{}] connect", a_name))?;
 
                     println!("[{}] opening bi", a_name);
-                    let (mut send_bi, recv_bi) = conn
+                    let (mut send_bi, mut recv_bi) = conn
                         .open_bi()
                         .await
                         .with_context(|| format!("[{}] open bi", a_name))?;
@@ -3504,7 +3469,7 @@ mod tests {
                 quinn::EndpointConfig::default(),
                 Some(server_config),
                 conn,
-                quinn::TokioRuntime,
+                Arc::new(quinn::TokioRuntime),
             )?;
 
             let tls_client_config = tls::make_client_config(
@@ -3547,7 +3512,7 @@ mod tests {
                         .await
                         .with_context(|| format!("[{}] connecting", b_name))?;
                     println!("[{}] accepting bi", b_name);
-                    let (mut send_bi, recv_bi) = conn
+                    let (mut send_bi, mut recv_bi) = conn
                         .accept_bi()
                         .await
                         .with_context(|| format!("[{}] accepting bi", b_name))?;
@@ -3577,7 +3542,7 @@ mod tests {
                     .with_context(|| format!("[{}] connect", a_name))?;
 
                 println!("[{}] opening bi", a_name);
-                let (mut send_bi, recv_bi) = conn
+                let (mut send_bi, mut recv_bi) = conn
                     .open_bi()
                     .await
                     .with_context(|| format!("[{}] open bi", a_name))?;
@@ -3656,7 +3621,7 @@ mod tests {
                 quinn::EndpointConfig::default(),
                 Some(server_config),
                 conn,
-                quinn::TokioRuntime,
+                Arc::new(quinn::TokioRuntime),
             )?;
 
             let tls_client_config = tls::make_client_config(
@@ -3703,7 +3668,7 @@ mod tests {
                         .await
                         .with_context(|| format!("[{}] connecting", b_name))?;
                     println!("[{}] accepting bi", b_name);
-                    let (mut send_bi, recv_bi) = conn
+                    let (mut send_bi, mut recv_bi) = conn
                         .accept_bi()
                         .await
                         .with_context(|| format!("[{}] accepting bi", b_name))?;
@@ -3733,7 +3698,7 @@ mod tests {
                     .with_context(|| format!("[{}] connect", a_name))?;
 
                 println!("[{}] opening bi", a_name);
-                let (mut send_bi, recv_bi) = conn
+                let (mut send_bi, mut recv_bi) = conn
                     .open_bi()
                     .await
                     .with_context(|| format!("[{}] open bi", a_name))?;

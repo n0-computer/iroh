@@ -144,11 +144,7 @@ struct Reports {
 }
 
 impl Client {
-    pub async fn new(
-        port_mapper: Option<portmapper::Client>,
-        get_stun_conn4: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
-        get_stun_conn6: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
-    ) -> Result<Self> {
+    pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let last_full = Instant::now();
         let (got_hair_stun, _) = broadcast::channel(1);
 
@@ -169,8 +165,6 @@ impl Client {
             udp_bind_addr: "0.0.0.0:0".parse().unwrap(),
             port_mapper,
             got_hair_stun,
-            get_stun_conn4,
-            get_stun_conn6,
             dns_resolver,
         };
 
@@ -190,8 +184,13 @@ impl Client {
     /// Gets a report.
     ///
     /// It may not be called concurrently with itself.
-    pub async fn get_report(&mut self, dm: &DerpMap) -> Result<Arc<Report>> {
-        let report = self.actor.run(dm.clone()).await?;
+    pub async fn get_report(
+        &mut self,
+        dm: &DerpMap,
+        stun_conn4: Option<Arc<net::UdpSocket>>,
+        stun_conn6: Option<Arc<net::UdpSocket>>,
+    ) -> Result<Arc<Report>> {
+        let report = self.actor.run(dm.clone(), stun_conn4, stun_conn6).await?;
 
         Ok(report)
     }
@@ -980,6 +979,7 @@ impl ProbeReport {
     }
 }
 
+#[derive(Debug)]
 struct Actor {
     receiver: mpsc::Receiver<ActorMessage>,
     reports: Reports,
@@ -996,26 +996,9 @@ struct Actor {
     // If `None`, portmap discovery is not done.
     port_mapper: Option<portmapper::Client>,
 
-    get_stun_conn4: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
-    get_stun_conn6: Option<Arc<Box<dyn Fn() -> Arc<net::UdpSocket> + Send + Sync + 'static>>>,
-
     got_hair_stun: broadcast::Sender<SocketAddr>,
 
     dns_resolver: TokioAsyncResolver,
-}
-
-impl Debug for Actor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Actor")
-            .field("receiver", &self.receiver)
-            .field("skip_external_network", &self.skip_external_network)
-            .field("udp_bind_addr", &self.udp_bind_addr)
-            .field("port_mapper", &self.port_mapper)
-            .field("get_stun_conn4", &"[..]")
-            .field("get_stun_conn6", &"[..]")
-            .field("got_hair_stun", &self.got_hair_stun)
-            .finish()
-    }
 }
 
 #[derive(Debug)]
@@ -1024,13 +1007,18 @@ enum ActorMessage {
 }
 
 impl Actor {
-    async fn run(&mut self, dm: DerpMap) -> Result<Arc<Report>> {
-        let report_state = self.create_report_state(&dm).await?;
+    async fn run(
+        &mut self,
+        dm: DerpMap,
+        pc4: Option<Arc<net::UdpSocket>>,
+        pc6: Option<Arc<net::UdpSocket>>,
+    ) -> Result<Arc<Report>> {
+        let report_state = self.create_report_state(&dm, pc4, pc6).await?;
+        let pc4 = report_state.pc4.clone();
+        let pc6 = report_state.pc6.clone();
         let port_mapper = self.port_mapper.clone();
         let skip_external = self.skip_external_network;
         let (in_flight_s, mut in_flight_r) = sync::mpsc::channel(8);
-        let pc4 = report_state.pc4.clone();
-        let pc6 = report_state.pc6.clone();
         let resolver = self.dns_resolver.clone();
         let mut running = Box::pin(time::timeout(OVERALL_PROBE_TIMEOUT, async move {
             report_state
@@ -1096,7 +1084,12 @@ impl Actor {
         }
     }
 
-    async fn create_report_state(&mut self, dm: &DerpMap) -> Result<ReportState> {
+    async fn create_report_state(
+        &mut self,
+        dm: &DerpMap,
+        pc4: Option<Arc<net::UdpSocket>>,
+        pc6: Option<Arc<net::UdpSocket>>,
+    ) -> Result<ReportState> {
         let now = Instant::now();
         let last = self.reports.last.clone();
 
@@ -1112,9 +1105,9 @@ impl Actor {
 
         let got_hair_stun_r = self.got_hair_stun.subscribe();
         let if_state = interfaces::State::new().await;
-        let pc4 = Some(self.init_stun_conn4().await?);
+        let pc4 = Some(self.init_stun_conn4(pc4).await?);
         let pc6 = if if_state.have_v6 {
-            Some(self.init_stun_conn6().await?)
+            Some(self.init_stun_conn6(pc6).await?)
         } else {
             None
         };
@@ -1158,9 +1151,12 @@ impl Actor {
         })
     }
 
-    async fn init_stun_conn4(&self) -> Result<Arc<net::UdpSocket>> {
-        if let Some(ref get_stun_conn4) = self.get_stun_conn4 {
-            return Ok(get_stun_conn4());
+    async fn init_stun_conn4(
+        &self,
+        pc4: Option<Arc<net::UdpSocket>>,
+    ) -> Result<Arc<net::UdpSocket>> {
+        if let Some(pc4) = pc4 {
+            return Ok(pc4);
         }
         let addr = self.udp_bind_addr_v4();
         let u4 = net::UdpSocket::bind(addr)
@@ -1169,9 +1165,12 @@ impl Actor {
         Ok(Arc::new(u4))
     }
 
-    async fn init_stun_conn6(&self) -> Result<Arc<net::UdpSocket>> {
-        if let Some(ref get_stun_conn6) = self.get_stun_conn6 {
-            return Ok(get_stun_conn6());
+    async fn init_stun_conn6(
+        &self,
+        pc6: Option<Arc<net::UdpSocket>>,
+    ) -> Result<Arc<net::UdpSocket>> {
+        if let Some(pc6) = pc6 {
+            return Ok(pc6);
         }
         let addr = self.udp_bind_addr_v6();
         let u6 = net::UdpSocket::bind(addr)
@@ -1471,12 +1470,12 @@ mod tests {
 
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None, None, None).await?;
+        let mut client = Client::new(None).await?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
 
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(&dm).await?;
+            let r = client.get_report(&dm, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1516,7 +1515,7 @@ mod tests {
             .try_init()
             .ok();
 
-        let mut client = Client::new(None, None, None).await?;
+        let mut client = Client::new(None).await?;
         let stun_port = 19302;
         let host_name = "stun.l.google.com".into();
 
@@ -1525,7 +1524,7 @@ mod tests {
         let derp_ipv6 = UseIpv6::None;
         let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
 
-        let r = client.get_report(&dm).await?;
+        let r = client.get_report(&dm, None, None).await?;
         assert!(r.udp, "want UDP");
         assert_eq!(
             r.region_latency.len(),
@@ -1593,9 +1592,9 @@ mod tests {
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
         dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
 
-        let mut client = Client::new(None, None, None).await?;
+        let mut client = Client::new(None).await?;
 
-        let r = client.get_report(&dm).await?;
+        let r = client.get_report(&dm, None, None).await?;
         let mut r: Report = (&*r).clone();
         r.upnp = None;
         r.pmp = None;
@@ -1773,7 +1772,7 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(None, None, None).await?;
+            let mut client = Client::new(None).await?;
 
             for s in &mut tt.steps {
                 // trigger the timer

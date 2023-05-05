@@ -561,7 +561,7 @@ mod tests {
     };
 
     use anyhow::Result;
-    use bytes::BytesMut;
+    use bytes::{Bytes, BytesMut};
     use tokio::io::DuplexStream;
 
     struct MockPacketForwarder {
@@ -879,8 +879,8 @@ mod tests {
         handler.add_packet_forwarder(key_c.clone(), packet_fwd)?;
 
         // send message from a to b!
-        let msg = b"hello client b!!";
-        client_a.send(public_key_b.clone(), msg.to_vec()).await?;
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b.clone(), msg.clone()).await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -892,8 +892,8 @@ mod tests {
         }
 
         // send message from b to a!
-        let msg = b"nice to meet you client a!!";
-        client_b.send(public_key_a.clone(), msg.to_vec()).await?;
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a.clone(), msg.clone()).await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
@@ -905,8 +905,8 @@ mod tests {
         }
 
         // send message from a to c
-        let msg = b"can you pass this to client d?";
-        client_a.send(key_c.clone(), msg.to_vec()).await?;
+        let msg = Bytes::from_static(b"can you pass this to client d?");
+        client_a.send(key_c.clone(), msg.clone()).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
@@ -915,8 +915,8 @@ mod tests {
         // remove the packet forwarder for c
         handler.remove_packet_forwarder(key_c.clone())?;
         // try to send c a message
-        let msg = b"can you pass this to client d?";
-        client_a.send(key_c, msg.to_vec()).await?;
+        let msg = Bytes::from_static(b"can you pass this to client d?");
+        client_a.send(key_c, msg.clone()).await?;
         // packet forwarder has been removed
         assert!(fwd_recv.recv().await.is_none());
 
@@ -924,7 +924,9 @@ mod tests {
         server.close().await;
 
         // client connections have been shutdown
-        client_a.send(public_key_b, b"try to send".to_vec()).await?;
+        client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await?;
         assert!(client_b.recv().await.is_err());
         Ok(())
     }

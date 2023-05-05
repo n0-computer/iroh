@@ -3,11 +3,10 @@ use std::{
     io,
     net::SocketAddr,
     sync::Arc,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
 use anyhow::bail;
-use async_lock::RwLock;
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
@@ -17,172 +16,59 @@ use super::conn::{CurrentPortFate, Network};
 use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RebindingUdpConn {
-    pub(super) pconn: Arc<RwLock<UdpSocket>>,
-    waker: Arc<std::sync::Mutex<Option<Waker>>>,
-}
-
-impl Debug for RebindingUdpConn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RebindingUdpConn")
-            .field("pconn", &self.pconn)
-            .field("wakers_mutex", &"..")
-            .finish()
-    }
+    io: Arc<tokio::net::UdpSocket>,
+    state: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl RebindingUdpConn {
     pub(super) fn as_socket(&self) -> Arc<tokio::net::UdpSocket> {
-        let pconn = self.pconn.read_blocking();
-        pconn.io.clone()
+        self.io.clone()
     }
 
     pub(super) async fn rebind(
-        &self,
+        &mut self,
         port: u16,
         network: Network,
         cur_port_fate: CurrentPortFate,
     ) -> anyhow::Result<()> {
         // Do not bother rebinding if we are keeping the port.
-        if self.port().await == port && cur_port_fate == CurrentPortFate::Keep {
+        if self.port() == port && cur_port_fate == CurrentPortFate::Keep {
             return Ok(());
         }
 
-        // Hold the lock the entire time, so that the close+bind is atomic.
-        let mut inner = self.pconn.write().await;
-        let pconn = bind(Some(&mut inner), port, network, cur_port_fate).await?;
-        *inner = pconn;
-        drop(inner);
-
-        // wakeup wakers
-        self.wakeup();
+        let sock = bind(Some(&self.io), port, network, cur_port_fate).await?;
+        self.io = Arc::new(tokio::net::UdpSocket::from_std(sock)?);
+        self.state = Default::default();
 
         Ok(())
     }
 
-    fn wakeup(&self) {
-        if let Some(waker) = self.waker.lock().unwrap().take() {
-            waker.wake();
-        }
-    }
-
     pub(super) async fn bind(port: u16, network: Network) -> anyhow::Result<Self> {
-        let pconn = bind(None, port, network, CurrentPortFate::Keep).await?;
-
-        Ok(Self::from_socket(pconn))
+        let sock = bind(None, port, network, CurrentPortFate::Keep).await?;
+        Ok(Self {
+            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
+            state: Default::default(),
+        })
     }
 
-    pub async fn port(&self) -> u16 {
-        self.pconn
-            .read()
-            .await
-            .local_addr()
-            .map(|p| p.port())
-            .unwrap_or_default()
+    pub fn port(&self) -> u16 {
+        self.local_addr().map(|p| p.port()).unwrap_or_default()
     }
 
     pub async fn close(&self) -> Result<(), io::Error> {
         // Nothing to do atm
         Ok(())
     }
-
-    pub fn poll_send(
-        &self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        if let Some(ref mut pconn) = self.pconn.try_write() {
-            let res = pconn.poll_send(state, cx, transmits);
-            drop(pconn);
-            self.wakeup();
-            return res;
-        }
-
-        // Store the waker and return pending
-        self.waker.lock().unwrap().replace(cx.waker().clone());
-        Poll::Pending
-    }
-
-    pub fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        // Fast path, see if we can just grab the lock
-        if let Some(ref mut pconn) = self.pconn.try_read() {
-            let res = pconn.poll_recv(cx, bufs, meta);
-            drop(pconn);
-            self.wakeup();
-            return res;
-        }
-
-        // Store the waker and return pending
-        self.waker.lock().unwrap().replace(cx.waker().clone());
-        Poll::Pending
-    }
-
-    pub async fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addr = self.pconn.read().await.local_addr()?;
-        Ok(addr)
-    }
-
-    pub(super) fn from_socket(pconn: UdpSocket) -> Self {
-        RebindingUdpConn {
-            pconn: Arc::new(RwLock::new(pconn)),
-            waker: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct UdpSocket {
-    io: Arc<tokio::net::UdpSocket>,
-    inner: quinn_udp::UdpSocketState,
-}
-
-impl UdpSocket {
-    pub fn from_std(sock: std::net::UdpSocket) -> io::Result<Self> {
-        quinn_udp::UdpSocketState::configure((&sock).into())?;
-        Ok(UdpSocket {
-            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
-            inner: quinn_udp::UdpSocketState::new(),
-        })
-    }
 }
 
 impl AsyncUdpSocket for RebindingUdpConn {
     fn poll_send(
-        &mut self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        (&*self).poll_send(state, cx, transmits)
-    }
-
-    fn poll_recv(
         &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        self.poll_recv(cx, bufs, meta)
-    }
-
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.pconn.read_blocking().local_addr()
-    }
-}
-
-impl AsyncUdpSocket for UdpSocket {
-    fn poll_send(
-        &mut self,
         state: &quinn_udp::UdpState,
         cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
+        transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         trace!(
             "sending {:?} transmits",
@@ -197,7 +83,7 @@ impl AsyncUdpSocket for UdpSocket {
                 .collect::<Vec<_>>()
         );
 
-        let inner = &mut self.inner;
+        let inner = &self.state;
         let io = &self.io;
         loop {
             ready!(io.poll_send_ready(cx))?;
@@ -229,7 +115,7 @@ impl AsyncUdpSocket for UdpSocket {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.inner.recv((&self.io).into(), bufs, meta)
+                self.state.recv((&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
@@ -245,17 +131,17 @@ impl AsyncUdpSocket for UdpSocket {
         }
     }
 
-    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
     }
 }
 
 async fn bind(
-    mut inner: Option<&mut UdpSocket>,
+    inner: Option<&tokio::net::UdpSocket>,
     port: u16,
     network: Network,
     cur_port_fate: CurrentPortFate,
-) -> anyhow::Result<UdpSocket> {
+) -> anyhow::Result<std::net::UdpSocket> {
     debug!(
         "bind_socket: network={:?} cur_port_fate={:?}",
         network, cur_port_fate
@@ -283,7 +169,7 @@ async fn bind(
 
     for port in &ports {
         // Close the existing conn, in case it is sitting on the port we want.
-        if let Some(ref mut _inner) = inner {
+        if let Some(ref _inner) = inner {
             // TODO: inner.close()
         }
         // Open a new one with the desired port.
@@ -310,7 +196,7 @@ async fn bind(
 }
 
 /// Opens a packet listener.
-async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket> {
+async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net::UdpSocket> {
     let addr = SocketAddr::new(network.default_addr(), port);
     let socket = socket2::Socket::new(
         network.into(),
@@ -332,9 +218,9 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<UdpSocket
     }
     socket.set_nonblocking(true)?;
     socket.bind(&addr.into())?;
-    let socket = UdpSocket::from_std(socket.into())?;
+    let socket: std::net::UdpSocket = socket.into();
 
-    debug!("bound to {}", socket.local_addr()?);
+    quinn_udp::UdpSocketState::configure((&socket).into())?;
 
     Ok(socket)
 }
@@ -355,7 +241,7 @@ mod tests {
             quinn::EndpointConfig::default(),
             Some(server_config),
             conn,
-            quinn::TokioRuntime,
+            Arc::new(quinn::TokioRuntime),
         )?;
 
         let tls_client_config = tls::make_client_config(
@@ -371,12 +257,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv() -> Result<()> {
-        let m1 = std::net::UdpSocket::bind("127.0.0.1:0")?;
-        let m1 = RebindingUdpConn::from_socket(UdpSocket::from_std(m1)?);
+        let m1 = RebindingUdpConn::bind(0, Network::Ipv4).await?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = std::net::UdpSocket::bind("127.0.0.1:0")?;
-        let m2 = RebindingUdpConn::from_socket(UdpSocket::from_std(m2)?);
+        let m2 = RebindingUdpConn::bind(0, Network::Ipv6).await?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m1.local_addr()?.port());
@@ -385,7 +269,7 @@ mod tests {
         let m1_task = tokio::task::spawn(async move {
             while let Some(conn) = m1.accept().await {
                 let conn = conn.await?;
-                let (mut send_bi, recv_bi) = conn.accept_bi().await?;
+                let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
                 let val = recv_bi.read_to_end(usize::MAX).await?;
                 m1_send.send_async(val).await?;
@@ -398,7 +282,7 @@ mod tests {
 
         let conn = m2.connect(m1_addr, "localhost")?.await?;
 
-        let (mut send_bi, recv_bi) = conn.open_bi().await?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await?;
         send_bi.write_all(b"hello").await?;
         send_bi.finish().await?;
 

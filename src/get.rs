@@ -81,7 +81,7 @@ pub async fn make_client_endpoint(
         quinn::EndpointConfig::default(),
         None,
         conn.clone(),
-        quinn::TokioRuntime,
+        Arc::new(quinn::TokioRuntime),
     )?;
 
     let mut transport_config = quinn::TransportConfig::default();

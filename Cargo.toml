@@ -44,16 +44,16 @@ os_info = "3.6.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.5", default-features = false, features = ["quinn-transport", "flume-transport"] }
-quinn = "0.9"
-quinn-proto = "0.9"
-quinn-udp = "0.3"
+quinn = "0.10"
+quinn-proto = "0.10"
+quinn-udp = "0.4"
 rand = "0.8"
 rcgen = "0.10"
 regex = { version = "1.7.1", optional = true }
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
-rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
-rustls-acme = { version = "0.5.2", optional = true, features = ["tokio"] }
+rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
+rustls-acme = { version = "0.7", optional = true, features = ["tokio"] }
 rustls-pemfile = { version = "1.0.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
@@ -66,7 +66,7 @@ tempfile = "3.4"
 thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["full"] }
-tokio-rustls = { version = "0.23.4", optional = true }
+tokio-rustls = { version = "0.24", optional = true }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 toml = { version = "0.7.3", optional = true }
@@ -81,7 +81,6 @@ x509-parser = "0.14"
 zeroize = "1.5"
 bao-tree = { version = "0.1.5", features = ["tokio_io"], default-features = false }
 range-collections = "0.4.0"
-async-lock = { git = "https://github.com/smol-rs/async-lock", branch = "notgull/block-lock" }
 surge-ping = "0.8.0"
 
 
@@ -129,3 +128,11 @@ incremental = false
 [patch.crates-io]
 crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
 ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
+
+# quinn = { path = "../quinn/quinn" }
+# quinn-udp = { path = "../quinn/quinn-udp" }
+# quinn-proto = { path = "../quinn/quinn-proto" }
+quinn = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
+quinn-udp = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
+quinn-proto = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
+quic-rpc = { git = "https://github.com/n0-computer/quic-rpc", branch = "feat-quinn-010" }
