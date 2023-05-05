@@ -5,11 +5,13 @@ use std::{
     task::Poll,
 };
 
+use bao_tree::io::fsm::AsyncSliceWriter;
 use bytes::Bytes;
-use futures::ready;
+use futures::{future::BoxFuture, ready, FutureExt};
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite},
+    sync::mpsc,
 };
 use tokio_util::either::Either;
 
@@ -52,6 +54,44 @@ where
             this.read = this.read.saturating_add(size as u64);
         }
         res
+    }
+}
+
+/// A slice writer that adds a synchronous progress callback
+#[derive(Debug)]
+pub struct ProgressSliceWriter<W>(W, mpsc::Sender<(u64, usize)>);
+
+impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
+    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    pub fn new(inner: W, on_write: mpsc::Sender<(u64, usize)>) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
+    type WriteFuture = BoxFuture<'static, (Self, io::Result<()>)>;
+
+    fn write_at(self, offset: u64, data: Bytes) -> Self::WriteFuture {
+        self.1.try_send((offset, data.len())).ok();
+        async move {
+            let (this, res) = self.0.write_at(offset, data).await;
+            (Self(this, self.1), res)
+        }
+        .boxed()
+    }
+
+    fn write_array_at<const N: usize>(self, offset: u64, bytes: [u8; N]) -> Self::WriteFuture {
+        self.1.try_send((offset, bytes.len())).ok();
+        async move {
+            let (this, res) = self.0.write_array_at(offset, bytes).await;
+            (Self(this, self.1), res)
+        }
+        .boxed()
     }
 }
 

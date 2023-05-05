@@ -513,34 +513,30 @@ pub mod get_response_machine {
         ///
         /// When requesting only ranges, this concatenates the ranges without
         /// keeping gaps.
-        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
+        pub async fn concatenate<W: AsyncWrite + Unpin>(
             self,
             res: W,
-            on_write: OW,
         ) -> result::Result<AtEndBlob, DecodeError> {
             let (curr, _size) = self.next().await?;
-            curr.concatenate(res, on_write).await
+            curr.concatenate(res).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<
-            D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
-            OW: FnMut(u64, usize),
-        >(
+        pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
-            on_write: OW,
-        ) -> result::Result<AtEndBlob, DecodeError> {
+        ) -> result::Result<AtEndBlob, DecodeError>
+        where
+            D: AsyncSliceWriter,
+            O: AsyncSliceWriter,
+        {
             let (content, size) = self.next().await?;
             if let Some(o) = outboard.as_mut() {
                 o.write_array_at(0, size.to_le_bytes()).await?;
             }
-            content
-                .write_all_with_outboard(outboard, data, on_write)
-                .await
+            content.write_all_with_outboard(outboard, data).await
         }
     }
 
@@ -600,16 +596,14 @@ pub mod get_response_machine {
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<D, O, OW>(
+        pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
-            mut on_write: OW,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
             O: AsyncSliceWriter,
-            OW: FnMut(u64, usize),
         {
             let mut content = self;
             loop {
@@ -628,7 +622,6 @@ pub mod get_response_machine {
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {
-                                on_write(leaf.offset.0, leaf.data.len());
                                 data.write_at(leaf.offset.0, leaf.data).await?;
                             }
                         }
@@ -641,10 +634,9 @@ pub mod get_response_machine {
         }
 
         /// Concatenate the entire blob into a writer
-        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
+        pub async fn concatenate<W: AsyncWrite + Unpin>(
             self,
             mut res: W,
-            mut on_write: OW,
         ) -> result::Result<AtEndBlob, DecodeError> {
             let mut content = self;
             let done = loop {
@@ -654,7 +646,6 @@ pub mod get_response_machine {
                     BlobContentNext::Done(x) => break x,
                 };
                 if let BaoContentItem::Leaf(leaf) = item? {
-                    on_write(leaf.offset.0, leaf.data.len());
                     res.write_all(&leaf.data).await?;
                 }
             };
