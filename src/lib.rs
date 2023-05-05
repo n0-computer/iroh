@@ -38,6 +38,7 @@ mod tests {
 
     use anyhow::{anyhow, Context, Result};
     use bytes::Bytes;
+    use futures::{future::BoxFuture, FutureExt};
     use rand::RngCore;
     use testdir::testdir;
     use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
@@ -45,10 +46,10 @@ mod tests {
 
     use crate::{
         blobs::Collection,
-        get::Stats,
         get::{dial_peer, get_response_machine},
-        protocol::{AuthToken, GetRequest},
-        provider::{create_collection, Event, Provider},
+        get::{get_response_machine::ConnectedNext, Stats},
+        protocol::{AnyGetRequest, AuthToken, GetRequest},
+        provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
         tls::PeerId,
         util::Hash,
     };
@@ -156,7 +157,7 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            let response = get::run(GetRequest::all(hash), token, opts).await?;
+            let response = get::run(GetRequest::all(hash).into(), token, opts).await?;
             let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
@@ -267,7 +268,7 @@ mod tests {
         };
 
         let response = get::run(
-            GetRequest::all(collection_hash),
+            GetRequest::all(collection_hash).into(),
             provider.auth_token(),
             opts,
         )
@@ -372,7 +373,7 @@ mod tests {
         });
 
         let response = get::run(
-            GetRequest::all(hash),
+            GetRequest::all(hash).into(),
             auth_token,
             get::Options {
                 addr: provider_addr,
@@ -415,7 +416,7 @@ mod tests {
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
-                GetRequest::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr: provider_addr,
@@ -460,7 +461,7 @@ mod tests {
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
-                GetRequest::all(hash),
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr,
@@ -489,7 +490,7 @@ mod tests {
         let ticket = provider.ticket(hash).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let response =
-                get::run_ticket(&ticket, GetRequest::all(ticket.hash()), true, 16).await?;
+                get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, 16).await?;
             aggregate_get_response_fsm(response).await
         })
         .await
@@ -575,10 +576,132 @@ mod tests {
                 keylog: true,
             })
             .await?;
-            let request = GetRequest::all(hash);
+            let request = GetRequest::all(hash).into();
             let stream = get::run_connection(connection, request, auth_token);
             let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
             validate_children(collection, children)?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    fn readme_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")
+    }
+
+    #[derive(Clone, Debug)]
+    struct CollectionCustomHandler;
+
+    impl CustomGetHandler for CollectionCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: Database,
+        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+            async move {
+                let readme = readme_path();
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, hash) = create_collection(sources).await?;
+                let new_db = new_db.to_inner();
+                database.union_with(new_db);
+                let request = GetRequest::all(hash);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct BlobCustomHandler;
+
+    impl CustomGetHandler for BlobCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: Database,
+        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+            async move {
+                let readme = readme_path();
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, c_hash) = create_collection(sources).await?;
+                let mut new_db = new_db.to_inner();
+                new_db.remove(&c_hash);
+                let file_hash = *new_db.iter().next().unwrap().0;
+                database.union_with(new_db);
+                let request = GetRequest::single(file_hash);
+                println!("{:?}", request);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_blob() {
+        let db = Database::default();
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_get_handler(BlobCustomHandler)
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let response = get::run(
+                request,
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+            )
+            .await?;
+            let connected = response.next().await?;
+            let ConnectedNext::StartCollection(start) = connected.next().await? else { panic!() };
+            let header = start.next();
+            let mut actual = Vec::new();
+            header.concatenate(&mut actual, |_, _| {}).await?;
+            let expected = tokio::fs::read(readme_path()).await?;
+            assert_eq!(actual, expected);
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_collection() {
+        let db = Database::default();
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_get_handler(CollectionCustomHandler)
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let response = get::run(
+                request,
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+            )
+            .await?;
+            let (_collection, items, _stats) = aggregate_get_response_fsm(response).await?;
+            let actual = &items[&0];
+            let expected = tokio::fs::read(readme_path()).await?;
+            assert_eq!(actual, &expected);
             anyhow::Ok(())
         })
         .await

@@ -884,7 +884,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         Some((collection.len() as u64, 0))
     };
 
-    let request = GetRequest::new(get.hash(), query);
+    let request = GetRequest::new(get.hash(), query).into();
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
@@ -1029,7 +1029,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    let request = GetRequest::new(get.hash(), query);
+    let request = GetRequest::new(get.hash(), query).into();
     let response = match get {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?

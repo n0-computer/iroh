@@ -8,6 +8,7 @@ use bytes::{Bytes, BytesMut};
 use derive_more::From;
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
@@ -41,7 +42,14 @@ impl Handshake {
 pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
+    /// A get request that allows the receiver to create a collection
+    CustomGet(Bytes),
 }
+
+/// Currently all requests are get requests. But that won't always be the case.
+///
+/// Hence this type alias that will at some point be replaced by a proper enum.
+pub type AnyGetRequest = Request;
 
 /// A request
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
@@ -65,6 +73,14 @@ impl GetRequest {
         Self {
             hash,
             ranges: RangeSpecSeq::all(),
+        }
+    }
+
+    /// Request just a single blob
+    pub fn single(hash: Hash) -> Self {
+        Self {
+            hash,
+            ranges: RangeSpecSeq::new([RangeSet2::all()]),
         }
     }
 }
