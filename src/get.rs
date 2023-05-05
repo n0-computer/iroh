@@ -529,8 +529,7 @@ pub mod get_response_machine {
             Ok((res, handle.into_inner().into_inner()))
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: &mut Handle<D>,
@@ -611,8 +610,7 @@ pub mod get_response_machine {
             }
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: &mut Handle<D>,
