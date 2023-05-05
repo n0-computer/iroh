@@ -158,7 +158,7 @@ mod tests {
             let expected_data = &content;
             let expected_name = &name;
             let response = get::run(GetRequest::all(hash).into(), token, opts).await?;
-            let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+            let (collection, children, _stats) = aggregate_get_response(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
             assert_eq!(expected_data, &children[&0]);
@@ -273,7 +273,7 @@ mod tests {
             opts,
         )
         .await?;
-        let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+        let (collection, children, _stats) = aggregate_get_response(response).await?;
         assert_eq!(num_blobs, collection.blobs().len());
         for (i, (name, path, hash)) in expects.into_iter().enumerate() {
             let blob = &collection.blobs()[i];
@@ -383,7 +383,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let (_collection, _children, _stats) = aggregate_get_response_fsm(response).await.unwrap();
+        let (_collection, _children, _stats) = aggregate_get_response(response).await.unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
         tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -471,7 +471,7 @@ mod tests {
             )
             .await
             .unwrap();
-            aggregate_get_response_fsm(request).await
+            aggregate_get_response(request).await
         })
         .await
         .expect("timeout")
@@ -491,7 +491,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             let response =
                 get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, 16).await?;
-            aggregate_get_response_fsm(response).await
+            aggregate_get_response(response).await
         })
         .await
         .expect("timeout")
@@ -514,7 +514,7 @@ mod tests {
     }
 
     // helper to aggregate a get response and return all relevant data
-    async fn aggregate_get_response_fsm(
+    async fn aggregate_get_response(
         initial: get_response_machine::AtInitial,
     ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
         use get_response_machine::*;
@@ -573,7 +573,7 @@ mod tests {
             .await?;
             let request = GetRequest::all(hash).into();
             let stream = get::run_connection(connection, request, auth_token);
-            let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
+            let (collection, children, _) = aggregate_get_response(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())
         })
@@ -692,7 +692,7 @@ mod tests {
                 },
             )
             .await?;
-            let (_collection, items, _stats) = aggregate_get_response_fsm(response).await?;
+            let (_collection, items, _stats) = aggregate_get_response(response).await?;
             let actual = &items[&0];
             let expected = tokio::fs::read(readme_path()).await?;
             assert_eq!(actual, &expected);
