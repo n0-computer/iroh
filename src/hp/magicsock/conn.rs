@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     io::{self, IoSliceMut},
     mem::MaybeUninit,
@@ -940,29 +940,27 @@ impl Actor {
                 }
                 Some(ip_msgs) = ip_stream.next() => {
                     match ip_msgs {
-                        Ok(ip_msgs) => {
-                            for (bytes, network, mut meta) in ip_msgs.into_iter().filter_map(|val| val) {
-                                if self.receive_ip(&bytes, &mut meta, network).await {
-                                    match network {
-                                        Network::Ipv4 => {
-                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                                source: NetworkSource::Ipv4,
-                                                bytes,
-                                                meta,
-                                            }).await;
-                                        }
-                                        Network::Ipv6 => {
-                                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                                source: NetworkSource::Ipv6,
-                                                bytes,
-                                                meta,
-                                            }).await;
-                                        }
+                        Ok((bytes, network, mut meta)) => {
+                            if self.receive_ip(&bytes, &mut meta, network).await {
+                                match network {
+                                    Network::Ipv4 => {
+                                        let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
+                                            source: NetworkSource::Ipv4,
+                                            bytes,
+                                            meta,
+                                        }).await;
                                     }
-                                    let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                                    if let Some(waker) = wakers.take() {
-                                        waker.wake();
+                                    Network::Ipv6 => {
+                                        let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
+                                            source: NetworkSource::Ipv6,
+                                            bytes,
+                                            meta,
+                                        }).await;
                                     }
+                                }
+                                let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
+                                if let Some(waker) = wakers.take() {
+                                    waker.wake();
                                 }
                             }
                         }
@@ -2570,6 +2568,7 @@ struct IpStream {
     pconn6: Option<RebindingUdpConn>,
     recv_buf: Box<[u8]>,
     udp_state: quinn_udp::UdpState,
+    out_buffer: VecDeque<(BytesMut, Network, quinn_udp::RecvMeta)>,
 }
 
 impl IpStream {
@@ -2587,17 +2586,20 @@ impl IpStream {
             conn,
             pconn4,
             pconn6,
+            out_buffer: VecDeque::new(),
         }
     }
 }
 
 impl Stream for IpStream {
-    type Item =
-        io::Result<[Option<(BytesMut, Network, quinn_udp::RecvMeta)>; quinn_udp::BATCH_SIZE]>;
+    type Item = io::Result<(BytesMut, Network, quinn_udp::RecvMeta)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.conn.is_closed() {
             return Poll::Ready(None);
+        }
+        if let Some(res) = self.out_buffer.pop_front() {
+            return Poll::Ready(Some(Ok(res)));
         }
 
         let mut metas = [quinn_udp::RecvMeta::default(); quinn_udp::BATCH_SIZE];
@@ -2618,21 +2620,20 @@ impl Stream for IpStream {
             match pconn6.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Pending => {}
                 Poll::Ready(Ok(msgs)) => {
-                    let mut out: [Option<_>; quinn_udp::BATCH_SIZE] = Default::default();
-                    for (i, (meta, buf)) in metas
-                        .into_iter()
-                        .zip(iovs.into_iter())
-                        .take(msgs)
-                        .enumerate()
-                    {
+                    for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
                         let mut data: BytesMut = buf[0..meta.len].into();
+                        let stride = meta.stride;
                         while !data.is_empty() {
-                            let buf = data.split_to(meta.stride.min(data.len()));
-                            out[i] = Some((buf, Network::Ipv6, meta));
+                            let buf = data.split_to(stride.min(data.len()));
+                            // set stride to len, as we are cutting it into pieces here
+                            meta.len = buf.len();
+                            meta.stride = buf.len();
+                            self.out_buffer.push_back((buf, Network::Ipv6, meta));
                         }
                     }
-
-                    return Poll::Ready(Some(Ok(out)));
+                    if let Some(res) = self.out_buffer.pop_front() {
+                        return Poll::Ready(Some(Ok(res)));
+                    }
                 }
                 Poll::Ready(Err(err)) => {
                     return Poll::Ready(Some(Err(err)));
@@ -2643,20 +2644,20 @@ impl Stream for IpStream {
         match self.pconn4.poll_recv(cx, &mut iovs, &mut metas) {
             Poll::Pending => {}
             Poll::Ready(Ok(msgs)) => {
-                let mut out: [Option<_>; quinn_udp::BATCH_SIZE] = Default::default();
-                for (i, (meta, buf)) in metas
-                    .into_iter()
-                    .zip(iovs.into_iter())
-                    .take(msgs)
-                    .enumerate()
-                {
+                for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
                     let mut data: BytesMut = buf[0..meta.len].into();
+                    let stride = meta.stride;
                     while !data.is_empty() {
-                        let buf = data.split_to(meta.stride.min(data.len()));
-                        out[i] = Some((buf, Network::Ipv6, meta));
+                        let buf = data.split_to(stride.min(data.len()));
+                        // set stride to len, as we are cutting it into pieces here
+                        meta.len = buf.len();
+                        meta.stride = buf.len();
+                        self.out_buffer.push_back((buf, Network::Ipv6, meta));
                     }
                 }
-                return Poll::Ready(Some(Ok(out)));
+                if let Some(res) = self.out_buffer.pop_front() {
+                    return Poll::Ready(Some(Ok(res)));
+                }
             }
             Poll::Ready(Err(err)) => {
                 return Poll::Ready(Some(Err(err)));
