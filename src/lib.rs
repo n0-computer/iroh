@@ -60,14 +60,20 @@ mod tests {
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn multi_file() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let file_opts = vec![
             ("1", 10),
             ("2", 1024),
             ("3", 1024 * 1024),
             // overkill, but it works! Just annoying to wait for
-            // ("4", 1024 * 1024 * 90),
+            ("4", 1024 * 1024 * 90),
         ];
         transfer_random_data(file_opts).await
     }
@@ -229,8 +235,9 @@ mod tests {
 
         for opt in file_opts.into_iter() {
             let (name, data) = opt;
-
             let name = name.into();
+            println!("Sending {}: {}b", name, data.len());
+
             let path = dir.join(name.clone());
             // get expected hash of file
             let hash = blake3::hash(&data);
@@ -278,7 +285,7 @@ mod tests {
             events
         });
 
-        let addrs = dbg!(provider.listen_addresses().await?);
+        let addrs = provider.listen_addresses().await?;
         let addr = *addrs.first().unwrap();
         let opts = get::Options {
             addr,
