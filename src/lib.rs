@@ -73,7 +73,7 @@ mod tests {
             ("2", 1024),
             ("3", 1024 * 1024),
             // overkill, but it works! Just annoying to wait for
-            ("4", 1024 * 1024 * 90),
+            // ("4", 1024 * 1024 * 90),
         ];
         transfer_random_data(file_opts).await
     }
