@@ -32,7 +32,7 @@ mod tests {
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use anyhow::{anyhow, Context, Result};
@@ -60,8 +60,14 @@ mod tests {
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn multi_file() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let file_opts = vec![
             ("1", 10),
             ("2", 1024),
@@ -89,8 +95,14 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn sizes() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let sizes = [
             0,
             10,
@@ -100,10 +112,13 @@ mod tests {
             1024 * 500,
             1024 * 1024,
             1024 * 1024 + 10,
+            1024 * 1024 * 9,
         ];
 
         for size in sizes {
+            let now = Instant::now();
             transfer_random_data(vec![("hello_world", size)]).await?;
+            println!("  took {}ms", now.elapsed().as_millis());
         }
 
         Ok(())
@@ -229,8 +244,9 @@ mod tests {
 
         for opt in file_opts.into_iter() {
             let (name, data) = opt;
-
             let name = name.into();
+            println!("Sending {}: {}b", name, data.len());
+
             let path = dir.join(name.clone());
             // get expected hash of file
             let hash = blake3::hash(&data);
@@ -278,7 +294,7 @@ mod tests {
             events
         });
 
-        let addrs = dbg!(provider.listen_addresses().await?);
+        let addrs = provider.listen_addresses().await?;
         let addr = *addrs.first().unwrap();
         let opts = get::Options {
             addr,

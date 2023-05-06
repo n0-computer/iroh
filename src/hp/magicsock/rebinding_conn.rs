@@ -70,19 +70,6 @@ impl AsyncUdpSocket for RebindingUdpConn {
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
-        trace!(
-            "sending {:?} transmits",
-            transmits
-                .iter()
-                .map(|t| format!(
-                    "dest: {:?}, src: {:?} bytes: {}",
-                    t.destination,
-                    t.src_ip,
-                    t.contents.len()
-                ))
-                .collect::<Vec<_>>()
-        );
-
         let inner = &self.state;
         let io = &self.io;
         loop {
@@ -110,8 +97,6 @@ impl AsyncUdpSocket for RebindingUdpConn {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        trace!("trying to recv {}: {:?}", bufs.len(), meta.len());
-
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
