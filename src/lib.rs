@@ -32,7 +32,7 @@ mod tests {
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use anyhow::{anyhow, Context, Result};
@@ -95,8 +95,14 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn sizes() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let sizes = [
             0,
             10,
@@ -106,10 +112,13 @@ mod tests {
             1024 * 500,
             1024 * 1024,
             1024 * 1024 + 10,
+            1024 * 1024 * 9,
         ];
 
         for size in sizes {
+            let now = Instant::now();
             transfer_random_data(vec![("hello_world", size)]).await?;
+            println!("  took {}ms", now.elapsed().as_millis());
         }
 
         Ok(())
