@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn generate_headers() -> ::std::io::Result<()> {
         ::safer_ffi::headers::builder()
-            .to_file("c/libiroh.h")?
+            .to_file("iroh.h")?
             .generate()
     }
 

@@ -7,8 +7,8 @@
  *                                         *
  *******************************************/
 
-#ifndef __RUST_LIBIROH__
-#define __RUST_LIBIROH__
+#ifndef __RUST_IROH__
+#define __RUST_IROH__
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +22,13 @@ int32_t add_numbers (
     int32_t number1,
     int32_t number2);
 
+uint32_t get (
+    char const * hash,
+    char const * auth_token,
+    char const * peer,
+    char const * peer_addr,
+    char const * out_path);
+
 uint32_t get_ticket (
     char const * ticket,
     char const * out_path);
@@ -31,4 +38,4 @@ uint32_t get_ticket (
 } /* extern "C" */
 #endif
 
-#endif /* __RUST_LIBIROH__ */
+#endif /* __RUST_IROH__ */
