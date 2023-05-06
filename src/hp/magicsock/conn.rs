@@ -532,23 +532,26 @@ impl AsyncUdpSocket for Conn {
             )));
         }
 
-        let transmits = transmits.to_vec();
-        let n = transmits.len();
-        match self.network_sender.try_send(transmits) {
-            Ok(_) => Poll::Ready(Ok(n)),
-            Err(flume::TrySendError::Full(_)) => {
-                self.network_send_wakers
-                    .lock()
-                    .unwrap()
-                    .replace(cx.waker().clone());
+        if self.network_sender.is_full() {
+            self.network_send_wakers
+                .lock()
+                .unwrap()
+                .replace(cx.waker().clone());
 
-                Poll::Pending
-            }
-            Err(flume::TrySendError::Disconnected(_)) => Poll::Ready(Err(io::Error::new(
+            return Poll::Pending;
+        }
+        if self.network_sender.is_disconnected() {
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            ))),
+            )));
         }
+
+        let n = transmits.len();
+        self.network_sender
+            .try_send(transmits.to_vec())
+            .expect("just checked");
+        Poll::Ready(Ok(n))
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -938,7 +941,7 @@ impl Actor {
                 Some(ip_msgs) = ip_stream.next() => {
                     match ip_msgs {
                         Ok(ip_msgs) => {
-                            for (bytes, network, mut meta) in ip_msgs.into_iter() {
+                            for (bytes, network, mut meta) in ip_msgs.into_iter().filter_map(|val| val) {
                                 if self.receive_ip(&bytes, &mut meta, network).await {
                                     match network {
                                         Network::Ipv4 => {
@@ -1322,75 +1325,66 @@ impl Actor {
         if transmits.is_empty() {
             return;
         }
+        let current_destination = &transmits[0].destination;
+        debug_assert!(
+            transmits
+                .iter()
+                .all(|t| &t.destination == current_destination),
+            "mixed destinations"
+        );
 
-        let mut groups = vec![vec![]];
-        let mut current_destination = transmits[0].destination;
-
-        for transmit in transmits.into_iter() {
-            if current_destination == transmit.destination {
-                groups.last_mut().unwrap().push(transmit);
-            } else {
-                current_destination = transmit.destination;
-                groups.push(vec![transmit]);
-            }
-        }
-
-        for group in groups {
-            match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
-                Some(ep) => {
-                    let public_key = ep.public_key();
-                    match ep.get_send_addrs().await {
-                        Ok((Some(udp_addr), Some(derp_addr))) => {
-                            let res = if let Some(public_key) = public_key {
-                                let res = self.send_raw(udp_state, udp_addr, group.clone()).await;
-                                self.send_derp(
-                                    derp_addr.port(),
-                                    public_key,
-                                    group.into_iter().map(|t| t.contents).collect(),
-                                )
-                                .await;
-                                res
-                            } else {
-                                self.send_raw(udp_state, udp_addr, group).await
-                            };
-                            if let Err(err) = res {
-                                warn!("failed to send UDP: {:?}", err);
-                            }
-                        }
-                        Ok((None, Some(derp_addr))) => {
-                            if let Some(public_key) = ep.public_key() {
-                                self.send_derp(
-                                    derp_addr.port(),
-                                    public_key,
-                                    group.into_iter().map(|t| t.contents).collect(),
-                                )
-                                .await;
-                            } else {
-                                warn!(
-                                    "no public key for endpoint available, and only DERP address"
-                                );
-                            }
-                        }
-                        Ok((Some(udp_addr), None)) => {
-                            if let Err(err) = self.send_raw(udp_state, udp_addr, group).await {
-                                warn!("failed to send UDP: {:?}", err);
-                            }
-                        }
-                        Ok((None, None)) => {
-                            warn!("no UDP or DERP addr")
-                        }
-                        Err(err) => {
-                            warn!(
-                                "failed to send messages to {}: {:?}",
-                                current_destination, err
-                            );
+        match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
+            Some(ep) => {
+                let public_key = ep.public_key();
+                match ep.get_send_addrs().await {
+                    Ok((Some(udp_addr), Some(derp_addr))) => {
+                        let res = if let Some(public_key) = public_key {
+                            let res = self.send_raw(udp_state, udp_addr, transmits.clone()).await;
+                            self.send_derp(
+                                derp_addr.port(),
+                                public_key,
+                                transmits.into_iter().map(|t| t.contents).collect(),
+                            )
+                            .await;
+                            res
+                        } else {
+                            self.send_raw(udp_state, udp_addr, transmits).await
+                        };
+                        if let Err(err) = res {
+                            warn!("failed to send UDP: {:?}", err);
                         }
                     }
+                    Ok((None, Some(derp_addr))) => {
+                        if let Some(public_key) = ep.public_key() {
+                            self.send_derp(
+                                derp_addr.port(),
+                                public_key,
+                                transmits.into_iter().map(|t| t.contents).collect(),
+                            )
+                            .await;
+                        } else {
+                            warn!("no public key for endpoint available, and only DERP address");
+                        }
+                    }
+                    Ok((Some(udp_addr), None)) => {
+                        if let Err(err) = self.send_raw(udp_state, udp_addr, transmits).await {
+                            warn!("failed to send UDP: {:?}", err);
+                        }
+                    }
+                    Ok((None, None)) => {
+                        warn!("no UDP or DERP addr")
+                    }
+                    Err(err) => {
+                        warn!(
+                            "failed to send messages to {}: {:?}",
+                            current_destination, err
+                        );
+                    }
                 }
-                None => {
-                    // Should this error, do we need to create the EP?
-                    debug!("trying to find endpoint for {}", current_destination);
-                }
+            }
+            None => {
+                // Should this error, do we need to create the EP?
+                debug!("trying to find endpoint for {}", current_destination);
             }
         }
     }
@@ -2524,16 +2518,12 @@ impl Actor {
             &self.pconn4
         };
 
-        let sum = if transmits.iter().any(|t| t.destination != addr) {
-            // :(
+        if transmits.iter().any(|t| t.destination != addr) {
             for t in &mut transmits {
                 t.destination = addr;
             }
-
-            futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await
-        } else {
-            futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await
-        }?;
+        }
+        let sum = futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await?;
 
         debug!("sent {} packets", sum);
         debug_assert!(
@@ -2578,9 +2568,8 @@ struct IpStream {
     conn: Arc<Inner>,
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
-    recv_buf: BytesMut,
+    recv_buf: Box<[u8]>,
     udp_state: quinn_udp::UdpState,
-    target_recv_buf_len: usize,
 }
 
 impl IpStream {
@@ -2590,30 +2579,26 @@ impl IpStream {
 
         // 1480 MTU size based on default from quinn
         let target_recv_buf_len = 1480 * udp_state.gro_segments() * quinn_udp::BATCH_SIZE;
-        let recv_buf = BytesMut::zeroed(target_recv_buf_len);
+        let recv_buf = vec![0u8; target_recv_buf_len];
 
         Self {
             udp_state,
-            recv_buf,
+            recv_buf: recv_buf.into(),
             conn,
             pconn4,
             pconn6,
-            target_recv_buf_len,
         }
     }
 }
 
 impl Stream for IpStream {
-    type Item = io::Result<Vec<(BytesMut, Network, quinn_udp::RecvMeta)>>;
+    type Item =
+        io::Result<[Option<(BytesMut, Network, quinn_udp::RecvMeta)>; quinn_udp::BATCH_SIZE]>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.conn.is_closed() {
             return Poll::Ready(None);
         }
-
-        // Resize the recv buffer so we have enough for the next round
-        let target_len = self.target_recv_buf_len;
-        self.recv_buf.resize(target_len, 0u8);
 
         let mut metas = [quinn_udp::RecvMeta::default(); quinn_udp::BATCH_SIZE];
         let mut iovs = MaybeUninit::<[IoSliceMut; quinn_udp::BATCH_SIZE]>::uninit();
@@ -2633,11 +2618,18 @@ impl Stream for IpStream {
             match pconn6.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Pending => {}
                 Poll::Ready(Ok(msgs)) => {
-                    // Take out the read data
-                    let mut out = Vec::with_capacity(msgs);
-                    for meta in metas.into_iter().take(msgs) {
-                        let bytes = self.recv_buf.split_to(meta.len);
-                        out.push((bytes, Network::Ipv6, meta));
+                    let mut out: [Option<_>; quinn_udp::BATCH_SIZE] = Default::default();
+                    for (i, (meta, buf)) in metas
+                        .into_iter()
+                        .zip(iovs.into_iter())
+                        .take(msgs)
+                        .enumerate()
+                    {
+                        let mut data: BytesMut = buf[0..meta.len].into();
+                        while !data.is_empty() {
+                            let buf = data.split_to(meta.stride.min(data.len()));
+                            out[i] = Some((buf, Network::Ipv6, meta));
+                        }
                     }
 
                     return Poll::Ready(Some(Ok(out)));
@@ -2651,11 +2643,18 @@ impl Stream for IpStream {
         match self.pconn4.poll_recv(cx, &mut iovs, &mut metas) {
             Poll::Pending => {}
             Poll::Ready(Ok(msgs)) => {
-                // Take out the read data
-                let mut out = Vec::with_capacity(msgs);
-                for meta in metas.into_iter().take(msgs) {
-                    let bytes = self.recv_buf.split_to(meta.len);
-                    out.push((bytes, Network::Ipv4, meta));
+                let mut out: [Option<_>; quinn_udp::BATCH_SIZE] = Default::default();
+                for (i, (meta, buf)) in metas
+                    .into_iter()
+                    .zip(iovs.into_iter())
+                    .take(msgs)
+                    .enumerate()
+                {
+                    let mut data: BytesMut = buf[0..meta.len].into();
+                    while !data.is_empty() {
+                        let buf = data.split_to(meta.stride.min(data.len()));
+                        out[i] = Some((buf, Network::Ipv6, meta));
+                    }
                 }
                 return Poll::Ready(Some(Ok(out)));
             }
