@@ -563,7 +563,6 @@ impl AsyncUdpSocket for Conn {
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        trace!("trying to receive up to {} packets", bufs.len());
         if self.is_closed() {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -601,9 +600,15 @@ impl AsyncUdpSocket for Conn {
                             bytes,
                             meta,
                         } => {
-                            trace!("[QUINN] <- {:?} {:?} ({}b)", source, meta, bytes.len());
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
+                            trace!(
+                                "[QUINN] <- {} ({}b) ({}) ({:?})",
+                                meta_out.addr,
+                                meta_out.len,
+                                self.name,
+                                meta_out.dst_ip
+                            );
                         }
                     }
 
@@ -620,24 +625,7 @@ impl AsyncUdpSocket for Conn {
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            info!(
-                "received {:?} msgs {}",
-                metas
-                    .iter()
-                    .take(num_msgs)
-                    .map(|m| m.addr)
-                    .collect::<Vec<_>>(),
-                num_msgs
-            );
-            for m in metas {
-                trace!(
-                    "[QUINN] <- {} ({}b) ({}) ({:?})",
-                    m.addr,
-                    m.len,
-                    self.name,
-                    m.dst_ip
-                );
-            }
+            info!("received {} msgs", num_msgs);
             return Poll::Ready(Ok(num_msgs));
         }
 
@@ -3159,6 +3147,9 @@ mod tests {
 
             for (i, peer) in ms.iter().enumerate() {
                 if i == my_idx {
+                    continue;
+                }
+                if eps[i].is_empty() {
                     continue;
                 }
 
