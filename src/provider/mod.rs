@@ -7,40 +7,40 @@
 //! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
+use std::borrow::Cow;
 use std::future::Future;
-use std::io::{BufReader, Cursor};
-use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::io::{self, Cursor};
+use std::net::{Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::sync::encode_ranges_validated;
-use bao_tree::outboard::{PostOrderMemOutboard, PreOrderMemOutboardRef};
+use bao_tree::io::fsm::encode_ranges_validated;
+use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
-use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use postcard::experimental::max_size::MaxSize;
+use futures::{FutureExt, Stream, TryFutureExt};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use range_collections::RangeSet2;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
-use crate::blobs::{Blob, Collection};
+use crate::blobs::Collection;
 use crate::hp::derp::DerpMap;
 use crate::net::ip::find_local_addresses;
 use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
+    read_lp, write_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
@@ -49,22 +49,25 @@ use crate::rpc_protocol::{
     WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::{canonicalize_path, Hash, Progress, ProgressReader, ProgressReaderUpdate};
+use crate::tokio_util::read_as_bytes;
+use crate::util::{canonicalize_path, Hash, Progress};
 use crate::IROH_BLOCK_SIZE;
 
+mod collection;
 mod database;
 mod ticket;
 
 pub use database::Database;
-#[cfg(cli)]
-pub use database::Snapshot;
+#[cfg(feature = "cli")]
+pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+
 /// Default bind address for the provider.
-pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
 
 /// Builder for the [`Provider`].
 ///
@@ -74,32 +77,96 @@ pub const DEFAULT_BIND_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 4433);
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
+pub struct Builder<E = DummyServerEndpoint, C = ()>
+where
+    E: ServiceEndpoint<ProviderService>,
+    C: CustomGetHandler,
+{
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
     rpc_endpoint: E,
     db: Database,
     keylog: bool,
+    custom_get_handler: C,
     derp_map: Option<DerpMap>,
 }
 
+/// A custom get request handler that allows the user to make up a get request
+/// on the fly.
+pub trait CustomGetHandler: Send + Sync + Clone + 'static {
+    /// Handle the custom request, given an opaque data blob from the requester.
+    fn handle(
+        &self,
+        request: Bytes,
+        db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
+}
+
+/// Define CustomGetHandler for () so we can use it as a no-op default.
+impl CustomGetHandler for () {
+    fn handle(
+        &self,
+        _request: Bytes,
+        _db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+    }
+}
+
+/// A [`Database`] entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BlobOrCollection {
-    Blob(Data),
-    Collection { outboard: Bytes, data: Bytes },
+pub enum BlobOrCollection {
+    /// A blob.
+    Blob {
+        /// The bao outboard data.
+        outboard: Bytes,
+        /// Path to the original data, which must not change while in use.
+        ///
+        /// Note that when adding multiple files with the same content, only one of them
+        /// will get added to the store. So the path is not that useful for information.  It
+        /// is just a place to look for the data correspoding to the hash and outboard.
+        // TODO: Change this to a list of paths.
+        path: PathBuf,
+        /// Size of the original data.
+        size: u64,
+    },
+    /// A collection.
+    Collection {
+        /// The bao outboard data of the serialised [`Collection`].
+        outboard: Bytes,
+        /// The serialised [`Collection`].
+        data: Bytes,
+    },
 }
 
 impl BlobOrCollection {
-    pub fn is_blob(&self) -> bool {
-        matches!(self, BlobOrCollection::Blob(_))
+    pub(crate) fn is_blob(&self) -> bool {
+        matches!(self, BlobOrCollection::Blob { .. })
     }
 
-    pub fn data(&self) -> Option<&Data> {
+    pub(crate) fn blob_path(&self) -> Option<&Path> {
         match self {
-            BlobOrCollection::Blob(data) => Some(data),
+            BlobOrCollection::Blob { path, .. } => Some(path),
             BlobOrCollection::Collection { .. } => None,
         }
+    }
+
+    pub(crate) fn outboard(&self) -> &Bytes {
+        match self {
+            BlobOrCollection::Blob { outboard, .. } => outboard,
+            BlobOrCollection::Collection { outboard, .. } => outboard,
+        }
+    }
+
+    /// A reader for the data
+    async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
+        Ok(match self {
+            BlobOrCollection::Blob { path, .. } => {
+                Either::Right(tokio::fs::File::open(path).await?)
+            }
+            BlobOrCollection::Collection { data, .. } => Either::Left(Cursor::new(data.clone())),
+        })
     }
 
     /// Returns the size of the blob or collection.
@@ -108,7 +175,7 @@ impl BlobOrCollection {
     /// For blobs it is the blob size.
     pub fn size(&self) -> u64 {
         match self {
-            BlobOrCollection::Blob(data) => data.size,
+            BlobOrCollection::Blob { size, .. } => *size,
             BlobOrCollection::Collection { data, .. } => data.len() as u64,
         }
     }
@@ -121,23 +188,30 @@ impl Builder {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
-            rpc_endpoint: Default::default(),
             db,
             keylog: false,
             derp_map: None,
+            rpc_endpoint: Default::default(),
+            custom_get_handler: Default::default(),
         }
     }
 }
 
-impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
-    ///
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
+impl<E, C> Builder<E, C>
+where
+    E: ServiceEndpoint<ProviderService>,
+    C: CustomGetHandler,
+{
+    /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+        // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
             db: self.db,
             keylog: self.keylog,
+            custom_get_handler: self.custom_get_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
         }
@@ -147,6 +221,21 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     pub fn derp_map(mut self, dm: DerpMap) -> Self {
         self.derp_map = Some(dm);
         self
+    }
+
+    /// Configure the custom get handler, changing the type of the builder to the new handler type.
+    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: custom_handler,
+            derp_map: self.derp_map,
+        }
     }
 
     /// Binds the provider service to a different socket.
@@ -241,6 +330,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     handler,
                     self.rpc_endpoint,
                     internal_rpc,
+                    self.custom_get_handler,
                 )
                 .await
             })
@@ -259,6 +349,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
+        custom_get_handler: C,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -299,7 +390,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let auth_token = handler.inner.auth_token;
-                    tokio::spawn(handle_connection(connecting, db, auth_token, events));
+                    let custom_get_handler = custom_get_handler.clone();
+                    tokio::spawn(handle_connection(connecting, db, auth_token, events, custom_get_handler));
                 }
                 else => break,
             }
@@ -350,13 +442,22 @@ pub enum Event {
         connection_id: u64,
     },
     /// A request was received from a client.
-    RequestReceived {
+    GetRequestReceived {
         /// An unique connection id.
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
         /// The hash for which the client wants to receive data.
         hash: Hash,
+    },
+    /// A request was received from a client.
+    CustomGetRequestReceived {
+        /// An unique connection id.
+        connection_id: u64,
+        /// An identifier uniquely identifying this transfer request.
+        request_id: u64,
+        /// The size of the custom get request.
+        len: usize,
     },
     /// A collection has been found and is being transferred.
     TransferCollectionStarted {
@@ -545,35 +646,10 @@ impl RpcHandler {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = if root.is_dir() {
-            let files = futures::stream::iter(WalkDir::new(&root));
-            let data_sources = files.map_err(anyhow::Error::from).try_filter_map(|entry| {
-                let root = root.clone();
-                async move {
-                    if !entry.file_type().is_file() {
-                        // Skip symlinks. Directories are handled by WalkDir.
-                        return Ok(None);
-                    }
-                    let path = entry.into_path();
-                    let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                    anyhow::Ok(Some(DataSource::NamedFile { name, path }))
-                }
-            });
-            let data_sources: Vec<anyhow::Result<DataSource>> =
-                data_sources.collect::<Vec<_>>().await;
-            data_sources
-                .into_iter()
-                .collect::<anyhow::Result<Vec<_>>>()?
-        } else {
-            // A single file, use the file name as the name of the blob.
-            vec![DataSource::NamedFile {
-                name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-                path: root,
-            }]
-        };
+        let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = create_collection_inner(data_sources, Progress::new(progress)).await?;
+        let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
         self.inner.db.union_with(db);
 
         Ok(())
@@ -619,6 +695,36 @@ impl RpcHandler {
     }
 }
 
+/// Create data sources from a path.
+pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
+    Ok(if root.is_dir() {
+        let files = WalkDir::new(&root).into_iter();
+        let data_sources = files
+            .map(|entry| {
+                let entry = entry?;
+                let root = root.clone();
+                if !entry.file_type().is_file() {
+                    // Skip symlinks. Directories are handled by WalkDir.
+                    return Ok(None);
+                }
+                let path = entry.into_path();
+                let name = canonicalize_path(path.strip_prefix(&root)?)?;
+                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+            })
+            .filter_map(Result::transpose);
+        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
+        data_sources
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+    } else {
+        // A single file, use the file name as the name of the blob.
+        vec![DataSource::NamedFile {
+            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
+            path: root,
+        }]
+    })
+}
+
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
@@ -646,11 +752,12 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     });
 }
 
-async fn handle_connection(
+async fn handle_connection<C: CustomGetHandler>(
     connecting: quinn::Connecting,
     db: Database,
     auth_token: AuthToken,
     events: broadcast::Sender<Event>,
+    custom_get_handler: C,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -663,15 +770,23 @@ async fn handle_connection(
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {
-        while let Ok(stream) = connection.accept_bi().await {
-            let span = debug_span!("stream", stream_id = %stream.0.id());
+        while let Ok((writer, reader)) = connection.accept_bi().await {
+            // The stream ID index is used to identify this request.  Requests only arrive in
+            // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
+            let request_id = reader.id().index();
+            let span = debug_span!("stream", stream_id = %request_id);
+            let writer = ResponseWriter {
+                connection_id,
+                events: events.clone(),
+                inner: writer,
+            };
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
-            let events = events.clone();
+            let custom_get_handler = custom_get_handler.clone();
             tokio::spawn(
                 async move {
                     if let Err(err) =
-                        handle_stream(db, auth_token, connection_id, stream, events).await
+                        handle_stream(db, auth_token, reader, writer, custom_get_handler).await
                     {
                         warn!("error: {err:#?}",);
                     }
@@ -740,100 +855,95 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-#[allow(clippy::too_many_arguments)]
 async fn transfer_collection(
-    hash: Hash,
+    request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
-    // Quinn stream.
-    mut writer: quinn::SendStream,
-    // Buffer used when writing to writer.
-    buffer: &mut BytesMut,
-    // The bao outboard encoded data.
+    // Response writer, containing the quinn stream.
+    writer: &mut ResponseWriter,
+    // the collection to transfer
     outboard: &Bytes,
-    // The actual blob data.
-    data: &Bytes,
-    events: broadcast::Sender<Event>,
-    connection_id: u64,
-    request_id: u64,
+    data: Either<Cursor<Bytes>, tokio::fs::File>,
 ) -> Result<SentStatus> {
-    // We only respond to requests for collections, not individual blobs
-    let encoded_size: usize = bao_tree::encoded_size(data.len() as u64, IROH_BLOCK_SIZE)
-        .try_into()
-        .unwrap();
-    let mut encoded = Vec::with_capacity(encoded_size);
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard);
-    encode_ranges_validated(Cursor::new(data), outboard, &RangeSet2::all(), &mut encoded)?;
+    let mut data = bao_tree::io::fsm::Handle::new(data);
+    let hash = request.hash;
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
-    let c: Collection = postcard::from_bytes(data)?;
-
-    let _ = events.send(Event::TransferCollectionStarted {
-        connection_id,
-        request_id,
-        num_blobs: c.blobs().len() as u64,
-        total_blobs_size: c.total_blobs_size(),
-    });
-
-    // TODO: we should check if the blobs referenced in this container
-    // actually exist in this provider before returning `FoundCollection`
-    write_response(
-        &mut writer,
-        buffer,
-        Res::FoundCollection {
+    // if the request is just for the root, we don't need to deserialize the collection
+    let just_root = matches!(request.ranges.single(), Some((0, _)));
+    let c = if !just_root {
+        let bytes = read_as_bytes(data.as_mut()).await?;
+        let c: Collection = postcard::from_bytes(&bytes)?;
+        let _ = writer.events.send(Event::TransferCollectionStarted {
+            connection_id: writer.connection_id(),
+            request_id: writer.request_id(),
+            num_blobs: c.blobs().len() as u64,
             total_blobs_size: c.total_blobs_size(),
-        },
-    )
-    .await?;
-
-    writer.write_all(&encoded).await?;
-    for (i, blob) in c.blobs().iter().enumerate() {
-        debug!("writing blob {}/{}", i, c.blobs().len());
-        tokio::task::yield_now().await;
-        let (status, writer1, size) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
-        writer = writer1;
-        if SentStatus::NotFound == status {
-            writer.finish().await?;
-            return Ok(status);
-        }
-
-        let _ = events.send(Event::TransferBlobCompleted {
-            connection_id,
-            request_id,
-            hash: blob.hash,
-            index: i as u64,
-            size,
         });
+        Some(c)
+    } else {
+        None
+    };
+
+    for (offset, ranges) in request.ranges.iter_non_empty() {
+        if offset == 0 {
+            debug!("writing ranges '{:?}' of collection {}", ranges, hash);
+            // send the root
+            encode_ranges_validated(
+                &mut data,
+                outboard,
+                &ranges.to_chunk_ranges(),
+                &mut writer.inner,
+            )
+            .await?;
+            debug!(
+                "finished writing ranges '{:?}' of collection {}",
+                ranges, hash
+            );
+        } else {
+            debug!("wrtiting ranges '{:?}' of child {}", ranges, offset);
+            let c = c.as_ref().unwrap();
+            if offset < c.total_entries() + 1 {
+                tokio::task::yield_now().await;
+                let hash = c.blobs()[(offset - 1) as usize].hash;
+                let (status, size) = send_blob(db, hash, ranges, &mut writer.inner).await?;
+                if SentStatus::NotFound == status {
+                    writer.inner.finish().await?;
+                    return Ok(status);
+                }
+
+                let _ = writer.events.send(Event::TransferBlobCompleted {
+                    connection_id: writer.connection_id(),
+                    request_id: writer.request_id(),
+                    hash,
+                    index: offset - 1,
+                    size,
+                });
+            } else {
+                // nothing more we can send
+                break;
+            }
+        }
     }
 
-    writer.finish().await?;
+    debug!("done writing");
+    writer.inner.finish().await?;
     Ok(SentStatus::Sent)
-}
-
-fn notify_transfer_aborted(events: broadcast::Sender<Event>, connection_id: u64, request_id: u64) {
-    let _ = events.send(Event::TransferAborted {
-        connection_id,
-        request_id,
-    });
 }
 
 async fn handle_stream(
     db: Database,
     token: AuthToken,
-    connection_id: u64,
-    (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
-    events: broadcast::Sender<Event>,
+    mut reader: quinn::RecvStream,
+    writer: ResponseWriter,
+    custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
-    let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
-
-    // The stream ID index is used to identify this request.  Requests only arrive in
-    // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
-    let request_id = reader.id().index();
 
     // 1. Read Handshake
     debug!("reading handshake");
     if let Err(e) = read_handshake(&mut reader, &mut in_buffer, token).await {
-        notify_transfer_aborted(events, connection_id, request_id);
+        writer.notify_transfer_aborted();
         return Err(e);
     }
 
@@ -842,64 +952,115 @@ async fn handle_stream(
     let request = match read_request(reader, &mut in_buffer).await {
         Ok(r) => r,
         Err(e) => {
-            notify_transfer_aborted(events, connection_id, request_id);
+            writer.notify_transfer_aborted();
             return Err(e);
         }
     };
 
-    let hash = request.name;
-    debug!("got request for ({hash})");
-    let _ = events.send(Event::RequestReceived {
-        connection_id,
+    match request {
+        Request::Get(request) => handle_get(db, request, writer).await,
+        Request::CustomGet(request) => {
+            handle_custom_get(db, request, writer, custom_get_handler).await
+        }
+    }
+}
+
+async fn handle_custom_get(
+    db: Database,
+    request: Bytes,
+    mut writer: ResponseWriter,
+    custom_get_handler: impl CustomGetHandler,
+) -> Result<()> {
+    let _ = writer.events.send(Event::CustomGetRequestReceived {
+        len: request.len(),
+        connection_id: writer.connection_id(),
+        request_id: writer.request_id(),
+    });
+    // try to make a GetRequest from the custom bytes
+    let request = custom_get_handler.handle(request, db.clone()).await?;
+    // write it to the requester as the first thing
+    let data = postcard::to_stdvec(&request)?;
+    write_lp(&mut writer.inner, &data).await?;
+    // from now on just handle it like a normal get request
+    handle_get(db, request, writer).await
+}
+
+async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWriter) -> Result<()> {
+    let hash = request.hash;
+    debug!(%hash, "received request");
+    let _ = writer.events.send(Event::GetRequestReceived {
         hash,
-        request_id,
+        connection_id: writer.connection_id(),
+        request_id: writer.request_id(),
     });
 
     // 4. Attempt to find hash
-    let (outboard, data) = match db.get(&hash) {
-        // We only respond to requests for collections, not individual blobs
-        Some(BlobOrCollection::Collection { outboard, data }) => (outboard, data),
-        _ => {
-            debug!("not found {}", hash);
-            notify_transfer_aborted(events, connection_id, request_id);
-            write_response(&mut writer, &mut out_buffer, Res::NotFound).await?;
-            writer.finish().await?;
+    match db.get(&hash) {
+        // Collection or blob request
+        Some(entry) => {
+            // 5. Transfer data!
+            match transfer_collection(
+                request,
+                &db,
+                &mut writer,
+                entry.outboard(),
+                entry.data_reader().await?,
+            )
+            .await
+            {
+                Ok(SentStatus::Sent) => {
+                    writer.notify_transfer_completed();
+                }
+                Ok(SentStatus::NotFound) => {
+                    writer.notify_transfer_aborted();
+                }
+                Err(e) => {
+                    writer.notify_transfer_aborted();
+                    return Err(e);
+                }
+            }
 
-            return Ok(());
+            debug!("finished response");
+        }
+        None => {
+            debug!("not found {}", hash);
+            writer.notify_transfer_aborted();
+            writer.inner.finish().await?;
         }
     };
 
-    // 5. Transfer data!
-    match transfer_collection(
-        hash,
-        &db,
-        writer,
-        &mut out_buffer,
-        &outboard,
-        &data,
-        events.clone(),
-        connection_id,
-        request_id,
-    )
-    .await
-    {
-        Ok(SentStatus::Sent) => {
-            let _ = events.send(Event::TransferCollectionCompleted {
-                connection_id,
-                request_id,
-            });
-        }
-        Ok(SentStatus::NotFound) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-        }
-        Err(e) => {
-            notify_transfer_aborted(events, connection_id, request_id);
-            return Err(e);
-        }
+    Ok(())
+}
+
+/// A helper struct that combines a quinn::SendStream with auxiliary information
+struct ResponseWriter {
+    inner: quinn::SendStream,
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+}
+
+impl ResponseWriter {
+    fn connection_id(&self) -> u64 {
+        self.connection_id
     }
 
-    debug!("finished response");
-    Ok(())
+    fn request_id(&self) -> u64 {
+        self.inner.id().index()
+    }
+
+    fn notify_transfer_completed(&self) {
+        let _ = self.events.send(Event::TransferCollectionCompleted {
+            connection_id: self.connection_id(),
+            request_id: self.request_id(),
+        });
+    }
+
+    fn notify_transfer_aborted(&self) {
+        let _ = self.events.send(Event::TransferAborted {
+            connection_id: self.connection_id(),
+            request_id: self.request_id(),
+        });
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -909,40 +1070,41 @@ enum SentStatus {
 }
 
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
-    db: Database,
+    db: &Database,
     name: Hash,
-    mut writer: W,
-    buffer: &mut BytesMut,
-) -> Result<(SentStatus, W, u64)> {
+    ranges: &RangeSpec,
+    writer: &mut W,
+) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
-        Some(BlobOrCollection::Blob(Data {
+        Some(BlobOrCollection::Blob {
             outboard,
             path,
             size,
-        })) => {
-            write_response(&mut writer, buffer, Res::Found).await?;
-
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard);
-            let file_reader = tokio::fs::File::open(&path).await?;
-            bao_tree::io::tokio::encode_ranges_validated(
-                file_reader,
+        }) => {
+            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
+            let mut file_reader =
+                bao_tree::io::fsm::Handle::new(tokio::fs::File::open(&path).await?);
+            let res = bao_tree::io::fsm::encode_ranges_validated(
+                &mut file_reader,
                 outboard,
-                &RangeSet2::all(),
-                &mut writer,
+                &ranges.to_chunk_ranges(),
+                writer,
             )
-            .await?;
+            .await;
+            debug!("done sending blob {} {:?}", name, res);
+            res?;
 
-            Ok((SentStatus::Sent, writer, size))
+            Ok((SentStatus::Sent, size))
         }
         _ => {
-            write_response(&mut writer, buffer, Res::NotFound).await?;
-            Ok((SentStatus::NotFound, writer, 0))
+            debug!("blob not found {}", name);
+            Ok((SentStatus::NotFound, 0))
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Data {
+pub(crate) struct BlobData {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -980,6 +1142,27 @@ impl DataSource {
     pub fn with_name(path: PathBuf, name: String) -> Self {
         DataSource::NamedFile { path, name }
     }
+
+    /// Returns blob name for this data source.
+    ///
+    /// If no name was provided when created it is derived from the path name.
+    pub(crate) fn name(&self) -> Cow<'_, str> {
+        match self {
+            DataSource::File(path) => path
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default(),
+            DataSource::NamedFile { name, .. } => Cow::Borrowed(name),
+        }
+    }
+
+    /// Returns the path of this data source.
+    pub(crate) fn path(&self) -> &Path {
+        match self {
+            DataSource::File(path) => path,
+            DataSource::NamedFile { path, .. } => path,
+        }
+    }
 }
 
 impl From<PathBuf> for DataSource {
@@ -994,185 +1177,11 @@ impl From<&std::path::Path> for DataSource {
     }
 }
 
-/// Synchronously compute the outboard of a file, and return hash and outboard.
-///
-/// It is assumed that the file is not modified while this is running.
-///
-/// If it is modified while or after this is running, the outboard will be
-/// invalid, so any attempt to compute a slice from it will fail.
-///
-/// If the size of the file is changed while this is running, an error will be
-/// returned.
-fn compute_outboard(
-    path: PathBuf,
-    size: u64,
-    progress: impl Fn(u64) + Send + Sync + 'static,
-) -> anyhow::Result<(Hash, Vec<u8>)> {
-    ensure!(
-        path.is_file(),
-        "can only transfer blob data: {}",
-        path.display()
-    );
-    tracing::debug!("computing outboard for {}", path.display());
-    let file = std::fs::File::open(&path)?;
-    // compute outboard size so we can pre-allocate the buffer.
-    //
-    // outboard is ~1/16 of data size, so this will fail for really large files
-    // on really small devices. E.g. you want to transfer a 1TB file from a pi4 with 1gb ram.
-    //
-    // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
-    // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(bao_tree::outboard_size(size, IROH_BLOCK_SIZE))
-        .context("outboard too large to fit in memory")?;
-    let mut outboard = Vec::with_capacity(outboard_size);
-
-    // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader::new(file, |p| {
-        if let ProgressReaderUpdate::Progress(offset) = p {
-            progress(offset);
-        }
-    });
-    // wrap the reader in a buffered reader, so we read in large chunks
-    // this reduces the number of io ops and also the number of progress reports
-    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
-
-    let hash =
-        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
-    tracing::debug!("done. hash for {} is {hash}", path.display());
-
-    Ok((hash.into(), ob.into_inner()))
-}
-
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
+    let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
-}
-
-/// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
-/// a public Database.
-async fn create_collection_inner(
-    mut data_sources: Vec<DataSource>,
-    progress: Progress<ProvideProgress>,
-) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
-    // +1 is for the collection itself
-    let mut db = HashMap::with_capacity(data_sources.len() + 1);
-    let mut blobs = Vec::with_capacity(data_sources.len());
-    let mut total_blobs_size: u64 = 0;
-
-    data_sources.sort();
-
-    let outboard_progress = progress.clone();
-    // compute outboards in parallel, using tokio's blocking thread pool
-    let outboards = stream::iter(data_sources)
-        .enumerate()
-        .map(|(id, data)| {
-            let id = id as u64;
-            let (path, name) = match data {
-                DataSource::File(path) => (path, None),
-                DataSource::NamedFile { path, name } => (path, Some(name)),
-            };
-            let size = path.metadata().unwrap().len();
-            let find_progress = outboard_progress.clone();
-            let outboard_progress = outboard_progress.clone();
-            let done_progress = outboard_progress.clone();
-            async move {
-                // found events must be sent
-                let pname = name.clone().unwrap_or_else(|| path.display().to_string());
-                find_progress
-                    .send(ProvideProgress::Found {
-                        name: pname,
-                        id,
-                        size,
-                    })
-                    .await?;
-                let rpath = path.clone();
-                let (hash, outboard) = tokio::task::spawn_blocking(move || {
-                    compute_outboard(path, size, move |offset| {
-                        outboard_progress.try_send(ProvideProgress::Progress { id, offset })
-                    })
-                })
-                .await??;
-                // done events must be sent
-                done_progress
-                    .send(ProvideProgress::Done { id, hash })
-                    .await?;
-                anyhow::Ok((rpath, name, hash, outboard))
-            }
-        })
-        // allow at most num_cpus tasks at a time, otherwise we might get too many open files
-        // todo: this assumes that this is 100% cpu bound, which is likely not true.
-        // we might get better performance by using a larger number here.
-        .buffer_unordered(num_cpus::get());
-    // wait for completion and collect results
-    // weird massaging of the output to get rid of the results
-    let mut outboards = outboards
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-
-    outboards.sort();
-
-    // insert outboards into the database and build collection
-    for (path, name, hash, outboard) in outboards {
-        debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
-        let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
-        db.insert(
-            hash,
-            BlobOrCollection::Blob(Data {
-                outboard: Bytes::from(outboard),
-                path: path.clone(),
-                size,
-            }),
-        );
-        total_blobs_size += size;
-        // if the given name is `None`, use the filename from the given path as the name
-        let name = name.unwrap_or_else(|| {
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default()
-                .to_string()
-        });
-        blobs.push(Blob { name, hash });
-    }
-
-    let c = Collection::new(blobs, total_blobs_size)?;
-
-    let data = postcard::to_stdvec(&c).context("blob encoding")?;
-    let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
-    let hash = Hash::from(hash);
-    db.insert(
-        hash,
-        BlobOrCollection::Collection {
-            outboard: Bytes::from(outboard),
-            data: Bytes::from(data.to_vec()),
-        },
-    );
-    progress.send(ProvideProgress::AllDone { hash }).await?;
-
-    Ok((db, hash))
-}
-
-async fn write_response<W: AsyncWrite + Unpin>(
-    mut writer: W,
-    buffer: &mut BytesMut,
-    res: Res,
-) -> Result<()> {
-    let response = Response { data: res };
-
-    // TODO: do not transfer blob data as part of the responses
-    if buffer.len() < Response::POSTCARD_MAX_SIZE {
-        buffer.resize(Response::POSTCARD_MAX_SIZE, 0u8);
-    }
-    let used = postcard::to_slice(&response, buffer)?;
-
-    write_lp(&mut writer, used).await?;
-
-    debug!("written response of length {}", used.len());
-    Ok(())
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
@@ -1198,11 +1207,13 @@ pub fn make_server_config(
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
     use std::str::FromStr;
     use testdir::testdir;
 
+    use crate::blobs::Blob;
     use crate::provider::database::Snapshot;
 
     use super::*;
@@ -1234,11 +1245,11 @@ mod tests {
                 });
                 map.insert(
                     hash,
-                    BlobOrCollection::Blob(Data {
+                    BlobOrCollection::Blob {
                         outboard,
                         size,
                         path,
-                    }),
+                    },
                 );
             }
             let collection = Collection::new(cblobs, total_blobs_size).unwrap();

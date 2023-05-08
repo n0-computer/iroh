@@ -3,11 +3,16 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+#[allow(missing_docs)]
+pub mod main_util;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod net;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
+pub mod tokio_util;
 
 #[allow(missing_docs)]
 pub mod tls;
@@ -21,7 +26,8 @@ pub use util::Hash;
 
 use bao_tree::BlockSize;
 
-pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
+/// Block size used by iroh, 2^4*1024 = 16KiB
+pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
     Some(bs) => bs,
     None => panic!(),
 };
@@ -29,23 +35,29 @@ pub(crate) const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         net::{Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Arc},
         time::{Duration, Instant},
     };
 
     use anyhow::{anyhow, Context, Result};
+    use bytes::Bytes;
+    use futures::{future::BoxFuture, FutureExt};
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
-    use tokio::{fs, sync::broadcast};
+    use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::protocol::AuthToken;
-    use crate::provider::{create_collection, Event, Provider};
-    use crate::tls::PeerId;
-    use crate::util::Hash;
+    use crate::{
+        blobs::Collection,
+        get::{dial_peer, get_response_machine},
+        get::{get_response_machine::ConnectedNext, Stats},
+        protocol::{AnyGetRequest, AuthToken, GetRequest},
+        provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
+        tls::PeerId,
+        util::Hash,
+    };
 
     use super::*;
 
@@ -80,6 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn many_files() -> Result<()> {
+        setup_logging();
         let num_files = [10, 100, 1000, 10000];
         for num in num_files {
             println!("NUM_FILES: {num}");
@@ -146,8 +159,8 @@ mod tests {
 
         tokio::fs::write(&path, content).await?;
         // hash of the transfer file
-        let data = tokio::fs::read(&path).await?;
-        let expect_hash = blake3::hash(&data);
+        let expect_data = tokio::fs::read(&path).await?;
+        let expect_hash = blake3::hash(&expect_data);
         let expect_name = filename.to_string();
 
         let (db, hash) =
@@ -172,25 +185,13 @@ mod tests {
                 keylog: true,
                 derp_map: None,
             };
-            let content = &content;
-            let name = &name;
-            get::run(
-                hash,
-                token,
-                opts,
-                || async { Ok(()) },
-                |_collection| async { Ok(()) },
-                |got_hash, mut reader, got_name| async move {
-                    assert_eq!(file_hash, got_hash);
-                    let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
-                    assert_eq!(content, &got);
-                    assert_eq!(*name, got_name);
-
-                    Ok(reader)
-                },
-            )
-            .await?;
+            let expected_data = &content;
+            let expected_name = &name;
+            let response = get::run(GetRequest::all(hash).into(), token, opts).await?;
+            let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+            assert_eq!(expected_name, &collection.blobs()[0].name);
+            assert_eq!(&file_hash, &collection.blobs()[0].hash);
+            assert_eq!(expected_data, &children[&0]);
 
             Ok(())
         }
@@ -303,36 +304,22 @@ mod tests {
             derp_map: None,
         };
 
-        let i = AtomicUsize::new(0);
-        let expects = Arc::new(expects);
-
-        get::run(
-            collection_hash,
+        let response = get::run(
+            GetRequest::all(collection_hash).into(),
             provider.auth_token(),
             opts,
-            || async { Ok(()) },
-            |collection| {
-                assert_eq!(collection.blobs().len(), num_blobs);
-                async { Ok(()) }
-            },
-            |got_hash, mut reader, got_name| {
-                let i = &i;
-                let expects = expects.clone();
-                async move {
-                    let iv = i.load(std::sync::atomic::Ordering::SeqCst);
-                    let (expect_name, path, expect_hash) = expects.get(iv).unwrap();
-                    assert_eq!(*expect_hash, got_hash);
-                    let expect = tokio::fs::read(&path).await?;
-                    let mut got = Vec::new();
-                    reader.read_to_end(&mut got).await?;
-                    assert_eq!(expect, got);
-                    assert_eq!(*expect_name, got_name);
-                    i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Ok(reader)
-                }
-            },
         )
         .await?;
+        let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+        assert_eq!(num_blobs, collection.blobs().len());
+        for (i, (name, path, hash)) in expects.into_iter().enumerate() {
+            let blob = &collection.blobs()[i];
+            let expect = tokio::fs::read(&path).await?;
+            let got = &children[&(i as u64)];
+            assert_eq!(name, blob.name);
+            assert_eq!(hash, blob.hash);
+            assert_eq!(&expect, got);
+        }
 
         // We have to wait for the completed event before shutting down the provider.
         let events = tokio::time::timeout(Duration::from_secs(30), events_task)
@@ -357,7 +344,7 @@ mod tests {
             events
         );
         assert!(matches!(events[0], Event::ClientConnected { .. }));
-        assert!(matches!(events[1], Event::RequestReceived { .. }));
+        assert!(matches!(events[1], Event::GetRequestReceived { .. }));
         assert!(matches!(events[2], Event::TransferCollectionStarted { .. }));
         for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
             match event {
@@ -423,8 +410,8 @@ mod tests {
             }
         });
 
-        get::run(
-            hash,
+        let response = get::run(
+            GetRequest::all(hash).into(),
             auth_token,
             get::Options {
                 addr: provider_addr[0],
@@ -432,15 +419,10 @@ mod tests {
                 keylog: true,
                 derp_map: None,
             },
-            || async move { Ok(()) },
-            |_collection| async move { Ok(()) },
-            |_hash, mut stream, _name| async move {
-                io::copy(&mut stream, &mut io::sink()).await?;
-                Ok(stream)
-            },
         )
         .await
         .unwrap();
+        let (_collection, _children, _stats) = aggregate_get_response_fsm(response).await.unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
         tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -472,10 +454,9 @@ mod tests {
         let auth_token = provider.auth_token();
         let provider_addr = provider.local_address().await?;
 
-        let timeout = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            get::run(
-                hash,
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+            let request = get::run(
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr: provider_addr[0],
@@ -483,22 +464,21 @@ mod tests {
                     keylog: true,
                     derp_map: None,
                 },
-                || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
-                |_hash, stream, _name| async move {
-                    // evil: do nothing with the stream!
-                    Ok(stream)
-                },
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            // connect
+            let connected = request.next().await.unwrap();
+            // send the request
+            let _start = connected.next().await.unwrap();
+            // and then just hang
+        })
         .await;
         provider.shutdown();
 
-        let err = timeout.expect(
+        timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
         );
-
-        err.expect_err("expected an error when passing in a misbehaving `on_blob` function");
         Ok(())
     }
 
@@ -521,10 +501,9 @@ mod tests {
         let auth_token = provider.auth_token();
         let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run(
-                hash,
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request = get::run(
+                GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
                     addr: addr[0],
@@ -532,14 +511,11 @@ mod tests {
                     keylog: true,
                     derp_map: None,
                 },
-                || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
-                |_hash, mut stream, _name| async move {
-                    io::copy(&mut stream, &mut io::sink()).await?;
-                    Ok(stream)
-                },
-            ),
-        )
+            )
+            .await
+            .unwrap();
+            aggregate_get_response_fsm(request).await
+        })
         .await
         .expect("timeout")
         .expect("get failed");
@@ -556,38 +532,236 @@ mod tests {
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).await.unwrap();
-        let mut on_connected = false;
-        let mut on_collection = false;
-        let mut on_blob = false;
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            get::run_ticket(
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let response = get::run_ticket(
                 &ticket,
+                GetRequest::all(ticket.hash()).into(),
                 true,
                 16,
                 None,
-                || {
-                    on_connected = true;
-                    async { Ok(()) }
-                },
-                |_| {
-                    on_collection = true;
-                    async { Ok(()) }
-                },
-                |_hash, mut stream, _name| {
-                    on_blob = true;
-                    async move {
-                        io::copy(&mut stream, &mut io::sink()).await?;
-                        Ok(stream)
-                    }
-                },
-            ),
-        )
+            )
+            .await?;
+            aggregate_get_response_fsm(response).await
+        })
         .await
         .expect("timeout")
         .expect("get ticket failed");
-        assert!(on_connected);
-        assert!(on_collection);
-        assert!(on_blob);
+    }
+
+    /// Utility to validate that the children of a collection are correct
+    fn validate_children(
+        collection: Collection,
+        children: BTreeMap<u64, Bytes>,
+    ) -> anyhow::Result<()> {
+        let blobs = collection.into_inner();
+        anyhow::ensure!(blobs.len() == children.len());
+        for (child, blob) in blobs.into_iter().enumerate() {
+            let child = child as u64;
+            let data = children.get(&child).unwrap();
+            anyhow::ensure!(blob.hash == blake3::hash(data).into());
+        }
+        Ok(())
+    }
+
+    // helper to aggregate a get response and return all relevant data
+    async fn aggregate_get_response_fsm(
+        initial: get_response_machine::AtInitial,
+    ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+        use get_response_machine::*;
+        let mut items = BTreeMap::new();
+        let connected = initial.next().await?;
+        // we assume that the request includes the entire collection
+        let (mut next, collection) = {
+            let ConnectedNext::StartCollection(sc) = connected.next().await? else {
+                panic!("request did not include collection");
+            };
+            let mut data = Vec::new();
+            let done = sc.next().concatenate(&mut data, |_, _| {}).await?;
+            (done.next(), Collection::from_bytes(&data)?)
+        };
+        // read all the children
+        let finishing = loop {
+            let start = match next {
+                EndBlobNext::MoreChildren(start) => start,
+                EndBlobNext::Closing(finishing) => break finishing,
+            };
+            let child = start.child_offset();
+            let Some(blob) = collection.blobs().get(child as usize) else {
+                break start.finish();
+            };
+            let mut data = Vec::new();
+            let done = start
+                .next(blob.hash)
+                .concatenate(&mut data, |_, _| {})
+                .await?;
+            items.insert(child, data.into());
+            next = done.next();
+        };
+        let stats = finishing.next().await?;
+        Ok((collection, items, stats))
+    }
+
+    #[tokio::test]
+    async fn test_run_fsm() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+            .await
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address().await.unwrap();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addr: addr[0],
+                peer_id,
+                keylog: true,
+                derp_map: None,
+            })
+            .await?;
+            let request = GetRequest::all(hash).into();
+            let stream = get::run_connection(connection, request, auth_token);
+            let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
+            validate_children(collection, children)?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    fn readme_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")
+    }
+
+    #[derive(Clone, Debug)]
+    struct CollectionCustomHandler;
+
+    impl CustomGetHandler for CollectionCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: Database,
+        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+            async move {
+                let readme = readme_path();
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, hash) = create_collection(sources).await?;
+                let new_db = new_db.to_inner();
+                database.union_with(new_db);
+                let request = GetRequest::all(hash);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct BlobCustomHandler;
+
+    impl CustomGetHandler for BlobCustomHandler {
+        fn handle(
+            &self,
+            _data: Bytes,
+            database: Database,
+        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+            async move {
+                let readme = readme_path();
+                let sources = vec![DataSource::File(readme)];
+                let (new_db, c_hash) = create_collection(sources).await?;
+                let mut new_db = new_db.to_inner();
+                new_db.remove(&c_hash);
+                let file_hash = *new_db.iter().next().unwrap().0;
+                database.union_with(new_db);
+                let request = GetRequest::single(file_hash);
+                println!("{:?}", request);
+                Ok(request)
+            }
+            .boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_blob() {
+        let db = Database::default();
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_get_handler(BlobCustomHandler)
+            .spawn()
+            .await
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address().await.unwrap();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let response = get::run(
+                request,
+                auth_token,
+                get::Options {
+                    addr: addr[0],
+                    peer_id,
+                    keylog: true,
+                    derp_map: None,
+                },
+            )
+            .await?;
+            let connected = response.next().await?;
+            let ConnectedNext::StartCollection(start) = connected.next().await? else { panic!() };
+            let header = start.next();
+            let mut actual = Vec::new();
+            header.concatenate(&mut actual, |_, _| {}).await?;
+            let expected = tokio::fs::read(readme_path()).await?;
+            assert_eq!(actual, expected);
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_custom_request_collection() {
+        let db = Database::default();
+        let provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .custom_get_handler(CollectionCustomHandler)
+            .spawn()
+            .await
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let addr = provider.local_address().await.unwrap();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let response = get::run(
+                request,
+                auth_token,
+                get::Options {
+                    addr: addr[0],
+                    peer_id,
+                    keylog: true,
+                    derp_map: None,
+                },
+            )
+            .await?;
+            let (_collection, items, _stats) = aggregate_get_response_fsm(response).await?;
+            let actual = &items[&0];
+            let expected = tokio::fs::read(readme_path()).await?;
+            assert_eq!(actual, &expected);
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
     }
 }
