@@ -1040,6 +1040,7 @@ impl Actor {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
                     public_key: None,
+                    derp_addr: None,
                 });
                 self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
@@ -1114,16 +1115,31 @@ impl Actor {
             .await
         {
             // Message was internal, do not bubble up.
+            debug!("processed internal disco message from {:?}", dm.src);
             return None;
         }
 
-        let ep_fake_wg_addr = {
-            self.peer_map
-                .endpoint_for_node_key(&dm.src)
-                .map(|ep| ep.fake_wg_addr)
+        let ep_fake_wg_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
+            Some(ep) => ep.fake_wg_addr,
+            None => {
+                info!(
+                    "no peer_map state found for {:?} in: {:#?}",
+                    dm.src, self.peer_map
+                );
+                let id = self
+                    .peer_map
+                    .upsert_endpoint(EndpointOptions {
+                        conn_sender: self.conn.actor_sender.clone(),
+                        conn_public_key: self.conn.public_key.clone(),
+                        public_key: Some(dm.src),
+                        derp_addr: Some(ipp),
+                    })
+                    .expect("just checked");
+                self.peer_map.set_endpoint_for_ip_port(&ipp, id);
+                let ep = self.peer_map.by_id_mut(&id).expect("inserted");
+                ep.fake_wg_addr
+            }
         };
-
-        let ep_fake_wg_addr = ep_fake_wg_addr?;
 
         let meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
@@ -2187,7 +2203,6 @@ impl Actor {
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
-        let conn = self.conn.clone();
         let source = disco::source_and_box(msg);
         if source.is_none() {
             return false;
@@ -2195,7 +2210,7 @@ impl Actor {
 
         let (source, sealed_box) = source.unwrap();
 
-        if conn.is_closed() {
+        if self.conn.is_closed() {
             return true;
         }
 
@@ -2282,7 +2297,9 @@ impl Actor {
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
-                    let (_, insert) = ep.handle_pong_conn(&conn.public_key, &pong, di, src).await;
+                    let (_, insert) = ep
+                        .handle_pong_conn(&self.conn.public_key, &pong, di, src)
+                        .await;
                     if let Some((src, key)) = insert {
                         self.peer_map.set_node_key_for_ip_port(&src, &key);
                     }
@@ -2525,6 +2542,7 @@ impl Actor {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
                     public_key: Some(n.key.clone()),
+                    derp_addr: n.derp,
                 });
             }
 
@@ -2652,9 +2670,6 @@ impl IpStream {
         pconn4: RebindingUdpConn,
         pconn6: Option<RebindingUdpConn>,
     ) -> Self {
-        // Init UDP receving state
-        let udp_state = quinn_udp::UdpState::new();
-
         // 1480 MTU size based on default from quinn
         let target_recv_buf_len = 1480 * udp_state.gro_segments() * quinn_udp::BATCH_SIZE;
         let recv_buf = vec![0u8; target_recv_buf_len];

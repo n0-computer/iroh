@@ -104,6 +104,7 @@ pub(super) struct Options {
     pub(super) conn_sender: flume::Sender<ActorMessage>,
     pub(super) conn_public_key: key::node::PublicKey,
     pub(super) public_key: Option<key::node::PublicKey>,
+    pub(super) derp_addr: Option<SocketAddr>,
 }
 
 impl Endpoint {
@@ -117,7 +118,7 @@ impl Endpoint {
             conn_public_key: options.conn_public_key,
             public_key: options.public_key,
             last_full_ping: None,
-            derp_addr: None,
+            derp_addr: options.derp_addr,
             best_addr: None,
             best_addr_at: None,
             trust_best_addr_until: None,
@@ -345,6 +346,7 @@ impl Endpoint {
                 Some(ep.clone())
             })
             .collect();
+        debug!("sending pings to {:?}", pings);
 
         let sent_any = !pings.is_empty();
         for (i, ep) in pings.into_iter().enumerate() {

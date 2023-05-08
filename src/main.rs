@@ -170,8 +170,8 @@ enum Commands {
         #[clap(long)]
         auth_token: String,
         /// Address of the provider
-        #[clap(long, short, default_value_t = SocketAddr::from(get::DEFAULT_PROVIDER_ADDR))]
-        addr: SocketAddr,
+        #[clap(long, short)]
+        addr: Option<SocketAddr>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,

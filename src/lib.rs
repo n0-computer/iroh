@@ -180,7 +180,7 @@ mod tests {
             content: Vec<u8>,
         ) -> Result<()> {
             let opts = get::Options {
-                addr,
+                addr: Some(addr),
                 peer_id: Some(peer_id),
                 keylog: true,
                 derp_map: None,
@@ -298,7 +298,7 @@ mod tests {
         let addrs = provider.listen_addresses().await?;
         let addr = *addrs.first().unwrap();
         let opts = get::Options {
-            addr,
+            addr: Some(addr),
             peer_id: Some(provider.peer_id()),
             keylog: true,
             derp_map: None,
@@ -414,7 +414,7 @@ mod tests {
             GetRequest::all(hash).into(),
             auth_token,
             get::Options {
-                addr: provider_addr[0],
+                addr: Some(provider_addr[0]),
                 peer_id: None,
                 keylog: true,
                 derp_map: None,
@@ -459,7 +459,7 @@ mod tests {
                 GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
-                    addr: provider_addr[0],
+                    addr: Some(provider_addr[0]),
                     peer_id: None,
                     keylog: true,
                     derp_map: None,
@@ -506,7 +506,7 @@ mod tests {
                 GetRequest::all(hash).into(),
                 auth_token,
                 get::Options {
-                    addr: addr[0],
+                    addr: Some(addr[0]),
                     peer_id,
                     keylog: true,
                     derp_map: None,
@@ -622,7 +622,7 @@ mod tests {
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let connection = dial_peer(get::Options {
-                addr: addr[0],
+                addr: Some(addr[0]),
                 peer_id,
                 keylog: true,
                 derp_map: None,
@@ -708,7 +708,7 @@ mod tests {
                 request,
                 auth_token,
                 get::Options {
-                    addr: addr[0],
+                    addr: Some(addr[0]),
                     peer_id,
                     keylog: true,
                     derp_map: None,
@@ -747,7 +747,7 @@ mod tests {
                 request,
                 auth_token,
                 get::Options {
-                    addr: addr[0],
+                    addr: Some(addr[0]),
                     peer_id,
                     keylog: true,
                     derp_map: None,

@@ -48,7 +48,7 @@ pub const DEFAULT_PROVIDER_ADDR: (Ipv4Addr, u16) = crate::provider::DEFAULT_BIND
 #[derive(Clone, Debug)]
 pub struct Options {
     /// The address to connect to
-    pub addr: SocketAddr,
+    pub addr: Option<SocketAddr>,
     /// The peer id to expect
     pub peer_id: Option<PeerId>,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
@@ -60,7 +60,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            addr: SocketAddr::from(DEFAULT_PROVIDER_ADDR),
+            addr: None,
             peer_id: None,
             keylog: false,
             derp_map: None,
@@ -106,10 +106,11 @@ pub async fn make_client_endpoint(
 
 /// Establishes a QUIC connection to the provided peer.
 pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
-    let bind_addr = match opts.addr.is_ipv6() {
-        true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
-        false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
+    let bind_addr = match opts.addr.map(|a| a.is_ipv6()) {
+        Some(true) => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
+        Some(false) | None => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
     };
+
     let (endpoint, magicsock) = make_client_endpoint(
         bind_addr,
         opts.peer_id,
@@ -124,13 +125,20 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let node_key: crate::hp::key::node::PublicKey = peer_id.into();
     const DEFAULT_DERP_REGION: u16 = 1;
 
+    let mut addresses = Vec::new();
+    let mut endpoints = Vec::new();
+    // Add the provided address as a starting point.
+    if let Some(addr) = opts.addr {
+        addresses.push(addr.ip());
+        endpoints.push(addr);
+    }
     magicsock
         .set_network_map(netmap::NetworkMap {
             peers: vec![cfg::Node {
                 name: None,
-                addresses: vec![opts.addr.ip()],
+                addresses,
                 key: node_key.clone(),
-                endpoints: vec![opts.addr],
+                endpoints,
                 derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
                 created: Instant::now(),
                 hostinfo: crate::hp::hostinfo::Hostinfo::new(),
@@ -146,7 +154,10 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
         .get_mapping_addr(&node_key)
         .await
         .expect("just inserted");
-    debug!("connecting to {}: (via {} - {})", peer_id, addr, opts.addr);
+    debug!(
+        "connecting to {}: (via {} - {:?})",
+        peer_id, addr, opts.addr
+    );
     let connect = endpoint.connect(addr, "localhost")?;
     let connection = connect.await.context("failed connecting to provider")?;
 
@@ -201,7 +212,7 @@ async fn dial_ticket(
     let mut conn_stream = futures::stream::iter(addrs)
         .map(|addr| {
             let opts = Options {
-                addr,
+                addr: Some(addr),
                 peer_id: Some(ticket.peer()),
                 keylog,
                 derp_map: derp_map.clone(),
