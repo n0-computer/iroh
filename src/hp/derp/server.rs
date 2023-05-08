@@ -61,7 +61,7 @@ where
     server_channel: mpsc::Sender<ServerMessage<R, W, P>>,
     /// When true, the server has been shutdown.
     closed: bool,
-    /// The information we send to the [`client::Client`] about the [`Server`]'s protocol version
+    /// The information we send to the client about the [`Server`]'s protocol version
     /// and required rate limiting (if any)
     server_info: ServerInfo,
     /// Server loop handler
@@ -286,7 +286,7 @@ where
     /// some read or write error to the connection,  if the server is meant to verify clients,
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
-    /// The provided [`AsyncReader`] and [`AsyncWriter`] must be already connected to the [`Conn`].
+    /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
     pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
         debug!("accept: start");
         self.send_server_key(&mut writer)
