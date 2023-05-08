@@ -533,26 +533,36 @@ impl AsyncUdpSocket for Conn {
             )));
         }
 
-        if self.network_sender.is_full() {
-            self.network_send_wakers
-                .lock()
-                .unwrap()
-                .replace(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-        if self.network_sender.is_disconnected() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
+        let mut n = 0;
+        if transmits.is_empty() {
+            return Poll::Ready(Ok(n));
         }
 
-        let n = transmits.len();
-        self.network_sender
-            .try_send(transmits.to_vec())
-            .expect("just checked");
-        Poll::Ready(Ok(n))
+        // Split up transmits by destination, as the rest of the code assumes single dest.
+        let groups = TransmitIter::new(transmits);
+        for group in groups {
+            if self.network_sender.is_full() {
+                self.network_send_wakers
+                    .lock()
+                    .unwrap()
+                    .replace(cx.waker().clone());
+                break;
+            }
+            if self.network_sender.is_disconnected() {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "connection closed",
+                )));
+            }
+
+            n += group.len();
+            self.network_sender.try_send(group).expect("just checked");
+        }
+        if n > 0 {
+            return Poll::Ready(Ok(n));
+        }
+
+        Poll::Pending
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -798,8 +808,12 @@ impl Actor {
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
-        let mut ip_stream =
-            IpStream::new(self.conn.clone(), self.pconn4.clone(), self.pconn6.clone());
+        let mut ip_stream = IpStream::new(
+            &self.udp_state,
+            self.conn.clone(),
+            self.pconn4.clone(),
+            self.pconn6.clone(),
+        );
         loop {
             tokio::select! {
                 transmits = self.network_receiver.recv_async() => {
@@ -2628,12 +2642,16 @@ struct IpStream {
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
     recv_buf: Box<[u8]>,
-    udp_state: quinn_udp::UdpState,
     out_buffer: VecDeque<(BytesMut, Network, quinn_udp::RecvMeta)>,
 }
 
 impl IpStream {
-    fn new(conn: Arc<Inner>, pconn4: RebindingUdpConn, pconn6: Option<RebindingUdpConn>) -> Self {
+    fn new(
+        udp_state: &quinn_udp::UdpState,
+        conn: Arc<Inner>,
+        pconn4: RebindingUdpConn,
+        pconn6: Option<RebindingUdpConn>,
+    ) -> Self {
         // Init UDP receving state
         let udp_state = quinn_udp::UdpState::new();
 
@@ -2642,7 +2660,6 @@ impl IpStream {
         let recv_buf = vec![0u8; target_recv_buf_len];
 
         Self {
-            udp_state,
             recv_buf: recv_buf.into(),
             conn,
             pconn4,
@@ -2969,11 +2986,49 @@ impl ReaderState {
     }
 }
 
+/// A simple iterator to sp
+struct TransmitIter<'a> {
+    transmits: &'a [quinn_udp::Transmit],
+    offset: usize,
+}
+
+impl<'a> TransmitIter<'a> {
+    fn new(transmits: &'a [quinn_udp::Transmit]) -> Self {
+        TransmitIter {
+            transmits,
+            offset: 0,
+        }
+    }
+}
+
+impl Iterator for TransmitIter<'_> {
+    type Item = Vec<quinn_udp::Transmit>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset == self.transmits.len() {
+            return None;
+        }
+        let current_dest = &self.transmits[self.offset].destination;
+        let mut end = self.offset;
+        for t in &self.transmits[self.offset..] {
+            if current_dest != &t.destination {
+                break;
+            }
+            end += 1;
+        }
+
+        let out = self.transmits[self.offset..end].to_vec();
+        self.offset = end;
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
     use hyper::server::conn::Http;
     use rand::RngCore;
+    use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -2983,6 +3038,46 @@ mod tests {
         hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
         tls,
     };
+
+    fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
+        quinn_udp::Transmit {
+            destination,
+            ecn: None,
+            contents: destination.to_string().into(),
+            segment_size: None,
+            src_ip: None,
+        }
+    }
+
+    #[test]
+    fn test_transmit_iter() {
+        let transmits = vec![
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
+        ];
+
+        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
+        dbg!(&groups);
+        assert_eq!(groups.len(), 4);
+        assert_eq!(groups[0].len(), 1);
+        assert_eq!(groups[1].len(), 2);
+        assert_eq!(groups[2].len(), 1);
+        assert_eq!(groups[3].len(), 2);
+
+        let transmits = vec![
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+        ];
+
+        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
+        dbg!(&groups);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
+    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
