@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
@@ -288,17 +288,19 @@ where
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
     pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
-        debug!("accept: start");
+        trace!("accept: start");
         self.send_server_key(&mut writer)
             .await
             .context("unable to send server key to client")?;
-        debug!("accept: recv client key");
+        trace!("accept: recv client key");
         let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
             .await
             .context("unable to receive client information")?;
+        trace!("accept: send server info");
         self.send_server_info(&mut writer, &client_key)
             .await
             .context("unable to sent server info to client {client_key}")?;
+        trace!("accept: build client conn");
         let client_conn_builder = ClientConnBuilder {
             key: client_key,
             conn_num: new_conn_num(),
@@ -309,6 +311,7 @@ where
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
         };
+        trace!("accept: create client");
         self.server_channel
             .send(ServerMessage::CreateClient(client_conn_builder))
             .await

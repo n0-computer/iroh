@@ -253,7 +253,7 @@ impl Client {
     ///
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::hp::derp::client::Client`].
-    async fn connect(
+    pub async fn connect(
         &self,
     ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
         let key = self.inner.secret_key.public_key();
@@ -300,7 +300,9 @@ impl Client {
     }
 
     async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
+        debug!("connect_0");
         let region = self.current_region().await?;
+        debug!("connect_0 region: {:?}", region);
         let (tcp_stream, _node) = self.dial_region(region).await?;
 
         let local_addr = tcp_stream
@@ -393,6 +395,7 @@ impl Client {
     /// Return a TCP stream to the provided region, trying each node in order
     /// (using [`Client::dial_node`]) until one connects
     async fn dial_region(&self, reg: DerpRegion) -> Result<(TcpStream, DerpNode), ClientError> {
+        debug!("dial region: {:?}", reg);
         let target = self.target_string(&reg);
         if reg.nodes.is_empty() {
             return Err(ClientError::NoNodeForTarget(target));
@@ -423,6 +426,7 @@ impl Client {
     // overall but have dialRegion start overlapping races?
     async fn dial_node(&self, node: &DerpNode) -> Result<TcpStream, ClientError> {
         // TODO: Add support for HTTP proxies.
+        debug!("dial node: {:?}", node);
 
         let mut dials = JoinSet::new();
 

@@ -1280,16 +1280,30 @@ impl Actor {
         // metricNumDERPConns.Set(int64(len(c.activeDerp)))
         self.log_active_derp();
 
-        if let Some(ref f) = self.conn.on_derp_active {
-            // TODO: spawn
-            f();
-        }
+        let d = dc.clone();
+        let c = self.conn.clone();
+        let msg_sender = self.msg_sender.clone();
 
-        let rs = ReaderState::new(region_id, cancel, dc.clone());
-        self.msg_sender
-            .send_async(ActorMessage::Connected(rs))
-            .await
-            .unwrap();
+        // Needs to be done in a different task, to avoid deadlocking.
+        tokio::task::spawn(async move {
+            // Make sure we can establish a connection.
+            if let Err(err) = d.connect().await {
+                // TODO: what to do?
+                warn!("failed to connect to derp server: {:?}", err);
+            }
+
+            if let Some(ref f) = c.on_derp_active {
+                // TODO: spawn
+                f();
+            }
+
+            let rs = ReaderState::new(region_id, cancel, d);
+            msg_sender
+                .send_async(ActorMessage::Connected(rs))
+                .await
+                .unwrap();
+        });
+
         dc
     }
 
@@ -3048,16 +3062,16 @@ mod tests {
 
         let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
         let http_addr = http_listener.local_addr()?;
+        println!("DERP listening on {:?}", http_addr);
 
         let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
 
         // TODO: TLS
         // httpsrv.StartTLS()
 
-        // Spawn server on the default executor,
-        // which is usually a thread-pool from tokio default runtime.
         tokio::task::spawn(async move {
             let derp_client_handler = derp_server.client_conn_handler(Default::default());
+
             loop {
                 tokio::select! {
                     biased;
@@ -3067,6 +3081,7 @@ mod tests {
                     }
 
                     conn = http_listener.accept() => {
+                        trace!("accepted derp connection");
                         let (stream, _) = conn?;
                         let derp_client_handler = derp_client_handler.clone();
                         tokio::task::spawn(async move {
