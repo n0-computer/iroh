@@ -1,7 +1,5 @@
 //! Protocol for communication between provider and client.
-use std::fmt::Display;
 use std::io;
-use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -14,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod range_spec;
 pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 
-use crate::util::{self, Hash};
+use crate::util::Hash;
 
 /// Maximum message size is limited to 100MiB for now.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -25,15 +23,11 @@ pub const VERSION: u64 = 2;
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
     pub version: u64,
-    pub token: AuthToken,
 }
 
 impl Handshake {
-    pub fn new(token: AuthToken) -> Self {
-        Self {
-            version: VERSION,
-            token,
-        }
+    pub fn new() -> Self {
+        Self { version: VERSION }
     }
 }
 
@@ -131,55 +125,6 @@ pub(crate) async fn read_lp(
     Ok(Some(buffer.split_to(size).freeze()))
 }
 
-/// A token used to authenticate a handshake.
-///
-/// The token has a printable representation which can be serialised using [`Display`] and
-/// deserialised using [`FromStr`].
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, MaxSize)]
-pub struct AuthToken {
-    bytes: [u8; 32],
-}
-
-impl AuthToken {
-    /// Generates a new random token.
-    pub fn generate() -> Self {
-        Self {
-            bytes: rand::random(),
-        }
-    }
-}
-
-/// Serialises the [`AuthToken`] to base64.
-impl Display for AuthToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", util::encode(self.bytes))
-    }
-}
-
-/// Error for parsing [`AuthToken`] using [`FromStr`].
-#[derive(thiserror::Error, Debug)]
-pub enum AuthTokenParseError {
-    /// Invalid base64 encoding.
-    #[error("invalid encoding: {0}")]
-    Base64(#[from] base64::DecodeError),
-    /// Invalid length.
-    #[error("invalid length: {0}")]
-    Length(usize),
-}
-
-/// Deserialises the [`AuthToken`] from base64.
-impl FromStr for AuthToken {
-    type Err = AuthTokenParseError;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let decoded = util::decode(s)?;
-        let bytes = decoded
-            .try_into()
-            .map_err(|v: Vec<u8>| AuthTokenParseError::Length(v.len()))?;
-        Ok(AuthToken { bytes })
-    }
-}
-
 /// Reasons to close connections or stop streams.
 ///
 /// A QUIC **connection** can be *closed* and a **stream** can request the other side to
@@ -238,28 +183,5 @@ impl TryFrom<VarInt> for Closed {
             2 => Ok(Self::RequestReceived),
             val => Err(UnknownErrorCode(val)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_auth_token_base64() {
-        let token = AuthToken::generate();
-        println!("token: {token}");
-        let base64 = token.to_string();
-        println!("token: {base64}");
-        let decoded = AuthToken::from_str(&base64).unwrap();
-        assert_eq!(decoded, token);
-
-        let err = AuthToken::from_str("not-base64").err().unwrap();
-        println!("err {err:#}");
-        assert!(matches!(err, AuthTokenParseError::Base64(_)));
-
-        let err = AuthToken::from_str("abcd").err().unwrap();
-        println!("err {err:#}");
-        assert!(matches!(err, AuthTokenParseError::Length(3)));
     }
 }

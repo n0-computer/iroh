@@ -39,7 +39,7 @@ use walkdir::WalkDir;
 use crate::blobs::Collection;
 use crate::net::find_local_addresses;
 use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+    read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
@@ -83,7 +83,6 @@ where
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
-    auth_token: AuthToken,
     rpc_endpoint: E,
     db: Database,
     keylog: bool,
@@ -185,7 +184,6 @@ impl Builder {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
-            auth_token: AuthToken::generate(),
             db,
             keylog: false,
             rpc_endpoint: Default::default(),
@@ -205,7 +203,6 @@ where
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
-            auth_token: self.auth_token,
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
@@ -219,7 +216,6 @@ where
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
-            auth_token: self.auth_token,
             db: self.db,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
@@ -238,12 +234,6 @@ where
     /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
     pub fn keypair(mut self, keypair: Keypair) -> Self {
         self.keypair = keypair;
-        self
-    }
-
-    /// Uses the given [`AuthToken`] instead of a newly generated one.
-    pub fn auth_token(mut self, auth_token: AuthToken) -> Self {
-        self.auth_token = auth_token;
         self
     }
 
@@ -289,7 +279,6 @@ where
             db: self.db,
             listen_addr,
             keypair: self.keypair,
-            auth_token: self.auth_token,
             events,
             controller,
             cancel_token,
@@ -364,9 +353,8 @@ where
                 Some(connecting) = server.accept() => {
                     let db = handler.inner.db.clone();
                     let events = events.clone();
-                    let auth_token = handler.inner.auth_token;
                     let custom_get_handler = custom_get_handler.clone();
-                    tokio::spawn(handle_connection(connecting, db, auth_token, events, custom_get_handler));
+                    tokio::spawn(handle_connection(connecting, db, events, custom_get_handler));
                 }
                 else => break,
             }
@@ -402,7 +390,6 @@ struct ProviderInner {
     db: Database,
     listen_addr: SocketAddr,
     keypair: Keypair,
-    auth_token: AuthToken,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
@@ -503,11 +490,6 @@ impl Provider {
         self.inner.keypair.public().into()
     }
 
-    /// Returns the [`AuthToken`] needed to connect to the provider.
-    pub fn auth_token(&self) -> AuthToken {
-        self.inner.auth_token
-    }
-
     /// Subscribe to [`Event`]s emitted from the provider, informing about connections and
     /// progress.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -527,7 +509,7 @@ impl Provider {
     pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.listen_addresses()?;
-        Ticket::new(hash, self.peer_id(), addrs, self.inner.auth_token)
+        Ticket::new(hash, self.peer_id(), addrs)
     }
 
     /// Aborts the provider.
@@ -623,7 +605,6 @@ impl RpcHandler {
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
-            auth_token: Box::new(self.inner.auth_token),
             listen_addr: Box::new(self.inner.listen_addr),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
@@ -716,7 +697,6 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
 async fn handle_connection<C: CustomGetHandler>(
     connecting: quinn::Connecting,
     db: Database,
-    auth_token: AuthToken,
     events: broadcast::Sender<Event>,
     custom_get_handler: C,
 ) {
@@ -746,9 +726,7 @@ async fn handle_connection<C: CustomGetHandler>(
             let custom_get_handler = custom_get_handler.clone();
             tokio::spawn(
                 async move {
-                    if let Err(err) =
-                        handle_stream(db, auth_token, reader, writer, custom_get_handler).await
-                    {
+                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -767,11 +745,7 @@ async fn handle_connection<C: CustomGetHandler>(
 ///
 /// When successful, the reader is still useable after this function and the buffer will be
 /// drained of any handshake data.
-async fn read_handshake<R: AsyncRead + Unpin>(
-    mut reader: R,
-    buffer: &mut BytesMut,
-    token: AuthToken,
-) -> Result<()> {
+async fn read_handshake<R: AsyncRead + Unpin>(mut reader: R, buffer: &mut BytesMut) -> Result<()> {
     let payload = read_lp(&mut reader, buffer)
         .await?
         .context("no valid handshake received")?;
@@ -782,7 +756,6 @@ async fn read_handshake<R: AsyncRead + Unpin>(
         VERSION,
         handshake.version
     );
-    ensure!(handshake.token == token, "AuthToken mismatch");
     Ok(())
 }
 
@@ -894,7 +867,6 @@ async fn transfer_collection(
 
 async fn handle_stream(
     db: Database,
-    token: AuthToken,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter,
     custom_get_handler: impl CustomGetHandler,
@@ -903,7 +875,7 @@ async fn handle_stream(
 
     // 1. Read Handshake
     debug!("reading handshake");
-    if let Err(e) = read_handshake(&mut reader, &mut in_buffer, token).await {
+    if let Err(e) = read_handshake(&mut reader, &mut in_buffer).await {
         writer.notify_transfer_aborted();
         return Err(e);
     }
