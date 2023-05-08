@@ -1091,7 +1091,6 @@ impl Actor {
         pc6: Option<Arc<net::UdpSocket>>,
     ) -> Result<ReportState> {
         let now = Instant::now();
-        let last = self.reports.last.clone();
 
         // Create a UDP4 socket used for sending to our discovered IPv4 address.
         let pc4_hair = net::UdpSocket::bind("0.0.0.0:0")
@@ -1111,7 +1110,6 @@ impl Actor {
         } else {
             None
         };
-        let plan = ProbePlan::new(&dm, &if_state, last.as_deref()).await;
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
@@ -1124,13 +1122,16 @@ impl Actor {
             }
         }
         if do_full {
-            self.reports.last = None; // causes makeProbePlan below to do a full (initial) plan
+            self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
 
             // TODO
             // metricNumGetReportFull.Add(1);
         }
+
+        let last = self.reports.last.clone();
+        let plan = ProbePlan::new(&dm, &if_state, last.as_deref()).await;
 
         Ok(ReportState {
             incremental: last.is_some(),
