@@ -2986,7 +2986,7 @@ impl ReaderState {
     }
 }
 
-/// A simple iterator to sp
+/// A simple iterator to group [`Transmit`]s by destination.
 struct TransmitIter<'a> {
     transmits: &'a [quinn_udp::Transmit],
     offset: usize,
