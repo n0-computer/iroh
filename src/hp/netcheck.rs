@@ -107,7 +107,7 @@ pub struct Report {
 
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
-    /// [ip]:port of global IPv6
+    /// `[ip]:port` of global IPv6
     pub global_v6: Option<SocketAddr>,
 
     /// CaptivePortal is set when we think there's a captive portal that is
