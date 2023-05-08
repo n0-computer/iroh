@@ -175,8 +175,6 @@ pub struct Inner {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-    /// Do we currently have a derp connection.
-    derp_connected: AtomicBool,
 }
 
 impl Inner {
@@ -195,10 +193,6 @@ impl Inner {
 
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
-    }
-
-    fn is_derp_connected(&self) -> bool {
-        self.derp_connected.load(Ordering::Relaxed)
     }
 }
 
@@ -262,7 +256,6 @@ impl Conn {
             public_key: private_key.public_key(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            derp_connected: AtomicBool::new(false),
             network_recv_ch: network_recv_ch_receiver,
             network_recv_wakers: std::sync::Mutex::new(None),
             network_send_wakers: std::sync::Mutex::new(None),
@@ -918,15 +911,12 @@ impl Actor {
                     match result {
                         ReadResult::Break => {
                             // drop client
-                            self.conn.derp_connected.store(false, Ordering::Relaxed);
                             continue;
                         }
                         ReadResult::Continue => {
-                            self.conn.derp_connected.store(true, Ordering::Relaxed);
                             recvs.push(rs.recv())
                         }
                         ReadResult::Yield(read_result) => {
-                            self.conn.derp_connected.store(true, Ordering::Relaxed);
                             if let Some(passthrough) = self.process_derp_read_result(read_result).await {
                                 self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
                                 let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
@@ -3139,10 +3129,14 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
+            let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
                     let _ = ep_s.send(eps.to_vec());
+                })),
+                on_derp_active: Some(Box::new(move || {
+                    on_derp_s.try_send(()).ok();
                 })),
                 ..Default::default()
             };
@@ -3150,16 +3144,9 @@ mod tests {
             let conn = Conn::new(opts).await?;
             conn.set_derp_map(Some(derp_map)).await?;
 
-            let c = conn.clone();
-            tokio::time::timeout(Duration::from_secs(10), async move {
-                trace!("waiting for derp connection");
-                while !c.is_derp_connected() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                trace!("got derp connection");
-            })
-            .await
-            .context("wait for derp connection")?;
+            tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
+                .await
+                .context("wait for derp connection")?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
