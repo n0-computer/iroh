@@ -287,6 +287,7 @@ impl Conn {
                 enable_stun_packets: false,
                 pconn4,
                 pconn6,
+                udp_state: quinn_udp::UdpState::default(),
                 derp_map: Default::default(),
                 private_key,
                 my_derp: 0,
@@ -532,26 +533,36 @@ impl AsyncUdpSocket for Conn {
             )));
         }
 
-        if self.network_sender.is_full() {
-            self.network_send_wakers
-                .lock()
-                .unwrap()
-                .replace(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-        if self.network_sender.is_disconnected() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
+        let mut n = 0;
+        if transmits.is_empty() {
+            return Poll::Ready(Ok(n));
         }
 
-        let n = transmits.len();
-        self.network_sender
-            .try_send(transmits.to_vec())
-            .expect("just checked");
-        Poll::Ready(Ok(n))
+        // Split up transmits by destination, as the rest of the code assumes single dest.
+        let groups = TransmitIter::new(transmits);
+        for group in groups {
+            if self.network_sender.is_full() {
+                self.network_send_wakers
+                    .lock()
+                    .unwrap()
+                    .replace(cx.waker().clone());
+                break;
+            }
+            if self.network_sender.is_disconnected() {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "connection closed",
+                )));
+            }
+
+            n += group.len();
+            self.network_sender.try_send(group).expect("just checked");
+        }
+        if n > 0 {
+            return Poll::Ready(Ok(n));
+        }
+
+        Poll::Pending
     }
 
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -760,6 +771,7 @@ struct Actor {
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
+    udp_state: quinn_udp::UdpState,
 
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
@@ -796,13 +808,17 @@ impl Actor {
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
-        let mut ip_stream =
-            IpStream::new(self.conn.clone(), self.pconn4.clone(), self.pconn6.clone());
+        let mut ip_stream = IpStream::new(
+            &self.udp_state,
+            self.conn.clone(),
+            self.pconn4.clone(),
+            self.pconn6.clone(),
+        );
         loop {
             tokio::select! {
                 transmits = self.network_receiver.recv_async() => {
                     debug!("tick: network send");
-                    self.send_network(&ip_stream.udp_state, transmits?).await;
+                    self.send_network(transmits?).await;
                     debug!("tick: msg");
                     {
                         // Wakeup any send wakers that have been waiting for the channel
@@ -1278,24 +1294,34 @@ impl Actor {
         // metricNumDERPConns.Set(int64(len(c.activeDerp)))
         self.log_active_derp();
 
-        if let Some(ref f) = self.conn.on_derp_active {
-            // TODO: spawn
-            f();
-        }
+        let d = dc.clone();
+        let c = self.conn.clone();
+        let msg_sender = self.msg_sender.clone();
 
-        let rs = ReaderState::new(region_id, cancel, dc.clone());
-        self.msg_sender
-            .send_async(ActorMessage::Connected(rs))
-            .await
-            .unwrap();
+        // Needs to be done in a different task, to avoid deadlocking.
+        tokio::task::spawn(async move {
+            // Make sure we can establish a connection.
+            if let Err(err) = d.connect().await {
+                // TODO: what to do?
+                warn!("failed to connect to derp server: {:?}", err);
+            }
+
+            if let Some(ref f) = c.on_derp_active {
+                // TODO: spawn
+                f();
+            }
+
+            let rs = ReaderState::new(region_id, cancel, d);
+            msg_sender
+                .send_async(ActorMessage::Connected(rs))
+                .await
+                .unwrap();
+        });
+
         dc
     }
 
-    async fn send_network(
-        &mut self,
-        udp_state: &quinn_udp::UdpState,
-        transmits: Vec<quinn_udp::Transmit>,
-    ) {
+    async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
         debug!(
             "sending:\n{}",
             transmits
@@ -1326,7 +1352,7 @@ impl Actor {
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = if let Some(public_key) = public_key {
-                            let res = self.send_raw(udp_state, udp_addr, transmits.clone()).await;
+                            let res = self.send_raw(udp_addr, transmits.clone()).await;
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -1335,7 +1361,7 @@ impl Actor {
                             .await;
                             res
                         } else {
-                            self.send_raw(udp_state, udp_addr, transmits).await
+                            self.send_raw(udp_addr, transmits).await
                         };
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
@@ -1354,7 +1380,7 @@ impl Actor {
                         }
                     }
                     Ok((Some(udp_addr), None)) => {
-                        if let Err(err) = self.send_raw(udp_state, udp_addr, transmits).await {
+                        if let Err(err) = self.send_raw(udp_addr, transmits).await {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
@@ -1622,34 +1648,92 @@ impl Actor {
 
         self.ignore_stun_packets().await;
 
-        if let Ok(local_addr) = self.pconn4.local_addr() {
-            if local_addr.ip().is_unspecified() {
-                let LocalAddresses {
-                    regular: mut ips,
-                    loopback,
-                } = LocalAddresses::new();
+        let local_addr_v4 = self.pconn4.local_addr().ok();
+        let local_addr_v6 = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-                if ips.is_empty() && eps.is_empty() {
-                    // Only include loopback addresses if we have no
-                    // interfaces at all to use as endpoints and don't
-                    // have a public IPv4 or IPv6 address. This allows
-                    // for localhost testing when you're on a plane and
-                    // offline, for example.
-                    ips = loopback;
-                }
-                for ip in ips {
-                    add_addr!(
-                        already,
-                        eps,
-                        SocketAddr::new(ip, local_addr.port()),
-                        cfg::EndpointType::Local
-                    );
-                }
-            } else {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, local_addr, cfg::EndpointType::Local);
+        let is_unspecified_v4 = local_addr_v4
+            .map(|a| a.ip().is_unspecified())
+            .unwrap_or(false);
+        let is_unspecified_v6 = local_addr_v6
+            .map(|a| a.ip().is_unspecified())
+            .unwrap_or(false);
+
+        let LocalAddresses {
+            regular: mut ips,
+            loopback,
+        } = LocalAddresses::new();
+
+        if is_unspecified_v4 || is_unspecified_v6 {
+            if ips.is_empty() && eps.is_empty() {
+                // Only include loopback addresses if we have no
+                // interfaces at all to use as endpoints and don't
+                // have a public IPv4 or IPv6 address. This allows
+                // for localhost testing when you're on a plane and
+                // offline, for example.
+                ips = loopback;
             }
+            let v4_port = local_addr_v4.and_then(|addr| {
+                if addr.ip().is_unspecified() {
+                    Some(addr.port())
+                } else {
+                    None
+                }
+            });
+
+            let v6_port = local_addr_v6.and_then(|addr| {
+                if addr.ip().is_unspecified() {
+                    Some(addr.port())
+                } else {
+                    None
+                }
+            });
+
+            for ip in ips {
+                match ip {
+                    IpAddr::V4(_) => {
+                        if let Some(port) = v4_port {
+                            add_addr!(
+                                already,
+                                eps,
+                                SocketAddr::new(ip, port),
+                                cfg::EndpointType::Local
+                            );
+                        }
+                    }
+                    IpAddr::V6(_) => {
+                        if let Some(port) = v6_port {
+                            add_addr!(
+                                already,
+                                eps,
+                                SocketAddr::new(ip, port),
+                                cfg::EndpointType::Local
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if !is_unspecified_v4 {
+            // Our local endpoint is bound to a particular address.
+            // Do not offer addresses on other local interfaces.
+            add_addr!(
+                already,
+                eps,
+                local_addr_v4.unwrap(),
+                cfg::EndpointType::Local
+            );
+        }
+
+        if !is_unspecified_v6 {
+            // Our local endpoint is bound to a particular address.
+            // Do not offer addresses on other local interfaces.
+            add_addr!(
+                already,
+                eps,
+                local_addr_v6.unwrap(),
+                cfg::EndpointType::Local
+            );
         }
 
         // Note: the endpoints are intentionally returned in priority order,
@@ -1916,20 +2000,23 @@ impl Actor {
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
-        let port = self.local_port();
         if let Some(ref mut conn) = self.pconn6 {
+            let port = conn.port();
+            trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
             if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
             }
         }
+
+        let port = self.local_port_v4();
         self.pconn4
             .rebind(port, Network::Ipv4, cur_port_fate)
             .await
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port();
+        let port = self.local_port_v4();
         self.port_mapper.set_local_port(port).await;
 
         Ok(())
@@ -2056,7 +2143,6 @@ impl Actor {
         pkt: Bytes,
     ) -> io::Result<usize> {
         if addr.ip() != DERP_MAGIC_IP {
-            let udp_state = quinn_udp::UdpState::default(); // TODO: store
             let transmits = vec![quinn_udp::Transmit {
                 destination: addr,
                 contents: pkt,
@@ -2064,7 +2150,7 @@ impl Actor {
                 segment_size: None, // TODO: make sure this is correct
                 src_ip: None,       // TODO
             }];
-            return self.send_raw(&udp_state, addr, transmits).await;
+            return self.send_raw(addr, transmits).await;
         }
 
         match pub_key {
@@ -2482,14 +2568,13 @@ impl Actor {
     }
 
     /// Returns the current IPv4 listener's port number.
-    fn local_port(&self) -> u16 {
+    fn local_port_v4(&self) -> u16 {
         self.pconn4.port()
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_raw(
         &self,
-        state: &quinn_udp::UdpState,
         addr: SocketAddr,
         mut transmits: Vec<quinn_udp::Transmit>,
     ) -> io::Result<usize> {
@@ -2510,9 +2595,10 @@ impl Actor {
                 t.destination = addr;
             }
         }
-        let sum = futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await?;
+        let sum =
+            futures::future::poll_fn(|cx| conn.poll_send(&self.udp_state, cx, &transmits)).await?;
 
-        debug!("sent {} packets", sum);
+        debug!("sent {} packets to {}", sum, addr);
         debug_assert!(
             sum <= transmits.len(),
             "too many msgs {} > {}",
@@ -2556,12 +2642,16 @@ struct IpStream {
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
     recv_buf: Box<[u8]>,
-    udp_state: quinn_udp::UdpState,
     out_buffer: VecDeque<(BytesMut, Network, quinn_udp::RecvMeta)>,
 }
 
 impl IpStream {
-    fn new(conn: Arc<Inner>, pconn4: RebindingUdpConn, pconn6: Option<RebindingUdpConn>) -> Self {
+    fn new(
+        udp_state: &quinn_udp::UdpState,
+        conn: Arc<Inner>,
+        pconn4: RebindingUdpConn,
+        pconn6: Option<RebindingUdpConn>,
+    ) -> Self {
         // Init UDP receving state
         let udp_state = quinn_udp::UdpState::new();
 
@@ -2570,7 +2660,6 @@ impl IpStream {
         let recv_buf = vec![0u8; target_recv_buf_len];
 
         Self {
-            udp_state,
             recv_buf: recv_buf.into(),
             conn,
             pconn4,
@@ -2897,11 +2986,49 @@ impl ReaderState {
     }
 }
 
+/// A simple iterator to group [`Transmit`]s by destination.
+struct TransmitIter<'a> {
+    transmits: &'a [quinn_udp::Transmit],
+    offset: usize,
+}
+
+impl<'a> TransmitIter<'a> {
+    fn new(transmits: &'a [quinn_udp::Transmit]) -> Self {
+        TransmitIter {
+            transmits,
+            offset: 0,
+        }
+    }
+}
+
+impl Iterator for TransmitIter<'_> {
+    type Item = Vec<quinn_udp::Transmit>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset == self.transmits.len() {
+            return None;
+        }
+        let current_dest = &self.transmits[self.offset].destination;
+        let mut end = self.offset;
+        for t in &self.transmits[self.offset..] {
+            if current_dest != &t.destination {
+                break;
+            }
+            end += 1;
+        }
+
+        let out = self.transmits[self.offset..end].to_vec();
+        self.offset = end;
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
     use hyper::server::conn::Http;
     use rand::RngCore;
+    use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -2911,6 +3038,46 @@ mod tests {
         hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
         tls,
     };
+
+    fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
+        quinn_udp::Transmit {
+            destination,
+            ecn: None,
+            contents: destination.to_string().into(),
+            segment_size: None,
+            src_ip: None,
+        }
+    }
+
+    #[test]
+    fn test_transmit_iter() {
+        let transmits = vec![
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 2)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 3)),
+        ];
+
+        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
+        dbg!(&groups);
+        assert_eq!(groups.len(), 4);
+        assert_eq!(groups[0].len(), 1);
+        assert_eq!(groups[1].len(), 2);
+        assert_eq!(groups[2].len(), 1);
+        assert_eq!(groups[3].len(), 2);
+
+        let transmits = vec![
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+            make_transmit(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1)),
+        ];
+
+        let groups: Vec<_> = TransmitIter::new(&transmits).collect();
+        dbg!(&groups);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
+    }
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -2990,16 +3157,16 @@ mod tests {
 
         let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
         let http_addr = http_listener.local_addr()?;
+        println!("DERP listening on {:?}", http_addr);
 
         let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
 
         // TODO: TLS
         // httpsrv.StartTLS()
 
-        // Spawn server on the default executor,
-        // which is usually a thread-pool from tokio default runtime.
         tokio::task::spawn(async move {
             let derp_client_handler = derp_server.client_conn_handler(Default::default());
+
             loop {
                 tokio::select! {
                     biased;
@@ -3009,6 +3176,7 @@ mod tests {
                     }
 
                     conn = http_listener.accept() => {
+                        trace!("accepted derp connection");
                         let (stream, _) = conn?;
                         let derp_client_handler = derp_client_handler.clone();
                         tokio::task::spawn(async move {
@@ -3071,10 +3239,14 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
+            let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
                     let _ = ep_s.send(eps.to_vec());
+                })),
+                on_derp_active: Some(Box::new(move || {
+                    on_derp_s.try_send(()).ok();
                 })),
                 ..Default::default()
             };
@@ -3082,14 +3254,9 @@ mod tests {
             let conn = Conn::new(opts).await?;
             conn.set_derp_map(Some(derp_map)).await?;
 
-            // TODO: alternative check?
-            // let c = conn.clone();
-            // tokio::time::timeout(Duration::from_secs(10), async move {
-            //     while !c.0.state.lock().await.derp_started {
-            //         tokio::time::sleep(Duration::from_millis(100)).await;
-            //     }
-            // })
-            // .await?;
+            tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
+                .await
+                .context("wait for derp connection")?;
 
             let tls_server_config =
                 tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
@@ -3303,6 +3470,10 @@ mod tests {
                             .await
                             .with_context(|| format!("[{}] finishing", b_name))?;
 
+                        let stats = conn.stats();
+                        println!("[{}] stats: {:#?}", a_name, stats);
+                        assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", b_name);
+
                         println!("[{}] close", b_name);
                         conn.close(0u32.into(), b"done");
                         println!("[{}] closed", b_name);
@@ -3350,6 +3521,10 @@ mod tests {
                         hex::encode($msg),
                         hex::encode(val)
                     );
+
+                    let stats = conn.stats();
+                    println!("[{}] stats: {:#?}", a_name, stats);
+                    assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", a_name);
 
                     println!("[{}] close", a_name);
                     conn.close(0u32.into(), b"done");
@@ -3730,7 +3905,7 @@ mod tests {
             };
         }
 
-        for i in 0..1 {
+        for i in 0..10 {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
             roundtrip!(m2, m1, b"hello m2");

@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{instrument, trace};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
@@ -288,17 +288,19 @@ where
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
     pub async fn accept(&self, mut reader: R, mut writer: W) -> Result<()> {
-        debug!("accept: start");
+        trace!("accept: start");
         self.send_server_key(&mut writer)
             .await
             .context("unable to send server key to client")?;
-        debug!("accept: recv client key");
+        trace!("accept: recv client key");
         let (client_key, client_info) = recv_client_key(self.secret_key.clone(), &mut reader)
             .await
             .context("unable to receive client information")?;
+        trace!("accept: send server info");
         self.send_server_info(&mut writer, &client_key)
             .await
             .context("unable to sent server info to client {client_key}")?;
+        trace!("accept: build client conn");
         let client_conn_builder = ClientConnBuilder {
             key: client_key,
             conn_num: new_conn_num(),
@@ -309,6 +311,7 @@ where
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
         };
+        trace!("accept: create client");
         self.server_channel
             .send(ServerMessage::CreateClient(client_conn_builder))
             .await
@@ -366,6 +369,7 @@ where
     client_mesh: HashMap<PublicKey, Option<P>>,
     /// Mesh clients that need to be appraised on the state of the network
     watchers: HashSet<PublicKey>,
+    name: String,
 }
 
 impl<R, W, P> ServerActor<R, W, P>
@@ -375,15 +379,18 @@ where
     P: PacketForwarder,
 {
     pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<R, W, P>>) -> Self {
+        let name = format!("derp-{}", hex::encode(&key.as_ref()[..8]));
         Self {
             key,
             receiver,
             clients: Clients::new(),
             client_mesh: HashMap::default(),
             watchers: HashSet::default(),
+            name,
         }
     }
 
+    #[instrument(skip_all, fields(self.name = %self.name))]
     pub(crate) async fn run(mut self, done: CancellationToken) -> Result<()> {
         loop {
             tokio::select! {
@@ -406,6 +413,7 @@ where
                     };
                    match msg {
                        ServerMessage::AddWatcher(key) => {
+                           tracing::trace!("add watcher: {:?} (is_self: {})", key, key == self.key);
                            // connecting to ourselves, ignore
                            if key == self.key {
                                continue;
@@ -419,11 +427,13 @@ where
                            self.watchers.insert(key.clone());
                        },
                        ServerMessage::ClosePeer(key) => {
+                           tracing::trace!("close peer: {:?}", key);
                            // close the actual underlying connection to the client, but don't remove it from
                            // the list of clients
                            self.clients.close_conn(&key);
                        },
                         ServerMessage::SendPacket((key, packet)) => {
+                           tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src.clone();
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
@@ -436,10 +446,11 @@ where
                                 // forwarder
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
-                                tracing::warn!("no way to reach client {key:?}, dropped packet");
+                                tracing::warn!("send packet: no way to reach client {key:?}, dropped packet");
                             }
                         }
                        ServerMessage::SendDiscoPacket((key, packet)) => {
+                           tracing::trace!("send disco packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src.clone();
                             if self.clients.contains_key(&key) {
                                 // if this client is in our local network, just try to send the
@@ -452,10 +463,11 @@ where
                                 // forwarder
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
-                                tracing::warn!("no way to reach client {key:?}, dropped packet");
+                                tracing::warn!("send disco packet: no way to reach client {key:?}, dropped packet");
                             }
                        }
                        ServerMessage::CreateClient(client_builder) => {
+                           tracing::trace!("create client: {:?}", client_builder.key);
                            let key = client_builder.key.clone();
                            // add client to mesh
                             if !self.client_mesh.contains_key(&key) {
@@ -471,6 +483,7 @@ where
 
                         }
                        ServerMessage::RemoveClient(key) => {
+                           tracing::trace!("remove client: {:?}", key);
                            // remove the client from the map of clients, & notify any peers that it
                            // has sent messages that it has left the network
                            self.clients.unregister(&key);
@@ -480,11 +493,13 @@ where
                            self.broadcast_peer_state_change(key, false);
                        }
                        ServerMessage::AddPacketForwarder((key, packet_forwarder)) => {
+                           tracing::trace!("add packet forwarder: {:?}", key);
                            // Only one packet forward allowed at a time right now
                            self.client_mesh.insert(key, Some(packet_forwarder));
                        },
 
                        ServerMessage::RemovePacketForwarder(key) => {
+                           tracing::trace!("remove packet forwarder: {:?}", key);
                            // check if we have a local connection to the client at `key`
                            if self.clients.contains_key(&key) {
                                // remove any current packet forwarder associated with key
