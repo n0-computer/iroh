@@ -1602,6 +1602,11 @@ impl Actor {
             self.periodic_re_stun_timer = new_re_stun_timer();
         }
 
+        self.endpoints_update_state
+            .running
+            .send(None)
+            .expect("sender not go away");
+
         debug!("endpoint update done ({})", why);
     }
 
@@ -2789,7 +2794,7 @@ fn new_re_stun_timer() -> time::Interval {
     let mut rng = rand::thread_rng();
     let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
     debug!("scheduling periodic_stun to run in {}s", d.as_secs());
-    time::interval(d)
+    time::interval_at(time::Instant::now() + d, d)
 }
 
 /// Initial connection setup.
