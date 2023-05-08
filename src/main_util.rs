@@ -219,8 +219,18 @@ pub fn configure_derp_map() -> DerpMap {
     // Use google stun server for now
     let stun_port = 3478;
     let host_name = "derp.iroh.computer".into();
-    let derp_port = 0;
+    let derp_port = 3340;
     let derp_ipv4 = UseIpv4::Some("35.175.99.113".parse().unwrap());
+    let derp_ipv6 = UseIpv6::None;
+    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
+}
+
+pub fn configure_local_derp_map() -> DerpMap {
+    // Use google stun server for now
+    let stun_port = 3478;
+    let host_name = "derp.invalid".into();
+    let derp_port = 3340;
+    let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
     let derp_ipv6 = UseIpv6::None;
     DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
 }
