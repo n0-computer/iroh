@@ -1622,34 +1622,92 @@ impl Actor {
 
         self.ignore_stun_packets().await;
 
-        if let Ok(local_addr) = self.pconn4.local_addr() {
-            if local_addr.ip().is_unspecified() {
-                let LocalAddresses {
-                    regular: mut ips,
-                    loopback,
-                } = LocalAddresses::new();
+        let local_addr_v4 = self.pconn4.local_addr().ok();
+        let local_addr_v6 = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-                if ips.is_empty() && eps.is_empty() {
-                    // Only include loopback addresses if we have no
-                    // interfaces at all to use as endpoints and don't
-                    // have a public IPv4 or IPv6 address. This allows
-                    // for localhost testing when you're on a plane and
-                    // offline, for example.
-                    ips = loopback;
-                }
-                for ip in ips {
-                    add_addr!(
-                        already,
-                        eps,
-                        SocketAddr::new(ip, local_addr.port()),
-                        cfg::EndpointType::Local
-                    );
-                }
-            } else {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, local_addr, cfg::EndpointType::Local);
+        let is_unspecified_v4 = local_addr_v4
+            .map(|a| a.ip().is_unspecified())
+            .unwrap_or(false);
+        let is_unspecified_v6 = local_addr_v6
+            .map(|a| a.ip().is_unspecified())
+            .unwrap_or(false);
+
+        let LocalAddresses {
+            regular: mut ips,
+            loopback,
+        } = LocalAddresses::new();
+
+        if is_unspecified_v4 || is_unspecified_v6 {
+            if ips.is_empty() && eps.is_empty() {
+                // Only include loopback addresses if we have no
+                // interfaces at all to use as endpoints and don't
+                // have a public IPv4 or IPv6 address. This allows
+                // for localhost testing when you're on a plane and
+                // offline, for example.
+                ips = loopback;
             }
+            let v4_port = local_addr_v4.and_then(|addr| {
+                if addr.ip().is_unspecified() {
+                    Some(addr.port())
+                } else {
+                    None
+                }
+            });
+
+            let v6_port = local_addr_v6.and_then(|addr| {
+                if addr.ip().is_unspecified() {
+                    Some(addr.port())
+                } else {
+                    None
+                }
+            });
+
+            for ip in ips {
+                match ip {
+                    IpAddr::V4(_) => {
+                        if let Some(port) = v4_port {
+                            add_addr!(
+                                already,
+                                eps,
+                                SocketAddr::new(ip, port),
+                                cfg::EndpointType::Local
+                            );
+                        }
+                    }
+                    IpAddr::V6(_) => {
+                        if let Some(port) = v6_port {
+                            add_addr!(
+                                already,
+                                eps,
+                                SocketAddr::new(ip, port),
+                                cfg::EndpointType::Local
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if !is_unspecified_v4 {
+            // Our local endpoint is bound to a particular address.
+            // Do not offer addresses on other local interfaces.
+            add_addr!(
+                already,
+                eps,
+                local_addr_v4.unwrap(),
+                cfg::EndpointType::Local
+            );
+        }
+
+        if !is_unspecified_v6 {
+            // Our local endpoint is bound to a particular address.
+            // Do not offer addresses on other local interfaces.
+            add_addr!(
+                already,
+                eps,
+                local_addr_v6.unwrap(),
+                cfg::EndpointType::Local
+            );
         }
 
         // Note: the endpoints are intentionally returned in priority order,
@@ -1916,20 +1974,23 @@ impl Actor {
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
-        let port = self.local_port();
         if let Some(ref mut conn) = self.pconn6 {
+            let port = conn.port();
+            trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
             if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
             }
         }
+
+        let port = self.local_port_v4();
         self.pconn4
             .rebind(port, Network::Ipv4, cur_port_fate)
             .await
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port();
+        let port = self.local_port_v4();
         self.port_mapper.set_local_port(port).await;
 
         Ok(())
@@ -2482,7 +2543,7 @@ impl Actor {
     }
 
     /// Returns the current IPv4 listener's port number.
-    fn local_port(&self) -> u16 {
+    fn local_port_v4(&self) -> u16 {
         self.pconn4.port()
     }
 
