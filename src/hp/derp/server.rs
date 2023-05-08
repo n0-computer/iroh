@@ -406,6 +406,7 @@ where
                     };
                    match msg {
                        ServerMessage::AddWatcher(key) => {
+                           tracing::trace!("AddWatcher: adding peer {key:?} as a watcher");
                            // connecting to ourselves, ignore
                            if key == self.key {
                                continue;
@@ -419,6 +420,7 @@ where
                            self.watchers.insert(key.clone());
                        },
                        ServerMessage::ClosePeer(key) => {
+                            tracing::trace!("ClosePeer: closing underlying connection to client {key:?}");
                            // close the actual underlying connection to the client, but don't remove it from
                            // the list of clients
                            self.clients.close_conn(&key);
@@ -426,37 +428,42 @@ where
                         ServerMessage::SendPacket((key, packet)) => {
                             let src = packet.src.clone();
                             if self.clients.contains_key(&key) {
+                            tracing::debug!("SendPacket: sending packet sized {} from {src:?} to {key:?}", packet.bytes.len());
                                 // if this client is in our local network, just try to send the
                                 // packet
                                 if self.clients.send_packet(&key, packet).is_ok() {
                                     self.clients.record_send(&src, key);
                                 }
                             } else if let Some(Some(fwd)) = self.client_mesh.get_mut(&key) {
+                            tracing::debug!("SendPacket: forwarding packet sized {} from {src:?} to {key:?}", packet.bytes.len());
                                 // if this client is in our mesh network & has a packet
                                 // forwarder
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
-                                tracing::warn!("no way to reach client {key:?}, dropped packet");
+                                tracing::warn!("SendPacket: no way to reach client {key:?}, dropped packet of size {} from {src:?}", packet.bytes.len());
                             }
                         }
                        ServerMessage::SendDiscoPacket((key, packet)) => {
                             let src = packet.src.clone();
                             if self.clients.contains_key(&key) {
+                            tracing::debug!("SendDiscoPacket: sending packet sized {} from {src:?} to {key:?}", packet.bytes.len());
                                 // if this client is in our local network, just try to send the
                                 // packet
                                 if self.clients.send_disco_packet(&key, packet).is_ok() {
                                     self.clients.record_send(&src, key);
                                 }
                             } else if let Some(Some(fwd)) = self.client_mesh.get_mut(&key) {
+                            tracing::debug!("SendDiscoPacket: forwarding packet sized {} from {src:?} to {key:?}", packet.bytes.len());
                                 // if this client is in our mesh network & has a packet
                                 // forwarder
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
-                                tracing::warn!("no way to reach client {key:?}, dropped packet");
+                                tracing::warn!("SendPacket: no way to reach client {key:?}, dropped packet of size {} from {src:?}", packet.bytes.len());
                             }
                        }
                        ServerMessage::CreateClient(client_builder) => {
                            let key = client_builder.key.clone();
+                            tracing::debug!("CreateClient: register client {key:?}");
                            // add client to mesh
                             if !self.client_mesh.contains_key(&key) {
                                 // `None` means its a local client (so it doesn't need a packet
@@ -471,6 +478,7 @@ where
 
                         }
                        ServerMessage::RemoveClient(key) => {
+                            tracing::debug!("RemoveClient: unregister client {key:?}");
                            // remove the client from the map of clients, & notify any peers that it
                            // has sent messages that it has left the network
                            self.clients.unregister(&key);
@@ -480,11 +488,14 @@ where
                            self.broadcast_peer_state_change(key, false);
                        }
                        ServerMessage::AddPacketForwarder((key, packet_forwarder)) => {
+                            tracing::debug!("AddPacketForwarder: add packet forwarder for {key:?}");
                            // Only one packet forward allowed at a time right now
                            self.client_mesh.insert(key, Some(packet_forwarder));
                        },
 
                        ServerMessage::RemovePacketForwarder(key) => {
+
+                            tracing::debug!("RemovePacketForwarder: remove packet forwarder for {key:?}");
                            // check if we have a local connection to the client at `key`
                            if self.clients.contains_key(&key) {
                                // remove any current packet forwarder associated with key
