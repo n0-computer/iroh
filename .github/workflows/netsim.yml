@@ -25,10 +25,25 @@ jobs:
       pull-requests: write
     steps:
     - name: Checkout
+      if: github.event_name != 'issue_comment'
       uses: actions/checkout@master
       with:
         submodules: recursive
+
+    - name: Resolve PR refs (Issue)
+      if: ${{ github.event_name == 'issue_comment' }}  
+      id: refs
+      uses: arqu/resolve-pr-refs@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
+    - name: Checkout
+      if: github.event_name == 'issue_comment'
+      uses: actions/checkout@master
+      with:
+        submodules: recursive
+        ref: ${{ steps.refs.outputs.head_ref }}
+
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
 
@@ -97,12 +112,7 @@ jobs:
       run: |  
         echo "LAST_COMMIT_SHA=unknown" >> ${GITHUB_ENV}  
         echo "HEAD_REF=unknown" >> ${GITHUB_ENV}  
-    - name: Resolve PR refs (Issue)
-      if: ${{ github.event_name == 'issue_comment' }}  
-      id: refs
-      uses: arqu/resolve-pr-refs@main
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Setup Environment (Issue)  
       if: ${{ github.event_name == 'issue_comment' }}  
       shell: bash  
@@ -169,7 +179,7 @@ jobs:
         curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
     - name: Post metrics
-      if: github.ref_name=='main'
+      if: github.ref_name=='main' && github.event_name != 'issue_comment'
       run: |
         cd chuck/netsim
         d=$(cat report_metro.txt)

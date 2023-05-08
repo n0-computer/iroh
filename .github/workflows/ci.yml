@@ -8,9 +8,8 @@ on:
 
 env:
   RUST_BACKTRACE: 1
-  # RUSTFLAGS: -Dwarnings # Disable warnings so tests are actually run..
-  MSRV: "1.63"
-
+  # RUSTFLAGS: -Dwarnings
+  MSRV: "1.65"
 
 jobs:
   build_and_test_nix:
