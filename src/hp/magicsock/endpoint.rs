@@ -383,7 +383,9 @@ impl Endpoint {
     pub fn update_from_node(&mut self, n: &cfg::Node) {
         // Try first addr as potential best
         if let Some(addr) = n.endpoints.first() {
-            self.maybe_add_best_addr(*addr);
+            if addr.ip() != DERP_MAGIC_IP {
+                self.maybe_add_best_addr(*addr);
+            }
         }
 
         self.expired = n.expired;
