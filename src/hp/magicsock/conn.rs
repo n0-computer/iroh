@@ -287,6 +287,7 @@ impl Conn {
                 enable_stun_packets: false,
                 pconn4,
                 pconn6,
+                udp_state: quinn_udp::UdpState::default(),
                 derp_map: Default::default(),
                 private_key,
                 my_derp: 0,
@@ -760,6 +761,7 @@ struct Actor {
     // The underlying UDP sockets used to send/rcv packets.
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
+    udp_state: quinn_udp::UdpState,
 
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
@@ -802,7 +804,7 @@ impl Actor {
             tokio::select! {
                 transmits = self.network_receiver.recv_async() => {
                     debug!("tick: network send");
-                    self.send_network(&ip_stream.udp_state, transmits?).await;
+                    self.send_network(transmits?).await;
                     debug!("tick: msg");
                     {
                         // Wakeup any send wakers that have been waiting for the channel
@@ -1291,11 +1293,7 @@ impl Actor {
         dc
     }
 
-    async fn send_network(
-        &mut self,
-        udp_state: &quinn_udp::UdpState,
-        transmits: Vec<quinn_udp::Transmit>,
-    ) {
+    async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
         debug!(
             "sending:\n{}",
             transmits
@@ -1326,7 +1324,7 @@ impl Actor {
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = if let Some(public_key) = public_key {
-                            let res = self.send_raw(udp_state, udp_addr, transmits.clone()).await;
+                            let res = self.send_raw(udp_addr, transmits.clone()).await;
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -1335,7 +1333,7 @@ impl Actor {
                             .await;
                             res
                         } else {
-                            self.send_raw(udp_state, udp_addr, transmits).await
+                            self.send_raw(udp_addr, transmits).await
                         };
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
@@ -1354,7 +1352,7 @@ impl Actor {
                         }
                     }
                     Ok((Some(udp_addr), None)) => {
-                        if let Err(err) = self.send_raw(udp_state, udp_addr, transmits).await {
+                        if let Err(err) = self.send_raw(udp_addr, transmits).await {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
@@ -2117,7 +2115,6 @@ impl Actor {
         pkt: Bytes,
     ) -> io::Result<usize> {
         if addr.ip() != DERP_MAGIC_IP {
-            let udp_state = quinn_udp::UdpState::default(); // TODO: store
             let transmits = vec![quinn_udp::Transmit {
                 destination: addr,
                 contents: pkt,
@@ -2125,7 +2122,7 @@ impl Actor {
                 segment_size: None, // TODO: make sure this is correct
                 src_ip: None,       // TODO
             }];
-            return self.send_raw(&udp_state, addr, transmits).await;
+            return self.send_raw(addr, transmits).await;
         }
 
         match pub_key {
@@ -2550,7 +2547,6 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_raw(
         &self,
-        state: &quinn_udp::UdpState,
         addr: SocketAddr,
         mut transmits: Vec<quinn_udp::Transmit>,
     ) -> io::Result<usize> {
@@ -2571,9 +2567,10 @@ impl Actor {
                 t.destination = addr;
             }
         }
-        let sum = futures::future::poll_fn(|cx| conn.poll_send(state, cx, &transmits)).await?;
+        let sum =
+            futures::future::poll_fn(|cx| conn.poll_send(&self.udp_state, cx, &transmits)).await?;
 
-        debug!("sent {} packets", sum);
+        debug!("sent {} packets to {}", sum, addr);
         debug_assert!(
             sum <= transmits.len(),
             "too many msgs {} > {}",
