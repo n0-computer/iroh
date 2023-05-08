@@ -29,7 +29,6 @@ use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
@@ -187,7 +186,10 @@ fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
 pub mod get_response_machine {
     use std::result;
 
-    use crate::protocol::{read_lp, GetRequest};
+    use crate::{
+        protocol::{read_lp, GetRequest},
+        tokio_util::ConcatenateSliceWriter,
+    };
 
     use super::*;
 
@@ -293,8 +295,8 @@ pub mod get_response_machine {
     /// Possible next states after the handshake has been sent
     #[derive(Debug, From)]
     pub enum ConnectedNext {
-        /// First response is a collection
-        StartCollection(AtStartCollection),
+        /// First response is either a collection or a single blob
+        StartRoot(AtStartRoot),
         /// First response is a child
         StartChild(AtStartChild),
         /// Request is empty
@@ -304,7 +306,7 @@ pub mod get_response_machine {
     impl AtConnected {
         /// Send the request and move to the next state
         ///
-        /// The next state will be either `Start` or `StartCollection` depending on whether
+        /// The next state will be either `StartRoot` or `StartChild` depending on whether
         /// the request requests part of the collection or not.
         ///
         /// If the request is empty, this can also move directly to `Finished`.
@@ -366,7 +368,7 @@ pub mod get_response_machine {
             Ok(match misc.ranges_iter.next() {
                 Some((offset, ranges)) => {
                     if offset == 0 {
-                        AtStartCollection {
+                        AtStartRoot {
                             reader,
                             ranges,
                             misc,
@@ -390,7 +392,7 @@ pub mod get_response_machine {
 
     /// State of the get response when we start reading a collection
     #[derive(Debug)]
-    pub struct AtStartCollection {
+    pub struct AtStartRoot {
         ranges: RangeSet2<ChunkNum>,
         reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
@@ -447,7 +449,7 @@ pub mod get_response_machine {
         }
     }
 
-    impl AtStartCollection {
+    impl AtStartRoot {
         /// The ranges we have requested for the child
         pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
             &self.ranges
@@ -513,41 +515,44 @@ pub mod get_response_machine {
             }
         }
 
-        /// Concatenate the response into a writer
+        /// Concatenate the entire response into a vec
         ///
-        /// When requesting an entire blob, this is identical to writing the blob
-        /// to the writer.
-        ///
-        /// When requesting only ranges, this concatenates the ranges without
-        /// keeping gaps.
-        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
+        /// For a request that does not request the complete blob, this will just
+        /// concatenate the ranges that were requested.
+        pub async fn concatenate_into_vec(
             self,
-            res: W,
-            on_write: OW,
+        ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
+            let (curr, size) = self.next().await?;
+            let res = Vec::with_capacity(size as usize);
+            let mut handle = ConcatenateSliceWriter::new(res).into();
+            let res = curr.write_all(&mut handle).await?;
+            Ok((res, handle.into_inner().into_inner()))
+        }
+
+        /// Write the entire blob to a slice writer
+        pub async fn write_all<D: AsyncSliceWriter>(
+            self,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            let (curr, _size) = self.next().await?;
-            curr.concatenate(res, on_write).await
+            self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<
-            D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
-            OW: FnMut(u64, usize),
-        >(
+        pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
-            on_write: OW,
-        ) -> result::Result<AtEndBlob, DecodeError> {
+        ) -> result::Result<AtEndBlob, DecodeError>
+        where
+            D: AsyncSliceWriter,
+            O: AsyncSliceWriter,
+        {
             let (content, size) = self.next().await?;
             if let Some(o) = outboard.as_mut() {
                 o.write_array_at(0, size.to_le_bytes()).await?;
             }
-            content
-                .write_all_with_outboard(outboard, data, on_write)
-                .await
+            content.write_all_with_outboard(outboard, data).await
         }
     }
 
@@ -605,18 +610,24 @@ pub mod get_response_machine {
             }
         }
 
+        /// Write the entire blob to a slice writer
+        pub async fn write_all<D: AsyncSliceWriter>(
+            self,
+            data: &mut Handle<D>,
+        ) -> result::Result<AtEndBlob, DecodeError> {
+            self.write_all_with_outboard::<D, D>(&mut None, data).await
+        }
+
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<D, O, OW>(
+        pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: &mut Option<Handle<O>>,
             data: &mut Handle<D>,
-            mut on_write: OW,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
             O: AsyncSliceWriter,
-            OW: FnMut(u64, usize),
         {
             let mut content = self;
             loop {
@@ -635,7 +646,6 @@ pub mod get_response_machine {
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {
-                                on_write(leaf.offset.0, leaf.data.len());
                                 data.write_at(leaf.offset.0, leaf.data).await?;
                             }
                         }
@@ -645,27 +655,6 @@ pub mod get_response_machine {
                     }
                 }
             }
-        }
-
-        /// Concatenate the entire blob into a writer
-        pub async fn concatenate<W: AsyncWrite + Unpin, OW: FnMut(u64, usize)>(
-            self,
-            mut res: W,
-            mut on_write: OW,
-        ) -> result::Result<AtEndBlob, DecodeError> {
-            let mut content = self;
-            let done = loop {
-                let item;
-                (content, item) = match content.next().await {
-                    BlobContentNext::More(x) => x,
-                    BlobContentNext::Done(x) => break x,
-                };
-                if let BaoContentItem::Leaf(leaf) = item? {
-                    on_write(leaf.offset.0, leaf.data.len());
-                    res.write_all(&leaf.data).await?;
-                }
-            };
-            Ok(done)
         }
     }
 

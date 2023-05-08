@@ -23,9 +23,10 @@ use iroh::rpc_protocol::{
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 mod main_util;
-use iroh::tokio_util::SeekOptimized;
+use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 
 use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
@@ -897,7 +898,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         init_download_progress(count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
-        ConnectedNext::StartCollection(curr) => {
+        ConnectedNext::StartRoot(curr) => {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
                 .context("unable to create directory {temp_dir}")?;
@@ -905,9 +906,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .await
                 .context("Unable to create directory {out_dir}")?;
             let curr = curr.next();
-            let (curr, size) = curr.next().await?;
-            let mut collection_data = Vec::with_capacity(size as usize);
-            let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+            let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
             init_download_progress(collection.total_entries(), collection.total_blobs_size());
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
@@ -951,7 +950,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .create(true)
                 .open(&data_path)
                 .await?;
-            let mut data_file = SeekOptimized::new(data_file).into();
+            let data_file = SeekOptimized::new(data_file);
             tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
             let (curr, size) = header.next().await?;
             pb.set_length(size);
@@ -966,21 +965,29 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             } else {
                 None
             };
-            let on_write = |offset, _size| {
-                // println!("offset: {}/{}", offset, pb.length().unwrap());
-                pb.set_position(offset);
-            };
+
+            let (on_write, mut receive_on_write) = mpsc::channel(1);
+            let pb2 = pb.clone();
+            // create task that updates the progress bar
+            let progress_task = tokio::task::spawn(async move {
+                while let Some((offset, _)) = receive_on_write.recv().await {
+                    pb2.set_position(offset);
+                }
+            });
+            let mut data_file = ProgressSliceWriter::new(data_file, on_write).into();
             let curr = curr
-                .write_all_with_outboard(&mut outboard_file, &mut data_file, on_write)
+                .write_all_with_outboard(&mut outboard_file, &mut data_file)
                 .await?;
+            // Flush the data file first, it is the only thing that matters at this point
+            data_file.into_inner().into_inner().shutdown().await?;
+            // wait for the progress task to finish, only after dropping the ProgressSliceWriter
+            progress_task.await.ok();
             tokio::fs::create_dir_all(
                 final_path
                     .parent()
                     .context("final path should have parent")?,
             )
             .await?;
-            // Flush the data file first, it is the only thing that matters at this point
-            data_file.into_inner().shutdown().await?;
             // Rename temp file, to target name
             // once this is done, the file is considered complete
             tokio::fs::rename(data_path, final_path).await?;
@@ -1038,14 +1045,12 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
-    let ConnectedNext::StartCollection(curr) = connected.next().await? else {
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("expected a collection");
     };
     let (mut next, collection) = {
         let curr = curr.next();
-        let (curr, size) = curr.next().await?;
-        let mut collection_data = Vec::with_capacity(size as usize);
-        let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+        let (curr, collection_data) = curr.concatenate_into_vec().await?;
         let collection = Collection::from_bytes(&collection_data)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
@@ -1082,12 +1087,21 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         pb.set_message(format!("Receiving '{}'...", name.display()));
         pb.reset();
         let header = start.next(blob.hash);
-        let curr = {
-            let on_write = |offset, _size| {
-                pb.set_position(offset);
-            };
-            header.concatenate(tokio::io::stdout(), on_write).await?
-        };
+        let (on_write, mut receive_on_write) = mpsc::channel(1);
+        let pb2 = pb.clone();
+        // create task that updates the progress bar
+        let progress_task = tokio::task::spawn(async move {
+            while let Some((offset, _)) = receive_on_write.recv().await {
+                pb2.set_position(offset);
+            }
+        });
+        let mut writer =
+            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write)
+                .into();
+        let curr = header.write_all(&mut writer).await?;
+        drop(writer);
+        // wait for the progress task to finish, only after dropping the writer
+        progress_task.await.ok();
         pb.finish();
         next = curr.next();
     };
