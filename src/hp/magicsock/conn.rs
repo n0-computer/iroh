@@ -3303,6 +3303,10 @@ mod tests {
                             .await
                             .with_context(|| format!("[{}] finishing", b_name))?;
 
+                        let stats = conn.stats();
+                        println!("[{}] stats: {:#?}", a_name, stats);
+                        assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", b_name);
+
                         println!("[{}] close", b_name);
                         conn.close(0u32.into(), b"done");
                         println!("[{}] closed", b_name);
@@ -3350,6 +3354,10 @@ mod tests {
                         hex::encode($msg),
                         hex::encode(val)
                     );
+
+                    let stats = conn.stats();
+                    println!("[{}] stats: {:#?}", a_name, stats);
+                    assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", a_name);
 
                     println!("[{}] close", a_name);
                     conn.close(0u32.into(), b"done");
