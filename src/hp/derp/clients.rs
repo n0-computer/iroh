@@ -131,6 +131,7 @@ impl Clients {
     }
 
     pub fn close_conn(&mut self, key: &PublicKey) {
+        tracing::info!("closing conn {:?}", key);
         if let Some(client) = self.inner.remove(key) {
             client.shutdown();
         }
@@ -170,6 +171,7 @@ impl Clients {
         // this builds the client handler & starts the read & write loops to that client connection
         let client = client.build();
         let key = client.key.clone();
+        tracing::trace!("registering client: {:?}", key);
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when mulitple connections exist.
@@ -184,6 +186,7 @@ impl Clients {
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     pub fn unregister(&mut self, peer: &PublicKey) {
+        tracing::trace!("unregistering client: {:?}", peer);
         if let Some(client) = self.inner.remove(peer) {
             // go impl `notePeerGoneFromRegion`
             for key in client.sent_to.iter() {
