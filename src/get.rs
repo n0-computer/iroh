@@ -126,7 +126,10 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     const DEFAULT_DERP_REGION: u16 = 1;
 
     let mut addresses = Vec::new();
-    let mut endpoints = Vec::new();
+    let mut endpoints = vec![
+        // default endpoint
+        SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION),
+    ];
     // Add the provided address as a starting point.
     if let Some(addr) = opts.addr {
         addresses.push(addr.ip());
