@@ -317,11 +317,11 @@ impl Conn {
     }
 
     pub async fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        let (s, r) = sync::oneshot::channel();
+        let (s, r) = flume::bounded(1);
         self.actor_sender
             .send_async(ActorMessage::GetLocalAddr(s))
             .await?;
-        let (v4, v6) = r.await?;
+        let (v4, v6) = r.recv_async().await?;
         if let Some(v6) = v6 {
             return Ok((v4?, Some(v6?)));
         }
@@ -633,11 +633,12 @@ impl AsyncUdpSocket for Conn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        let (s, r) = sync::oneshot::channel();
+        let (s, r) = flume::bounded(1);
         self.actor_sender
             .send(ActorMessage::GetLocalAddr(s))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        let (v4, v6) = tokio::task::block_in_place(|| r.blocking_recv())
+        let (v4, v6) = r
+            .recv()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         // Default to v6 to pretend v6 for quinn in all cases (needs more thought)
         if let Some(v6) = v6 {
@@ -693,7 +694,7 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 pub(super) enum ActorMessage {
-    GetLocalAddr(sync::oneshot::Sender<(io::Result<SocketAddr>, Option<io::Result<SocketAddr>>)>),
+    GetLocalAddr(flume::Sender<(io::Result<SocketAddr>, Option<io::Result<SocketAddr>>)>),
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     GetDerpRegion(usize, sync::oneshot::Sender<Option<DerpRegion>>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
@@ -3478,8 +3479,8 @@ mod tests {
             Ok(quic_ep)
         };
 
-        let m1 = make_conn("127.0.0.1:7770".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:7771".parse().unwrap())?;
+        let m1 = make_conn("127.0.0.1:8770".parse().unwrap())?;
+        let m2 = make_conn("127.0.0.1:8771".parse().unwrap())?;
 
         // msg from  a -> b
         macro_rules! roundtrip {
@@ -3732,14 +3733,14 @@ mod tests {
         for i in 0..1 {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
-            // roundtrip!(m2, m1, b"hello m2");
+            roundtrip!(m2, m1, b"hello m2");
 
-            // println!("-- larger data");
+            println!("-- larger data");
 
-            // let mut data = vec![0u8; 10 * 1024];
-            // rand::thread_rng().fill_bytes(&mut data);
-            // roundtrip!(m1, m2, data);
-            // roundtrip!(m2, m1, data);
+            let mut data = vec![0u8; 10 * 1024];
+            rand::thread_rng().fill_bytes(&mut data);
+            roundtrip!(m1, m2, data);
+            roundtrip!(m2, m1, data);
         }
 
         Ok(())
