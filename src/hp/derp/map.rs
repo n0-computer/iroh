@@ -2,7 +2,8 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr}, fmt,
+    fmt,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::{Duration, Instant}, net::SocketAddr};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -11,6 +15,8 @@ use iroh::{
     },
     tls,
 };
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
 use tokio::sync;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -33,6 +39,46 @@ enum Commands {
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
+}
+
+#[derive(Debug, Serialize, Deserialize, MaxSize)]
+enum TestStreamRequest {
+    Echo,
+    Drain,
+    Send { bytes: u64, block_size: u32 },
+}
+
+/// handle a test stream request
+async fn handle_test_request(
+    mut send: quinn::SendStream,
+    mut recv: quinn::RecvStream,
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+    recv.read_exact(&mut buf).await?;
+    let request: TestStreamRequest = postcard::from_bytes(&buf)?;
+    println!("{:?}", request);
+    match request {
+        TestStreamRequest::Echo => {
+            // copy the stream back
+            tokio::io::copy(&mut recv, &mut send).await?;
+        }
+        TestStreamRequest::Drain => {
+            // drain the stream
+            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await?;
+        }
+        TestStreamRequest::Send { bytes, block_size } => {
+            // send the requested number of bytes, in blocks of the requested size
+            let mut buf = vec![0u8; block_size as usize];
+            let mut remaining = bytes;
+            while remaining > 0 {
+                let n = remaining.min(block_size as u64);
+                send.write_all(&mut buf[..n as usize]).await?;
+                remaining -= n;
+            }
+        }
+    }
+    send.finish().await?;
+    Ok(())
 }
 
 async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
@@ -78,9 +124,12 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
     };
 
     let private_key = SecretKey::generate();
+    tracing::info!(
+        "public key: {}",
+        hex::encode(private_key.public_key().as_bytes())
+    );
     let derp_map = configure_derp_map();
-    println!("public key: {}", hex::encode(private_key.public_key().as_bytes()));
-    println!("derp map {:#?}", derp_map);
+    tracing::info!("derp map {:#?}", derp_map);
     let opts = magicsock::Options {
         port: 12345,
         on_endpoints: Some(Box::new(on_endpoints)),
@@ -126,8 +175,7 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
         let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
         let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
 
-    conn
-        .set_network_map(hp::netmap::NetworkMap {
+        conn.set_network_map(hp::netmap::NetworkMap {
             peers: vec![hp::cfg::Node {
                 name: None,
                 addresses: vec![],
@@ -145,50 +193,50 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
         .await?;
         let addr = conn.get_mapping_addr(&key).await;
         let addr = addr.context("no mapping address")?;
-        println!("dialing {:?} at {:?}", key, addr);
+        tracing::info!("dialing {:?} at {:?}", key, addr);
         let connecting = endpoint.connect(addr, "localhost")?;
         match connecting.await {
             Ok(connection) => {
-                println!("got connection {:?}", connection);
+                tracing::info!("got connection");
                 match connection.open_bi().await {
                     Ok((mut send, mut recv)) => {
-                        println!("got bi");
+                        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+                        postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
+                        send.write_all(&buf).await?;
                         let copying = tokio::spawn(async move {
-                            println!("draining response");
+                            tracing::debug!("draining response");
                             tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
                         });
                         let t0 = Instant::now();
-                        for i in 0..1000 {
+                        for _ in 0..1000 {
                             send.write_all(&[0u8; 1024]).await?;
-                            println!(".");
                         }
                         send.finish().await?;
                         copying.await??;
                         println!("done in {} s", t0.elapsed().as_secs_f64());
-                    },
+                    }
                     Err(cause) => {
                         println!("got error {:?}", cause);
                     }
                 }
-            },
+            }
             Err(cause) => {
                 println!("got error {:?}", cause);
             }
         }
-
     } else {
-        println!("accepting connection");
+        println!(
+            "run drderp connect {} in another terminal or on another machine",
+            hex::encode(key.public_key().as_bytes())
+        );
         while let Some(connecting) = endpoint.accept().await {
             println!("got connecting");
             match connecting.await {
                 Ok(connection) => {
                     tokio::task::spawn(async move {
                         match connection.accept_bi().await {
-                            Ok((mut send, mut recv)) => {
-                                println!("got bi");
-                                tokio::io::copy(&mut recv, &mut send).await?;
-                                println!("done copying");
-                                send.finish().await?;
+                            Ok((send, recv)) => {
+                                handle_test_request(send, recv).await?;
                             }
                             Err(cause) => {
                                 println!("got error {:?}", cause);
@@ -196,7 +244,7 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
                         };
                         anyhow::Ok(())
                     });
-                },
+                }
                 Err(cause) => {
                     println!("got error {:?}", cause);
                 }

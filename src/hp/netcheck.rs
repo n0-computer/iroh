@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashMap,
-    fmt::{Debug, self},
+    fmt::{self, Debug},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
