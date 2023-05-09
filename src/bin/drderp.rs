@@ -34,6 +34,9 @@ enum Commands {
 
         #[clap(long)]
         private_key: Option<String>,
+
+        #[clap(long)]
+        local_derper: bool,
     },
 }
 
@@ -108,13 +111,13 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
 }
 
 async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    echo_test(connection.clone()).await?;
-    send_test(connection.clone()).await?;
-    recv_test(connection).await?;
+    echo_test(&connection).await?;
+    send_test(&connection).await?;
+    recv_test(&connection).await?;
     Ok(())
 }
 
-async fn echo_test(connection: quinn::Connection) -> anyhow::Result<()> {
+async fn echo_test(connection: &quinn::Connection) -> anyhow::Result<()> {
     let mut size = 1;
     println!("performing echo test...");
     while size <= 1024 * 1024 {
@@ -142,7 +145,7 @@ async fn echo_test(connection: quinn::Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn send_test(connection: quinn::Connection) -> anyhow::Result<()> {
+async fn send_test(connection: &quinn::Connection) -> anyhow::Result<()> {
     let mut size = 1;
     println!("performing send test...");
     while size <= 1024 * 1024 {
@@ -170,7 +173,7 @@ async fn send_test(connection: quinn::Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn recv_test(connection: quinn::Connection) -> anyhow::Result<()> {
+async fn recv_test(connection: &quinn::Connection) -> anyhow::Result<()> {
     let mut size = 1;
     println!("performing recv test...");
     while size <= 1024 * 1024 {
@@ -203,7 +206,7 @@ async fn recv_test(connection: quinn::Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-//
+/// Passive side that just accepts connections and answers requests (echo, drain or send)
 async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
@@ -220,7 +223,7 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
     }
 }
 
-pub fn configure_derp_map() -> DerpMap {
+fn configure_derp_map() -> DerpMap {
     let stun_port = 3478;
     let host_name = "derp.iroh.computer".into();
     let derp_port = 3340;
@@ -229,10 +232,23 @@ pub fn configure_derp_map() -> DerpMap {
     DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
 }
 
+fn configure_local_derp_map() -> DerpMap {
+    let stun_port = 3478;
+    let host_name = "derp.invalid".into();
+    let derp_port = 3340;
+    let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
+    let derp_ipv6 = UseIpv6::None;
+    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
+}
+
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 const DEFAULT_DERP_REGION: u16 = 1;
 
-async fn connect(dial: Option<String>, private_key: Option<String>) -> anyhow::Result<()> {
+async fn connect(
+    dial: Option<String>,
+    private_key: Option<String>,
+    local_derper: bool,
+) -> anyhow::Result<()> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
     let on_net_info = |ni: hp::cfg::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
@@ -258,7 +274,11 @@ async fn connect(dial: Option<String>, private_key: Option<String>) -> anyhow::R
         "public key: {}",
         hex::encode(private_key.public_key().as_bytes())
     );
-    let derp_map = configure_derp_map();
+    let derp_map = if local_derper {
+        configure_local_derp_map()
+    } else {
+        configure_derp_map()
+    };
     tracing::info!("derp map {:#?}", derp_map);
     let opts = magicsock::Options {
         port: 0,
@@ -369,6 +389,10 @@ async fn main() -> anyhow::Result<()> {
             host_name,
             stun_port,
         } => report(host_name, stun_port).await,
-        Commands::Connect { dial, private_key } => connect(dial, private_key).await,
+        Commands::Connect {
+            dial,
+            private_key,
+            local_derper,
+        } => connect(dial, private_key, local_derper).await,
     }
 }
