@@ -48,7 +48,7 @@ mod tests {
         blobs::Collection,
         get::{dial_peer, get_response_machine},
         get::{get_response_machine::ConnectedNext, Stats},
-        protocol::{AnyGetRequest, AuthToken, GetRequest},
+        protocol::{AnyGetRequest, GetRequest},
         provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
         tls::PeerId,
         util::Hash,
@@ -143,7 +143,6 @@ mod tests {
 
         async fn run_client(
             hash: Hash,
-            token: AuthToken,
             file_hash: Hash,
             name: String,
             addr: SocketAddr,
@@ -157,7 +156,7 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            let response = get::run(GetRequest::all(hash).into(), token, opts).await?;
+            let response = get::run(GetRequest::all(hash).into(), opts).await?;
             let (collection, children, _stats) = aggregate_get_response(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
@@ -170,7 +169,6 @@ mod tests {
         for _i in 0..3 {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
-                provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
                 provider.local_address(),
@@ -267,12 +265,7 @@ mod tests {
             keylog: true,
         };
 
-        let response = get::run(
-            GetRequest::all(collection_hash).into(),
-            provider.auth_token(),
-            opts,
-        )
-        .await?;
+        let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
         let (collection, children, _stats) = aggregate_get_response(response).await?;
         assert_eq!(num_blobs, collection.blobs().len());
         for (i, (name, path, hash)) in expects.into_iter().enumerate() {
@@ -343,7 +336,6 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
             .unwrap();
-        let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
 
         // This tasks closes the connection on the provider side as soon as the transfer
@@ -374,7 +366,6 @@ mod tests {
 
         let response = get::run(
             GetRequest::all(hash).into(),
-            auth_token,
             get::Options {
                 addr: provider_addr,
                 peer_id: None,
@@ -411,13 +402,11 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()?;
-        let auth_token = provider.auth_token();
         let provider_addr = provider.local_address();
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
-                auth_token,
                 get::Options {
                     addr: provider_addr,
                     peer_id: None,
@@ -456,13 +445,11 @@ mod tests {
                 return;
             }
         };
-        let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
-                auth_token,
                 get::Options {
                     addr,
                     peer_id,
@@ -561,7 +548,6 @@ mod tests {
                 return;
             }
         };
-        let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -572,7 +558,7 @@ mod tests {
             })
             .await?;
             let request = GetRequest::all(hash).into();
-            let stream = get::run_connection(connection, request, auth_token);
+            let stream = get::run_connection(connection, request);
             let (collection, children, _) = aggregate_get_response(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())
@@ -641,14 +627,12 @@ mod tests {
             .custom_get_handler(BlobCustomHandler)
             .spawn()
             .unwrap();
-        let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
-                auth_token,
                 get::Options {
                     addr,
                     peer_id,
@@ -677,14 +661,12 @@ mod tests {
             .custom_get_handler(CollectionCustomHandler)
             .spawn()
             .unwrap();
-        let auth_token = provider.auth_token();
         let addr = provider.local_address();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
-                auth_token,
                 get::Options {
                     addr,
                     peer_id,

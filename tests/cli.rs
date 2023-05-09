@@ -464,7 +464,6 @@ fn match_provide_output<T: Read>(
         reader,
         r"Listening address: [\d.:]*"; 1,
         r"PeerID: [_\w\d-]*"; 1,
-        r"Auth token: [\w\d]*"; 1,
         r""; 1,
         r"Adding .*"; 1,
         r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,

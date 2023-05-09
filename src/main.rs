@@ -14,7 +14,7 @@ use indicatif::{
 use iroh::blobs::{Blob, Collection};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
-use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
+use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -119,9 +119,6 @@ enum Commands {
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(provider::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
-        /// Auth token, defaults to random generated
-        #[clap(long)]
-        auth_token: Option<String>,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
@@ -171,9 +168,6 @@ enum Commands {
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// The authentication token to present to the server
-        #[clap(long)]
-        auth_token: String,
         /// Address of the provider
         #[clap(long, short, default_value_t = SocketAddr::from(get::DEFAULT_PROVIDER_ADDR))]
         addr: SocketAddr,
@@ -509,7 +503,6 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            auth_token,
             addr,
             out,
             single,
@@ -519,12 +512,9 @@ async fn main_impl() -> Result<()> {
                 peer_id: Some(peer),
                 keylog: cli.keylog,
             };
-            let token = AuthToken::from_str(&auth_token)
-                .context("Wrong format for authentication token")?;
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
                 opts,
-                token,
                 single,
             };
             tokio::select! {
@@ -553,7 +543,6 @@ async fn main_impl() -> Result<()> {
         Commands::Provide {
             path,
             addr,
-            auth_token,
             rpc_port,
         } => {
             let iroh_data_root = iroh_data_root()?;
@@ -574,15 +563,7 @@ async fn main_impl() -> Result<()> {
             };
             let key = Some(iroh_data_root.join("keypair"));
 
-            let provider = provide(
-                db.clone(),
-                addr,
-                auth_token,
-                key,
-                cli.keylog,
-                rpc_port.into(),
-            )
-            .await?;
+            let provider = provide(db.clone(), addr, key, cli.keylog, rpc_port.into()).await?;
             let controller = provider.controller();
 
             // task that will add data to the provider, either from a file or from stdin
@@ -695,7 +676,6 @@ async fn main_impl() -> Result<()> {
 
             println!("Listening address: {}", response.listen_addr);
             println!("PeerID: {}", response.peer_id);
-            println!("Auth token: {}", response.auth_token);
             Ok(())
         }
         Commands::Add { path, rpc_port } => {
@@ -728,20 +708,15 @@ async fn main_impl() -> Result<()> {
 async fn provide(
     db: Database,
     addr: SocketAddr,
-    auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
     rpc_port: Option<u16>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = provider::Provider::builder(db)
+    let builder = provider::Provider::builder(db)
         .keylog(keylog)
         .bind_addr(addr);
-    if let Some(ref encoded) = auth_token {
-        let auth_token = AuthToken::from_str(encoded)?;
-        builder = builder.auth_token(auth_token);
-    }
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
         builder
@@ -754,7 +729,6 @@ async fn provide(
 
     println!("Listening address: {}", provider.local_address());
     println!("PeerID: {}", provider.peer_id());
-    println!("Auth token: {}", provider.auth_token());
     println!();
     Ok(provider)
 }
@@ -811,7 +785,6 @@ enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
-        token: AuthToken,
         single: bool,
     },
 }
@@ -890,7 +863,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -1041,7 +1014,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());

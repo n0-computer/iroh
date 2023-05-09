@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AnyGetRequest, AuthToken, Handshake, RangeSpecSeq};
+use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
 use crate::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::tls::{self, Keypair, PeerId};
@@ -123,7 +123,7 @@ pub async fn run_ticket(
     max_concurrent: u8,
 ) -> Result<get_response_machine::AtInitial> {
     let connection = dial_ticket(ticket, keylog, max_concurrent.into()).await?;
-    Ok(run_connection(connection, request, ticket.token()))
+    Ok(run_connection(connection, request))
 }
 
 async fn dial_ticket(
@@ -245,7 +245,6 @@ pub mod get_response_machine {
     pub struct AtInitial {
         connection: quinn::Connection,
         request: AnyGetRequest,
-        auth_token: AuthToken,
     }
 
     impl AtInitial {
@@ -253,16 +252,10 @@ pub mod get_response_machine {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        /// `auth_token` is the auth token for the request
-        pub fn new(
-            connection: quinn::Connection,
-            request: AnyGetRequest,
-            auth_token: AuthToken,
-        ) -> Self {
+        pub fn new(connection: quinn::Connection, request: AnyGetRequest) -> Self {
             Self {
                 connection,
                 request,
-                auth_token,
             }
         }
 
@@ -277,7 +270,6 @@ pub mod get_response_machine {
                 reader,
                 writer,
                 request: self.request,
-                auth_token: self.auth_token,
             })
         }
     }
@@ -289,7 +281,6 @@ pub mod get_response_machine {
         reader: TrackingReader<quinn::RecvStream>,
         writer: TrackingWriter<quinn::SendStream>,
         request: AnyGetRequest,
-        auth_token: AuthToken,
     }
 
     /// Possible next states after the handshake has been sent
@@ -316,14 +307,13 @@ pub mod get_response_machine {
                 mut reader,
                 mut writer,
                 request,
-                auth_token,
             } = self;
             let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
 
             // 1. Send Handshake
             {
                 debug!("sending handshake");
-                let handshake = Handshake::new(auth_token);
+                let handshake = Handshake::new();
                 let used = postcard::to_slice(&handshake, &mut out_buffer)?;
                 write_lp(&mut writer, used).await?;
             }
@@ -734,20 +724,18 @@ pub mod get_response_machine {
 /// Dial a peer and run a get request
 pub async fn run(
     request: AnyGetRequest,
-    auth_token: AuthToken,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
     let connection = dial_peer(opts).await?;
-    Ok(run_connection(connection, request, auth_token))
+    Ok(run_connection(connection, request))
 }
 
 /// Do a get request and return a stream of responses
 pub fn run_connection(
     connection: quinn::Connection,
     request: AnyGetRequest,
-    auth_token: AuthToken,
 ) -> get_response_machine::AtInitial {
-    get_response_machine::AtInitial::new(connection, request, auth_token)
+    get_response_machine::AtInitial::new(connection, request)
 }
 
 /// Error when processing a response
