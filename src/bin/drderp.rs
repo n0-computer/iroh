@@ -31,6 +31,9 @@ enum Commands {
     },
     Connect {
         dial: Option<String>,
+
+        #[clap(long)]
+        private_key: Option<String>,
     },
 }
 
@@ -56,7 +59,6 @@ async fn handle_test_request(
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     recv.read_exact(&mut buf).await?;
     let request: TestStreamRequest = postcard::from_bytes(&buf)?;
-    println!("{:?}", request);
     match request {
         TestStreamRequest::Echo => {
             // copy the stream back
@@ -95,6 +97,49 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
+    tracing::info!("got connection");
+    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+    let mut size = 1;
+    while size < 1024 * 1024 {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
+        send.write_all(&buf).await?;
+        let copying = tokio::spawn(async move {
+            tracing::debug!("draining response");
+            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        });
+        println!("sending {} bytes", size);
+        let t0 = Instant::now();
+        send.write_all(&vec![0u8; size]).await?;
+        send.finish().await?;
+        copying.await??;
+        let elapsed = t0.elapsed().as_secs_f64();
+        println!("done in {} s", elapsed);
+        println!("speed {} bytes/s", (size as f64) / elapsed);
+        size = size * 16;
+    }
+    println!("test done");
+    Ok(())
+}
+
+//
+async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
+    loop {
+        match connection.accept_bi().await {
+            Ok((send, recv)) => {
+                if let Err(cause) = handle_test_request(send, recv).await {
+                    eprintln!("Error handling test request {}", cause);
+                }
+            }
+            Err(cause) => {
+                eprintln!("error accepting bidi stream {}", cause);
+                break Err(cause.into());
+            }
+        };
+    }
+}
+
 pub fn configure_derp_map() -> DerpMap {
     // Use google stun server for now
     let stun_port = 3478;
@@ -108,22 +153,28 @@ pub fn configure_derp_map() -> DerpMap {
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 const DEFAULT_DERP_REGION: u16 = 1;
 
-async fn connect(dial: Option<String>) -> anyhow::Result<()> {
+async fn connect(dial: Option<String>, private_key: Option<String>) -> anyhow::Result<()> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
     let on_net_info = |ni: hp::cfg::NetInfo| {
-        println!("got net info {:#?}", ni);
+        tracing::info!("got net info {:#?}", ni);
     };
 
     let on_endpoints = |ep: &[hp::cfg::Endpoint]| {
-        println!("got endpoint {:#?}", ep);
+        tracing::info!("got endpoint {:#?}", ep);
     };
 
     let on_derp_active = move || {
-        println!("got derp active");
+        tracing::info!("got derp active");
         on_derp_s.try_send(()).ok();
     };
 
-    let private_key = SecretKey::generate();
+    let private_key = if let Some(key) = private_key {
+        let bytes = hex::decode(key)?;
+        let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
+        SecretKey::from(bytes)
+    } else {
+        SecretKey::generate()
+    };
     tracing::info!(
         "public key: {}",
         hex::encode(private_key.public_key().as_bytes())
@@ -197,56 +248,26 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
         let connecting = endpoint.connect(addr, "localhost")?;
         match connecting.await {
             Ok(connection) => {
-                tracing::info!("got connection");
-                match connection.open_bi().await {
-                    Ok((mut send, mut recv)) => {
-                        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-                        postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
-                        send.write_all(&buf).await?;
-                        let copying = tokio::spawn(async move {
-                            tracing::debug!("draining response");
-                            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
-                        });
-                        let t0 = Instant::now();
-                        for _ in 0..1000 {
-                            send.write_all(&[0u8; 1024]).await?;
-                        }
-                        send.finish().await?;
-                        copying.await??;
-                        println!("done in {} s", t0.elapsed().as_secs_f64());
-                    }
-                    Err(cause) => {
-                        println!("got error {:?}", cause);
-                    }
+                if let Err(cause) = passive_side(connection).await {
+                    eprintln!("error handling connection: {}", cause);
                 }
             }
             Err(cause) => {
-                println!("got error {:?}", cause);
+                eprintln!("unable to connect to {}: {}", addr, cause);
             }
         }
     } else {
         println!(
-            "run drderp connect {} in another terminal or on another machine",
+            "run 'drderp connect {}' in another terminal or on another machine",
             hex::encode(key.public_key().as_bytes())
         );
         while let Some(connecting) = endpoint.accept().await {
-            println!("got connecting");
             match connecting.await {
                 Ok(connection) => {
-                    tokio::task::spawn(async move {
-                        match connection.accept_bi().await {
-                            Ok((send, recv)) => {
-                                handle_test_request(send, recv).await?;
-                            }
-                            Err(cause) => {
-                                println!("got error {:?}", cause);
-                            }
-                        };
-                        anyhow::Ok(())
-                    });
+                    active_side(connection).await?;
                 }
                 Err(cause) => {
-                    println!("got error {:?}", cause);
+                    eprintln!("error accepting connection {}", cause);
                 }
             }
         }
@@ -269,6 +290,6 @@ async fn main() -> anyhow::Result<()> {
             host_name,
             stun_port,
         } => report(host_name, stun_port).await,
-        Commands::Connect { dial } => connect(dial).await,
+        Commands::Connect { dial, private_key } => connect(dial, private_key).await,
     }
 }
