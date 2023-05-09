@@ -101,7 +101,7 @@ async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
     tracing::info!("got connection");
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     let mut size = 1;
-    while size < 1024 * 1024 {
+    while size <= 1024 * 1024 {
         let (mut send, mut recv) = connection.open_bi().await?;
         postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
         send.write_all(&buf).await?;
@@ -141,7 +141,6 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
 }
 
 pub fn configure_derp_map() -> DerpMap {
-    // Use google stun server for now
     let stun_port = 3478;
     let host_name = "derp.iroh.computer".into();
     let derp_port = 3340;
@@ -182,7 +181,7 @@ async fn connect(dial: Option<String>, private_key: Option<String>) -> anyhow::R
     let derp_map = configure_derp_map();
     tracing::info!("derp map {:#?}", derp_map);
     let opts = magicsock::Options {
-        port: 12345,
+        port: 0,
         on_endpoints: Some(Box::new(on_endpoints)),
         on_derp_active: Some(Box::new(on_derp_active)),
         on_net_info: Some(Box::new(on_net_info)),

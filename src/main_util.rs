@@ -216,7 +216,6 @@ pub fn create_quinn_client(
 }
 
 pub fn configure_derp_map() -> DerpMap {
-    // Use google stun server for now
     let stun_port = 3478;
     let host_name = "derp.iroh.computer".into();
     let derp_port = 3340;
@@ -226,7 +225,6 @@ pub fn configure_derp_map() -> DerpMap {
 }
 
 pub fn configure_local_derp_map() -> DerpMap {
-    // Use google stun server for now
     let stun_port = 3478;
     let host_name = "derp.invalid".into();
     let derp_port = 3340;
