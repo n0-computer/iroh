@@ -53,7 +53,7 @@ mod tests {
         blobs::Collection,
         get::{dial_peer, get_response_machine},
         get::{get_response_machine::ConnectedNext, Stats},
-        protocol::{AnyGetRequest, AuthToken, GetRequest},
+        protocol::{AnyGetRequest, GetRequest},
         provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
         tls::PeerId,
         util::Hash,
@@ -172,7 +172,6 @@ mod tests {
 
         async fn run_client(
             hash: Hash,
-            token: AuthToken,
             file_hash: Hash,
             name: String,
             addr: SocketAddr,
@@ -187,8 +186,8 @@ mod tests {
             };
             let expected_data = &content;
             let expected_name = &name;
-            let response = get::run(GetRequest::all(hash).into(), token, opts).await?;
-            let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+            let response = get::run(GetRequest::all(hash).into(), opts).await?;
+            let (collection, children, _stats) = aggregate_get_response(response).await?;
             assert_eq!(expected_name, &collection.blobs()[0].name);
             assert_eq!(&file_hash, &collection.blobs()[0].hash);
             assert_eq!(expected_data, &children[&0]);
@@ -200,7 +199,6 @@ mod tests {
         for _i in 0..3 {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
-                provider.auth_token(),
                 expect_hash.into(),
                 expect_name.clone(),
                 provider.local_address().await.unwrap()[0],
@@ -304,13 +302,8 @@ mod tests {
             derp_map: None,
         };
 
-        let response = get::run(
-            GetRequest::all(collection_hash).into(),
-            provider.auth_token(),
-            opts,
-        )
-        .await?;
-        let (collection, children, _stats) = aggregate_get_response_fsm(response).await?;
+        let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
+        let (collection, children, _stats) = aggregate_get_response(response).await?;
         assert_eq!(num_blobs, collection.blobs().len());
         for (i, (name, path, hash)) in expects.into_iter().enumerate() {
             let blob = &collection.blobs()[i];
@@ -381,7 +374,6 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let auth_token = provider.auth_token();
         let provider_addr = provider.local_address().await.unwrap();
 
         // This tasks closes the connection on the provider side as soon as the transfer
@@ -412,7 +404,6 @@ mod tests {
 
         let response = get::run(
             GetRequest::all(hash).into(),
-            auth_token,
             get::Options {
                 addr: Some(provider_addr[0]),
                 peer_id: None,
@@ -422,7 +413,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let (_collection, _children, _stats) = aggregate_get_response_fsm(response).await.unwrap();
+        let (_collection, _children, _stats) = aggregate_get_response(response).await.unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
         tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -451,13 +442,11 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
             .await?;
-        let auth_token = provider.auth_token();
         let provider_addr = provider.local_address().await?;
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
-                auth_token,
                 get::Options {
                     addr: Some(provider_addr[0]),
                     peer_id: None,
@@ -498,13 +487,11 @@ mod tests {
                 return;
             }
         };
-        let auth_token = provider.auth_token();
         let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
-                auth_token,
                 get::Options {
                     addr: Some(addr[0]),
                     peer_id,
@@ -514,7 +501,7 @@ mod tests {
             )
             .await
             .unwrap();
-            aggregate_get_response_fsm(request).await
+            aggregate_get_response(request).await
         })
         .await
         .expect("timeout")
@@ -541,7 +528,7 @@ mod tests {
                 None,
             )
             .await?;
-            aggregate_get_response_fsm(response).await
+            aggregate_get_response(response).await
         })
         .await
         .expect("timeout")
@@ -564,7 +551,7 @@ mod tests {
     }
 
     // helper to aggregate a get response and return all relevant data
-    async fn aggregate_get_response_fsm(
+    async fn aggregate_get_response(
         initial: get_response_machine::AtInitial,
     ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
         use get_response_machine::*;
@@ -572,11 +559,10 @@ mod tests {
         let connected = initial.next().await?;
         // we assume that the request includes the entire collection
         let (mut next, collection) = {
-            let ConnectedNext::StartCollection(sc) = connected.next().await? else {
+            let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
-            let mut data = Vec::new();
-            let done = sc.next().concatenate(&mut data, |_, _| {}).await?;
+            let (done, data) = sc.next().concatenate_into_vec().await?;
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children
@@ -589,11 +575,7 @@ mod tests {
             let Some(blob) = collection.blobs().get(child as usize) else {
                 break start.finish();
             };
-            let mut data = Vec::new();
-            let done = start
-                .next(blob.hash)
-                .concatenate(&mut data, |_, _| {})
-                .await?;
+            let (done, data) = start.next(blob.hash).concatenate_into_vec().await?;
             items.insert(child, data.into());
             next = done.next();
         };
@@ -617,7 +599,6 @@ mod tests {
                 return;
             }
         };
-        let auth_token = provider.auth_token();
         let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -629,8 +610,8 @@ mod tests {
             })
             .await?;
             let request = GetRequest::all(hash).into();
-            let stream = get::run_connection(connection, request, auth_token);
-            let (collection, children, _) = aggregate_get_response_fsm(stream).await?;
+            let stream = get::run_connection(connection, request);
+            let (collection, children, _) = aggregate_get_response(stream).await?;
             validate_children(collection, children)?;
             anyhow::Ok(())
         })
@@ -699,14 +680,12 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let auth_token = provider.auth_token();
         let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
-                auth_token,
                 get::Options {
                     addr: Some(addr[0]),
                     peer_id,
@@ -716,10 +695,9 @@ mod tests {
             )
             .await?;
             let connected = response.next().await?;
-            let ConnectedNext::StartCollection(start) = connected.next().await? else { panic!() };
+            let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
             let header = start.next();
-            let mut actual = Vec::new();
-            header.concatenate(&mut actual, |_, _| {}).await?;
+            let (_, actual) = header.concatenate_into_vec().await?;
             let expected = tokio::fs::read(readme_path()).await?;
             assert_eq!(actual, expected);
             anyhow::Ok(())
@@ -738,14 +716,12 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let auth_token = provider.auth_token();
         let addr = provider.local_address().await.unwrap();
         let peer_id = Some(provider.peer_id());
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
-                auth_token,
                 get::Options {
                     addr: Some(addr[0]),
                     peer_id,
@@ -754,7 +730,7 @@ mod tests {
                 },
             )
             .await?;
-            let (_collection, items, _stats) = aggregate_get_response_fsm(response).await?;
+            let (_collection, items, _stats) = aggregate_get_response(response).await?;
             let actual = &items[&0];
             let expected = tokio::fs::read(readme_path()).await?;
             assert_eq!(actual, &expected);

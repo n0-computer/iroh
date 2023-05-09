@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{protocol::AuthToken, util::RpcError, Hash, PeerId};
+use crate::{util::RpcError, Hash, PeerId};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -129,7 +129,6 @@ pub struct WatchResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
     pub peer_id: Box<PeerId>,
-    pub auth_token: Box<AuthToken>,
     pub listen_addrs: Vec<SocketAddr>,
     pub version: String,
 }

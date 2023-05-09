@@ -16,13 +16,14 @@ use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
 use iroh::main_util::pathbuf_from_name;
-use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
+use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
-use iroh::tokio_util::SeekOptimized;
+use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh::main_util::{configure_derp_map, create_quinn_client, iroh_data_root, Blake3Cid};
@@ -114,9 +115,6 @@ enum Commands {
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(provider::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
-        /// Auth token, defaults to random generated
-        #[clap(long)]
-        auth_token: Option<String>,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
@@ -166,9 +164,6 @@ enum Commands {
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// The authentication token to present to the server
-        #[clap(long)]
-        auth_token: String,
         /// Address of the provider
         #[clap(long, short)]
         addr: Option<SocketAddr>,
@@ -503,7 +498,6 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            auth_token,
             addr,
             out,
             single,
@@ -515,12 +509,9 @@ async fn main_impl() -> Result<()> {
                 keylog: cli.keylog,
                 derp_map: Some(dm),
             };
-            let token = AuthToken::from_str(&auth_token)
-                .context("Wrong format for authentication token")?;
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
                 opts,
-                token,
                 single,
             };
             tokio::select! {
@@ -551,7 +542,6 @@ async fn main_impl() -> Result<()> {
         Commands::Provide {
             path,
             addr,
-            auth_token,
             rpc_port,
         } => {
             let iroh_data_root = iroh_data_root()?;
@@ -572,15 +562,7 @@ async fn main_impl() -> Result<()> {
             };
             let key = Some(iroh_data_root.join("keypair"));
 
-            let provider = provide(
-                db.clone(),
-                addr,
-                auth_token,
-                key,
-                cli.keylog,
-                rpc_port.into(),
-            )
-            .await?;
+            let provider = provide(db.clone(), addr, key, cli.keylog, rpc_port.into()).await?;
             let controller = provider.controller();
 
             // task that will add data to the provider, either from a file or from stdin
@@ -693,7 +675,6 @@ async fn main_impl() -> Result<()> {
 
             println!("Listening address: {:#?}", response.listen_addrs);
             println!("PeerID: {}", response.peer_id);
-            println!("Auth token: {}", response.auth_token);
             Ok(())
         }
         Commands::Add { path, rpc_port } => {
@@ -726,7 +707,6 @@ async fn main_impl() -> Result<()> {
 async fn provide(
     db: Database,
     addr: SocketAddr,
-    auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
     rpc_port: Option<u16>,
@@ -734,15 +714,11 @@ async fn provide(
     let keypair = get_keypair(key).await?;
 
     let dm = configure_derp_map(); // TODO: pass what is needed.
-    let mut builder = provider::Provider::builder(db)
+    let builder = provider::Provider::builder(db)
         .keylog(keylog)
         .derp_map(dm)
         .bind_addr(addr);
 
-    if let Some(ref encoded) = auth_token {
-        let auth_token = AuthToken::from_str(encoded)?;
-        builder = builder.auth_token(auth_token);
-    }
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
         builder
@@ -756,7 +732,6 @@ async fn provide(
 
     println!("Listening address: {:#?}", provider.local_address().await?);
     println!("PeerID: {}", provider.peer_id());
-    println!("Auth token: {}", provider.auth_token());
     println!();
     Ok(provider)
 }
@@ -814,7 +789,6 @@ enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
-        token: AuthToken,
         single: bool,
     },
 }
@@ -895,7 +869,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             keylog,
             derp_map,
         } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
-        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -903,7 +877,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         init_download_progress(count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
-        ConnectedNext::StartCollection(curr) => {
+        ConnectedNext::StartRoot(curr) => {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
                 .context("unable to create directory {temp_dir}")?;
@@ -911,9 +885,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .await
                 .context("Unable to create directory {out_dir}")?;
             let curr = curr.next();
-            let (curr, size) = curr.next().await?;
-            let mut collection_data = Vec::with_capacity(size as usize);
-            let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+            let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
             init_download_progress(collection.total_entries(), collection.total_blobs_size());
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
@@ -957,7 +929,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .create(true)
                 .open(&data_path)
                 .await?;
-            let mut data_file = SeekOptimized::new(data_file).into();
+            let data_file = SeekOptimized::new(data_file);
             tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
             let (curr, size) = header.next().await?;
             pb.set_length(size);
@@ -972,21 +944,29 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             } else {
                 None
             };
-            let on_write = |offset, _size| {
-                // println!("offset: {}/{}", offset, pb.length().unwrap());
-                pb.set_position(offset);
-            };
+
+            let (on_write, mut receive_on_write) = mpsc::channel(1);
+            let pb2 = pb.clone();
+            // create task that updates the progress bar
+            let progress_task = tokio::task::spawn(async move {
+                while let Some((offset, _)) = receive_on_write.recv().await {
+                    pb2.set_position(offset);
+                }
+            });
+            let mut data_file = ProgressSliceWriter::new(data_file, on_write).into();
             let curr = curr
-                .write_all_with_outboard(&mut outboard_file, &mut data_file, on_write)
+                .write_all_with_outboard(&mut outboard_file, &mut data_file)
                 .await?;
+            // Flush the data file first, it is the only thing that matters at this point
+            data_file.into_inner().into_inner().shutdown().await?;
+            // wait for the progress task to finish, only after dropping the ProgressSliceWriter
+            progress_task.await.ok();
             tokio::fs::create_dir_all(
                 final_path
                     .parent()
                     .context("final path should have parent")?,
             )
             .await?;
-            // Flush the data file first, it is the only thing that matters at this point
-            data_file.into_inner().shutdown().await?;
             // Rename temp file, to target name
             // once this is done, the file is considered complete
             tokio::fs::rename(data_path, final_path).await?;
@@ -1042,18 +1022,16 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             keylog,
             derp_map,
         } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
-        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
-    let ConnectedNext::StartCollection(curr) = connected.next().await? else {
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("expected a collection");
     };
     let (mut next, collection) = {
         let curr = curr.next();
-        let (curr, size) = curr.next().await?;
-        let mut collection_data = Vec::with_capacity(size as usize);
-        let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+        let (curr, collection_data) = curr.concatenate_into_vec().await?;
         let collection = Collection::from_bytes(&collection_data)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
@@ -1090,12 +1068,21 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         pb.set_message(format!("Receiving '{}'...", name.display()));
         pb.reset();
         let header = start.next(blob.hash);
-        let curr = {
-            let on_write = |offset, _size| {
-                pb.set_position(offset);
-            };
-            header.concatenate(tokio::io::stdout(), on_write).await?
-        };
+        let (on_write, mut receive_on_write) = mpsc::channel(1);
+        let pb2 = pb.clone();
+        // create task that updates the progress bar
+        let progress_task = tokio::task::spawn(async move {
+            while let Some((offset, _)) = receive_on_write.recv().await {
+                pb2.set_position(offset);
+            }
+        });
+        let mut writer =
+            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write)
+                .into();
+        let curr = header.write_all(&mut writer).await?;
+        drop(writer);
+        // wait for the progress task to finish, only after dropping the writer
+        progress_task.await.ok();
         pb.finish();
         next = curr.next();
     };

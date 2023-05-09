@@ -10,7 +10,6 @@ use std::str::FromStr;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::AuthToken;
 use crate::util;
 use crate::{Hash, PeerId};
 
@@ -30,24 +29,12 @@ pub struct Ticket {
     ///
     /// This will never be empty.
     addrs: Vec<SocketAddr>,
-    /// The authentication token with permission to retrieve the hash.
-    token: AuthToken,
 }
 
 impl Ticket {
-    pub(super) fn new(
-        hash: Hash,
-        peer: PeerId,
-        addrs: Vec<SocketAddr>,
-        token: AuthToken,
-    ) -> Result<Self> {
+    pub(super) fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
-        Ok(Self {
-            hash,
-            peer,
-            addrs,
-            token,
-        })
+        Ok(Self { hash, peer, addrs })
     }
 
     /// Deserializes from bytes.
@@ -77,11 +64,6 @@ impl Ticket {
     /// This is guaranteed to be non-empty.
     pub fn addrs(&self) -> &[SocketAddr] {
         &self.addrs
-    }
-
-    /// The authentication token for this ticket.
-    pub fn token(&self) -> AuthToken {
-        self.token
     }
 }
 
@@ -116,12 +98,10 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let token = AuthToken::generate();
         let ticket = Ticket {
             hash,
             peer,
             addrs: vec![addr],
-            token,
         };
         let base64 = ticket.to_string();
         println!("Ticket: {base64}");
