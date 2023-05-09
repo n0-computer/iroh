@@ -70,16 +70,26 @@ async fn handle_test_request(
         }
         TestStreamRequest::Send { bytes, block_size } => {
             // send the requested number of bytes, in blocks of the requested size
-            let mut buf = vec![0u8; block_size as usize];
-            let mut remaining = bytes;
-            while remaining > 0 {
-                let n = remaining.min(block_size as u64);
-                send.write_all(&mut buf[..n as usize]).await?;
-                remaining -= n;
-            }
+            send_blocks(&mut send, bytes, block_size).await?;
         }
     }
     send.finish().await?;
+    Ok(())
+}
+
+async fn send_blocks(
+    send: &mut quinn::SendStream,
+    total_bytes: u64,
+    block_size: u32,
+) -> anyhow::Result<()> {
+    // send the requested number of bytes, in blocks of the requested size
+    let mut buf = vec![0u8; block_size as usize];
+    let mut remaining = total_bytes;
+    while remaining > 0 {
+        let n = remaining.min(block_size as u64);
+        send.write_all(&mut buf[..n as usize]).await?;
+        remaining -= n;
+    }
     Ok(())
 }
 
@@ -98,11 +108,18 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
 }
 
 async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    tracing::info!("got connection");
-    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+    echo_test(connection.clone()).await?;
+    send_test(connection.clone()).await?;
+    recv_test(connection).await?;
+    Ok(())
+}
+
+async fn echo_test(connection: quinn::Connection) -> anyhow::Result<()> {
     let mut size = 1;
+    println!("performing echo test...");
     while size <= 1024 * 1024 {
         let (mut send, mut recv) = connection.open_bi().await?;
+        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
         postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
         send.write_all(&buf).await?;
         let copying = tokio::spawn(async move {
@@ -111,15 +128,78 @@ async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
         });
         println!("sending {} bytes", size);
         let t0 = Instant::now();
-        send.write_all(&vec![0u8; size]).await?;
+        send_blocks(&mut send, size, 1024 * 1024).await?;
         send.finish().await?;
-        copying.await??;
+        let received = copying.await??;
+        anyhow::ensure!(received == size);
         let elapsed = t0.elapsed().as_secs_f64();
         println!("done in {} s", elapsed);
         println!("speed {} bytes/s", (size as f64) / elapsed);
         size = size * 16;
     }
     println!("test done");
+    println!("");
+    Ok(())
+}
+
+async fn send_test(connection: quinn::Connection) -> anyhow::Result<()> {
+    let mut size = 1;
+    println!("performing send test...");
+    while size <= 1024 * 1024 {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+        postcard::to_slice(&TestStreamRequest::Drain, &mut buf)?;
+        send.write_all(&buf).await?;
+        let copying = tokio::spawn(async move {
+            tracing::debug!("draining response");
+            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        });
+        println!("sending {} bytes", size);
+        let t0 = Instant::now();
+        send_blocks(&mut send, size, 1024 * 1024).await?;
+        send.finish().await?;
+        let received = copying.await??;
+        anyhow::ensure!(received == 0);
+        let elapsed = t0.elapsed().as_secs_f64();
+        println!("done in {} s", elapsed);
+        println!("speed {} bytes/s", (size as f64) / elapsed);
+        size = size * 16;
+    }
+    println!("test done");
+    println!("");
+    Ok(())
+}
+
+async fn recv_test(connection: quinn::Connection) -> anyhow::Result<()> {
+    let mut size = 1;
+    println!("performing recv test...");
+    while size <= 1024 * 1024 {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+        postcard::to_slice(
+            &TestStreamRequest::Send {
+                bytes: size,
+                block_size: 1024 * 1024,
+            },
+            &mut buf,
+        )?;
+        println!("asking for {} bytes", size);
+        let t0 = Instant::now();
+        send.write_all(&buf).await?;
+        let copying = tokio::spawn(async move {
+            tracing::debug!("draining response");
+            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        });
+        send.finish().await?;
+        let received = copying.await??;
+        anyhow::ensure!(received == size);
+        let elapsed = t0.elapsed().as_secs_f64();
+        println!("done in {} s", elapsed);
+        println!("speed {} bytes/s", (size as f64) / elapsed);
+        size = size * 16;
+    }
+    println!("test done");
+    println!("");
     Ok(())
 }
 
