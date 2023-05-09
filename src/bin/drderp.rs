@@ -1,21 +1,18 @@
-use std::{sync::Arc, time::Duration, str::FromStr};
+use std::{sync::Arc, time::{Duration, Instant}, net::SocketAddr};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use ed25519_dalek::VerifyingKey;
 use iroh::{
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
         magicsock,
-        netcheck::Client,
     },
-    tls, PeerId,
+    tls,
 };
 use tokio::sync;
 use tracing_subscriber::{prelude::*, EnvFilter};
-use x509_parser::public_key;
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -27,7 +24,6 @@ enum Commands {
         stun_port: u16,
     },
     Connect {
-        #[clap(long)]
         dial: Option<String>,
     },
 }
@@ -40,16 +36,16 @@ struct Cli {
 }
 
 async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
-    let mut client = Client::new(None).await?;
+    let mut client = hp::netcheck::Client::new(None).await?;
 
     let derp_port = 0;
     let derp_ipv4 = UseIpv4::None;
     let derp_ipv6 = UseIpv6::None;
     let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
-    println!("getting report using derp map {:#?}", dm);
+    println!("getting report using derp map {:#}", dm);
 
     let r = client.get_report(&dm, None, None).await?;
-    println!("{:#?}", r);
+    println!("{:#}", r);
     Ok(())
 }
 
@@ -63,7 +59,8 @@ pub fn configure_derp_map() -> DerpMap {
     DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
 }
 
-pub(crate) const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
+const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
+const DEFAULT_DERP_REGION: u16 = 1;
 
 async fn connect(dial: Option<String>) -> anyhow::Result<()> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
@@ -128,14 +125,82 @@ async fn connect(dial: Option<String>) -> anyhow::Result<()> {
         let bytes = hex::decode(dial)?;
         let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
         let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
+
+    conn
+        .set_network_map(hp::netmap::NetworkMap {
+            peers: vec![hp::cfg::Node {
+                name: None,
+                addresses: vec![],
+                key: key.clone(),
+                endpoints: vec![],
+                derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                created: Instant::now(),
+                hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                keep_alive: false,
+                expired: false,
+                online: None,
+                last_seen: None,
+            }],
+        })
+        .await?;
         let addr = conn.get_mapping_addr(&key).await;
+        let addr = addr.context("no mapping address")?;
         println!("dialing {:?} at {:?}", key, addr);
+        let connecting = endpoint.connect(addr, "localhost")?;
+        match connecting.await {
+            Ok(connection) => {
+                println!("got connection {:?}", connection);
+                match connection.open_bi().await {
+                    Ok((mut send, mut recv)) => {
+                        println!("got bi");
+                        let copying = tokio::spawn(async move {
+                            println!("draining response");
+                            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+                        });
+                        let t0 = Instant::now();
+                        for i in 0..1000 {
+                            send.write_all(&[0u8; 1024]).await?;
+                            println!(".");
+                        }
+                        send.finish().await?;
+                        copying.await??;
+                        println!("done in {} s", t0.elapsed().as_secs_f64());
+                    },
+                    Err(cause) => {
+                        println!("got error {:?}", cause);
+                    }
+                }
+            },
+            Err(cause) => {
+                println!("got error {:?}", cause);
+            }
+        }
+
     } else {
         println!("accepting connection");
         while let Some(connecting) = endpoint.accept().await {
             println!("got connecting");
-            let connection = connecting.await?;
-            println!("got connection");
+            match connecting.await {
+                Ok(connection) => {
+                    tokio::task::spawn(async move {
+                        match connection.accept_bi().await {
+                            Ok((mut send, mut recv)) => {
+                                println!("got bi");
+                                tokio::io::copy(&mut recv, &mut send).await?;
+                                println!("done copying");
+                                send.finish().await?;
+                            }
+                            Err(cause) => {
+                                println!("got error {:?}", cause);
+                            }
+                        };
+                        anyhow::Ok(())
+                    });
+                },
+                Err(cause) => {
+                    println!("got error {:?}", cause);
+                }
+            }
         }
     }
 

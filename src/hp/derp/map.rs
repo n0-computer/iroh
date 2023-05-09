@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr}, fmt,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -50,6 +50,12 @@ impl DerpMap {
         );
 
         dm
+    }
+}
+
+impl fmt::Display for DerpMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
     }
 }
 

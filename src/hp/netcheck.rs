@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, self},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use derive_more::Display;
 use futures::{
     stream::{FuturesUnordered, StreamExt},
     Future, FutureExt,
@@ -119,6 +120,12 @@ impl Report {
     /// Reports whether any of UPnP, PMP, or PCP are non-empty.
     pub fn any_port_mapping_checked(&self) -> bool {
         self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
+    }
+}
+
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
     }
 }
 
