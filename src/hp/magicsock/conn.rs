@@ -676,11 +676,12 @@ enum NetworkSource {
     Derp,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct DerpReadResult {
     region_id: u16,
     src: key::node::PublicKey,
     /// packet data
+    #[debug(skip)]
     buf: BytesMut,
 }
 
@@ -986,7 +987,7 @@ impl Actor {
                     debug!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
                     for (_, ep) in self.peer_map.endpoints_mut() {
-                        ep.heartbeat().await;
+                        ep.stayin_alive().await;
                     }
                 }
                 _ = endpoints_update_receiver.changed() => {

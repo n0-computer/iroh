@@ -710,7 +710,8 @@ impl Endpoint {
         self.pending_cli_pings.clear();
     }
 
-    pub(super) async fn heartbeat(&mut self) {
+    /// Send a heartbeat to the peer to keep the connection alive.
+    pub(super) async fn stayin_alive(&mut self) {
         let now = Instant::now();
         let (udp_addr, _derp_addr) = self.addr_for_send(&now);
 
@@ -730,7 +731,7 @@ impl Endpoint {
                         ep_state.last_ping.map(|l| now - l),
                         now
                     );
-                    self.start_ping(udp_addr, now, DiscoPingPurpose::Heartbeat)
+                    self.start_ping(udp_addr, now, DiscoPingPurpose::StayinAlive)
                         .await;
                 }
             }
@@ -755,7 +756,7 @@ impl Endpoint {
 
         // Trigger a round of pings if we haven't had any full pings yet.
         if self.last_full_ping.is_none() {
-            self.heartbeat().await;
+            self.stayin_alive().await;
         }
 
         debug!(
@@ -1008,7 +1009,7 @@ pub enum DiscoPingPurpose {
     /// The user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
     Cli,
     /// Ping to ensure the current route is still valid.
-    Heartbeat,
+    StayinAlive,
 }
 
 static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
