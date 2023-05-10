@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    fmt::Debug,
     io::{self, IoSliceMut},
     mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -84,18 +83,22 @@ impl From<Network> for socket2::Domain {
 }
 
 /// Contains options for `Conn::listen`.
+#[derive(derive_more::Debug)]
 pub struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
     pub port: u16,
 
     /// Optionally provides a func to be called when endpoints change.
+    #[debug("on_endpoints: Option<Box<..>>")]
     pub on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
 
     /// Optionally provides a func to be called when a connection is made to a DERP server.
+    #[debug("on_derp_active: Option<Box<..>>")]
     pub on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    #[debug("on_net_info: Option<Box<..>>")]
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
     /// Private key for this node.
@@ -115,7 +118,7 @@ impl Default for Options {
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
@@ -130,28 +133,18 @@ impl Deref for Conn {
     }
 }
 
-impl Debug for Conn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO:
-        f.debug_struct("Conn").finish()
-    }
-}
-
-impl Debug for Inner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO:
-        f.debug_struct("Inner").finish()
-    }
-}
-
+#[derive(derive_more::Debug)]
 pub struct Inner {
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
+    #[debug("on_endpoints: Option<Box<..>>")]
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
+    #[debug("on_derp_active: Option<Box<..>>")]
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    #[debug("on_net_info: Option<Box<..>>")]
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
 
     /// Used for receiving DERP messages.

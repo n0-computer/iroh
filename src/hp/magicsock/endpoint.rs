@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fmt::{Debug, Display},
     hash::Hash,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -27,42 +26,9 @@ use super::{
     SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
 
-impl Debug for Endpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MagicsockEndpoint({:?}, {}, {})",
-            self.public_key.as_ref().map(crate::util::encode),
-            self.id,
-            self.fake_wg_addr,
-        )
-    }
-}
-
-impl Display for Endpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self,)
-    }
-}
-
-impl Hash for Endpoint {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.to_string().hash(state);
-    }
-}
-
-impl PartialEq for Endpoint {
-    fn eq(&self, other: &Self) -> bool {
-        self.public_key == other.public_key
-            && self.id == other.id
-            && self.fake_wg_addr == other.fake_wg_addr
-    }
-}
-
-impl Eq for Endpoint {}
-
 /// A conneciton endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
+#[derive(Debug)]
 pub(super) struct Endpoint {
     pub(super) id: usize,
     conn_sender: flume::Sender<ActorMessage>,
@@ -94,8 +60,10 @@ pub(super) struct Endpoint {
     sent_ping: HashMap<stun::TransactionId, SentPing>,
 }
 
+#[derive(derive_more::Debug)]
 pub struct PendingCliPing {
     pub res: cfg::PingResult,
+    #[debug("cb: Box<..>")]
     pub cb: Box<dyn Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
 }
 
