@@ -259,16 +259,12 @@ async fn connect(
     remote_endpoints: Vec<SocketAddr>,
 ) -> anyhow::Result<()> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
-    let endpoints = Arc::new(Mutex::new(Vec::new()));
-    let endpoints2 = endpoints.clone();
     let on_net_info = |ni: hp::cfg::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
     };
 
     let on_endpoints = move |ep: &[hp::cfg::Endpoint]| {
         tracing::info!("got endpoint {:#?}", ep);
-        let mut endpoints = endpoints2.lock().unwrap();
-        *endpoints = ep.to_vec();
     };
 
     let on_derp_active = move || {
@@ -371,8 +367,12 @@ async fn connect(
             }
         }
     } else {
-        let endpoints = endpoints.lock().unwrap().clone();
-        let remote_addrs = endpoints.iter().map(|endpoint| format!("--remote-endpoint {}", endpoint.addr)).collect::<Vec<_>>().join(" ");
+        let endpoints = conn.local_endpoints().await?;
+        let remote_addrs = endpoints
+            .iter()
+            .map(|endpoint| format!("--remote-endpoint {}", endpoint.addr))
+            .collect::<Vec<_>>()
+            .join(" ");
         println!(
             "Run\n\ndrderp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
             hex::encode(key.public_key().as_bytes()),
