@@ -44,12 +44,6 @@ use super::{
     HEARTBEAT_INTERVAL,
 };
 
-// /// How many packets writes can be queued up the DERP client to write on the wire before we start
-// /// dropping.
-// ///
-// /// TODO: this is currently arbitrary. Figure out something better?
-// const BUFFERED_DERP_WRITES_BEFORE_DROP: usize = 32;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(super) enum CurrentPortFate {
     Keep,
@@ -615,15 +609,20 @@ impl AsyncUdpSocket for Conn {
                         NetworkReadResult::Error(err) => {
                             return Poll::Ready(Err(err));
                         }
-                        NetworkReadResult::Ok { bytes, meta } => {
+                        NetworkReadResult::Ok {
+                            bytes,
+                            meta,
+                            source,
+                        } => {
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
                             trace!(
-                                "[QUINN] <- {} ({}b) ({}) ({:?})",
+                                "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
                                 meta_out.addr,
                                 meta_out.len,
                                 self.name,
-                                meta_out.dst_ip
+                                meta_out.dst_ip,
+                                source
                             );
                         }
                     }
@@ -668,18 +667,18 @@ impl AsyncUdpSocket for Conn {
 enum NetworkReadResult {
     Error(io::Error),
     Ok {
-        // source: NetworkSource,
+        source: NetworkSource,
         meta: quinn_udp::RecvMeta,
         bytes: BytesMut,
     },
 }
 
-// #[derive(Debug)]
-// enum NetworkSource {
-//     Ipv4,
-//     Ipv6,
-//     Derp,
-// }
+#[derive(Debug)]
+enum NetworkSource {
+    Ipv4,
+    Ipv6,
+    Derp,
+}
 
 #[derive(derive_more::Debug)]
 struct DerpReadResult {
@@ -961,14 +960,14 @@ impl Actor {
                                 match network {
                                     Network::Ipv4 => {
                                         let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                            // source: NetworkSource::Ipv4,
+                                            source: NetworkSource::Ipv4,
                                             bytes,
                                             meta,
                                         }).await;
                                     }
                                     Network::Ipv6 => {
                                         let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                            // source: NetworkSource::Ipv6,
+                                            source: NetworkSource::Ipv6,
                                             bytes,
                                             meta,
                                         }).await;
@@ -1165,7 +1164,7 @@ impl Actor {
         // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
         // }
         Some(NetworkReadResult::Ok {
-            // source: NetworkSource::Derp,
+            source: NetworkSource::Derp,
             bytes: dm.buf,
             meta,
         })
