@@ -1,4 +1,5 @@
 //! based on tailscale/derp/derp_client.go
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -546,7 +547,7 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
@@ -603,6 +604,22 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
+}
+
+impl fmt::Debug for ReceivedMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReceivedPacket { source, data } => f.debug_struct("ReceivedPacket").field("source", source).field("data", &data.len()).finish(),
+            Self::PeerGone(arg0) => f.debug_tuple("PeerGone").field(arg0).finish(),
+            Self::PeerPresent(arg0) => f.debug_tuple("PeerPresent").field(arg0).finish(),
+            Self::ServerInfo { token_bucket_bytes_per_second, token_bucket_bytes_burst } => f.debug_struct("ServerInfo").field("token_bucket_bytes_per_second", token_bucket_bytes_per_second).field("token_bucket_bytes_burst", token_bucket_bytes_burst).finish(),
+            Self::Ping(arg0) => f.debug_tuple("Ping").field(arg0).finish(),
+            Self::Pong(arg0) => f.debug_tuple("Pong").field(arg0).finish(),
+            Self::KeepAlive => write!(f, "KeepAlive"),
+            Self::Health { problem } => f.debug_struct("Health").field("problem", problem).finish(),
+            Self::ServerRestarting { reconnect_in, try_for } => f.debug_struct("ServerRestarting").field("reconnect_in", reconnect_in).field("try_for", try_for).finish(),
+        }
+    }
 }
 
 pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(

@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, self},
     io::{self, IoSliceMut},
     mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -676,12 +676,21 @@ enum NetworkSource {
     Derp,
 }
 
-#[derive(Debug)]
 struct DerpReadResult {
     region_id: u16,
     src: key::node::PublicKey,
     /// packet data
     buf: BytesMut,
+}
+
+impl fmt::Debug for DerpReadResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DerpReadResult")
+            .field("region_id", &self.region_id)
+            .field("src", &self.src)
+            .field("buf", &self.buf.len())
+            .finish()
+    }
 }
 
 /// Contains fields for an active DERP connection.
