@@ -317,6 +317,15 @@ impl Conn {
         Ok(res)
     }
 
+    pub async fn local_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
+        let (s, r) = sync::oneshot::channel();
+        self.actor_sender
+            .send_async(ActorMessage::LocalEndpoints(s))
+            .await?;
+        let res = r.await?;
+        Ok(res)
+    }
+
     pub async fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         let (s, r) = flume::bounded(1);
         self.actor_sender
@@ -710,6 +719,7 @@ pub(super) enum ActorMessage {
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     GetDerpRegion(usize, sync::oneshot::Sender<Option<DerpRegion>>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
+    LocalEndpoints(sync::oneshot::Sender<Vec<cfg::Endpoint>>),
     GetMappingAddr(
         key::node::PublicKey,
         sync::oneshot::Sender<Option<SocketAddr>>,
@@ -850,6 +860,10 @@ impl Actor {
                         }
                         ActorMessage::TrackedEndpoints(s) => {
                             let eps: Vec<_> = self.peer_map.endpoints().filter_map(|(_, ep)| ep.public_key.clone()).collect();
+                            let _ = s.send(eps);
+                        }
+                        ActorMessage::LocalEndpoints(s) => {
+                            let eps: Vec<_> = self.last_endpoints.clone();
                             let _ = s.send(eps);
                         }
                         ActorMessage::GetMappingAddr(node_key, s) => {
