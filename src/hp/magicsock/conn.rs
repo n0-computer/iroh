@@ -814,7 +814,10 @@ struct Actor {
 impl Actor {
     #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
-        let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
+        let mut cleanup_timer = time::interval_at(
+            time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
+            DERP_CLEAN_STALE_INTERVAL,
+        );
         let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
@@ -1046,10 +1049,7 @@ impl Actor {
         }
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
-                info!(
-                    "no peer_map state found for {} in {:#?}",
-                    meta.addr, self.peer_map
-                );
+                info!("no peer_map state found for {}", meta.addr);
 
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
@@ -1064,10 +1064,7 @@ impl Actor {
                 meta.addr = ep.fake_wg_addr;
             }
             Some(ep) => {
-                debug!(
-                    "peer_map state found for {} in {:#?}",
-                    meta.addr, self.peer_map
-                );
+                debug!("peer_map state found for {}", meta.addr);
 
                 meta.addr = ep.fake_wg_addr;
             }
@@ -1584,7 +1581,11 @@ impl Actor {
 
         debug!("starting endpoint update ({})", why);
         if self.no_v4_send && !self.conn.is_closed() {
-            debug!("last netcheck reported send error. Rebinding.");
+            warn!(
+                "last netcheck reported send error. Rebinding. (no_v4_send: {} conn closed: {})",
+                self.no_v4_send,
+                self.conn.is_closed()
+            );
             self.rebind_all().await;
         }
 
@@ -1843,6 +1844,10 @@ impl Actor {
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
         let r = &report;
+        debug!(
+            "setting no_v4_send {} -> {}",
+            self.no_v4_send, !r.ipv4_can_send
+        );
         self.no_v4_send = !r.ipv4_can_send;
 
         let mut ni = cfg::NetInfo {
@@ -2144,9 +2149,11 @@ impl Actor {
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
+                warn!("disco: failed to send {:?} to {}", msg, dst);
                 Ok(false)
             }
             Ok(_n) => {
+                debug!("disco: sent message to {}", dst);
                 // TODO:
                 // if is_derp {
                 //     metricSentDiscoDERP.Add(1);
