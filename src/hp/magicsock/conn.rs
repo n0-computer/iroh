@@ -814,7 +814,10 @@ struct Actor {
 impl Actor {
     #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
-        let mut cleanup_timer = time::interval(DERP_CLEAN_STALE_INTERVAL);
+        let mut cleanup_timer = time::interval_at(
+            time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
+            DERP_CLEAN_STALE_INTERVAL,
+        );
         let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
