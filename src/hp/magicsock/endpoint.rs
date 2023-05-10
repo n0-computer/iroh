@@ -182,6 +182,7 @@ impl Endpoint {
 
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
+    #[allow(unused)]
     pub async fn cli_ping<F>(&mut self, mut res: cfg::PingResult, cb: F)
     where
         F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,

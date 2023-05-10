@@ -44,12 +44,6 @@ use super::{
     HEARTBEAT_INTERVAL,
 };
 
-/// How many packets writes can be queued up the DERP client to write on the wire before we start
-/// dropping.
-///
-/// TODO: this is currently arbitrary. Figure out something better?
-const BUFFERED_DERP_WRITES_BEFORE_DROP: usize = 32;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(super) enum CurrentPortFate {
     Keep,
@@ -616,18 +610,19 @@ impl AsyncUdpSocket for Conn {
                             return Poll::Ready(Err(err));
                         }
                         NetworkReadResult::Ok {
-                            source,
                             bytes,
                             meta,
+                            source,
                         } => {
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
                             trace!(
-                                "[QUINN] <- {} ({}b) ({}) ({:?})",
+                                "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
                                 meta_out.addr,
                                 meta_out.len,
                                 self.name,
-                                meta_out.dst_ip
+                                meta_out.dst_ip,
+                                source
                             );
                         }
                     }
