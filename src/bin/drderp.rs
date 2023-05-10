@@ -1,11 +1,12 @@
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     hp::{
         self,
@@ -14,10 +15,11 @@ use iroh::{
         magicsock,
     },
     tls,
+    tokio_util::ProgressWriter,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio::sync;
+use tokio::{io::AsyncWriteExt, sync};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Subcommand, Debug, Clone)]
@@ -29,9 +31,30 @@ enum Commands {
         #[clap(long, default_value_t = 3478)]
         stun_port: u16,
     },
+    Accept {
+        /// Our own private key, in hex. If not specified, a random key will be generated.
+        #[clap(long)]
+        private_key: Option<String>,
+
+        #[clap(long, default_value_t = 1)]
+        min_size: u64,
+
+        #[clap(long, default_value_t = 1024 * 1024)]
+        max_size: u64,
+
+        #[clap(long, default_value_t = 16)]
+        size_multiplier: u64,
+
+        #[clap(long, default_value_t = -1)]
+        iterations: i64,
+
+        /// Use a local derp relay
+        #[clap(long)]
+        local_derper: bool,
+    },
     Connect {
         /// hex peer id of the node to connect to
-        dial: Option<String>,
+        dial: String,
 
         /// One or more remote endpoints to use when dialing
         #[clap(long)]
@@ -61,6 +84,13 @@ enum TestStreamRequest {
     Send { bytes: u64, block_size: u32 },
 }
 
+struct TestConfig {
+    min_size: u64,
+    max_size: u64,
+    size_multiplier: u64,
+    iterations: Option<u64>,
+}
+
 /// handle a test stream request
 async fn handle_test_request(
     mut send: quinn::SendStream,
@@ -88,7 +118,7 @@ async fn handle_test_request(
 }
 
 async fn send_blocks(
-    send: &mut quinn::SendStream,
+    mut send: impl tokio::io::AsyncWrite + Unpin,
     total_bytes: u64,
     block_size: u32,
 ) -> anyhow::Result<()> {
@@ -117,101 +147,167 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    loop {
-        echo_test(&connection).await?;
-        send_test(&connection).await?;
-        recv_test(&connection).await?;
+async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
+    let n = config.iterations.unwrap_or(u64::MAX);
+    let mp = MultiProgress::new();
+    mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
+    let pb = indicatif::ProgressBar::hidden();
+    let send_pb = mp.add(ProgressBar::hidden());
+    let recv_pb = mp.add(ProgressBar::hidden());
+    let echo_pb = mp.add(ProgressBar::hidden());
+    let style = indicatif::ProgressStyle::default_bar()
+        .template("{msg}")
+        .unwrap();
+    send_pb.set_style(style.clone());
+    recv_pb.set_style(style.clone());
+    echo_pb.set_style(style.clone());
+    let pb = mp.add(pb);
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb.set_style(indicatif::ProgressStyle::default_bar()
+        .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
+        .progress_chars("█▉▊▋▌▍▎▏ "));
+    for _ in 0..n {
+        let (b, d) = send_test(&connection, config, &pb).await?;
+        send_pb.set_message(format!(
+            "send: {}/s",
+            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
+        ));
+        let (b, d) = recv_test(&connection, config, &pb).await?;
+        recv_pb.set_message(format!(
+            "recv: {}/s",
+            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
+        ));
+        let (b, d) = echo_test(&connection, config, &pb).await?;
+        echo_pb.set_message(format!(
+            "echo: {}/s",
+            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
+        ));
     }
+    Ok(())
 }
 
-async fn echo_test(connection: &quinn::Connection) -> anyhow::Result<()> {
-    let mut size = 1;
-    println!("performing echo test...");
-    while size <= 1024 * 1024 {
+async fn send_test_request(
+    send: &mut quinn::SendStream,
+    request: &TestStreamRequest,
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
+    postcard::to_slice(&request, &mut buf)?;
+    send.write_all(&buf).await?;
+    Ok(())
+}
+
+async fn echo_test(
+    connection: &quinn::Connection,
+    config: &TestConfig,
+    pb: &indicatif::ProgressBar,
+) -> anyhow::Result<(u64, Duration)> {
+    let mut total_bytes = 0;
+    let mut total_duration = Duration::ZERO;
+    let mut size = config.min_size;
+    while size <= config.max_size {
+        pb.set_length(size);
+        pb.set_position(0);
+        pb.set_message("echo");
         let (mut send, mut recv) = connection.open_bi().await?;
-        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-        postcard::to_slice(&TestStreamRequest::Echo, &mut buf)?;
-        send.write_all(&buf).await?;
-        let copying = tokio::spawn(async move {
-            tracing::debug!("draining response");
-            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        send_test_request(&mut send, &TestStreamRequest::Echo).await?;
+        let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
+        let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+        let pb2 = pb.clone();
+        let progress = tokio::spawn(async move {
+            while let Some(position) = updates.recv().await {
+                pb2.set_position(position);
+            }
         });
-        println!("sending {} bytes", size);
         let t0 = Instant::now();
         send_blocks(&mut send, size, 1024 * 1024).await?;
         send.finish().await?;
         let received = copying.await??;
         anyhow::ensure!(received == size);
-        let elapsed = t0.elapsed().as_secs_f64();
-        println!("done in {} s", elapsed);
-        println!("speed {} bytes/s", (size as f64) / elapsed);
-        size = size * 16;
+        total_duration += t0.elapsed();
+        total_bytes += received;
+        progress.await?;
+        size = size * config.size_multiplier;
     }
-    println!("test done");
-    println!("");
-    Ok(())
+    Ok((total_bytes, total_duration))
 }
 
-async fn send_test(connection: &quinn::Connection) -> anyhow::Result<()> {
-    let mut size = 1;
-    println!("performing send test...");
-    while size <= 1024 * 1024 {
+async fn send_test(
+    connection: &quinn::Connection,
+    config: &TestConfig,
+    pb: &indicatif::ProgressBar,
+) -> anyhow::Result<(u64, Duration)> {
+    let mut total_bytes = 0;
+    let mut total_duration = Duration::ZERO;
+    let mut size = config.min_size;
+    while size <= config.max_size {
+        pb.set_length(size);
+        pb.set_position(0);
+        pb.set_message("send");
         let (mut send, mut recv) = connection.open_bi().await?;
-        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-        postcard::to_slice(&TestStreamRequest::Drain, &mut buf)?;
-        send.write_all(&buf).await?;
-        let copying = tokio::spawn(async move {
-            tracing::debug!("draining response");
-            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        send_test_request(&mut send, &TestStreamRequest::Drain).await?;
+        let (mut send_with_progress, mut updates) = ProgressWriter::new(&mut send);
+        let copying =
+            tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
+        let pb2 = pb.clone();
+        let progress = tokio::spawn(async move {
+            while let Some(position) = updates.recv().await {
+                pb2.set_position(position);
+            }
         });
-        println!("sending {} bytes", size);
         let t0 = Instant::now();
-        send_blocks(&mut send, size, 1024 * 1024).await?;
+        send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
+        drop(send_with_progress);
         send.finish().await?;
+        drop(send);
         let received = copying.await??;
         anyhow::ensure!(received == 0);
-        let elapsed = t0.elapsed().as_secs_f64();
-        println!("done in {} s", elapsed);
-        println!("speed {} bytes/s", (size as f64) / elapsed);
-        size = size * 16;
+        total_duration += t0.elapsed();
+        total_bytes += size;
+        progress.await?;
+        size = size * config.size_multiplier;
     }
-    println!("test done");
-    println!("");
-    Ok(())
+    Ok((total_bytes, total_duration))
 }
 
-async fn recv_test(connection: &quinn::Connection) -> anyhow::Result<()> {
-    let mut size = 1;
-    println!("performing recv test...");
-    while size <= 1024 * 1024 {
+async fn recv_test(
+    connection: &quinn::Connection,
+    config: &TestConfig,
+    pb: &indicatif::ProgressBar,
+) -> anyhow::Result<(u64, Duration)> {
+    let mut total_bytes = 0;
+    let mut total_duration = Duration::ZERO;
+    let mut size = config.min_size;
+    while size <= config.max_size {
+        pb.set_length(size);
+        pb.set_position(0);
+        pb.set_message("recv");
         let (mut send, mut recv) = connection.open_bi().await?;
-        let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-        postcard::to_slice(
+        let t0 = Instant::now();
+        let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
+        send_test_request(
+            &mut send,
             &TestStreamRequest::Send {
                 bytes: size,
                 block_size: 1024 * 1024,
             },
-            &mut buf,
-        )?;
-        println!("asking for {} bytes", size);
-        let t0 = Instant::now();
-        send.write_all(&buf).await?;
-        let copying = tokio::spawn(async move {
-            tracing::debug!("draining response");
-            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await
+        )
+        .await?;
+        let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+        let pb2 = pb.clone();
+        let progress = tokio::spawn(async move {
+            while let Some(position) = updates.recv().await {
+                pb2.set_position(position);
+            }
         });
         send.finish().await?;
         let received = copying.await??;
         anyhow::ensure!(received == size);
-        let elapsed = t0.elapsed().as_secs_f64();
-        println!("done in {} s", elapsed);
-        println!("speed {} bytes/s", (size as f64) / elapsed);
-        size = size * 16;
+        total_duration += t0.elapsed();
+        total_bytes += received;
+        progress.await?;
+        size = size * config.size_multiplier;
     }
-    println!("test done");
-    println!("");
-    Ok(())
+    Ok((total_bytes, total_duration))
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
@@ -252,12 +348,10 @@ fn configure_local_derp_map() -> DerpMap {
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 const DEFAULT_DERP_REGION: u16 = 1;
 
-async fn connect(
-    dial: Option<String>,
-    private_key: Option<String>,
+async fn make_endpoint(
     local_derper: bool,
-    remote_endpoints: Vec<SocketAddr>,
-) -> anyhow::Result<()> {
+    private_key: SecretKey,
+) -> anyhow::Result<(magicsock::Conn, quinn::Endpoint)> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
     let on_net_info = |ni: hp::cfg::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
@@ -272,13 +366,6 @@ async fn connect(
         on_derp_s.try_send(()).ok();
     };
 
-    let private_key = if let Some(key) = private_key {
-        let bytes = hex::decode(key)?;
-        let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-        SecretKey::from(bytes)
-    } else {
-        SecretKey::generate()
-    };
     tracing::info!(
         "public key: {}",
         hex::encode(private_key.public_key().as_bytes())
@@ -328,70 +415,102 @@ async fn connect(
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
     client_config.transport_config(Arc::new(transport_config));
     endpoint.set_default_client_config(client_config);
+    Ok((conn, endpoint))
+}
 
-    if let Some(dial) = dial {
-        let bytes = hex::decode(dial)?;
-        let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-        let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
+async fn connect(
+    dial: String,
+    private_key: SecretKey,
+    local_derper: bool,
+    remote_endpoints: Vec<SocketAddr>,
+) -> anyhow::Result<()> {
+    let (conn, endpoint) = make_endpoint(local_derper, private_key.clone()).await?;
 
-        let endpoints = remote_endpoints;
-        let addresses = endpoints.iter().map(|a| a.ip().clone()).collect();
-        conn.set_network_map(hp::netmap::NetworkMap {
-            peers: vec![hp::cfg::Node {
-                name: None,
-                key: key.clone(),
-                endpoints,
-                addresses,
-                derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-                created: Instant::now(),
-                hostinfo: crate::hp::hostinfo::Hostinfo::new(),
-                keep_alive: false,
-                expired: false,
-                online: None,
-                last_seen: None,
-            }],
-        })
-        .await?;
-        let addr = conn.get_mapping_addr(&key).await;
-        let addr = addr.context("no mapping address")?;
-        tracing::info!("dialing {:?} at {:?}", key, addr);
-        let connecting = endpoint.connect(addr, "localhost")?;
+    let bytes = hex::decode(dial)?;
+    let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
+    let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
+
+    let endpoints = remote_endpoints;
+    let addresses = endpoints.iter().map(|a| a.ip().clone()).collect();
+    conn.set_network_map(hp::netmap::NetworkMap {
+        peers: vec![hp::cfg::Node {
+            name: None,
+            key: key.clone(),
+            endpoints,
+            addresses,
+            derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+            created: Instant::now(),
+            hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+            keep_alive: false,
+            expired: false,
+            online: None,
+            last_seen: None,
+        }],
+    })
+    .await?;
+    let addr = conn.get_mapping_addr(&key).await;
+    let addr = addr.context("no mapping address")?;
+    tracing::info!("dialing {:?} at {:?}", key, addr);
+    let connecting = endpoint.connect(addr, "localhost")?;
+    match connecting.await {
+        Ok(connection) => {
+            if let Err(cause) = passive_side(connection).await {
+                eprintln!("error handling connection: {}", cause);
+            }
+        }
+        Err(cause) => {
+            eprintln!("unable to connect to {}: {}", addr, cause);
+        }
+    }
+
+    Ok(())
+}
+
+async fn accept(
+    private_key: SecretKey,
+    local_derper: bool,
+    config: TestConfig,
+) -> anyhow::Result<()> {
+    let (conn, endpoint) = make_endpoint(local_derper, private_key.clone()).await?;
+
+    let endpoints = conn.local_endpoints().await?;
+    let remote_addrs = endpoints
+        .iter()
+        .map(|endpoint| format!("--remote-endpoint {}", endpoint.addr))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!(
+            "Run\n\ndrderp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
+            hex::encode(private_key.public_key().as_bytes()),
+            remote_addrs,
+        );
+    println!("Omit the --remote-endpoint args to connect just by key.");
+    while let Some(connecting) = endpoint.accept().await {
         match connecting.await {
             Ok(connection) => {
-                if let Err(cause) = passive_side(connection).await {
-                    eprintln!("error handling connection: {}", cause);
+                println!("\nAccepted connection. Performing test.\n");
+                let t0 = Instant::now();
+                if let Err(cause) = active_side(connection, &config).await {
+                    println!("error after {}: {}", t0.elapsed().as_secs_f64(), cause);
                 }
             }
             Err(cause) => {
-                eprintln!("unable to connect to {}: {}", addr, cause);
-            }
-        }
-    } else {
-        let endpoints = conn.local_endpoints().await?;
-        let remote_addrs = endpoints
-            .iter()
-            .map(|endpoint| format!("--remote-endpoint {}", endpoint.addr))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!(
-            "Run\n\ndrderp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
-            hex::encode(key.public_key().as_bytes()),
-            remote_addrs,
-        );
-        println!("Omit the --remote-endpoint args to connect just by key.");
-        while let Some(connecting) = endpoint.accept().await {
-            match connecting.await {
-                Ok(connection) => {
-                    active_side(connection).await?;
-                }
-                Err(cause) => {
-                    eprintln!("error accepting connection {}", cause);
-                }
+                eprintln!("error accepting connection {}", cause);
             }
         }
     }
 
     Ok(())
+}
+
+fn create_secret_key(private_key: Option<String>) -> anyhow::Result<SecretKey> {
+    Ok(if let Some(key) = private_key {
+        let bytes = hex::decode(key)?;
+        let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
+        SecretKey::from(bytes)
+    } else {
+        SecretKey::generate()
+    })
 }
 
 #[tokio::main]
@@ -413,6 +532,31 @@ async fn main() -> anyhow::Result<()> {
             private_key,
             local_derper,
             remote_endpoint,
-        } => connect(dial, private_key, local_derper, remote_endpoint).await,
+        } => {
+            let private_key = create_secret_key(private_key)?;
+            connect(dial, private_key, local_derper, remote_endpoint).await
+        }
+        Commands::Accept {
+            private_key,
+            local_derper,
+            min_size,
+            max_size,
+            size_multiplier,
+            iterations,
+        } => {
+            let private_key = create_secret_key(private_key)?;
+            let iterations = if iterations < 0 {
+                None
+            } else {
+                Some(iterations as u64)
+            };
+            let config = TestConfig {
+                min_size,
+                max_size,
+                size_multiplier,
+                iterations,
+            };
+            accept(private_key, local_derper, config).await
+        }
     }
 }
