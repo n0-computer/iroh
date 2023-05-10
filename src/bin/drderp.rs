@@ -36,10 +36,10 @@ enum Commands {
         #[clap(long)]
         private_key: Option<String>,
 
-        #[clap(long, default_value_t = 1)]
+        #[clap(long, default_value_t = 1024 * 1024 * 16)]
         min_size: u64,
 
-        #[clap(long, default_value_t = 1024 * 1024)]
+        #[clap(long, default_value_t = 1024 * 1024 * 16)]
         max_size: u64,
 
         #[clap(long, default_value_t = 16)]
