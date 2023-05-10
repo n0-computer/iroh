@@ -589,6 +589,10 @@ impl ReportState {
                                     }
                                 }
                             }
+                            let mut report = self.report.write().await;
+                            report.ipv4_can_send = probe_report.ipv4_can_send;
+                            report.ipv6_can_send = probe_report.ipv6_can_send;
+                            report.icmpv4 = probe_report.icmpv4;
                         }
                         Some(Err(err)) => {
                             warn!("probe error: {:?}", err);

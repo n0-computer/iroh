@@ -1049,10 +1049,7 @@ impl Actor {
         }
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
-                info!(
-                    "no peer_map state found for {} in {:#?}",
-                    meta.addr, self.peer_map
-                );
+                info!("no peer_map state found for {}", meta.addr);
 
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
@@ -1067,10 +1064,7 @@ impl Actor {
                 meta.addr = ep.fake_wg_addr;
             }
             Some(ep) => {
-                debug!(
-                    "peer_map state found for {} in {:#?}",
-                    meta.addr, self.peer_map
-                );
+                debug!("peer_map state found for {}", meta.addr);
 
                 meta.addr = ep.fake_wg_addr;
             }
@@ -1587,7 +1581,7 @@ impl Actor {
 
         debug!("starting endpoint update ({})", why);
         if self.no_v4_send && !self.conn.is_closed() {
-            debug!(
+            warn!(
                 "last netcheck reported send error. Rebinding. (no_v4_send: {} conn closed: {})",
                 self.no_v4_send,
                 self.conn.is_closed()
@@ -1850,6 +1844,10 @@ impl Actor {
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
         let r = &report;
+        debug!(
+            "setting no_v4_send {} -> {}",
+            self.no_v4_send, !r.ipv4_can_send
+        );
         self.no_v4_send = !r.ipv4_can_send;
 
         let mut ni = cfg::NetInfo {
