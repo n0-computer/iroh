@@ -860,12 +860,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13418e745008f7349ec7e449155f419a61b92b58a99cc3616942b926825ec76b"
 
 [[package]]
-name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
 name = "cookie"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,14 +1190,20 @@ dependencies = [
 [[package]]
 name = "derive_more"
 version = "0.99.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
+source = "git+https://github.com/JelteF/derive_more#70c43f919f39626179a4a53490248769fa240655"
 dependencies = [
- "convert_case",
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "0.99.17"
+source = "git+https://github.com/JelteF/derive_more#70c43f919f39626179a4a53490248769fa240655"
+dependencies = [
  "proc-macro2",
  "quote",
- "rustc_version 0.4.0",
  "syn 1.0.109",
+ "unicode-xid",
 ]
 
 [[package]]

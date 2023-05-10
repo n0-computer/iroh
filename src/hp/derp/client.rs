@@ -546,12 +546,13 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
         source: PublicKey,
         /// The received packet bytes. It aliases the memory passed to Client.Recv.
+        #[debug(skip)]
         data: BytesMut, // TODO: ref
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
