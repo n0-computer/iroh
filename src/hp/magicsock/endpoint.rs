@@ -275,7 +275,7 @@ impl Endpoint {
     }
 
     async fn start_ping(&mut self, ep: SocketAddr, now: Instant, purpose: DiscoPingPurpose) {
-        info!("start ping {:?}", purpose);
+        info!("start ping to {}: {:?}", ep, purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = self.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
@@ -293,6 +293,12 @@ impl Endpoint {
         let mut to_remove = Vec::new();
         for (id, ping) in self.sent_ping.iter() {
             if now - ping.at > PING_TIMEOUT_DURATION {
+                debug!(
+                    "disco: ping timeout [{}]: (elapsed: {:?} - started: {:?})",
+                    id,
+                    now - ping.at,
+                    ping.at
+                );
                 to_remove.push(*id);
             }
         }

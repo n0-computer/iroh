@@ -1587,7 +1587,11 @@ impl Actor {
 
         debug!("starting endpoint update ({})", why);
         if self.no_v4_send && !self.conn.is_closed() {
-            debug!("last netcheck reported send error. Rebinding.");
+            debug!(
+                "last netcheck reported send error. Rebinding. (no_v4_send: {} conn closed: {})",
+                self.no_v4_send,
+                self.conn.is_closed()
+            );
             self.rebind_all().await;
         }
 
@@ -2147,9 +2151,11 @@ impl Actor {
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
+                warn!("disco: failed to send {:?} to {}", msg, dst);
                 Ok(false)
             }
             Ok(_n) => {
+                debug!("disco: sent message to {}", dst);
                 // TODO:
                 // if is_derp {
                 //     metricSentDiscoDERP.Add(1);
