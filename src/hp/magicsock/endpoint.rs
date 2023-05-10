@@ -180,43 +180,43 @@ impl Endpoint {
         false
     }
 
-    /// Starts a ping for the "ping" command.
-    /// `res` is value to call cb with, already partially filled.
-    pub async fn cli_ping<F>(&mut self, mut res: cfg::PingResult, cb: F)
-    where
-        F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
-    {
-        if self.expired {
-            res.err = Some("endpoint expired".to_string());
-            cb(res);
-            return;
-        }
+    // /// Starts a ping for the "ping" command.
+    // /// `res` is value to call cb with, already partially filled.
+    // pub async fn cli_ping<F>(&mut self, mut res: cfg::PingResult, cb: F)
+    // where
+    //     F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    // {
+    //     if self.expired {
+    //         res.err = Some("endpoint expired".to_string());
+    //         cb(res);
+    //         return;
+    //     }
 
-        self.pending_cli_pings.push(PendingCliPing {
-            res,
-            cb: Box::new(cb),
-        });
+    //     self.pending_cli_pings.push(PendingCliPing {
+    //         res,
+    //         cb: Box::new(cb),
+    //     });
 
-        let now = Instant::now();
-        let (udp_addr, derp_addr) = self.addr_for_send(&now);
-        if let Some(derp_addr) = derp_addr {
-            self.start_ping(derp_addr, now, DiscoPingPurpose::Cli).await;
-        }
-        if let Some(udp_addr) = udp_addr {
-            if self.is_best_addr_valid(now) {
-                // Already have an active session, so just ping the address we're using.
-                // Otherwise "tailscale ping" results to a node on the local network
-                // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
-                // IPv6 address, both 1ms away, and it's random who replies first.
-                self.start_ping(udp_addr, now, DiscoPingPurpose::Cli).await;
-            } else {
-                let eps: Vec<_> = self.endpoint_state.keys().cloned().collect();
-                for ep in eps {
-                    self.start_ping(ep, now, DiscoPingPurpose::Cli).await;
-                }
-            }
-        }
-    }
+    //     let now = Instant::now();
+    //     let (udp_addr, derp_addr) = self.addr_for_send(&now);
+    //     if let Some(derp_addr) = derp_addr {
+    //         self.start_ping(derp_addr, now, DiscoPingPurpose::Cli).await;
+    //     }
+    //     if let Some(udp_addr) = udp_addr {
+    //         if self.is_best_addr_valid(now) {
+    //             // Already have an active session, so just ping the address we're using.
+    //             // Otherwise "tailscale ping" results to a node on the local network
+    //             // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
+    //             // IPv6 address, both 1ms away, and it's random who replies first.
+    //             self.start_ping(udp_addr, now, DiscoPingPurpose::Cli).await;
+    //         } else {
+    //             let eps: Vec<_> = self.endpoint_state.keys().cloned().collect();
+    //             for ep in eps {
+    //                 self.start_ping(ep, now, DiscoPingPurpose::Cli).await;
+    //             }
+    //         }
+    //     }
+    // }
 
     fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {

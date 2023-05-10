@@ -8,7 +8,7 @@ use super::cfg::NetInfo;
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUST_VERSION: &str = env!("RUSTC_VERSION");
-const SOURCE_TIMESTAMP: &str = env!("SOURCE_TIMESTAMP");
+// const SOURCE_TIMESTAMP: &str = env!("SOURCE_TIMESTAMP");
 const GIT_COMMIT: &str = env!("GIT_COMMIT");
 
 /// Contains a summary of the host we are running on.
