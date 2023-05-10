@@ -676,11 +676,12 @@ enum NetworkSource {
     Derp,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct DerpReadResult {
     region_id: u16,
     src: key::node::PublicKey,
     /// packet data
+    #[debug(skip)]
     buf: BytesMut,
 }
 
