@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -30,11 +30,18 @@ enum Commands {
         stun_port: u16,
     },
     Connect {
+        /// hex peer id of the node to connect to
         dial: Option<String>,
 
+        /// One or more remote endpoints to use when dialing
+        #[clap(long)]
+        remote_endpoint: Vec<SocketAddr>,
+
+        /// Our own private key, in hex. If not specified, a random key will be generated.
         #[clap(long)]
         private_key: Option<String>,
 
+        /// Use a local derp relay
         #[clap(long)]
         local_derper: bool,
     },
@@ -103,18 +110,19 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
     let derp_ipv4 = UseIpv4::None;
     let derp_ipv6 = UseIpv6::None;
     let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
-    println!("getting report using derp map {:#}", dm);
+    println!("getting report using derp map {:#?}", dm);
 
     let r = client.get_report(&dm, None, None).await?;
-    println!("{:#}", r);
+    println!("{:#?}", r);
     Ok(())
 }
 
 async fn active_side(connection: quinn::Connection) -> anyhow::Result<()> {
-    echo_test(&connection).await?;
-    send_test(&connection).await?;
-    recv_test(&connection).await?;
-    Ok(())
+    loop {
+        echo_test(&connection).await?;
+        send_test(&connection).await?;
+        recv_test(&connection).await?;
+    }
 }
 
 async fn echo_test(connection: &quinn::Connection) -> anyhow::Result<()> {
@@ -248,14 +256,19 @@ async fn connect(
     dial: Option<String>,
     private_key: Option<String>,
     local_derper: bool,
+    remote_endpoints: Vec<SocketAddr>,
 ) -> anyhow::Result<()> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
+    let endpoints = Arc::new(Mutex::new(Vec::new()));
+    let endpoints2 = endpoints.clone();
     let on_net_info = |ni: hp::cfg::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
     };
 
-    let on_endpoints = |ep: &[hp::cfg::Endpoint]| {
+    let on_endpoints = move |ep: &[hp::cfg::Endpoint]| {
         tracing::info!("got endpoint {:#?}", ep);
+        let mut endpoints = endpoints2.lock().unwrap();
+        *endpoints = ep.to_vec();
     };
 
     let on_derp_active = move || {
@@ -325,12 +338,14 @@ async fn connect(
         let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
         let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
 
+        let endpoints = remote_endpoints;
+        let addresses = endpoints.iter().map(|a| a.ip().clone()).collect();
         conn.set_network_map(hp::netmap::NetworkMap {
             peers: vec![hp::cfg::Node {
                 name: None,
-                addresses: vec![],
                 key: key.clone(),
-                endpoints: vec![],
+                endpoints,
+                addresses,
                 derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
                 created: Instant::now(),
                 hostinfo: crate::hp::hostinfo::Hostinfo::new(),
@@ -356,10 +371,14 @@ async fn connect(
             }
         }
     } else {
+        let endpoints = endpoints.lock().unwrap().clone();
+        let remote_addrs = endpoints.iter().map(|endpoint| format!("--remote-endpoint {}", endpoint.addr)).collect::<Vec<_>>().join(" ");
         println!(
-            "run 'drderp connect {}' in another terminal or on another machine",
-            hex::encode(key.public_key().as_bytes())
+            "Run\n\ndrderp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
+            hex::encode(key.public_key().as_bytes()),
+            remote_addrs,
         );
+        println!("Omit the --remote-endpoint args to connect just by key.");
         while let Some(connecting) = endpoint.accept().await {
             match connecting.await {
                 Ok(connection) => {
@@ -393,6 +412,7 @@ async fn main() -> anyhow::Result<()> {
             dial,
             private_key,
             local_derper,
-        } => connect(dial, private_key, local_derper).await,
+            remote_endpoint,
+        } => connect(dial, private_key, local_derper, remote_endpoint).await,
     }
 }
