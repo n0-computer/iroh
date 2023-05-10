@@ -10,7 +10,7 @@ use std::{
 
 use futures::future::BoxFuture;
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     hp::{
@@ -220,12 +220,10 @@ impl Endpoint {
 
     fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
-            if !self.is_best_addr_valid(Instant::now()) {
-                debug!(
-                    "disco: timeout waiting for pong {:?} from {:?} ({:?})",
-                    txid, sp.to, self.public_key,
-                );
-            }
+            warn!(
+                "disco: timeout waiting for pong {:?} from {:?} ({:?})",
+                txid, sp.to, self.public_key,
+            );
             if let Some(ep_state) = self.endpoint_state.get_mut(&sp.to) {
                 ep_state.last_ping = None;
             }
@@ -275,7 +273,7 @@ impl Endpoint {
     }
 
     async fn start_ping(&mut self, ep: SocketAddr, now: Instant, purpose: DiscoPingPurpose) {
-        info!("start ping {:?}", purpose);
+        info!("start ping to {}: {:?}", ep, purpose);
         if purpose != DiscoPingPurpose::Cli {
             if let Some(st) = self.endpoint_state.get_mut(&ep) {
                 st.last_ping.replace(now);
@@ -293,6 +291,12 @@ impl Endpoint {
         let mut to_remove = Vec::new();
         for (id, ping) in self.sent_ping.iter() {
             if now - ping.at > PING_TIMEOUT_DURATION {
+                debug!(
+                    "disco: ping timeout [{}]: (elapsed: {:?} - started: {:?})",
+                    id,
+                    now - ping.at,
+                    ping.at
+                );
                 to_remove.push(*id);
             }
         }
@@ -496,12 +500,14 @@ impl Endpoint {
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
     pub(super) fn note_connectivity_change(&mut self) {
+        trace!("connectivity changed");
         self.trust_best_addr_until = None;
     }
 
     /// Note that we have a potential best addr.
     pub(super) fn maybe_add_best_addr(&mut self, addr: SocketAddr) {
         if self.best_addr.is_none() {
+            trace!("maybe best addr {}", addr);
             self.best_addr = Some(AddrLatency {
                 addr,
                 latency: Duration::from_secs(1), // assume bad latency for now
@@ -621,6 +627,7 @@ impl Endpoint {
                     }
                     let best_addr = self.best_addr.as_mut().expect("just set");
                     if best_addr.addr == this_pong.addr {
+                        trace!("updating best addr trust {}", best_addr.addr);
                         best_addr.latency = latency;
                         self.best_addr_at.replace(now);
                         self.trust_best_addr_until
@@ -710,35 +717,35 @@ impl Endpoint {
         self.pending_cli_pings.clear();
     }
 
-    /// Send a heartbeat to the peer to keep the connection alive.
+    fn last_ping(&self, addr: &SocketAddr) -> Option<Instant> {
+        self.endpoint_state.get(addr).and_then(|ep| ep.last_ping)
+    }
+
+    /// Send a heartbeat to the peer to keep the connection alive, or trigger a full ping
+    /// if necessary.
     pub(super) async fn stayin_alive(&mut self) {
         let now = Instant::now();
-        let (udp_addr, _derp_addr) = self.addr_for_send(&now);
+        let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
 
+        // Send heartbeat ping to keep the current addr going as long as we need it.
         if let Some(udp_addr) = udp_addr {
-            // Send heartbeat ping to keep the current addr going as long as we need it.
+            let elapsed = self.last_ping(&udp_addr).map(|l| now - l);
+            // Send a ping if the last ping is either older than 2 seconds or we don't have one.
+            let needs_ping = elapsed.map(|e| e >= Duration::from_secs(2)).unwrap_or(true);
 
-            if let Some(ep_state) = self.endpoint_state.get(&udp_addr) {
-                let needs_ping = ep_state
-                    .last_ping
-                    .map(|l| now - l > Duration::from_secs(2))
-                    .unwrap_or(true);
-
-                if needs_ping {
-                    debug!(
-                        "needs ping {}: {:?} {:?}",
-                        needs_ping,
-                        ep_state.last_ping.map(|l| now - l),
-                        now
-                    );
-                    self.start_ping(udp_addr, now, DiscoPingPurpose::StayinAlive)
-                        .await;
-                }
+            if needs_ping {
+                debug!(
+                    "stayin alive ping for {}: {:?} {:?}",
+                    udp_addr, elapsed, now
+                );
+                self.start_ping(udp_addr, now, DiscoPingPurpose::StayinAlive)
+                    .await;
+                return;
             }
         }
 
-        if udp_addr.is_none() || self.want_full_ping(&now) {
-            // If we do not have an optimal addr, send pings to all known places.
+        // If we do not have an optimal addr, send pings to all known places.
+        if self.want_full_ping(&now) {
             debug!("send pings all");
             self.send_pings(now, true).await;
         }
@@ -753,11 +760,6 @@ impl Endpoint {
 
         let now = Instant::now();
         let (udp_addr, derp_addr) = self.addr_for_send(&now);
-
-        // Trigger a round of pings if we haven't had any full pings yet.
-        if self.last_full_ping.is_none() {
-            self.stayin_alive().await;
-        }
 
         debug!(
             "sending UDP: {}, DERP: {}",
