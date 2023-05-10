@@ -1446,19 +1446,19 @@ impl Actor {
         }
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
-        for content in contents {
+        for content in &contents {
             trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
+        }
 
-            match derp_client.send(peer.clone(), content).await {
-                Ok(_) => {
-                    // TODO:
-                    // metricSendDERP.Add(1)
-                }
-                Err(err) => {
-                    warn!("derp.send: failed {:?}", err);
-                    // TODO:
-                    // metricSendDERPError.Add(1)
-                }
+        match derp_client.send(peer.clone(), contents).await {
+            Ok(_) => {
+                // TODO:
+                // metricSendDERP.Add(1)
+            }
+            Err(err) => {
+                warn!("derp.send: failed {:?}", err);
+                // TODO:
+                // metricSendDERPError.Add(1)
             }
         }
     }

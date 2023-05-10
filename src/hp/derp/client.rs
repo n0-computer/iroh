@@ -72,7 +72,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
+    pub async fn send(&self, dstkey: PublicKey, packet: Vec<Bytes>) -> Result<()> {
         debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
 
         self.inner
@@ -307,7 +307,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
 #[derive(Debug)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
-    Packet((PublicKey, Bytes)),
+    Packet((PublicKey, Vec<Bytes>)),
     /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
     /// Should only be used for mesh clients.
     FwdPacket((PublicKey, PublicKey, Bytes)),
@@ -610,26 +610,31 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
     mut writer: W,
     rate_limiter: &Option<RateLimiter>,
     dstkey: PublicKey,
-    packet: &[u8],
+    packets: &[impl AsRef<[u8]>],
 ) -> Result<()> {
-    ensure!(
-        packet.len() <= MAX_PACKET_SIZE,
-        "packet too big: {}",
-        packet.len()
-    );
-    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+    let total_len: usize = packets.iter().map(|x| x.as_ref().len()).sum();
+    for packet in packets {
+        ensure!(
+            packet.as_ref().len() <= MAX_PACKET_SIZE,
+            "packet too big: {}",
+            packet.as_ref().len()
+        );
+    }
+    let frame_len = PUBLIC_KEY_LENGTH + total_len;
     if let Some(rate_limiter) = rate_limiter {
         if rate_limiter.check_n(frame_len).is_err() {
             tracing::warn!("dropping send: rate limit reached");
             return Ok(());
         }
     }
-    write_frame(
-        &mut writer,
-        FrameType::SendPacket,
-        &[dstkey.as_bytes(), packet],
-    )
-    .await?;
+    for packet in packets {
+        write_frame(
+            &mut writer,
+            FrameType::SendPacket,
+            &[dstkey.as_bytes(), packet.as_ref()],
+        )
+        .await?;
+    }
     writer.flush().await?;
     Ok(())
 }
