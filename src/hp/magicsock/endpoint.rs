@@ -762,6 +762,11 @@ impl Endpoint {
         let now = Instant::now();
         let (udp_addr, derp_addr) = self.addr_for_send(&now);
 
+        // Trigger a round of pings if we haven't had any full pings yet.
+        if self.last_full_ping.is_none() {
+            self.stayin_alive().await;
+        }
+
         debug!(
             "sending UDP: {}, DERP: {}",
             udp_addr.is_some(),
