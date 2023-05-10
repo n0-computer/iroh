@@ -37,6 +37,7 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
+use crate::hp::cfg::Endpoint;
 use crate::hp::derp::DerpMap;
 use crate::net::ip::find_local_addresses;
 use crate::protocol::{
@@ -503,6 +504,11 @@ impl Provider {
         self.inner.local_address().await
     }
 
+    /// Lists the local endpoint of this node.
+    pub async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
+        self.inner.local_endpoints().await
+    }
+
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
@@ -555,6 +561,10 @@ impl Provider {
 }
 
 impl ProviderInner {
+    async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
+        self.conn.local_endpoints().await
+    }
+
     async fn local_address(&self) -> Result<Vec<SocketAddr>> {
         let (v4, v6) = self.conn.local_addr().await?;
         let mut addrs = vec![v4];

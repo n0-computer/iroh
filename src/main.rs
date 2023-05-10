@@ -731,6 +731,7 @@ async fn provide(
     };
 
     println!("Listening address: {:#?}", provider.local_address().await?);
+    println!("Local endpoints: {:#?}", provider.local_endpoints().await?);
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)
