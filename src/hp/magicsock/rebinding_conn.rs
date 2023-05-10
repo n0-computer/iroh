@@ -154,7 +154,7 @@ async fn bind(
 
     for port in &ports {
         // Close the existing conn, in case it is sitting on the port we want.
-        if let Some(ref _inner) = inner {
+        if let Some(_inner) = inner {
             // TODO: inner.close()
         }
         // Open a new one with the desired port.
@@ -252,14 +252,13 @@ mod tests {
         let (m1_send, m1_recv) = flume::bounded(8);
 
         let m1_task = tokio::task::spawn(async move {
-            while let Some(conn) = m1.accept().await {
+            if let Some(conn) = m1.accept().await {
                 let conn = conn.await?;
                 let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
                 let val = recv_bi.read_to_end(usize::MAX).await?;
                 m1_send.send_async(val).await?;
                 send_bi.finish().await?;
-                break;
             }
 
             Ok::<_, anyhow::Error>(())

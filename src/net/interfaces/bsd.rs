@@ -85,10 +85,6 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
                 return true;
             }
         }
-        _ => {}
-    }
-
-    match (dst, netmask) {
         (Addr::Inet6 { ip: dst, .. }, Addr::Inet6 { ip: netmask, .. }) => {
             if dst.octets() == V6_DEFAULT && netmask.octets() == V6_DEFAULT {
                 return true;
@@ -96,7 +92,6 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
         }
         _ => {}
     }
-
     false
 }
 
@@ -292,13 +287,13 @@ fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<RouteMessage>, RouteError>
 /// For the manipulation of routing information, the route message must
 /// contain appropriate fields that include:
 ///
-///	Version       = <must be specified>
-///	Type          = <must be specified>
-///	Flags         = <must be specified>
-///	Index         = <must be specified if necessary>
-///	ID            = <must be specified>
-///	Seq           = <must be specified>
-///	Addrs         = <must be specified>
+///  Version       = <must be specified>
+///  Type          = <must be specified>
+///  Flags         = <must be specified>
+///  Index         = <must be specified if necessary>
+///  ID            = <must be specified>
+///  Seq           = <must be specified>
+///  Addrs         = <must be specified>
 #[derive(Debug)]
 struct RouteMessage {
     /// message version

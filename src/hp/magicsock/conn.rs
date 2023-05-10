@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map, HashMap, HashSet, VecDeque},
     io::{self, IoSliceMut},
     mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -996,7 +996,7 @@ impl Actor {
                     }
                 }
                 _ = endpoints_update_receiver.changed() => {
-                    let reason = endpoints_update_receiver.borrow().clone();
+                    let reason = *endpoints_update_receiver.borrow();
                     debug!("tick: endpoints update receiver {:?}", reason);
                     if let Some(reason) = reason {
                         self.update_endpoints(reason).await;
@@ -1031,7 +1031,7 @@ impl Actor {
             self.on_stun_receive(bytes, meta.addr).await;
             return false;
         }
-        if self.handle_disco_message(&bytes, meta.addr, None).await {
+        if self.handle_disco_message(bytes, meta.addr, None).await {
             debug!("received DISCO message {}", bytes.len());
             return false;
         }
@@ -1105,10 +1105,7 @@ impl Actor {
         }
         let region_id = dm.region_id;
 
-        let ipp = SocketAddr::new(
-            DERP_MAGIC_IP,
-            u16::try_from(region_id).expect("invalid region id"),
-        );
+        let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
 
         if self
             .handle_disco_message(&dm.buf, ipp, Some(dm.src.clone()))
@@ -1362,7 +1359,7 @@ impl Actor {
             "mixed destinations"
         );
 
-        match self.peer_map.endpoint_for_ip_port_mut(&current_destination) {
+        match self.peer_map.endpoint_for_ip_port_mut(current_destination) {
             Some(ep) => {
                 let public_key = ep.public_key();
                 match ep.get_send_addrs().await {
@@ -1464,13 +1461,10 @@ impl Actor {
         derp_id: u16,
         dc: &derp::http::Client,
     ) {
-        match self.derp_route.entry(peer) {
-            std::collections::hash_map::Entry::Occupied(r) => {
-                if r.get().derp_id == derp_id && &r.get().dc == dc {
-                    r.remove();
-                }
+        if let hash_map::Entry::Occupied(r) = self.derp_route.entry(peer) {
+            if r.get().derp_id == derp_id && &r.get().dc == dc {
+                r.remove();
             }
-            _ => {}
         }
     }
 
@@ -1533,7 +1527,7 @@ impl Actor {
     /// our current home DERP.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
-        self.close_derp(region_id.into(), why).await;
+        self.close_derp(region_id, why).await;
         if self.my_derp == region_id {
             self.connect(region_id, None).await;
         }
@@ -1827,7 +1821,7 @@ impl Actor {
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
         let report = time::timeout(Duration::from_secs(10), async move {
-            net_checker.get_report(&dm, pconn4, pconn6).await
+            net_checker.get_report(dm, pconn4, pconn6).await
         })
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
@@ -1871,7 +1865,6 @@ impl Actor {
         }
 
         // TODO: set link type
-        drop(r);
         self.call_net_info_callback(ni).await;
         self.ignore_stun_packets().await;
 
@@ -2185,12 +2178,10 @@ impl Actor {
         }
 
         match pub_key {
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "missing pub key for derp route",
-                ));
-            }
+            None => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "missing pub key for derp route",
+            )),
             Some(pub_key) => {
                 self.send_derp(addr.port(), pub_key.clone(), vec![pkt])
                     .await;
@@ -2257,7 +2248,7 @@ impl Actor {
         // this peer, do the heavy crypto lifting to see what they want.
 
         let di = get_disco_info(&mut self.disco_info, &self.private_key, &sender);
-        let payload = di.shared_key.open(&sealed_box);
+        let payload = di.shared_key.open(sealed_box);
         if payload.is_err() {
             // This might be have been intended for a previous
             // disco key.  When we restart we get a new disco key
@@ -2364,7 +2355,7 @@ impl Actor {
         src: SocketAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) {
-        let di = get_disco_info(&mut self.disco_info, &self.private_key, &sender);
+        let di = get_disco_info(&mut self.disco_info, &self.private_key, sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -3065,7 +3056,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        hp::{
+            derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
+            hostinfo::Hostinfo,
+        },
         tls,
     };
 
@@ -3139,12 +3133,10 @@ mod tests {
             loop {
                 tokio::select! {
                     _ = &mut cancel_r => {
-                        return Ok(());
+                        return anyhow::Ok(());
                     }
                     res = futures::future::poll_fn(|cx| conn.poll_recv(cx, &mut buffs, &mut meta)) => {
-                        if let Err(err) = res {
-                            return Err(err);
-                        }
+                        res?;
                     }
                 }
             }
@@ -3327,7 +3319,7 @@ mod tests {
         }
 
         fn public(&self) -> key::node::PublicKey {
-            self.key.public_key().into()
+            self.key.public_key()
         }
     }
 
@@ -3355,11 +3347,11 @@ mod tests {
                 peers.push(cfg::Node {
                     addresses: addresses.clone(),
                     name: Some(format!("node{}", i + 1)),
-                    key: peer.key.public_key().into(),
+                    key: peer.key.public_key(),
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
                     created: Instant::now(),
-                    hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                    hostinfo: Hostinfo::default(),
                     keep_alive: false,
                     expired: false,
                     online: None,
@@ -3380,7 +3372,7 @@ mod tests {
             eps[my_idx] = new_eps;
 
             for (i, m) in ms.iter().enumerate() {
-                let nm = build_netmap(&eps, ms, i).await;
+                let nm = build_netmap(eps, ms, i).await;
                 let _ = m.conn.set_network_map(nm).await;
             }
         }
@@ -3669,12 +3661,8 @@ mod tests {
                 Arc::new(quinn::TokioRuntime),
             )?;
 
-            let tls_client_config = tls::make_client_config(
-                &key.clone().into(),
-                None,
-                vec![tls::P2P_ALPN.to_vec()],
-                false,
-            )?;
+            let tls_client_config =
+                tls::make_client_config(&key.into(), None, vec![tls::P2P_ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));

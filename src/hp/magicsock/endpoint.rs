@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map, HashMap},
     hash::Hash,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -316,7 +316,7 @@ impl Endpoint {
                     );
                     return None;
                 }
-                Some(ep.clone())
+                Some(*ep)
             })
             .collect();
         debug!("sending pings to {:?}", pings);
@@ -330,7 +330,7 @@ impl Endpoint {
             self.start_ping(ep, now, DiscoPingPurpose::Discovery).await;
         }
 
-        let derp_addr = self.derp_addr.clone();
+        let derp_addr = self.derp_addr;
         if sent_any && send_call_me_maybe {
             if let Some(derp_addr) = derp_addr {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
@@ -364,7 +364,7 @@ impl Endpoint {
         self.expired = n.expired;
         self.derp_addr = n.derp;
 
-        for (_, st) in &mut self.endpoint_state {
+        for st in self.endpoint_state.values_mut() {
             st.index = Index::Deleted; // assume deleted until updated in next loop
         }
         for (i, ep) in n.endpoints.iter().take(u16::MAX as usize).enumerate() {
@@ -401,7 +401,7 @@ impl Endpoint {
         self.best_addr = None;
         self.best_addr_at = None;
         self.trust_best_addr_until = None;
-        for (_, es) in &mut self.endpoint_state {
+        for es in self.endpoint_state.values_mut() {
             es.last_ping = None;
         }
     }
@@ -510,7 +510,7 @@ impl Endpoint {
                     "disco: received unexpected pong {:?} from {:?}",
                     m.tx_id, src,
                 );
-                return (false, None);
+                (false, None)
             }
             Some(sp) => {
                 let known_tx_id = true;
@@ -531,7 +531,7 @@ impl Endpoint {
                             return (known_tx_id, peer_map_insert);
                         }
                         Some(st) => {
-                            peer_map_insert = Some((src, key.clone()));
+                            peer_map_insert = Some((src, key));
                             st.add_pong_reply(PongReply {
                                 latency,
                                 pong_at: now,
@@ -561,10 +561,7 @@ impl Endpoint {
                     let ep = sp.to;
                     let region_id = usize::from(ep.port());
                     // FIXME: this creates a deadlock as it needs to interact with the run loop in the conn::Actor
-                    let region_code = self
-                        .get_derp_region(region_id)
-                        .await
-                        .map(|r| r.region_code.clone());
+                    let region_code = self.get_derp_region(region_id).await.map(|r| r.region_code);
 
                     for PendingCliPing { mut res, cb } in self.pending_cli_pings.drain(..) {
                         res.latency_seconds = Some(latency.as_secs_f64());
@@ -778,11 +775,11 @@ impl PeerMap {
     }
 
     pub(super) fn by_id(&self, id: &usize) -> Option<&Endpoint> {
-        self.by_id.get(&id)
+        self.by_id.get(id)
     }
 
     pub(super) fn by_id_mut(&mut self, id: &usize) -> Option<&mut Endpoint> {
-        self.by_id.get_mut(&id)
+        self.by_id.get_mut(id)
     }
 
     /// Returns the endpoint for nk, or None if nk is not known to us.
@@ -819,8 +816,8 @@ impl PeerMap {
     }
 
     pub(super) fn store_node_key_mapping(&mut self, id: usize, public_key: key::node::PublicKey) {
-        if !self.by_node_key.contains_key(&public_key) {
-            self.by_node_key.insert(public_key, id);
+        if let hash_map::Entry::Vacant(e) = self.by_node_key.entry(public_key) {
+            e.insert(id);
             // allow lookups by the fake addr
             let fake_wg_addr = self.by_id(&id).unwrap().fake_wg_addr;
             self.by_ip_port.insert(fake_wg_addr, id);
@@ -916,16 +913,11 @@ struct EndpointState {
     index: Index,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 enum Index {
+    #[default]
     Deleted,
     Some(usize),
-}
-
-impl Default for Index {
-    fn default() -> Self {
-        Index::Deleted
-    }
 }
 
 impl EndpointState {
@@ -1014,10 +1006,8 @@ impl AddrLatency {
             if self.latency / 10 * 9 < other.latency {
                 return true;
             }
-        } else if self.addr.is_ipv4() && other.addr.is_ipv6() {
-            if other.is_better_than(self) {
-                return false;
-            }
+        } else if self.addr.is_ipv4() && other.addr.is_ipv6() && other.is_better_than(self) {
+            return false;
         }
         self.latency < other.latency
     }

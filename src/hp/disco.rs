@@ -4,16 +4,19 @@
 //!
 //! Header:
 //!
-//!	magic          [u8; 6]  // “TS💬” (0x54 53 f0 9f 92 ac)
-//!	senderDiscoPub [u8; 32] // nacl public key
-//!	nonce          [u8; 24]
-//!
+//! ```no_run
+//! magic:            [u8; 6]  // “TS💬” (0x54 53 f0 9f 92 ac)
+//! sender_disco_pub: [u8; 32] // nacl public key
+//! nonce:            [u8; 24]
+//! ````
 //! The recipient then decrypts the bytes following (the nacl secretbox)
 //! and then the inner payload structure is:
 //!
-//!	messageType     u8  (the MessageType constants below)
-//!	messageVersion  u8  (0 for now; but always ignore bytes at the end)
-//!	message-payload &[u8]
+//! ```no_run
+//! message_type:    u8   // (the MessageType constants below)
+//! message_version: u8   // (0 for now; but always ignore bytes at the end)
+//! message_payload: &[u8]
+//! ```
 
 use std::{
     fmt::Display,
@@ -178,9 +181,8 @@ fn socket_addr_from_bytes(p: &[u8]) -> SocketAddr {
 
     let src_ip = to_canonical(IpAddr::from(raw_src_ip));
     let src_port = u16::from_le_bytes(raw_port);
-    let src = SocketAddr::new(src_ip, src_port);
 
-    src
+    SocketAddr::new(src_ip, src_port)
 }
 
 fn socket_addr_as_bytes(addr: &SocketAddr) -> [u8; EP_LENGTH] {
@@ -321,53 +323,53 @@ mod tests {
             want: &'static str,
         }
         let tests = [
-	    Test {
-		name: "ping_with_nodekey_src",
-		m: Message::Ping(Ping {
-		    tx_id:    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-		    node_key: key::node::PublicKey::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
-		}),
-		want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1e 1f",
-	    },
-	    Test {
-		name: "pong",
-		m: Message::Pong(Pong{
-		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-		    src:  "2.3.4.5:1234".parse().unwrap(),
-		}),
-		want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
-	    },
-	    Test {
-		name: "pongv6",
-		m: Message::Pong(Pong {
-		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-		    src:  "[fed0::12]:6666".parse().unwrap(),
-		}),
-		want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
-	    },
-	    Test {
-		name: "call_me_maybe",
-		m:    Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new() }),
-		want: "03 00",
-	    },
-	    Test {
-		name: "call_me_maybe_endpoints",
-		m: Message::CallMeMaybe(CallMeMaybe {
-		    my_number: vec![
-			"1.2.3.4:567".parse().unwrap(),
-			"[2001::3456]:789".parse().unwrap(),
-		    ],
-		}),
-		want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03",
-	    },
-	];
+            Test {
+                name: "ping_with_nodekey_src",
+                m: Message::Ping(Ping {
+                    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
+                    node_key: key::node::PublicKey::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
+                }),
+                want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1e 1f",
+            },
+            Test {
+                name: "pong",
+                m: Message::Pong(Pong{
+                    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
+                    src:  "2.3.4.5:1234".parse().unwrap(),
+                }),
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
+            },
+            Test {
+                name: "pongv6",
+                m: Message::Pong(Pong {
+                    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
+                    src: "[fed0::12]:6666".parse().unwrap(),
+                }),
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
+            },
+            Test {
+                name: "call_me_maybe",
+                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new() }),
+                want: "03 00",
+            },
+            Test {
+                name: "call_me_maybe_endpoints",
+                m: Message::CallMeMaybe(CallMeMaybe {
+                    my_number: vec![
+                        "1.2.3.4:567".parse().unwrap(),
+                        "[2001::3456]:789".parse().unwrap(),
+                    ],
+                }),
+                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03",
+            },
+        ];
         for test in tests {
             println!("{}", test.name);
 
             let got = test.m.as_bytes();
             assert_eq!(
                 got,
-                hex::decode(test.want.replace(" ", "")).unwrap(),
+                hex::decode(test.want.replace(' ', "")).unwrap(),
                 "wrong as_bytes"
             );
 
@@ -379,10 +381,10 @@ mod tests {
     #[test]
     fn test_extraction() {
         let sender_key = key::node::SecretKey::generate();
-        let sender_node_key: key::node::PublicKey = sender_key.public_key().into();
+        let sender_node_key: key::node::PublicKey = sender_key.public_key();
         let msg = Message::Ping(Ping {
             tx_id: stun::TransactionId::default(),
-            node_key: sender_node_key.clone(),
+            node_key: sender_node_key,
         });
 
         let sender_disco_key = key::node::SecretKey::generate();

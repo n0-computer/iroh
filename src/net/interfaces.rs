@@ -232,7 +232,7 @@ impl State {
 
     /// Reports whether any interface has the provided IP address.
     pub fn has_ip(&self, ip: &IpAddr) -> bool {
-        for (_, pv) in &self.interface_ips {
+        for pv in self.interface_ips.values() {
             for p in pv {
                 match (p, ip) {
                     (IpNet::V4(a), IpAddr::V4(b)) => {
