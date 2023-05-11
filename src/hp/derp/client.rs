@@ -730,7 +730,7 @@ pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
 
 /// Combines blobs into packets of at most MAX_PACKET_SIZE.
 ///
-/// Each item in a packet has a big-endian 2-byte length prefix.
+/// Each item in a packet has a little-endian 2-byte length prefix.
 pub struct PacketizeIter<I: Iterator> {
     iter: std::iter::Peekable<I>,
     buffer: BytesMut,
@@ -761,8 +761,7 @@ where
             if self.buffer.len() + next_length as usize + 2 > MAX_PACKET_SIZE {
                 break;
             }
-            let length_prefix = next_length.to_be_bytes();
-            self.buffer.put_slice(&length_prefix);
+            self.buffer.put_u16_le(next_length);
             self.buffer.put_slice(next_bytes);
             self.iter.next();
         }
@@ -812,8 +811,7 @@ impl Iterator for PacketSplitIter {
             if self.bytes.remaining() < 2 {
                 return self.fail();
             }
-            // this reads as big-endian
-            let len = self.bytes.get_u16() as usize;
+            let len = self.bytes.get_u16_le() as usize;
             if self.bytes.remaining() < len {
                 return self.fail();
             }
