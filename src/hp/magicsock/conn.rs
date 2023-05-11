@@ -33,7 +33,10 @@ use crate::{
         derp::{self, client::PacketSplitIter, DerpMap, DerpRegion},
         disco, key, netcheck, netmap, portmapper, stun,
     },
+    inc,
+    metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
+    record,
 };
 
 use super::{
@@ -522,7 +525,11 @@ impl AsyncUdpSocket for Conn {
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
+        let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
+        record!(MagicsockMetrics::SendData, bytes_total as _);
+
         if self.is_closed() {
+            record!(MagicsockMetrics::SendDataNetworkDown, bytes_total as _);
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
@@ -609,6 +616,18 @@ impl AsyncUdpSocket for Conn {
                         } => {
                             buf_out[..bytes.len()].copy_from_slice(&bytes);
                             *meta_out = meta;
+
+                            match source {
+                                NetworkSource::Derp => {
+                                    record!(MagicsockMetrics::RecvDataDerp, bytes.len() as _);
+                                }
+                                NetworkSource::Ipv4 => {
+                                    record!(MagicsockMetrics::RecvDataIPv4, bytes.len() as _);
+                                }
+                                NetworkSource::Ipv6 => {
+                                    record!(MagicsockMetrics::RecvDataIPv6, bytes.len() as _);
+                                }
+                            }
                             trace!(
                                 "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
                                 meta_out.addr,
@@ -1228,8 +1247,7 @@ impl Actor {
             c.close().await;
             cancel.cancel();
 
-            // TODO:
-            // metricNumDERPConns.Set(int64(len(c.activeDerp)))
+            inc!(MagicsockMetrics::NumDerpConnsRemoved);
         }
     }
 
@@ -1306,9 +1324,6 @@ impl Actor {
                 })
             });
 
-        // TODO: DNS Cache
-        // dc.DNSCache = dnscache.Get();
-
         let cancel = CancellationToken::new();
         let ad = ActiveDerp {
             c: dc.clone(),
@@ -1318,8 +1333,7 @@ impl Actor {
         };
         self.active_derp.insert(region_id, ad);
 
-        // TODO:
-        // metricNumDERPConns.Set(int64(len(c.activeDerp)))
+        inc!(MagicsockMetrics::NumDerpConnsAdded);
         self.log_active_derp();
 
         let d = dc.clone();
@@ -1457,13 +1471,11 @@ impl Actor {
 
         match derp_client.send(peer.clone(), contents).await {
             Ok(_) => {
-                // TODO:
-                // metricSendDERP.Add(1)
+                inc!(MagicsockMetrics::SendDerp);
             }
             Err(err) => {
                 warn!("derp.send: failed {:?}", err);
-                // TODO:
-                // metricSendDERPError.Add(1)
+                inc!(MagicsockMetrics::SendDerpError);
             }
         }
     }
@@ -1551,8 +1563,7 @@ impl Actor {
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn re_stun(&mut self, why: &'static str) {
-        // TODO:
-        // metricReSTUNCalls.Add(1)
+        inc!(MagicsockMetrics::ReStunCalls);
 
         if self.endpoints_update_state.is_running() {
             if Some(why) != self.endpoints_update_state.want_update {
@@ -1573,8 +1584,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn update_endpoints(&mut self, why: &'static str) {
-        // TODO:
-        // metricUpdateEndpoints.Add(1)
+        inc!(MagicsockMetrics::UpdateEndpoints);
 
         debug!("starting endpoint update ({})", why);
         if self.no_v4_send && !self.conn.is_closed() {
@@ -2012,8 +2022,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind_all(&mut self) {
-        // TODO:
-        // metricRebindCalls.Add(1)
+        inc!(MagicsockMetrics::RebindCalls);
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
             debug!("{:?}", err);
             return;
@@ -2085,8 +2094,7 @@ impl Actor {
             return true;
         }
         if my_derp != 0 && derp_num != 0 {
-            // TODO:
-            // metricDERPHomeChange.Add(1)
+            inc!(MagicsockMetrics::DerpHomeChange);
         }
         self.my_derp = derp_num;
 
@@ -2132,13 +2140,12 @@ impl Actor {
         let di = get_disco_info(&mut self.disco_info, &self.private_key, &dst_key);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
-        // let is_derp = dst.ip() == DERP_MAGIC_IP;
-        // TODO
-        // if is_derp {
-        // 	metricSendDiscoDERP.Add(1)
-        // } else {
-        // 	metricSendDiscoUDP.Add(1)
-        // }
+        let is_derp = dst.ip() == DERP_MAGIC_IP;
+        if is_derp {
+            inc!(MagicsockMetrics::SendDiscoDerp);
+        } else {
+            inc!(MagicsockMetrics::SendDiscoUdp);
+        }
 
         let pkt = disco::encode_message(&self.conn.public_key, seal);
         let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
@@ -2150,20 +2157,22 @@ impl Actor {
             }
             Ok(_n) => {
                 debug!("disco: sent message to {}", dst);
-                // TODO:
-                // if is_derp {
-                //     metricSentDiscoDERP.Add(1);
-                // } else {
-                //     metricSentDiscoUDP.Add(1);
-                // }
-                // match msg {
-                //     case *disco.Ping:
-                //     	metricSentDiscoPing.Add(1)
-                //     case *disco.Pong:
-                //     	metricSentDiscoPong.Add(1)
-                //     case *disco.CallMeMaybe:
-                //     	metricSentDiscoCallMeMaybe.Add(1)
-                //     }
+                if is_derp {
+                    inc!(MagicsockMetrics::SentDiscoDerp);
+                } else {
+                    inc!(MagicsockMetrics::SentDiscoUdp);
+                }
+                match msg {
+                    disco::Message::Ping(_) => {
+                        inc!(MagicsockMetrics::SentDiscoPing);
+                    }
+                    disco::Message::Pong(_) => {
+                        inc!(MagicsockMetrics::SentDiscoPong);
+                    }
+                    disco::Message::CallMeMaybe(_) => {
+                        inc!(MagicsockMetrics::SentDiscoCallMeMaybe);
+                    }
+                }
                 Ok(true)
             }
             Err(err) => {
@@ -2186,8 +2195,8 @@ impl Actor {
                 destination: addr,
                 contents: pkt,
                 ecn: None,
-                segment_size: None, // TODO: make sure this is correct
-                src_ip: None,       // TODO
+                segment_size: None,
+                src_ip: None, // TODO
             }];
             return self.send_raw(addr, transmits).await;
         }
@@ -2249,8 +2258,7 @@ impl Actor {
                 }
             }
             if abort {
-                // TODO:
-                // metricRecvDiscoBadPeer.Add(1)
+                inc!(MagicsockMetrics::RecvDiscoBadPeer);
                 debug!(
                     "disco: ignoring disco-looking frame, don't know endpoint for {:?}",
                     sender
@@ -2276,8 +2284,7 @@ impl Actor {
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
                 self.conn.public_key, sender, payload,
             );
-            // TODO:
-            // metricRecvDiscoBadKey.Add(1)
+            inc!(MagicsockMetrics::RecvDiscoBadKey);
             return true;
         }
         let payload = payload.unwrap();
@@ -2291,29 +2298,27 @@ impl Actor {
             // understand. Not even worth logging about, lest it
             // be too spammy for old clients.
 
-            // TODO:
-            // metricRecvDiscoBadParse.Add(1)
+            inc!(MagicsockMetrics::RecvDiscoBadParse);
             return true;
         }
 
         let dm = dm.unwrap();
         let is_derp = src.ip() == DERP_MAGIC_IP;
-        // if isDERP {
-        //     metricRecvDiscoDERP.Add(1);
-        // } else {
-        //     metricRecvDiscoUDP.Add(1)
-        // };
+        if is_derp {
+            inc!(MagicsockMetrics::RecvDiscoDerp);
+        } else {
+            inc!(MagicsockMetrics::RecvDiscoUdp);
+        }
 
         debug!("got disco message: {:?}", dm);
         match dm {
             disco::Message::Ping(ping) => {
-                // metricRecvDiscoPing.Add(1)
+                inc!(MagicsockMetrics::RecvDiscoPing);
                 self.handle_ping(ping, &sender, src, derp_node_src).await;
                 true
             }
             disco::Message::Pong(pong) => {
-                // metricRecvDiscoPong.Add(1)
-
+                inc!(MagicsockMetrics::RecvDiscoPong);
                 // There might be multiple nodes for the sender's DiscoKey.
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
@@ -2328,8 +2333,7 @@ impl Actor {
                 true
             }
             disco::Message::CallMeMaybe(cm) => {
-                // metricRecvDiscoCallMeMaybe.Add(1)
-
+                inc!(MagicsockMetrics::RecvDiscoCallMeMaybe);
                 if !is_derp || derp_node_src.is_none() {
                     // CallMeMaybe messages should only come via DERP.
                     debug!("[unexpected] CallMeMaybe packets should only come via DERP");
@@ -2338,7 +2342,7 @@ impl Actor {
                 let node_key = derp_node_src.unwrap();
                 match self.peer_map.endpoint_for_node_key_mut(&node_key) {
                     None => {
-                        // metricRecvDiscoCallMeMaybeBadNode.Add(1)
+                        inc!(MagicsockMetrics::RecvDiscoCallMeMaybeBadDisco);
                         debug!(
                             "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
                             sender, node_key,
@@ -2528,9 +2532,6 @@ impl Actor {
 
         // Update self.net_map regardless, before the following early return.
         let prior_netmap = self.net_map.replace(nm);
-
-        // TODO:
-        // metricNumPeers.Set(int64(len(nm.Peers)))
 
         if prior_netmap.is_some()
             && prior_netmap.as_ref().unwrap().peers == self.net_map.as_ref().unwrap().peers
