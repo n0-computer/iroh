@@ -45,14 +45,14 @@ pub struct Hostinfo {
     pub net_info: Option<NetInfo>,
 }
 
-impl Hostinfo {
-    pub fn new() -> Self {
+impl Default for Hostinfo {
+    fn default() -> Self {
         let hostname = hostname::get()
             .ok()
             .and_then(|s| s.into_string().ok())
             .unwrap_or_default();
         // grab the first label
-        let hostname = hostname.split(".").next().unwrap_or_default().to_string();
+        let hostname = hostname.split('.').next().unwrap_or_default().to_string();
         let os = os_info::get();
 
         return Hostinfo {
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_hostinfo() {
-        let info = Hostinfo::new();
+        let info = Hostinfo::default();
         println!("{:#?}", info);
 
         assert!(!info.rust_version.is_empty());

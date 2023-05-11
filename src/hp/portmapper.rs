@@ -13,12 +13,12 @@ pub struct ProbeResult {
 }
 
 /// A port mapping client.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Client {}
 
 impl Client {
     pub fn new() -> Self {
-        Client {}
+        Self::default()
     }
 
     pub async fn probe(&self) -> Result<ProbeResult, Error> {

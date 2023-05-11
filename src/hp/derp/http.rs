@@ -11,7 +11,7 @@ pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 mod tests {
     use super::*;
 
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::net::SocketAddr;
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
@@ -111,7 +111,7 @@ mod tests {
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
-                ipv4: UseIpv4::Some(Ipv4Addr::from(addr)),
+                ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
                 derp_port: port,
             }],
@@ -164,9 +164,7 @@ mod tests {
     ) {
         let client = ClientBuilder::new().new_region(key.clone(), move || {
             let region = region.clone();
-            Box::pin(async move {
-                return Some(region);
-            })
+            Box::pin(async move { Some(region) })
         });
         let public_key = key.public_key();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
@@ -182,13 +180,16 @@ mod tests {
                     Ok((msg, _)) => {
                         println!("got message on {:?}: {msg:?}", key.public_key());
                         if let ReceivedMessage::ReceivedPacket { source, data } = msg {
-                            received_msg_s.send((source, data)).await.expect(
-                                format!(
-                                    "client {:?}, error sending message over channel",
-                                    key.public_key()
-                                )
-                                .as_str(),
-                            );
+                            received_msg_s
+                                .send((source, data))
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!(
+                                        "client {:?}, error sending message over channel: {:?}",
+                                        key.public_key(),
+                                        err
+                                    )
+                                });
                         }
                     }
                 }
