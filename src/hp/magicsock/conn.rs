@@ -33,6 +33,7 @@ use crate::{
         derp::{self, client::PacketSplitIter, DerpMap, DerpRegion},
         disco, key, netcheck, netmap, portmapper, stun,
     },
+    metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
 };
 
@@ -210,6 +211,8 @@ impl Conn {
     /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
     #[instrument(skip_all, fields(name))]
     pub async fn new(opts: Options) -> Result<Self> {
+        crate::inc!(MagicsockMetrics::NumPeers);
+
         let name = format!(
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])

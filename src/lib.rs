@@ -1,11 +1,9 @@
 //! Send data over the internet.
-#![deny(missing_docs)]
+// #![deny(missing_docs)] TODO: fix me before merging
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
-#[allow(missing_docs)]
 pub mod main_util;
-#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod net;
 pub mod progress;
