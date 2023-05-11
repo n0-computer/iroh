@@ -132,10 +132,4 @@ incremental = false
 crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
 ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
 
-# quinn = { path = "../quinn/quinn" }
-# quinn-udp = { path = "../quinn/quinn-udp" }
-# quinn-proto = { path = "../quinn/quinn-proto" }
-quinn = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
-quinn-udp = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
-quinn-proto = { git = "http://github.com/dignifiedquire/quinn", branch = "feat-bytes-transmit" }
 quic-rpc = { git = "https://github.com/n0-computer/quic-rpc", branch = "feat-quinn-010" }
