@@ -720,3 +720,133 @@ pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
         &frame[PUBLIC_KEY_LENGTH..],
     ))
 }
+
+/// Combines blobs into packets of at most MAX_PACKET_SIZE.
+///
+/// Each item in a packet has a big-endian 2-byte length prefix.
+pub struct PacketizeIter<I: Iterator> {
+    iter: std::iter::Peekable<I>,
+    buffer: BytesMut,
+}
+
+impl<I: Iterator> PacketizeIter<I> {
+    /// Create a new new PacketizeIter from something that can be turned into an
+    /// iterator of slices, like a Vec<Bytes>.
+    pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
+        Self {
+            iter: iter.into_iter().peekable(),
+            buffer: BytesMut::with_capacity(MAX_PACKET_SIZE),
+        }
+    }
+}
+
+impl<I: Iterator> Iterator for PacketizeIter<I>
+where
+    I::Item: AsRef<[u8]>,
+{
+    type Item = Bytes;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::BufMut;
+        while let Some(next_bytes) = self.iter.peek() {
+            let next_bytes = next_bytes.as_ref();
+            let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
+            if self.buffer.len() + next_length as usize + 2 > MAX_PACKET_SIZE {
+                break;
+            }
+            let length_prefix = next_length.to_be_bytes();
+            self.buffer.put_slice(&length_prefix);
+            self.buffer.put_slice(next_bytes);
+            self.iter.next();
+        }
+        if !self.buffer.is_empty() {
+            Some(self.buffer.split().freeze())
+        } else {
+            None
+        }
+    }
+}
+
+/// Splits a packet into its component items.
+
+pub struct PacketSplitIter {
+    bytes: BytesMut,
+}
+
+impl PacketSplitIter {
+    /// Create a new PacketSplitIter from a packet.
+    ///
+    /// Returns an error if the packet is too big.
+    pub fn new(bytes: BytesMut) -> std::io::Result<Self> {
+        if bytes.len() <= MAX_PACKET_SIZE {
+            Ok(Self { bytes })
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "packet too big",
+            ))
+        }
+    }
+
+    fn fail(&mut self) -> Option<std::io::Result<BytesMut>> {
+        self.bytes.clear();
+        Some(Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "",
+        )))
+    }
+}
+
+impl Iterator for PacketSplitIter {
+    type Item = std::io::Result<BytesMut>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::Buf;
+        if self.bytes.has_remaining() {
+            if self.bytes.remaining() < 2 {
+                return self.fail();
+            }
+            // this reads as big-endian
+            let len = self.bytes.get_u16() as usize;
+            if self.bytes.remaining() < len {
+                return self.fail();
+            }
+            let item = self.bytes.split_to(len);
+            Some(Ok(item))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty() {
+        let empty_vec: Vec<Bytes> = Vec::new();
+        let mut iter = PacketizeIter::new(empty_vec);
+        assert_eq!(None, iter.next());
+    }
+
+    #[test]
+    fn test_single_result() {
+        let single_vec = vec!["Hello"];
+        let iter = PacketizeIter::new(single_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(1, result.len());
+        assert_eq!(&[0, 5, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
+    }
+
+    #[test]
+    fn test_multiple_results() {
+        let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
+        let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
+        let iter = PacketizeIter::new(multiple_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(2, result.len());
+        assert_eq!(&[0, 5, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
+        assert_eq!(&[0, 5, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
+    }
+}
