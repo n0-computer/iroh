@@ -5,6 +5,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     pub regions: HashMap<usize, DerpRegion>,
@@ -54,7 +56,7 @@ impl DerpMap {
 }
 
 /// A geographic region running DERP relay node(s).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpRegion {
     /// A unique integer for a geographic region.
     pub region_id: usize,
@@ -63,7 +65,7 @@ pub struct DerpRegion {
     pub region_code: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpNode {
     pub name: String,
     pub region_id: usize,
@@ -82,7 +84,7 @@ pub struct DerpNode {
     pub derp_port: u16,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv4 {
     None,
     Disabled,
@@ -96,7 +98,7 @@ impl UseIpv4 {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv6 {
     None,
     Disabled,
