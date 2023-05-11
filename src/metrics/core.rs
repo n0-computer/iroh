@@ -12,6 +12,7 @@ pub(crate) struct Core {
     registry: Registry,
     iroh_metrics: iroh::Metrics,
     magicsock_metrics: magicsock::Metrics,
+    magicsock_hist_metrics: magicsock::MetricsHist,
 }
 
 impl Default for Core {
@@ -21,6 +22,7 @@ impl Default for Core {
             enabled: AtomicBool::new(false),
             iroh_metrics: iroh::Metrics::new(&mut reg),
             magicsock_metrics: magicsock::Metrics::new(&mut reg),
+            magicsock_hist_metrics: magicsock::MetricsHist::new(&mut reg),
             registry: reg,
         }
     }
@@ -37,6 +39,10 @@ impl Core {
 
     pub(crate) fn magicsock_metrics(&self) -> &magicsock::Metrics {
         &self.magicsock_metrics
+    }
+
+    pub(crate) fn magicsock_hist_metrics(&self) -> &magicsock::MetricsHist {
+        &self.magicsock_hist_metrics
     }
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, std::io::Error> {
@@ -105,6 +111,7 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
+            Collector::MagicsockHist => CORE.magicsock_hist_metrics().record(m, v),
             _ => unimplemented!("not enabled/implemented"),
         };
     }
@@ -120,6 +127,7 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
+            Collector::MagicsockHist => CORE.magicsock_hist_metrics().observe(m, v),
             _ => unimplemented!("not enabled/implemented"),
         };
     }
@@ -133,4 +141,6 @@ pub enum Collector {
     Iroh,
     /// Magicsock related metrics.
     Magicsock,
+    /// Magicsock Histogram related metrics.
+    MagicsockHist,
 }

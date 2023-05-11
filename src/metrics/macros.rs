@@ -38,7 +38,7 @@ macro_rules! observe {
     ( $e:expr, $v:expr) => {
         #[cfg(feature = "metrics")]
         {
-            use $crate::metrics::core::MRecorder;
+            use $crate::metrics::core::MObserver;
             $e.observe($v);
         }
         #[cfg(not(feature = "metrics"))]
@@ -49,17 +49,14 @@ macro_rules! observe {
     };
 }
 
-/// Generate metrics for a module
+/// Generate recorder metrics for a module.
 #[macro_export]
-macro_rules! make_metrics {
+macro_rules! make_metric_recorders {
     ($module_name:ident, $($name:ident: $type:ident: $description:expr),+) => {
         paste::paste! {
             #[cfg(feature = "metrics")]
             #[allow(unused_imports)]
             use prometheus_client::metrics::counter::*;
-            #[cfg(feature = "metrics")]
-            #[allow(unused_imports)]
-            use prometheus_client::metrics::gauge::*;
 
             #[cfg(feature = "metrics")]
             #[derive(Default, Clone, Debug)]
@@ -152,11 +149,175 @@ macro_rules! make_metrics {
             impl $crate::metrics::core::MRecorder for  [<$module_name Metrics>] {
                 fn record(&self, value: u64) {
                     $crate::metrics::core::record(
-                        $crate::metrics::core::Collector::$module_name, self.clone(),
+                        $crate::metrics::core::Collector::$module_name,
+                        self.clone(),
                         value
                     );
                 }
             }
+
+
+            #[cfg(feature = "metrics")]
+            impl std::fmt::Display for  [<$module_name Metrics>] {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    use $crate::metrics::core::MetricType;
+
+                    write!(f, "{}", self.name())
+                }
+            }
+
+            /// Enum of metrics for the module
+            #[derive(Debug, Copy, Clone)]
+            pub enum [<$module_name Metrics>] {
+                $(
+                    /// Metric for $name
+                    $name,
+                )+
+            }
+        }
+    }
+}
+
+/// Generate recorder metrics for a module.
+#[macro_export]
+macro_rules! make_metric_observers {
+    ($module_name:ident, $($name:ident: $type:ident: $description:expr),+) => {
+        paste::paste! {
+            #[cfg(feature = "metrics")]
+            #[allow(unused_imports)]
+            use prometheus_client::metrics::gauge::*;
+
+            #[cfg(feature = "metrics")]
+            #[derive(Default, Clone, Debug)]
+                pub(crate) struct MetricsHist {
+                    $(
+                        [<$name:snake>]: $type,
+                    )+
+                }
+
+            #[cfg(not(feature = "metrics"))]
+            #[derive(Default, Clone, Debug)]
+            #[allow(dead_code)]
+            pub(crate) struct MetricsHist {
+                $(
+                    [<$name:snake>]: (),
+                )+
+            }
+        }
+
+        paste::paste! {
+            $(
+                /// Define a metric for the module
+                pub const [<METRICS_HIST_ $name:snake:upper>]: &str = stringify!([<$name:snake>]);
+            )+
+
+            #[cfg(feature = "metrics")]
+            impl MetricsHist {
+                pub(crate) fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
+                    let sub_registry = registry.sub_registry_with_prefix(stringify!([<$module_name:snake>]));
+
+                    $(
+                        let [<$name:snake>] = <$type>::default();
+                        sub_registry.register(
+                            stringify!([<$name:snake>]),
+                            $description,
+                            Box::new([<$name:snake>].clone())
+                        );
+                    )+
+
+                    Self {
+                        $(
+                            [<$name:snake>],
+                        )+
+                    }
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::metrics::core::MetricsRecorder for MetricsHist {
+                fn record<M>(&self, m: M, value: u64)
+                where
+                    M: $crate::metrics::core::MetricType + std::fmt::Display,
+                {
+                    use $crate::metrics::core::MetricType;
+                    match m.name() {
+                        $(
+                            x if x ==  [<$module_name Metrics>]::$name.name() => {
+                                self.[<$name:snake>].inc_by(value);
+                            }
+                        )+
+                        name => {
+                            tracing::error!("record ([<$module_name:snake>]): unknown metric {}", name);
+                        }
+                    }
+                }
+
+                fn observe<M>(&self, m: M, value: f64)
+                where
+                    M: $crate::metrics::core::HistogramType + std::fmt::Display,
+                {
+                    use $crate::metrics::core::HistogramType;
+                    match m.name() {
+                        $(
+                            x if x ==  [<$module_name Metrics>]::$name.name() => {
+                                self.[<$name:snake>].set(value as u64); // TODO: why is this not a float?
+                            }
+                        )+
+                        name => {
+                            tracing::error!("observe ([<$module_name:snake>]): unknown metric {}", name);
+                        }
+                    }
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::metrics::core::MetricType for [<$module_name Metrics>] {
+                fn name(&self) -> &'static str {
+                    match self {
+                        $(
+                            [<$module_name Metrics>]::$name => {
+                                [<METRICS_HIST_ $name:snake:upper>]
+                            }
+                        )+
+                    }
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::metrics::core::HistogramType for [<$module_name Metrics>] {
+                fn name(&self) -> &'static str {
+                    match self {
+                        $(
+                            [<$module_name Metrics>]::$name => {
+                                [<METRICS_HIST_ $name:snake:upper>]
+                            }
+                        )+
+                    }
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::metrics::core::MRecorder for  [<$module_name Metrics>] {
+                fn record(&self, value: u64) {
+                    $crate::metrics::core::record(
+                        $crate::metrics::core::Collector::$module_name,
+                        self.clone(),
+                        value
+                    );
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::metrics::core::MObserver for  [<$module_name Metrics>] {
+                fn observe(&self, value: f64) {
+                    $crate::metrics::core::observe(
+                        $crate::metrics::core::Collector::$module_name,
+                        self.clone(),
+                        value
+                    );
+                }
+            }
+
 
             #[cfg(feature = "metrics")]
             impl std::fmt::Display for  [<$module_name Metrics>] {
