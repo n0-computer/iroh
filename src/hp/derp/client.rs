@@ -227,7 +227,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
                     let (source, data) = parse_recv_frame(&frame_payload)?;
                     let packet = ReceivedMessage::ReceivedPacket {
                         source,
-                        data: BytesMut::from(data),
+                        data: Bytes::copy_from_slice(data),
                     };
                     return Ok(packet);
                 }
@@ -553,7 +553,7 @@ pub enum ReceivedMessage {
         source: PublicKey,
         /// The received packet bytes. It aliases the memory passed to Client.Recv.
         #[debug(skip)]
-        data: BytesMut, // TODO: ref
+        data: Bytes, // TODO: ref
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
@@ -627,7 +627,7 @@ pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
             return Ok(());
         }
     }
-    for packet in packets {
+    for packet in PacketizeIter::new(packets) {
         write_frame(
             &mut writer,
             FrameType::SendPacket,
@@ -770,14 +770,14 @@ where
 /// Splits a packet into its component items.
 
 pub struct PacketSplitIter {
-    bytes: BytesMut,
+    bytes: Bytes,
 }
 
 impl PacketSplitIter {
     /// Create a new PacketSplitIter from a packet.
     ///
     /// Returns an error if the packet is too big.
-    pub fn new(bytes: BytesMut) -> std::io::Result<Self> {
+    pub fn new(bytes: Bytes) -> std::io::Result<Self> {
         if bytes.len() <= MAX_PACKET_SIZE {
             Ok(Self { bytes })
         } else {
@@ -788,7 +788,7 @@ impl PacketSplitIter {
         }
     }
 
-    fn fail(&mut self) -> Option<std::io::Result<BytesMut>> {
+    fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
         self.bytes.clear();
         Some(Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
@@ -798,7 +798,7 @@ impl PacketSplitIter {
 }
 
 impl Iterator for PacketSplitIter {
-    type Item = std::io::Result<BytesMut>;
+    type Item = std::io::Result<Bytes>;
 
     fn next(&mut self) -> Option<Self::Item> {
         use bytes::Buf;

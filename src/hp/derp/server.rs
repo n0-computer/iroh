@@ -895,7 +895,9 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), vec![msg.clone()]).await?;
+        client_a
+            .send(public_key_b.clone(), vec![msg.clone()])
+            .await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -908,7 +910,9 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), vec![msg.clone()]).await?;
+        client_b
+            .send(public_key_a.clone(), vec![msg.clone()])
+            .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);

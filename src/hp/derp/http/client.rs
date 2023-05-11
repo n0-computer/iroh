@@ -602,7 +602,11 @@ impl Client {
     ///
     /// If there is an error sending the packet, it closes the underlying derp connection before
     /// returning.
-    pub async fn send(&self, dst_key: key::node::PublicKey, b: Vec<Bytes>) -> Result<(), ClientError> {
+    pub async fn send(
+        &self,
+        dst_key: key::node::PublicKey,
+        b: Vec<Bytes>,
+    ) -> Result<(), ClientError> {
         debug!("send");
         let (client, _) = self.connect().await?;
         if let Err(_) = client.send(dst_key, b).await {

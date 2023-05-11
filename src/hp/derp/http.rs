@@ -14,7 +14,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use anyhow::Result;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use hyper::server::conn::Http;
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::TcpListener;
@@ -23,6 +23,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
+    use crate::hp::derp::client::PacketSplitIter;
     use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
     use crate::hp::{
         derp::Server as DerpServer,
@@ -158,7 +159,7 @@ mod tests {
         region: DerpRegion,
     ) -> (
         PublicKey,
-        mpsc::Receiver<(PublicKey, BytesMut)>,
+        mpsc::Receiver<(PublicKey, Bytes)>,
         JoinHandle<()>,
         Client,
     ) {
@@ -182,13 +183,23 @@ mod tests {
                     Ok((msg, _)) => {
                         println!("got message on {:?}: {msg:?}", key.public_key());
                         if let ReceivedMessage::ReceivedPacket { source, data } = msg {
-                            received_msg_s.send((source, data)).await.expect(
-                                format!(
-                                    "client {:?}, error sending message over channel",
-                                    key.public_key()
-                                )
-                                .as_str(),
-                            );
+                            let Ok(iter) = PacketSplitIter::new(data) else {
+                                tracing::warn!("packet too large {:?}", key.public_key());
+                                return;
+                            };
+                            for packet in iter {
+                                let Ok(data) = packet else {
+                                    tracing::warn!("error parsing packet");
+                                    return;
+                                };
+                                received_msg_s.send((source.clone(), data)).await.expect(
+                                    format!(
+                                        "client {:?}, error sending message over channel",
+                                        key.public_key()
+                                    )
+                                    .as_str(),
+                                );
+                            }
                         }
                     }
                 }
