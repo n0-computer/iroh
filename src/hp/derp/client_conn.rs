@@ -913,7 +913,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 
@@ -922,7 +922,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 
