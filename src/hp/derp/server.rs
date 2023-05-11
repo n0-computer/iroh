@@ -155,8 +155,11 @@ where
     /// Closes the server and waits for the connections to disconnect.
     pub async fn close(mut self) {
         if !self.closed {
-            if let Err(_) = self.server_channel.send(ServerMessage::Shutdown).await {
-                tracing::warn!("could not shutdown the server gracefully, doing a forced shutdown");
+            if let Err(err) = self.server_channel.send(ServerMessage::Shutdown).await {
+                tracing::warn!(
+                    "could not shutdown the server gracefully, doing a forced shutdown: {:?}",
+                    err
+                );
                 self.cancel.cancel();
             }
             match self.loop_handler.await {
@@ -184,10 +187,10 @@ where
     /// [`Server`].
     pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler<R, W, P> {
         ClientConnHandler {
-            mesh_key: self.mesh_key.clone(),
+            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::new(default_headers),
         }
@@ -264,10 +267,10 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            mesh_key: self.mesh_key.clone(),
+            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::clone(&self.default_headers),
         }
@@ -307,7 +310,7 @@ where
             reader,
             writer,
             can_mesh: self.can_mesh(client_info.mesh_key),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
         };
@@ -545,9 +548,9 @@ where
 /// This RTT optimization fails where there's a corp-mandated TLS proxy with
 /// corp-mandated root certs on employee machines and TLS proxy cleans up
 /// unnecessary certs. In that case we jsut fall back to the extra RTT.
-fn init_meta_cert<'a>(server_key: &PublicKey) -> Vec<u8> {
+fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
     let mut params =
-        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(&server_key.as_bytes()))]);
+        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
     params.serial_number = Some(PROTOCOL_VERSION as u64);
     // Windows requires not_after and not_before set:
     params.not_after = time::OffsetDateTime::now_utc()
@@ -867,7 +870,7 @@ mod tests {
         let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
         let server: Server<DuplexStream, DuplexStream, MockPacketForwarder> =
-            Server::new(server_key, mesh_key.clone());
+            Server::new(server_key, mesh_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();

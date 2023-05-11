@@ -409,7 +409,7 @@ where
                 self.send_peer_gone(peer_conn_state.peer).await?;
             }
         }
-        if updates.len() != 0 {
+        if !updates.is_empty() {
             self.request_mesh_update(updates).await?;
         }
         Ok(())
@@ -608,7 +608,7 @@ where
 
     async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
         ensure!(
-            data.len() == 0,
+            data.is_empty(),
             "FrameType::WatchConns content is an unexpected size"
         );
         ensure!(self.can_mesh, "insufficient permissions");
@@ -775,7 +775,7 @@ mod tests {
         // change preferred to false
         crate::hp::derp::client::send_note_preferred(&mut writer, false).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(false, preferred.load(Ordering::Relaxed));
+        assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         crate::hp::derp::client::send_note_preferred(&mut writer, true).await?;

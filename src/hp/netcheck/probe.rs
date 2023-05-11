@@ -61,7 +61,7 @@ impl Probe {
     pub fn delay(&self) -> &Duration {
         match self {
             Probe::Ipv4 { delay, .. } | Probe::Ipv6 { delay, .. } | Probe::Https { delay, .. } => {
-                &delay
+                delay
             }
         }
     }
@@ -119,7 +119,7 @@ impl ProbePlan {
         let had4 = !last.region_v4_latency.is_empty();
         let had6 = !last.region_v6_latency.is_empty();
         let had_both = have6if && had4 && had6;
-        for (ri, reg) in sort_regions(dm, &last).into_iter().enumerate() {
+        for (ri, reg) in sort_regions(dm, last).into_iter().enumerate() {
             if ri == NUM_INCREMENTAL_REGIONS {
                 break;
             }
@@ -210,7 +210,7 @@ impl ProbePlan {
     fn new_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbePlan {
         let mut plan = ProbePlan::default();
 
-        for (_, reg) in &dm.regions {
+        for reg in dm.regions.values() {
             let mut p4 = Vec::new();
             let mut p6 = Vec::new();
             let mut https = Vec::new();

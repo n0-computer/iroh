@@ -21,7 +21,7 @@ const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
-const UPGRADE_INTERVAL: Duration = Duration::from_secs(1 * 60);
+const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);

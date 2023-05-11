@@ -165,7 +165,7 @@ enum TlsAcceptor {
 
 fn escape_hostname(hostname: &str) -> Cow<'_, str> {
     let unsafe_hostname_characters = regex::Regex::new(r"[^a-zA-Z0-9-\.]").unwrap();
-    unsafe_hostname_characters.replace_all(&hostname, "")
+    unsafe_hostname_characters.replace_all(hostname, "")
 }
 
 fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
@@ -671,9 +671,9 @@ async fn serve_no_content_handler(
 
 fn is_challenge_char(c: char) -> bool {
     // Semi-randomly chosen as a limited set of valid characters
-    ('a' <= c && c <= 'z')
-        || ('A' <= c && c <= 'Z')
-        || ('0' <= c && c <= '9')
+    c.is_ascii_lowercase()
+        || c.is_ascii_uppercase()
+        || c.is_ascii_digit()
         || c == '.'
         || c == '-'
         || c == '_'

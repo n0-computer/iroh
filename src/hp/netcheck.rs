@@ -255,7 +255,6 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
         }
 
         let i = (0..rids.len())
-            .into_iter()
             .choose(&mut rand::thread_rng())
             .unwrap_or_default();
         *rids[i]
@@ -706,7 +705,7 @@ impl ReportState {
     async fn wait_hair_check(&mut self) {
         let last = self.last.as_deref();
         if self.incremental {
-            if let Some(ref last) = last {
+            if let Some(last) = last {
                 let last_val = last.hair_pinning;
                 self.report.write().await.hair_pinning = last_val;
             }
@@ -947,7 +946,7 @@ fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duratio
 }
 
 fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
-    for (_, r) in &dm.regions {
+    for r in dm.regions.values() {
         for n in &r.nodes {
             if n.name == node_name {
                 return Some(n);
@@ -1135,7 +1134,7 @@ impl Actor {
         }
 
         let last = self.reports.last.clone();
-        let plan = ProbePlan::new(&dm, &if_state, last.as_deref()).await;
+        let plan = ProbePlan::new(dm, &if_state, last.as_deref()).await;
 
         Ok(ReportState {
             incremental: last.is_some(),
@@ -1192,13 +1191,13 @@ impl Actor {
     ) {
         debug!("received STUN packet from {}", src);
 
-        if src.is_ipv4() {
-            // TODO:
-            // metricSTUNRecv4.Add(1)
-        } else if src.is_ipv6() {
-            // TODO:
-            // metricSTUNRecv6.Add(1)
-        }
+        // if src.is_ipv4() {
+        // TODO:
+        // metricSTUNRecv4.Add(1)
+        // } else if src.is_ipv6() {
+        // TODO:
+        // metricSTUNRecv6.Add(1)
+        // }
 
         if self.handle_hair_stun(pkt, src).await {
             return;
@@ -1339,7 +1338,7 @@ impl Actor {
             .reports
             .prev
             .iter()
-            .map(|(a, b)| -> (&Instant, &Report) { (a, &*b) })
+            .map(|(a, b)| -> (&Instant, &Report) { (a, b) })
             .chain(std::iter::once((&now, &r)));
 
         let mut to_remove = Vec::new();
@@ -1600,21 +1599,22 @@ mod tests {
         let mut client = Client::new(None).await?;
 
         let r = client.get_report(&dm, None, None).await?;
-        let mut r: Report = (&*r).clone();
+        let mut r: Report = (*r).clone();
         r.upnp = None;
         r.pmp = None;
         r.pcp = None;
 
-        let mut want = Report::default();
-
-        // The ip_v4_can_send flag gets set differently across platforms.
-        // On Windows this test detects false, while on Linux detects true.
-        // That's not relevant to this test, so just accept what we're given.
-        want.ipv4_can_send = r.ipv4_can_send;
-        // OS IPv6 test is irrelevant here, accept whatever the current machine has.
-        want.os_has_ipv6 = r.os_has_ipv6;
-        // Captive portal test is irrelevant; accept what the current report has.
-        want.captive_portal = r.captive_portal;
+        let want = Report {
+            // The ip_v4_can_send flag gets set differently across platforms.
+            // On Windows this test detects false, while on Linux detects true.
+            // That's not relevant to this test, so just accept what we're given.
+            ipv4_can_send: r.ipv4_can_send,
+            // OS IPv6 test is irrelevant here, accept whatever the current machine has.
+            os_has_ipv6: r.os_has_ipv6,
+            // Captive portal test is irrelevant; accept what the current report has.
+            captive_portal: r.captive_portal,
+            ..Default::default()
+        };
 
         assert_eq!(r, want);
 
@@ -1627,7 +1627,7 @@ mod tests {
         fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
             let mut report = Report::default();
             for (s, d) in a {
-                assert!(s.starts_with("d"), "invalid derp server key");
+                assert!(s.starts_with('d'), "invalid derp server key");
                 let region_id: usize = s[1..].parse().unwrap();
                 report
                     .region_latency

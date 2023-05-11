@@ -538,7 +538,7 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
         bail!("invalid server greeting");
     }
 
-    Ok(get_key_from_slice(&buf[magic_len..expected_frame_len])?)
+    get_key_from_slice(&buf[magic_len..expected_frame_len])
 }
 
 // errors if `frame_len` is less than the expected key size
@@ -775,7 +775,6 @@ where
 }
 
 /// Splits a packet into its component items.
-
 pub struct PacketSplitIter {
     bytes: Bytes,
 }

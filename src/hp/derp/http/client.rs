@@ -104,7 +104,8 @@ struct InnerClient {
     server_public_key: Option<key::node::PublicKey>,
 }
 
-/// Build a Client
+/// Build a Client.
+#[derive(Default)]
 pub struct ClientBuilder {
     /// Default is false
     can_ack_pings: bool,
@@ -133,14 +134,7 @@ impl std::fmt::Debug for ClientBuilder {
 
 impl ClientBuilder {
     pub fn new() -> Self {
-        Self {
-            can_ack_pings: false,
-            is_preferred: false,
-            address_family_selector: None,
-            mesh_key: None,
-            is_prober: false,
-            server_public_key: None,
-        }
+        Self::default()
     }
 
     // S returns if we should prefer ipv6
@@ -226,7 +220,7 @@ impl Client {
         };
         // need to do this outside the above closure because they rely on the same lock
         // if there was an error sending, close the underlying derp connection
-        if let Err(_) = res {
+        if res.is_err() {
             self.close_for_reconnect().await;
         }
     }
@@ -311,7 +305,7 @@ impl Client {
 
         let (mut request_sender, connection) = hyper::client::conn::handshake(tcp_stream)
             .await
-            .map_err(|e| ClientError::Hyper(e))?;
+            .map_err(ClientError::Hyper)?;
 
         tokio::spawn(async move {
             // polling `connection` drives the HTTP exchange
@@ -334,7 +328,7 @@ impl Client {
         let res = request_sender
             .send_request(req)
             .await
-            .map_err(|e| ClientError::Hyper(e))?;
+            .map_err(ClientError::Hyper)?;
 
         if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
             warn!("connect: invalid status received: {:?}", res.status());
@@ -364,7 +358,7 @@ impl Client {
         debug!("connect: building..");
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
-                .mesh_key(self.inner.mesh_key.clone())
+                .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
                 .is_prober(self.inner.is_prober)
                 .server_public_key(self.inner.server_public_key.clone())
@@ -372,11 +366,10 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        if *self.inner.is_preferred.lock().await {
-            if let Err(_) = derp_client.note_preferred(true).await {
-                derp_client.close().await;
-                return Err(ClientError::Send);
-            }
+        if *self.inner.is_preferred.lock().await && derp_client.note_preferred(true).await.is_err()
+        {
+            derp_client.close().await;
+            return Err(ClientError::Send);
         }
         debug!("connect: built");
         Ok(derp_client)
@@ -444,7 +437,7 @@ impl Client {
         // Return the first successfull dial, otherwise the first error we saw.
         let mut first_err = None;
         while let Some(res) = dials.join_next().await {
-            match res.map_err(|e| ClientError::DialTask(e))? {
+            match res.map_err(ClientError::DialTask)? {
                 Ok(conn) => {
                     // Cancel rest
                     dials.abort_all();
@@ -516,7 +509,7 @@ impl Client {
         let ping = rand::thread_rng().gen::<[u8; 8]>();
         let (send, recv) = oneshot::channel();
         self.register_ping(ping, send).await;
-        if let Err(_) = client.send_ping(ping).await {
+        if client.send_ping(ping).await.is_err() {
             self.close_for_reconnect().await;
             let _ = self.unregister_ping(ping).await;
             return Err(ClientError::Send);
@@ -539,7 +532,7 @@ impl Client {
         debug!("send_pong");
         if self.inner.can_ack_pings {
             let (client, _) = self.connect().await?;
-            if let Err(_) = client.send_pong(data).await {
+            if client.send_pong(data).await.is_err() {
                 self.close_for_reconnect().await;
                 return Err(ClientError::Send);
             }
@@ -577,7 +570,7 @@ impl Client {
 
                     if let ReceivedMessage::Pong(ping) = msg {
                         if let Some(chan) = self.unregister_ping(ping).await {
-                            if let Err(_) = chan.send(()) {
+                            if chan.send(()).is_err() {
                                 tracing::warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
                             }
                             continue;
@@ -609,7 +602,7 @@ impl Client {
     ) -> Result<(), ClientError> {
         debug!("send");
         let (client, _) = self.connect().await?;
-        if let Err(_) = client.send(dst_key, b).await {
+        if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
         }
@@ -641,7 +634,7 @@ impl Client {
     pub async fn watch_connection_changes(&self) -> Result<(), ClientError> {
         debug!("watch_connection_changes");
         let (client, _) = self.connect().await?;
-        if let Err(_) = client.watch_connection_changes().await {
+        if client.watch_connection_changes().await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
         }
@@ -658,7 +651,7 @@ impl Client {
     pub async fn close_peer(&self, target: key::node::PublicKey) -> Result<(), ClientError> {
         debug!("close_peer");
         let (client, _) = self.connect().await?;
-        if let Err(_) = client.close_peer(target).await {
+        if client.close_peer(target).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
         }
@@ -681,7 +674,7 @@ impl PacketForwarder for Client {
                 let dstkey = dstkey.clone();
                 let packet = packet.clone();
                 if let Ok((client, _)) = packet_forwarder.connect().await {
-                    if let Ok(_) = client.forward_packet(srckey, dstkey, packet).await {
+                    if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
                         return;
                     }
                 }

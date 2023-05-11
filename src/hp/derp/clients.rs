@@ -158,7 +158,7 @@ impl Clients {
         updates: Vec<PeerConnState>,
     ) {
         for k in keys {
-            self.send_mesh_updates(&k, updates.clone());
+            self.send_mesh_updates(k, updates.clone());
         }
     }
 
