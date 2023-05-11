@@ -729,10 +729,10 @@ mod tests {
         // get message on a's reader
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (key, frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(key_b, key);
-        assert_eq!(msg, frame);
+        assert_eq!(msg, &frame[..]);
 
         // write disco message from b to d
         let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
