@@ -1,5 +1,9 @@
 make_metric_recorders! {
     Magicsock,
+
+    NumDerpConnsAdded:  Counter: "num_derp_conns added",
+    NumDerpConnsRemoved:  Counter: "num_derp_conns removed",
+
     RebindCalls:     Counter: "rebind_calls",
     ReStunCalls:     Counter: "restun_calls",
     UpdateEndpoints: Counter: "update_endpoints",
@@ -43,10 +47,4 @@ make_metric_recorders! {
 
     // How many times our DERP home region DI has changed from non-zero to a different non-zero.
     DerpHomeChange: Counter: "derp_home_change"
-}
-
-make_metric_observers! {
-    MagicsockHist,
-    NumPeers:      Gauge: "netmap_num_peers",
-    NumDerpConns:  Gauge: "num_derp_conns"
 }

@@ -34,9 +34,9 @@ use crate::{
         disco, key, netcheck, netmap, portmapper, stun,
     },
     inc,
-    metrics::magicsock::{MagicsockHistMetrics, MagicsockMetrics},
+    metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
-    observe, record,
+    record,
 };
 
 use super::{
@@ -1247,10 +1247,7 @@ impl Actor {
             c.close().await;
             cancel.cancel();
 
-            observe!(
-                MagicsockHistMetrics::NumDerpConns,
-                self.active_derp.len() as _
-            );
+            inc!(MagicsockMetrics::NumDerpConnsRemoved);
         }
     }
 
@@ -1336,10 +1333,7 @@ impl Actor {
         };
         self.active_derp.insert(region_id, ad);
 
-        observe!(
-            MagicsockHistMetrics::NumDerpConns,
-            self.active_derp.len() as _
-        );
+        inc!(MagicsockMetrics::NumDerpConnsAdded);
         self.log_active_derp();
 
         let d = dc.clone();
@@ -2536,7 +2530,6 @@ impl Actor {
             return;
         }
 
-        observe!(MagicsockHistMetrics::NumPeers, nm.peers.len() as _);
         // Update self.net_map regardless, before the following early return.
         let prior_netmap = self.net_map.replace(nm);
 
