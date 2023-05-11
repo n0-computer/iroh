@@ -224,11 +224,8 @@ impl<R: AsyncRead + Unpin> Client<R> {
                         tracing::warn!("unexpected: dropping short packet from DERP server");
                         continue;
                     }
-                    let (source, data) = parse_recv_frame(&frame_payload)?;
-                    let packet = ReceivedMessage::ReceivedPacket {
-                        source,
-                        data: Bytes::copy_from_slice(data),
-                    };
+                    let (source, data) = parse_recv_frame(frame_payload)?;
+                    let packet = ReceivedMessage::ReceivedPacket { source, data };
                     return Ok(packet);
                 }
                 FrameType::Ping => {
@@ -718,14 +715,14 @@ pub(crate) async fn close_peer<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
+pub(crate) fn parse_recv_frame(frame: BytesMut) -> Result<(PublicKey, Bytes)> {
     ensure!(
         frame.len() >= PUBLIC_KEY_LENGTH,
         "frame is shorter than expected"
     );
     Ok((
         PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
-        &frame[PUBLIC_KEY_LENGTH..],
+        frame.freeze().slice(PUBLIC_KEY_LENGTH..),
     ))
 }
 
