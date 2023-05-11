@@ -669,7 +669,7 @@ enum NetworkReadResult {
     Ok {
         source: NetworkSource,
         meta: quinn_udp::RecvMeta,
-        bytes: BytesMut,
+        bytes: Bytes,
     },
 }
 
@@ -964,14 +964,14 @@ impl Actor {
                                     Network::Ipv4 => {
                                         let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
                                             source: NetworkSource::Ipv4,
-                                            bytes,
+                                            bytes: bytes,
                                             meta,
                                         }).await;
                                     }
                                     Network::Ipv6 => {
                                         let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
                                             source: NetworkSource::Ipv6,
-                                            bytes,
+                                            bytes: bytes,
                                             meta,
                                         }).await;
                                     }
@@ -1024,7 +1024,7 @@ impl Actor {
     /// Returns `false` if this is an internal packet and it should not be reported.
     async fn receive_ip(
         &mut self,
-        bytes: &BytesMut,
+        bytes: &Bytes,
         meta: &mut quinn_udp::RecvMeta,
         network: Network,
     ) -> bool {
@@ -1162,7 +1162,7 @@ impl Actor {
         // }
         Some(NetworkReadResult::Ok {
             source: NetworkSource::Derp,
-            bytes: dm.buf,
+            bytes: dm.buf.freeze(),
             meta,
         })
     }
@@ -2682,7 +2682,7 @@ struct IpStream {
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
     recv_buf: Box<[u8]>,
-    out_buffer: VecDeque<(BytesMut, Network, quinn_udp::RecvMeta)>,
+    out_buffer: VecDeque<(Bytes, Network, quinn_udp::RecvMeta)>,
 }
 
 impl IpStream {
@@ -2707,7 +2707,7 @@ impl IpStream {
 }
 
 impl Stream for IpStream {
-    type Item = io::Result<(BytesMut, Network, quinn_udp::RecvMeta)>;
+    type Item = io::Result<(Bytes, Network, quinn_udp::RecvMeta)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.conn.is_closed() {
@@ -2739,7 +2739,7 @@ impl Stream for IpStream {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         let stride = meta.stride;
                         while !data.is_empty() {
-                            let buf = data.split_to(stride.min(data.len()));
+                            let buf = data.split_to(stride.min(data.len())).freeze();
                             // set stride to len, as we are cutting it into pieces here
                             meta.len = buf.len();
                             meta.stride = buf.len();
@@ -2763,7 +2763,7 @@ impl Stream for IpStream {
                     let mut data: BytesMut = buf[0..meta.len].into();
                     let stride = meta.stride;
                     while !data.is_empty() {
-                        let buf = data.split_to(stride.min(data.len()));
+                        let buf = data.split_to(stride.min(data.len())).freeze();
                         // set stride to len, as we are cutting it into pieces here
                         meta.len = buf.len();
                         meta.stride = buf.len();
