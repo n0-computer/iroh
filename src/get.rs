@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use crate::blobs::Collection;
 use crate::hp::cfg::DERP_MAGIC_IP;
 use crate::hp::derp::DerpMap;
+use crate::hp::hostinfo::Hostinfo;
 use crate::hp::{cfg, netmap};
 use crate::main_util::pathbuf_from_name;
 use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
@@ -44,7 +45,7 @@ pub use crate::util::Hash;
 pub const DEFAULT_PROVIDER_ADDR: (Ipv4Addr, u16) = crate::provider::DEFAULT_BIND_ADDR;
 
 /// Options for the client
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Options {
     /// The address to connect to
     pub addr: Option<SocketAddr>,
@@ -54,17 +55,6 @@ pub struct Options {
     pub keylog: bool,
     /// The configuration of the derp services.
     pub derp_map: Option<DerpMap>,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Options {
-            addr: None,
-            peer_id: None,
-            keylog: false,
-            derp_map: None,
-        }
-    }
 }
 
 /// Create a quinn client endpoint
@@ -143,7 +133,7 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
                 endpoints,
                 derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
                 created: Instant::now(),
-                hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+                hostinfo: Hostinfo::default(),
                 keep_alive: false,
                 expired: false,
                 online: None,

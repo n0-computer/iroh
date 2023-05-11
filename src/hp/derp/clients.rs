@@ -158,7 +158,7 @@ impl Clients {
         updates: Vec<PeerConnState>,
     ) {
         for k in keys {
-            self.send_mesh_updates(&k, updates.clone());
+            self.send_mesh_updates(k, updates.clone());
         }
     }
 
@@ -316,17 +316,17 @@ mod tests {
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
-        assert_eq!(data, got_frame);
+        assert_eq!(data, &got_frame[..]);
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
-        assert_eq!(data, got_frame);
+        assert_eq!(data, &got_frame[..]);
 
         // send peer_gone
         clients.send_peer_gone(&a_key.clone(), b_key.clone());

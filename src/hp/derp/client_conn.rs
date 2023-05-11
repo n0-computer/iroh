@@ -409,7 +409,7 @@ where
                 self.send_peer_gone(peer_conn_state.peer).await?;
             }
         }
-        if updates.len() != 0 {
+        if !updates.is_empty() {
             self.request_mesh_update(updates).await?;
         }
         Ok(())
@@ -608,7 +608,7 @@ where
 
     async fn handle_frame_watch_conns(&mut self, data: &[u8]) -> Result<()> {
         ensure!(
-            data.len() == 0,
+            data.is_empty(),
             "FrameType::WatchConns content is an unexpected size"
         );
         ensure!(self.can_mesh, "insufficient permissions");
@@ -775,7 +775,7 @@ mod tests {
         // change preferred to false
         crate::hp::derp::client::send_note_preferred(&mut writer, false).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(false, preferred.load(Ordering::Relaxed));
+        assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         crate::hp::derp::client::send_note_preferred(&mut writer, true).await?;
@@ -805,7 +805,7 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), data).await?;
+        crate::hp::derp::client::send_packets(&mut writer, &None, target.clone(), &[data]).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -823,7 +823,7 @@ mod tests {
         let mut disco_data = crate::hp::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), &disco_data)
+        crate::hp::derp::client::send_packets(&mut writer, &None, target.clone(), &[&disco_data])
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -913,7 +913,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 
@@ -922,7 +922,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut reader, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 

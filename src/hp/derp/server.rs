@@ -155,8 +155,11 @@ where
     /// Closes the server and waits for the connections to disconnect.
     pub async fn close(mut self) {
         if !self.closed {
-            if let Err(_) = self.server_channel.send(ServerMessage::Shutdown).await {
-                tracing::warn!("could not shutdown the server gracefully, doing a forced shutdown");
+            if let Err(err) = self.server_channel.send(ServerMessage::Shutdown).await {
+                tracing::warn!(
+                    "could not shutdown the server gracefully, doing a forced shutdown: {:?}",
+                    err
+                );
                 self.cancel.cancel();
             }
             match self.loop_handler.await {
@@ -184,10 +187,10 @@ where
     /// [`Server`].
     pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler<R, W, P> {
         ClientConnHandler {
-            mesh_key: self.mesh_key.clone(),
+            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::new(default_headers),
         }
@@ -264,10 +267,10 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            mesh_key: self.mesh_key.clone(),
+            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::clone(&self.default_headers),
         }
@@ -307,7 +310,7 @@ where
             reader,
             writer,
             can_mesh: self.can_mesh(client_info.mesh_key),
-            write_timeout: self.write_timeout.clone(),
+            write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
         };
@@ -545,9 +548,9 @@ where
 /// This RTT optimization fails where there's a corp-mandated TLS proxy with
 /// corp-mandated root certs on employee machines and TLS proxy cleans up
 /// unnecessary certs. In that case we jsut fall back to the extra RTT.
-fn init_meta_cert<'a>(server_key: &PublicKey) -> Vec<u8> {
+fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
     let mut params =
-        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(&server_key.as_bytes()))]);
+        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
     params.serial_number = Some(PROTOCOL_VERSION as u64);
     // Windows requires not_after and not_before set:
     params.not_after = time::OffsetDateTime::now_utc()
@@ -721,21 +724,21 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), msg).await?;
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_a.clone(), &[msg]).await?;
 
         // get message on a's reader
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
-        let (key, frame) = crate::hp::derp::client::parse_recv_frame(&buf)?;
+        let (key, frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(key_b, key);
-        assert_eq!(msg, frame);
+        assert_eq!(msg, &frame[..]);
 
         // write disco message from b to d
         let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &disco_msg)
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_d.clone(), &[&disco_msg])
             .await?;
 
         // get message on d's reader
@@ -867,7 +870,7 @@ mod tests {
         let server_key = SecretKey::generate();
         let mesh_key = Some([1u8; 32]);
         let server: Server<DuplexStream, DuplexStream, MockPacketForwarder> =
-            Server::new(server_key, mesh_key.clone());
+            Server::new(server_key, mesh_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
@@ -895,7 +898,9 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a
+            .send(public_key_b.clone(), vec![msg.clone()])
+            .await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -908,7 +913,9 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        client_b
+            .send(public_key_a.clone(), vec![msg.clone()])
+            .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
@@ -921,7 +928,7 @@ mod tests {
 
         // send message from a to c
         let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c.clone(), msg.clone()).await?;
+        client_a.send(key_c.clone(), vec![msg.clone()]).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
@@ -931,7 +938,7 @@ mod tests {
         handler.remove_packet_forwarder(key_c.clone())?;
         // try to send c a message
         let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c, msg.clone()).await?;
+        client_a.send(key_c, vec![msg.clone()]).await?;
         // packet forwarder has been removed
         assert!(fwd_recv.recv().await.is_none());
 
@@ -940,7 +947,7 @@ mod tests {
 
         // client connections have been shutdown
         client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(public_key_b, vec![Bytes::from_static(b"try to send")])
             .await?;
         assert!(client_b.recv().await.is_err());
         Ok(())

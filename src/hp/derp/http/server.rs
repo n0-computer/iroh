@@ -241,7 +241,7 @@ mod tests {
         });
 
         // Client requests a HTTP connection upgrade.
-        let request = client_upgrade_request(addr.clone());
+        let request = client_upgrade_request(addr);
         request.await?;
 
         // Complete the oneshot so that the server stops

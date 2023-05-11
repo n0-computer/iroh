@@ -162,7 +162,7 @@ impl SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", hex::encode(&self.0.to_bytes()))
+        write!(f, "SecretKey({})", hex::encode(self.0.to_bytes()))
     }
 }
 

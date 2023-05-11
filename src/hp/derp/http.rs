@@ -11,10 +11,10 @@ pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 mod tests {
     use super::*;
 
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::net::SocketAddr;
 
     use anyhow::Result;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use hyper::server::conn::Http;
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::TcpListener;
@@ -23,6 +23,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
+    use crate::hp::derp::client::PacketSplitIter;
     use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
     use crate::hp::{
         derp::Server as DerpServer,
@@ -111,7 +112,7 @@ mod tests {
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
-                ipv4: UseIpv4::Some(Ipv4Addr::from(addr)),
+                ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
                 derp_port: port,
             }],
@@ -130,7 +131,7 @@ mod tests {
 
         println!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key.clone(), msg.clone()).await?;
+        client_a.send(b_key.clone(), vec![msg.clone()]).await?;
         println!("waiting for message from a on b");
         let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
         assert_eq!(a_key, got_key);
@@ -138,7 +139,7 @@ mod tests {
 
         println!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key.clone(), msg.clone()).await?;
+        client_b.send(a_key.clone(), vec![msg.clone()]).await?;
         println!("waiting for message b on a");
         let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
         assert_eq!(b_key, got_key);
@@ -158,15 +159,13 @@ mod tests {
         region: DerpRegion,
     ) -> (
         PublicKey,
-        mpsc::Receiver<(PublicKey, BytesMut)>,
+        mpsc::Receiver<(PublicKey, Bytes)>,
         JoinHandle<()>,
         Client,
     ) {
         let client = ClientBuilder::new().new_region(key.clone(), move || {
             let region = region.clone();
-            Box::pin(async move {
-                return Some(region);
-            })
+            Box::pin(async move { Some(region) })
         });
         let public_key = key.public_key();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
@@ -182,13 +181,23 @@ mod tests {
                     Ok((msg, _)) => {
                         println!("got message on {:?}: {msg:?}", key.public_key());
                         if let ReceivedMessage::ReceivedPacket { source, data } = msg {
-                            received_msg_s.send((source, data)).await.expect(
-                                format!(
-                                    "client {:?}, error sending message over channel",
-                                    key.public_key()
-                                )
-                                .as_str(),
-                            );
+                            let iter = PacketSplitIter::new(data);
+                            for packet in iter {
+                                let Ok(data) = packet else {
+                                    tracing::warn!("error parsing packet");
+                                    return;
+                                };
+                                received_msg_s
+                                    .send((source.clone(), data))
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        panic!(
+                                            "client {:?}, error sending message over channel: {:?}",
+                                            key.public_key(),
+                                            err
+                                        )
+                                    });
+                            }
                         }
                     }
                 }
