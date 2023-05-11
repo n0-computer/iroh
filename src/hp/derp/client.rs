@@ -625,7 +625,8 @@ pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
         );
     }
     tracing::trace!("send derp packets {} {}", transmits.len(), total_len);
-    for packet in PacketizeIter::new(transmits) {
+    const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+    for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(transmits) {
         // rate limit for each packet, but exit early if the rate limit is exceeded.
         // it is unlikely to recover that quickly.
         if let Some(rate_limiter) = rate_limiter {
@@ -731,23 +732,23 @@ pub(crate) fn parse_recv_frame(frame: &[u8]) -> Result<(PublicKey, &[u8])> {
 /// Combines blobs into packets of at most MAX_PACKET_SIZE.
 ///
 /// Each item in a packet has a little-endian 2-byte length prefix.
-pub struct PacketizeIter<I: Iterator> {
+pub struct PacketizeIter<I: Iterator, const N: usize> {
     iter: std::iter::Peekable<I>,
     buffer: BytesMut,
 }
 
-impl<I: Iterator> PacketizeIter<I> {
+impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
     /// Create a new new PacketizeIter from something that can be turned into an
     /// iterator of slices, like a Vec<Bytes>.
     pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
         Self {
             iter: iter.into_iter().peekable(),
-            buffer: BytesMut::with_capacity(MAX_PACKET_SIZE),
+            buffer: BytesMut::with_capacity(N),
         }
     }
 }
 
-impl<I: Iterator> Iterator for PacketizeIter<I>
+impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
 where
     I::Item: AsRef<[u8]>,
 {
@@ -757,8 +758,9 @@ where
         use bytes::BufMut;
         while let Some(next_bytes) = self.iter.peek() {
             let next_bytes = next_bytes.as_ref();
+            assert!(next_bytes.len() + 2 <= N);
             let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
-            if self.buffer.len() + next_length as usize + 2 > MAX_PACKET_SIZE {
+            if self.buffer.len() + next_bytes.len() + 2 > N {
                 break;
             }
             self.buffer.put_u16_le(next_length);
@@ -782,15 +784,8 @@ impl PacketSplitIter {
     /// Create a new PacketSplitIter from a packet.
     ///
     /// Returns an error if the packet is too big.
-    pub fn new(bytes: Bytes) -> std::io::Result<Self> {
-        if bytes.len() <= MAX_PACKET_SIZE {
-            Ok(Self { bytes })
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "packet too big",
-            ))
-        }
+    pub fn new(bytes: Bytes) -> Self {
+        Self { bytes }
     }
 
     fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
@@ -830,27 +825,27 @@ mod tests {
     #[test]
     fn test_empty() {
         let empty_vec: Vec<Bytes> = Vec::new();
-        let mut iter = PacketizeIter::new(empty_vec);
+        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(empty_vec);
         assert_eq!(None, iter.next());
     }
 
     #[test]
     fn test_single_result() {
         let single_vec = vec!["Hello"];
-        let iter = PacketizeIter::new(single_vec);
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(single_vec);
         let result = iter.collect::<Vec<_>>();
         assert_eq!(1, result.len());
-        assert_eq!(&[0, 5, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
+        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
     }
 
     #[test]
     fn test_multiple_results() {
         let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
         let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
-        let iter = PacketizeIter::new(multiple_vec);
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(multiple_vec);
         let result = iter.collect::<Vec<_>>();
         assert_eq!(2, result.len());
-        assert_eq!(&[0, 5, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
-        assert_eq!(&[0, 5, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
+        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
+        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
     }
 }

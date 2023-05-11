@@ -1142,10 +1142,7 @@ impl Actor {
         // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
         // split the packet into these parts
-        let parts = match PacketSplitIter::new(dm.buf) {
-            Ok(parts) => parts,
-            Err(e) => return vec![NetworkReadResult::Error(e)],
-        };
+        let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
         let addr = ep_fake_wg_addr;

@@ -181,10 +181,7 @@ mod tests {
                     Ok((msg, _)) => {
                         println!("got message on {:?}: {msg:?}", key.public_key());
                         if let ReceivedMessage::ReceivedPacket { source, data } = msg {
-                            let Ok(iter) = PacketSplitIter::new(data) else {
-                                tracing::warn!("packet too large {:?}", key.public_key());
-                                return;
-                            };
+                            let iter = PacketSplitIter::new(data);
                             for packet in iter {
                                 let Ok(data) = packet else {
                                     tracing::warn!("error parsing packet");
