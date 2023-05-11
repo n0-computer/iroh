@@ -721,7 +721,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), &[msg]).await?;
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_a.clone(), &[msg]).await?;
 
         // get message on a's reader
         let (frame_type, _) =
@@ -735,7 +735,7 @@ mod tests {
         let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &[&disco_msg])
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_d.clone(), &[&disco_msg])
             .await?;
 
         // get message on d's reader

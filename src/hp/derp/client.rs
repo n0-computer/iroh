@@ -348,7 +348,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                 Some(ClientWriterMessage::Packet((key, bytes))) => {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
                     // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                    send_packets(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
                 }
                 Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
                     tokio::time::timeout(
@@ -606,28 +606,35 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
+pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
     mut writer: W,
     rate_limiter: &Option<RateLimiter>,
     dstkey: PublicKey,
-    packets: &[impl AsRef<[u8]>],
+    transmits: &[impl AsRef<[u8]>],
 ) -> Result<()> {
-    let total_len: usize = packets.iter().map(|x| x.as_ref().len()).sum();
-    for packet in packets {
+    let mut total_len: usize = 0;
+    // make sure no transmit is too big for a derp packet.
+    // also compute the total length of all transmits for logging.
+    for transmit in transmits {
+        let len = transmit.as_ref().len();
+        total_len += len;
         ensure!(
-            packet.as_ref().len() <= MAX_PACKET_SIZE,
+            len + PUBLIC_KEY_LENGTH <= MAX_PACKET_SIZE,
             "packet too big: {}",
-            packet.as_ref().len()
+            len
         );
     }
-    let frame_len = PUBLIC_KEY_LENGTH + total_len;
-    if let Some(rate_limiter) = rate_limiter {
-        if rate_limiter.check_n(frame_len).is_err() {
-            tracing::warn!("dropping send: rate limit reached");
-            return Ok(());
+    tracing::trace!("send derp packets {} {}", transmits.len(), total_len);
+    for packet in PacketizeIter::new(transmits) {
+        // rate limit for each packet, but exit early if the rate limit is exceeded.
+        // it is unlikely to recover that quickly.
+        if let Some(rate_limiter) = rate_limiter {
+            let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+            if rate_limiter.check_n(frame_len).is_err() {
+                tracing::warn!("dropping send: rate limit reached");
+                return Ok(());
+            }
         }
-    }
-    for packet in PacketizeIter::new(packets) {
         write_frame(
             &mut writer,
             FrameType::SendPacket,

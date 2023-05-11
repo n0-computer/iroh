@@ -805,7 +805,7 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), &[data]).await?;
+        crate::hp::derp::client::send_packets(&mut writer, &None, target.clone(), &[data]).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -823,7 +823,7 @@ mod tests {
         let mut disco_data = crate::hp::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::hp::derp::client::send_packet(&mut writer, &None, target.clone(), &[&disco_data])
+        crate::hp::derp::client::send_packets(&mut writer, &None, target.clone(), &[&disco_data])
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
