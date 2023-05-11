@@ -46,7 +46,7 @@ paste = { version = "1.0.12", optional = true }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 prometheus-client = { version = "0.18.0", optional = true }
-quic-rpc = { version = "0.5", default-features = false, features = ["quinn-transport", "flume-transport"] }
+quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
 quinn = "0.10"
 quinn-proto = "0.10"
 quinn-udp = "0.4"
@@ -131,5 +131,3 @@ incremental = false
 [patch.crates-io]
 crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
 ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
-
-quic-rpc = { git = "https://github.com/n0-computer/quic-rpc", branch = "feat-quinn-010" }
