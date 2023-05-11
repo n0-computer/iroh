@@ -2919,10 +2919,12 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.5.2"
-source = "git+https://github.com/n0-computer/quic-rpc?branch=feat-quinn-010#04b1cdc683bf91d113269c2b9d27a589e5d3926f"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce03f8ac4ca7bd4306e3b984808060f04c4f26bd2cf2f3aa175127df3904ef50"
 dependencies = [
  "bincode",
+ "educe",
  "flume",
  "futures",
  "pin-project",
