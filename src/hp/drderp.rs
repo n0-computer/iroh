@@ -4,10 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
-use clap::{Parser, Subcommand};
-use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::{
+use crate::{
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
@@ -17,14 +14,16 @@ use iroh::{
     tls,
     tokio_util::ProgressWriter,
 };
+use anyhow::Context;
+use clap::Subcommand;
+use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
-use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
-enum Commands {
+pub enum Commands {
     Report {
         #[clap(long, default_value = "derp.iroh.computer")]
         host_name: String,
@@ -68,13 +67,6 @@ enum Commands {
         #[clap(long)]
         local_derper: bool,
     },
-}
-
-#[derive(Parser, Debug, Clone)]
-#[clap(version)]
-struct Cli {
-    #[clap(subcommand)]
-    command: Commands,
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -123,11 +115,11 @@ async fn send_blocks(
     block_size: u32,
 ) -> anyhow::Result<()> {
     // send the requested number of bytes, in blocks of the requested size
-    let mut buf = vec![0u8; block_size as usize];
+    let buf = vec![0u8; block_size as usize];
     let mut remaining = total_bytes;
     while remaining > 0 {
         let n = remaining.min(block_size as u64);
-        send.write_all(&mut buf[..n as usize]).await?;
+        send.write_all(&buf[..n as usize]).await?;
         remaining -= n;
     }
     Ok(())
@@ -226,7 +218,7 @@ async fn echo_test(
         total_duration += t0.elapsed();
         total_bytes += received;
         progress.await?;
-        size = size * config.size_multiplier;
+        size *= config.size_multiplier;
     }
     Ok((total_bytes, total_duration))
 }
@@ -264,7 +256,7 @@ async fn send_test(
         total_duration += t0.elapsed();
         total_bytes += size;
         progress.await?;
-        size = size * config.size_multiplier;
+        size *= config.size_multiplier;
     }
     Ok((total_bytes, total_duration))
 }
@@ -305,7 +297,7 @@ async fn recv_test(
         total_duration += t0.elapsed();
         total_bytes += received;
         progress.await?;
-        size = size * config.size_multiplier;
+        size *= config.size_multiplier;
     }
     Ok((total_bytes, total_duration))
 }
@@ -431,7 +423,7 @@ async fn connect(
     let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
 
     let endpoints = remote_endpoints;
-    let addresses = endpoints.iter().map(|a| a.ip().clone()).collect();
+    let addresses = endpoints.iter().map(|a| a.ip()).collect();
     conn.set_network_map(hp::netmap::NetworkMap {
         peers: vec![hp::cfg::Node {
             name: None,
@@ -440,7 +432,7 @@ async fn connect(
             addresses,
             derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
             created: Instant::now(),
-            hostinfo: crate::hp::hostinfo::Hostinfo::new(),
+            hostinfo: crate::hp::hostinfo::Hostinfo::default(),
             keep_alive: false,
             expired: false,
             online: None,
@@ -480,7 +472,7 @@ async fn accept(
         .collect::<Vec<_>>()
         .join(" ");
     println!(
-            "Run\n\ndrderp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
+            "Run\n\niroh dr-derp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
             hex::encode(private_key.public_key().as_bytes()),
             remote_addrs,
         );
@@ -513,16 +505,8 @@ fn create_secret_key(private_key: Option<String>) -> anyhow::Result<SecretKey> {
     })
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .ok();
-
-    let cli = Cli::parse();
-    match cli.command {
+pub async fn run(command: Commands) -> anyhow::Result<()> {
+    match command {
         Commands::Report {
             host_name,
             stun_port,
