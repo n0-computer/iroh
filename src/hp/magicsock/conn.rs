@@ -30,7 +30,7 @@ use tracing::{debug, info, instrument, trace, warn};
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
-        derp::{self, DerpMap, DerpRegion},
+        derp::{self, client::PacketSplitIter, DerpMap, DerpRegion},
         disco, key, netcheck, netmap, portmapper, stun,
     },
     net::ip::LocalAddresses,
@@ -662,7 +662,7 @@ enum NetworkReadResult {
     Ok {
         source: NetworkSource,
         meta: quinn_udp::RecvMeta,
-        bytes: BytesMut,
+        bytes: Bytes,
     },
 }
 
@@ -679,7 +679,7 @@ struct DerpReadResult {
     src: key::node::PublicKey,
     /// packet data
     #[debug(skip)]
-    buf: BytesMut,
+    buf: Bytes,
 }
 
 /// Contains fields for an active DERP connection.
@@ -937,7 +937,8 @@ impl Actor {
                             recvs.push(rs.recv())
                         }
                         ReadResult::Yield(read_result) => {
-                            if let Some(passthrough) = self.process_derp_read_result(read_result).await {
+                            let passthroughs = self.process_derp_read_result(read_result).await;
+                            for passthrough in passthroughs {
                                 self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
                                 let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
                                 if let Some(waker) = wakers.take() {
@@ -1017,7 +1018,7 @@ impl Actor {
     /// Returns `false` if this is an internal packet and it should not be reported.
     async fn receive_ip(
         &mut self,
-        bytes: &BytesMut,
+        bytes: &Bytes,
         meta: &mut quinn_udp::RecvMeta,
         network: Network,
     ) -> bool {
@@ -1098,10 +1099,10 @@ impl Actor {
         }
     }
 
-    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Option<NetworkReadResult> {
+    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<NetworkReadResult> {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
-            return None;
+            return Vec::new();
         }
         let region_id = dm.region_id;
 
@@ -1113,7 +1114,7 @@ impl Actor {
         {
             // Message was internal, do not bubble up.
             debug!("processed internal disco message from {:?}", dm.src);
-            return None;
+            return Vec::new();
         }
 
         let ep_fake_wg_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
@@ -1138,23 +1139,37 @@ impl Actor {
             }
         };
 
-        let meta = quinn_udp::RecvMeta {
-            len: dm.buf.len(),
-            stride: dm.buf.len(),
-            addr: ep_fake_wg_addr,
-            // Normalize local_ip
-            dst_ip: self.normalized_local_addr().ok().map(|addr| addr.ip()),
-            ecn: None,
-        };
+        // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
+        //
+        // split the packet into these parts
+        let parts = PacketSplitIter::new(dm.buf);
+        // Normalize local_ip
+        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
+        let addr = ep_fake_wg_addr;
+        let res = parts
+            .map(|part| match part {
+                Ok(part) => {
+                    let meta = quinn_udp::RecvMeta {
+                        len: part.len(),
+                        stride: part.len(),
+                        addr,
+                        dst_ip,
+                        ecn: None,
+                    };
+                    NetworkReadResult::Ok {
+                        source: NetworkSource::Derp,
+                        bytes: part,
+                        meta,
+                    }
+                }
+                Err(e) => NetworkReadResult::Error(e),
+            })
+            .collect::<Vec<_>>();
 
         // if stats := c.stats.Load(); stats != nil {
         // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
         // }
-        Some(NetworkReadResult::Ok {
-            source: NetworkSource::Derp,
-            bytes: dm.buf,
-            meta,
-        })
+        res
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
@@ -1436,19 +1451,19 @@ impl Actor {
         }
 
         let derp_client = self.connect(region_id, Some(&peer)).await;
-        for content in contents {
+        for content in &contents {
             trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
+        }
 
-            match derp_client.send(peer.clone(), content).await {
-                Ok(_) => {
-                    // TODO:
-                    // metricSendDERP.Add(1)
-                }
-                Err(err) => {
-                    warn!("derp.send: failed {:?}", err);
-                    // TODO:
-                    // metricSendDERPError.Add(1)
-                }
+        match derp_client.send(peer.clone(), contents).await {
+            Ok(_) => {
+                // TODO:
+                // metricSendDERP.Add(1)
+            }
+            Err(err) => {
+                warn!("derp.send: failed {:?}", err);
+                // TODO:
+                // metricSendDERPError.Add(1)
             }
         }
     }
@@ -2666,7 +2681,7 @@ struct IpStream {
     pconn4: RebindingUdpConn,
     pconn6: Option<RebindingUdpConn>,
     recv_buf: Box<[u8]>,
-    out_buffer: VecDeque<(BytesMut, Network, quinn_udp::RecvMeta)>,
+    out_buffer: VecDeque<(Bytes, Network, quinn_udp::RecvMeta)>,
 }
 
 impl IpStream {
@@ -2691,7 +2706,7 @@ impl IpStream {
 }
 
 impl Stream for IpStream {
-    type Item = io::Result<(BytesMut, Network, quinn_udp::RecvMeta)>;
+    type Item = io::Result<(Bytes, Network, quinn_udp::RecvMeta)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.conn.is_closed() {
@@ -2723,7 +2738,7 @@ impl Stream for IpStream {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         let stride = meta.stride;
                         while !data.is_empty() {
-                            let buf = data.split_to(stride.min(data.len()));
+                            let buf = data.split_to(stride.min(data.len())).freeze();
                             // set stride to len, as we are cutting it into pieces here
                             meta.len = buf.len();
                             meta.stride = buf.len();
@@ -2747,7 +2762,7 @@ impl Stream for IpStream {
                     let mut data: BytesMut = buf[0..meta.len].into();
                     let stride = meta.stride;
                     while !data.is_empty() {
-                        let buf = data.split_to(stride.min(data.len()));
+                        let buf = data.split_to(stride.min(data.len())).freeze();
                         // set stride to len, as we are cutting it into pieces here
                         meta.len = buf.len();
                         meta.stride = buf.len();

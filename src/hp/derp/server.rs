@@ -724,7 +724,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_a.clone(), msg).await?;
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_a.clone(), &[msg]).await?;
 
         // get message on a's reader
         let (frame_type, _) =
@@ -738,7 +738,7 @@ mod tests {
         let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
         disco_msg.extend_from_slice(key_b.as_bytes());
         disco_msg.extend_from_slice(msg);
-        crate::hp::derp::client::send_packet(&mut b_writer, &None, key_d.clone(), &disco_msg)
+        crate::hp::derp::client::send_packets(&mut b_writer, &None, key_d.clone(), &[&disco_msg])
             .await?;
 
         // get message on d's reader
@@ -898,7 +898,9 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a
+            .send(public_key_b.clone(), vec![msg.clone()])
+            .await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_a, source);
@@ -911,7 +913,9 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        client_b
+            .send(public_key_a.clone(), vec![msg.clone()])
+            .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
                 assert_eq!(public_key_b, source);
@@ -924,7 +928,7 @@ mod tests {
 
         // send message from a to c
         let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c.clone(), msg.clone()).await?;
+        client_a.send(key_c.clone(), vec![msg.clone()]).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
@@ -934,7 +938,7 @@ mod tests {
         handler.remove_packet_forwarder(key_c.clone())?;
         // try to send c a message
         let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c, msg.clone()).await?;
+        client_a.send(key_c, vec![msg.clone()]).await?;
         // packet forwarder has been removed
         assert!(fwd_recv.recv().await.is_none());
 
@@ -943,7 +947,7 @@ mod tests {
 
         // client connections have been shutdown
         client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(public_key_b, vec![Bytes::from_static(b"try to send")])
             .await?;
         assert!(client_b.recv().await.is_err());
         Ok(())
