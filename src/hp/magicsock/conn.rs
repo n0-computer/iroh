@@ -169,6 +169,9 @@ pub struct Inner {
 
     public_key: key::node::PublicKey,
 
+    /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    local_addrs: Arc<std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>>,
+
     /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
 
@@ -244,6 +247,9 @@ impl Conn {
         let port = pconn4.port();
         port_mapper.set_local_port(port).await;
 
+        let ipv4_addr = pconn4.local_addr()?;
+        let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
+
         let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
         let (actor_sender, actor_receiver) = flume::bounded(128);
         let (network_sender, network_receiver) = flume::bounded(128);
@@ -255,6 +261,7 @@ impl Conn {
             on_net_info,
             port: AtomicU16::new(port),
             public_key: private_key.public_key(),
+            local_addrs: Arc::new(std::sync::RwLock::new((ipv4_addr, ipv6_addr))),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             network_recv_ch: network_recv_ch_receiver,
@@ -327,16 +334,8 @@ impl Conn {
         Ok(res)
     }
 
-    pub async fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        let (s, r) = flume::bounded(1);
-        self.actor_sender
-            .send_async(ActorMessage::GetLocalAddr(s))
-            .await?;
-        let (v4, v6) = r.recv_async().await?;
-        if let Some(v6) = v6 {
-            return Ok((v4?, Some(v6?)));
-        }
-        Ok((v4?, None))
+    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
+        Ok(self.local_addrs.read().unwrap().clone())
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
@@ -676,18 +675,10 @@ impl AsyncUdpSocket for Conn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        let (s, r) = flume::bounded(1);
-        self.actor_sender
-            .send(ActorMessage::GetLocalAddr(s))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        let (v4, v6) = r
-            .recv()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        // Default to v6 to pretend v6 for quinn in all cases (needs more thought)
-        if let Some(v6) = v6 {
-            return v6;
+        match &*self.local_addrs.read().unwrap() {
+            (ipv4, None) => Ok(*ipv4),
+            (_, Some(ipv6)) => Ok(*ipv6),
         }
-        v4
     }
 }
 
@@ -738,7 +729,6 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 pub(super) enum ActorMessage {
-    GetLocalAddr(flume::Sender<(io::Result<SocketAddr>, Option<io::Result<SocketAddr>>)>),
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     GetDerpRegion(usize, sync::oneshot::Sender<Option<DerpRegion>>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
@@ -851,26 +841,21 @@ impl Actor {
             self.pconn4.clone(),
             self.pconn6.clone(),
         );
+
         loop {
             tokio::select! {
                 transmits = self.network_receiver.recv_async() => {
-                    debug!("tick: network send");
+                    trace!("tick: network send");
                     self.send_network(transmits?).await;
-                    debug!("tick: msg");
-                    {
-                        // Wake up the send waker if one is waiting for space in the channel
-                        let mut wakers = self.conn.network_send_wakers.lock().unwrap();
-                        if let Some(waker) = wakers.take() {
-                            waker.wake();
-                        }
+                    // Wake up the send waker if one is waiting for space in the channel
+                    let mut wakers = self.conn.network_send_wakers.lock().unwrap();
+                    if let Some(waker) = wakers.take() {
+                        waker.wake();
                     }
                 }
                 msg = self.msg_receiver.recv_async() => {
+                    trace!("tick: msg");
                     match msg? {
-                        ActorMessage::GetLocalAddr(s) => {
-                            let addr = self.local_addr();
-                            let _ = s.send(addr);
-                        }
                         ActorMessage::SetDerpMap(dm, s) => {
                             self.set_derp_map(dm).await;
                             let _ = s.send(());
@@ -949,7 +934,7 @@ impl Actor {
                     }
                 }
                 Some((rs, result, action)) = recvs.next() => {
-                    debug!("tick: recvs: {:?}, {:?}", result, action);
+                    trace!("tick: recvs: {:?}, {:?}", result, action);
                     match action {
                         ReadAction::None => {},
                         ReadAction::AddPeerRoute { peers, region, derp_client } => {
@@ -986,6 +971,7 @@ impl Actor {
                     }
                 }
                 Some(ip_msgs) = ip_stream.next() => {
+                    trace!("tick: ip_msgs");
                     match ip_msgs {
                         Ok((bytes, network, mut meta)) => {
                             if self.receive_ip(&bytes, &mut meta, network).await {
@@ -1021,11 +1007,11 @@ impl Actor {
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
-                    debug!("tick: re_stun {:?}", tick);
+                    trace!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
                 }
                 _ = endpoint_heartbeat_timer.tick() => {
-                    debug!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
+                    trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
                     for (_, ep) in self.peer_map.endpoints_mut() {
                         ep.stayin_alive().await;
@@ -1033,17 +1019,17 @@ impl Actor {
                 }
                 _ = endpoints_update_receiver.changed() => {
                     let reason = *endpoints_update_receiver.borrow();
-                    debug!("tick: endpoints update receiver {:?}", reason);
+                    trace!("tick: endpoints update receiver {:?}", reason);
                     if let Some(reason) = reason {
                         self.update_endpoints(reason).await;
                     }
                 }
                 _ = cleanup_timer.tick() => {
-                    debug!("tick: cleanup");
+                    trace!("tick: cleanup");
                     self.clean_stale_derp().await;
                 }
                 else => {
-                    debug!("tick: other");
+                    trace!("tick: other");
                 }
             }
         }
@@ -2063,12 +2049,16 @@ impl Actor {
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
+        let mut ipv6_addr = None;
+
         if let Some(ref mut conn) = self.pconn6 {
             let port = conn.port();
             trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
             if let Err(err) = conn.rebind(port, Network::Ipv6, cur_port_fate).await {
                 info!("rebind ignoring IPv6 bind failure: {:?}", err);
+            } else {
+                ipv6_addr = conn.local_addr().ok();
             }
         }
 
@@ -2081,6 +2071,9 @@ impl Actor {
         // reread, as it might have changed
         let port = self.local_port_v4();
         self.port_mapper.set_local_port(port).await;
+        let ipv4_addr = self.pconn4.local_addr()?;
+
+        *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
 
         Ok(())
     }
@@ -3200,7 +3193,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rebind_stress() {
+    async fn test_rebind_stress_single_thread() {
+        rebind_stress().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rebind_stress_multi_thread() {
+        rebind_stress().await;
+    }
+
+    async fn rebind_stress() {
         let c = new_test_conn().await;
 
         let (cancel, mut cancel_r) = sync::oneshot::channel();
@@ -3213,9 +3215,14 @@ mod tests {
             loop {
                 tokio::select! {
                     _ = &mut cancel_r => {
+                        println!("cancel");
                         return anyhow::Ok(());
                     }
                     res = futures::future::poll_fn(|cx| conn.poll_recv(cx, &mut buffs, &mut meta)) => {
+                        println!("poll_recv");
+                        if res.is_err() {
+                            println!("failed to poll_recv: {:?}", res);
+                        }
                         res?;
                     }
                 }
@@ -3224,14 +3231,16 @@ mod tests {
 
         let conn = c.clone();
         let t1 = tokio::task::spawn(async move {
-            for _i in 0..2000 {
+            for i in 0..2000 {
+                println!("[t1] rebind {}", i);
                 conn.rebind_all().await;
             }
         });
 
         let conn = c.clone();
         let t2 = tokio::task::spawn(async move {
-            for _i in 0..2000 {
+            for i in 0..2000 {
+                println!("[t2] rebind {}", i);
                 conn.rebind_all().await;
             }
         });
@@ -3240,9 +3249,9 @@ mod tests {
         t2.await.unwrap();
 
         cancel.send(()).unwrap();
+        t.await.unwrap().unwrap();
 
         c.close().await.unwrap();
-        t.await.unwrap().unwrap();
     }
 
     struct Devices {
@@ -3528,8 +3537,8 @@ mod tests {
                 let a_name = stringify!($a);
                 let b_name = stringify!($b);
                 println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-                println!("[{}] {:?}", a_name, a.conn.local_addr().await);
-                println!("[{}] {:?}", b_name, b.conn.local_addr().await);
+                println!("[{}] {:?}", a_name, a.conn.local_addr());
+                println!("[{}] {:?}", b_name, b.conn.local_addr());
 
                 let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
                 let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();

@@ -16,7 +16,7 @@ use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
-use iroh::main_util::{iroh_config_path, pathbuf_from_name};
+use iroh::pathbuf_from_name;
 use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -27,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh::main_util::{create_quinn_client, iroh_data_root, Blake3Cid};
+use iroh::main_util::{create_quinn_client, iroh_config_path, iroh_data_root, Blake3Cid};
 use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 
@@ -609,7 +609,7 @@ async fn main_impl() -> Result<()> {
                     let stream = controller.server_streaming(ProvideRequest { path }).await?;
                     let (hash, entries) = aggregate_add_response(stream).await?;
                     print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash).await?;
+                    let ticket = provider.ticket(hash)?;
                     println!("All-in-one ticket: {ticket}");
                     anyhow::Ok(tmp_path)
                 })
@@ -752,7 +752,7 @@ async fn provide(
         builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {:#?}", provider.local_address().await?);
+    println!("Listening address: {:#?}", provider.local_address()?);
     println!("Local endpoints: {:#?}", provider.local_endpoints().await?);
     println!("PeerID: {}", provider.peer_id());
     println!();

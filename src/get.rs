@@ -15,12 +15,12 @@ use crate::hp::cfg::DERP_MAGIC_IP;
 use crate::hp::derp::DerpMap;
 use crate::hp::hostinfo::Hostinfo;
 use crate::hp::{cfg, netmap};
-use crate::main_util::pathbuf_from_name;
 use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::{TrackingReader, TrackingWriter};
+use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
 use anyhow::{anyhow, Context, Result};
 use bao_tree::io::error::DecodeError;
@@ -133,10 +133,8 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     const DEFAULT_DERP_REGION: u16 = 1;
 
     let mut addresses = Vec::new();
-    let mut endpoints = vec![
-        // default endpoint
-        SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION),
-    ];
+    let mut endpoints = Vec::new();
+
     // Add the provided address as a starting point.
     if let Some(addr) = opts.addr {
         addresses.push(addr.ip());
