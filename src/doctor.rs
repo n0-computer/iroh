@@ -17,6 +17,7 @@ use crate::{
     main_util::iroh_data_root,
     tls,
     tokio_util::ProgressWriter,
+    Keypair,
 };
 use anyhow::Context;
 use clap::Subcommand;
@@ -39,9 +40,10 @@ impl std::str::FromStr for PrivateKey {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(if s == "random" {
+        let s_lower = s.to_ascii_lowercase();
+        Ok(if s_lower == "random" {
             PrivateKey::Random
-        } else if s == "local" {
+        } else if s_lower == "local" {
             PrivateKey::Local
         } else {
             PrivateKey::Hex(s.to_string())
@@ -535,7 +537,7 @@ async fn accept(
     Ok(())
 }
 
-fn create_secret_key(private_key: PrivateKey, _config: &Config) -> anyhow::Result<SecretKey> {
+fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
     Ok(match private_key {
         PrivateKey::Random => SecretKey::generate(),
         PrivateKey::Hex(hex) => {
@@ -546,9 +548,9 @@ fn create_secret_key(private_key: PrivateKey, _config: &Config) -> anyhow::Resul
         PrivateKey::Local => {
             let iroh_data_root = iroh_data_root()?;
             let path = iroh_data_root.join("keypair");
-            let bytes = std::fs::read(path)?;
-            let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-            SecretKey::from(bytes)
+            let bytes = std::fs::read(&path)?;
+            let keypair = Keypair::try_from_openssh(bytes)?;
+            SecretKey::from(keypair.secret().to_bytes())
         }
     })
 }
@@ -570,7 +572,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             } else {
                 config.derp_map()
             };
-            let private_key = create_secret_key(private_key, config)?;
+            let private_key = create_secret_key(private_key)?;
             connect(dial, private_key, remote_endpoint, derp_map).await
         }
         Commands::Accept {
@@ -584,7 +586,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             } else {
                 config.derp_map()
             };
-            let private_key = create_secret_key(private_key, config)?;
+            let private_key = create_secret_key(private_key)?;
             let config = TestConfig { size, iterations };
             accept(private_key, config, derp_map).await
         }
