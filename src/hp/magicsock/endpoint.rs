@@ -1,9 +1,8 @@
 use std::{
-    collections::{hash_map, HashMap},
+    collections::HashMap,
     hash::Hash,
     io,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::atomic::{AtomicU64, Ordering},
+    net::{IpAddr, SocketAddr},
     time::Duration,
 };
 
@@ -21,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    conn::{ActorMessage, DiscoInfo},
+    conn::{ActorMessage, DiscoInfo, QuicMappedAddr},
     DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT,
     SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
@@ -32,8 +31,8 @@ use super::{
 pub(super) struct Endpoint {
     pub(super) id: usize,
     conn_sender: flume::Sender<ActorMessage>,
-    /// The UDP address we tell wireguard-go we're using
-    pub(super) fake_wg_addr: SocketAddr,
+    /// The UDP address used on the QUIC-layer to address this peer.
+    pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Public key for this node/conection.
     conn_public_key: key::node::PublicKey,
     /// Peer public key (for WireGuard + DERP)
@@ -77,12 +76,12 @@ pub(super) struct Options {
 
 impl Endpoint {
     pub fn new(id: usize, options: Options) -> Self {
-        let fake_wg_addr = init_fake_udp_addr();
+        let quic_mapped_addr = QuicMappedAddr::generate();
 
         Endpoint {
             id,
             conn_sender: options.conn_sender,
-            fake_wg_addr,
+            quic_mapped_addr,
             conn_public_key: options.conn_public_key,
             public_key: options.public_key,
             last_full_ping: None,
@@ -759,11 +758,29 @@ pub struct AddrLatency {
     pub latency: Duration,
 }
 
-/// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
+/// Map of the [`Endpoint`] information for all the known peers.
+///
+/// The peers can be looked up by:
+///
+/// - The peer's ID in this map, only useful if you know the ID from an insert or lookup.
+///   This is static and never changes.
+///
+/// - The [`QuicMappedAddr`] which internally identifies the peer to the QUIC stack.  This
+///   is static and never changes.
+///
+/// - The peers's public key, aka `PeerId` or "node_key".  This is static and never changes,
+///   however a peer could be added when this is not yet known.  To set this after creation
+///   use [`PeerMap::store_node_key_mapping`].
+///
+/// - A public socket address on which they are reachable on the internet, known as ip-port.
+///   These come and go as the peer moves around on the internet
+///
+/// An index of peerInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
 pub(super) struct PeerMap {
     by_node_key: HashMap<key::node::PublicKey, usize>,
     by_ip_port: HashMap<SocketAddr, usize>,
+    by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, Endpoint>,
     next_id: usize,
 }
@@ -807,6 +824,15 @@ impl PeerMap {
             .and_then(|id| self.by_id.get_mut(id))
     }
 
+    pub fn endpoint_for_quic_mapped_addr_mut(
+        &mut self,
+        addr: &QuicMappedAddr,
+    ) -> Option<&mut Endpoint> {
+        self.by_quic_mapped_addr
+            .get(addr)
+            .and_then(|id| self.by_id.get_mut(id))
+    }
+
     pub(super) fn endpoints(&self) -> impl Iterator<Item = (&usize, &Endpoint)> {
         self.by_id.iter()
     }
@@ -815,35 +841,26 @@ impl PeerMap {
         self.by_id.iter_mut()
     }
 
-    pub(super) fn store_node_key_mapping(&mut self, id: usize, public_key: key::node::PublicKey) {
-        if let hash_map::Entry::Vacant(e) = self.by_node_key.entry(public_key) {
-            e.insert(id);
-            // allow lookups by the fake addr
-            let fake_wg_addr = self.by_id(&id).unwrap().fake_wg_addr;
-            self.by_ip_port.insert(fake_wg_addr, id);
-        }
+    /// Sets the node key for a peer if it wasn't known yet.
+    ///
+    /// Since a peer can initially be created before the node key is known, this allows
+    /// setting the node key once it is known.
+    pub(super) fn store_node_key_mapping(&mut self, id: usize, node_key: key::node::PublicKey) {
+        self.by_node_key.entry(node_key).or_insert(id);
     }
 
-    /// Stores endpoint, with a public key.
-    pub(super) fn upsert_endpoint(&mut self, options: Options) -> Option<usize> {
-        if let Some(public_key) = options.public_key.clone() {
-            #[allow(clippy::map_entry)]
-            if !self.by_node_key.contains_key(&public_key) {
-                let id = self.insert_endpoint(options);
-                self.by_node_key.insert(public_key, id);
-                // allow lookups by the fake addr
-                let fake_wg_addr = self.by_id(&id).unwrap().fake_wg_addr;
-                self.by_ip_port.insert(fake_wg_addr, id);
-                return Some(id);
-            }
-        }
-        None
-    }
-
+    /// Inserts a new endpoint into the [`PeerMap`].
     pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;
-        let ep = Endpoint::new(id, options);
         self.next_id = self.next_id.wrapping_add(1);
+        let ep = Endpoint::new(id, options);
+
+        // update indices
+        self.by_quic_mapped_addr.insert(ep.quic_mapped_addr, id);
+        if let Some(public_key) = ep.public_key.clone() {
+            self.by_node_key.insert(public_key, id);
+        }
+
         self.by_id.insert(id, ep);
         id
     }
@@ -979,20 +996,6 @@ pub enum DiscoPingPurpose {
     Cli,
     /// Ping to ensure the current route is still valid.
     StayinAlive,
-}
-
-static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Generates a globally unique fake UDPAddr.
-pub(super) fn init_fake_udp_addr() -> SocketAddr {
-    let mut addr = [0u8; 16];
-    addr[0] = 0xfd;
-    addr[1] = 0x00;
-
-    let counter = ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
-    addr[2..10].copy_from_slice(&counter.to_le_bytes());
-
-    SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345)
 }
 
 impl AddrLatency {

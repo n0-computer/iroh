@@ -2,6 +2,7 @@
 // #![deny(missing_docs)] TODO: fix me before merging
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
+pub mod config;
 pub mod get;
 pub mod main_util;
 pub mod metrics;
