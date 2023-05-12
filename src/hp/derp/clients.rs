@@ -152,6 +152,13 @@ impl Clients {
         self.inner.contains_key(key)
     }
 
+    pub fn has_client(&self, key: &PublicKey, conn_num: usize) -> bool {
+        if let Some(client) = self.inner.get(key) {
+            return client.conn.conn_num == conn_num;
+        }
+        false
+    }
+
     pub fn broadcast_peer_state_change<'a>(
         &mut self,
         keys: impl Iterator<Item = &'a PublicKey>,

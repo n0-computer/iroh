@@ -171,7 +171,7 @@ impl ClientConnManager {
             let conn_num = writer_client_id.1;
             let res = conn_writer.run(writer_done).await;
             let _ = writer_server_channel
-                .send(ServerMessage::RemoveClient(key.clone()))
+                .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
                 .await;
             match res {
                 Err(e) => {
@@ -194,7 +194,7 @@ impl ClientConnManager {
             let conn_num = client_id.1;
             let res = conn_reader.run(reader_done).await;
             let _ = server_channel
-                .send(ServerMessage::RemoveClient(key.clone()))
+                .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
                 .await;
             match res {
                 Err(e) => {
