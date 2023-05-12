@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::bail;
+use anyhow::{bail, Context as _};
 use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
@@ -160,10 +160,8 @@ async fn bind(
         // Open a new one with the desired port.
         match listen_packet(network, *port).await {
             Ok(pconn) => {
-                debug!(
-                    "bind_socket: successfully listened {:?} port {}",
-                    network, port
-                );
+                let local_addr = pconn.local_addr().context("UDP socket not bound")?;
+                debug!("bind_socket: successfully bound {network:?} {local_addr}");
                 return Ok(pconn);
             }
             Err(err) => {
@@ -201,7 +199,7 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net:
             SOCKET_BUFFER_SIZE, err
         );
     }
-    socket.set_nonblocking(true)?;
+    socket.set_nonblocking(true)?; // UdpSocketState::configure also does this
     socket.bind(&addr.into())?;
     let socket: std::net::UdpSocket = socket.into();
 

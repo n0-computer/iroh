@@ -6,7 +6,7 @@ use std::{
     ops::Deref,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
     },
     task::{Context, Poll, Waker},
@@ -25,7 +25,7 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
     hp::{
@@ -140,6 +140,7 @@ impl Deref for Conn {
 pub struct Inner {
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
+    // TODO: send transmits *together* with their destination
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
     #[debug("on_endpoints: Option<Box<..>>")]
@@ -337,6 +338,10 @@ impl Conn {
             .unwrap();
     }
 
+    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this peer.
+    ///
+    /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
+    /// `QuicMappedAddr` as we do internally.
     pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let (s, r) = tokio::sync::oneshot::channel();
         if self
@@ -345,7 +350,7 @@ impl Conn {
             .await
             .is_ok()
         {
-            return r.await.ok().flatten();
+            return r.await.ok().flatten().map(|m| m.0);
         }
         None
     }
@@ -545,6 +550,7 @@ impl AsyncUdpSocket for Conn {
         let groups = TransmitIter::new(transmits);
         for group in groups {
             if self.network_sender.is_full() {
+                // TODO: add counter?
                 self.network_send_wakers
                     .lock()
                     .unwrap()
@@ -729,7 +735,7 @@ pub(super) enum ActorMessage {
     LocalEndpoints(sync::oneshot::Sender<Vec<cfg::Endpoint>>),
     GetMappingAddr(
         key::node::PublicKey,
-        sync::oneshot::Sender<Option<SocketAddr>>,
+        sync::oneshot::Sender<Option<QuicMappedAddr>>,
     ),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
@@ -842,7 +848,7 @@ impl Actor {
                     self.send_network(transmits?).await;
                     debug!("tick: msg");
                     {
-                        // Wakeup any send wakers that have been waiting for the channel
+                        // Wake up the send waker if one is waiting for space in the channel
                         let mut wakers = self.conn.network_send_wakers.lock().unwrap();
                         if let Some(waker) = wakers.take() {
                             waker.wake();
@@ -879,7 +885,7 @@ impl Actor {
                         ActorMessage::GetMappingAddr(node_key, s) => {
                             let res = self.peer_map
                                 .endpoint_for_node_key(&node_key)
-                                .map(|ep| ep.fake_wg_addr);
+                                .map(|ep| ep.quic_mapped_addr);
                             let _ = s.send(res);
                         }
                         ActorMessage::Shutdown => {
@@ -1033,7 +1039,12 @@ impl Actor {
         }
     }
 
-    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
+    /// Decides if a received UDP packet should be passed to the above QUIC layer or not.
+    ///
+    /// This also modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
+    /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
+    /// [`QuicMappedAddr`] instead of the actual remote.
+    ///
     /// Returns `false` if this is an internal packet and it should not be reported.
     async fn receive_ip(
         &mut self,
@@ -1069,12 +1080,12 @@ impl Actor {
 
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
                 ep.maybe_add_best_addr(meta.addr);
-                meta.addr = ep.fake_wg_addr;
+                meta.addr = ep.quic_mapped_addr.0;
             }
             Some(ep) => {
                 debug!("peer_map state found for {}", meta.addr);
 
-                meta.addr = ep.fake_wg_addr;
+                meta.addr = ep.quic_mapped_addr.0;
             }
         }
 
@@ -1136,25 +1147,22 @@ impl Actor {
             return Vec::new();
         }
 
-        let ep_fake_wg_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
-            Some(ep) => ep.fake_wg_addr,
+        let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
+            Some(ep) => ep.quic_mapped_addr,
             None => {
                 info!(
                     "no peer_map state found for {:?} in: {:#?}",
                     dm.src, self.peer_map
                 );
-                let id = self
-                    .peer_map
-                    .upsert_endpoint(EndpointOptions {
-                        conn_sender: self.conn.actor_sender.clone(),
-                        conn_public_key: self.conn.public_key.clone(),
-                        public_key: Some(dm.src),
-                        derp_addr: Some(ipp),
-                    })
-                    .expect("just checked");
+                let id = self.peer_map.insert_endpoint(EndpointOptions {
+                    conn_sender: self.conn.actor_sender.clone(),
+                    conn_public_key: self.conn.public_key.clone(),
+                    public_key: Some(dm.src),
+                    derp_addr: Some(ipp),
+                });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
-                ep.fake_wg_addr
+                ep.quic_mapped_addr
             }
         };
 
@@ -1164,14 +1172,13 @@ impl Actor {
         let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        let addr = ep_fake_wg_addr;
         let res = parts
             .map(|part| match part {
                 Ok(part) => {
                     let meta = quinn_udp::RecvMeta {
                         len: part.len(),
                         stride: part.len(),
-                        addr,
+                        addr: ep_quic_mapped_addr.0,
                         dst_ip,
                         ecn: None,
                     };
@@ -1364,13 +1371,13 @@ impl Actor {
     }
 
     async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
-        debug!(
+        trace!(
             "sending:\n{}",
             transmits
                 .iter()
                 .map(|t| format!(
                     "  dest: {}, src: {:?}, content_len: {}\n",
-                    t.destination,
+                    QuicMappedAddr(t.destination),
                     t.src_ip,
                     t.contents.len()
                 ))
@@ -1387,8 +1394,12 @@ impl Actor {
                 .all(|t| &t.destination == current_destination),
             "mixed destinations"
         );
+        let current_destination = QuicMappedAddr(*current_destination);
 
-        match self.peer_map.endpoint_for_ip_port_mut(current_destination) {
+        match self
+            .peer_map
+            .endpoint_for_quic_mapped_addr_mut(&current_destination)
+        {
             Some(ep) => {
                 let public_key = ep.public_key();
                 match ep.get_send_addrs().await {
@@ -1438,8 +1449,9 @@ impl Actor {
                 }
             }
             None => {
-                // Should this error, do we need to create the EP?
-                debug!("trying to find endpoint for {}", current_destination);
+                // TODO: This should not be possible.  We should have errored during the
+                // AsyncUdpSocket::poll_send call.
+                error!(addr=%current_destination, "no endpoint for mapped address");
             }
         }
     }
@@ -2546,21 +2558,19 @@ impl Actor {
             self.net_map.as_ref().unwrap().peers.len()
         );
 
-        // Try a pass of just upserting nodes and creating missing
-        // endpoints. If the set of nodes is the same, this is an
-        // efficient alloc-free update. If the set of nodes is different,
-        // we'll fall through to the next pass, which allocates but can
-        // handle full set updates.
+        // Try a pass of just inserting missing endpoints. If the set of nodes is the same,
+        // this is an efficient alloc-free update. If the set of nodes is different, we'll
+        // remove moribund nodes in the next step below.
         for n in &self.net_map.as_ref().unwrap().peers {
             if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
                 info!(
-                    "upserting endpoint {:?} - {:?} {:#?} {:#?}",
+                    "inserting endpoint {:?} - {:?} {:#?} {:#?}",
                     self.conn.public_key,
                     n.key.clone(),
                     self.peer_map,
                     n,
                 );
-                self.peer_map.upsert_endpoint(EndpointOptions {
+                self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
                     public_key: Some(n.key.clone()),
@@ -2578,7 +2588,7 @@ impl Actor {
         }
 
         // If the set of nodes changed since the last set_network_map, the
-        // upsert loop just above made self.peer_map contain the union of the
+        // insert loop just above made self.peer_map contain the union of the
         // old and new peers - which will be larger than the set from the
         // current netmap. If that happens, go through the allocful
         // deletion path to clean up moribund nodes.
@@ -3057,6 +3067,57 @@ impl Iterator for TransmitIter<'_> {
         let out = self.transmits[self.offset..end].to_vec();
         self.offset = end;
         Some(out)
+    }
+}
+
+/// The fake address used by the QUIC layer to address a peer.
+///
+/// You can consider this as nothing more than a lookup key for a peer the [`Conn`] knows
+/// about.
+///
+/// [`Conn`] can reach a peer by several real socket addresses, or maybe even via the derper
+/// relay.  The QUIC layer however needs to address a peer by a stable [`SocketAddr`] so
+/// that normal socket APIs can function.  Thus when a new peer is introduced to a [`Conn`]
+/// it is given a new fake address.  This is the type of that address.
+///
+/// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
+/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
+/// the conversion to this type.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct QuicMappedAddr(SocketAddr);
+
+/// Counter to always generate unique addresses for [`QuicMappedAddr`].
+static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+impl QuicMappedAddr {
+    /// The Prefix/L of our Unique Local Addresses.
+    const ADDR_PREFIXL: u8 = 0xfd;
+    /// The Global ID used in our Unique Local Addresses.
+    const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
+    /// The Subnet ID used in our Unique Local Addresses.
+    const ADDR_SUBNET: [u8; 2] = [0; 2];
+
+    /// Generates a globally unique fake UDP address.
+    ///
+    /// This generates and IPv6 Unique Local Address according to RFC 4193.
+    ///
+    /// TODO: Use the subnet to tie an address to a specific `Conn` instance.
+    pub(crate) fn generate() -> Self {
+        let mut addr = [0u8; 16];
+        addr[0] = Self::ADDR_PREFIXL;
+        addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
+        addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
+
+        let counter = ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        addr[8..16].copy_from_slice(&counter.to_be_bytes());
+
+        Self(SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345))
+    }
+}
+
+impl std::fmt::Display for QuicMappedAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "QuicMappedAddr({})", self.0)
     }
 }
 
