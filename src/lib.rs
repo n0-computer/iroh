@@ -4,6 +4,7 @@
 pub mod blobs;
 pub mod config;
 pub mod get;
+#[cfg(feature = "cli")]
 pub mod main_util;
 pub mod metrics;
 pub mod net;
@@ -21,7 +22,7 @@ mod util;
 pub mod hp;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
-pub use util::Hash;
+pub use util::{pathbuf_from_name, Hash};
 
 use bao_tree::BlockSize;
 
