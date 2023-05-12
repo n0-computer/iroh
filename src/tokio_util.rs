@@ -205,6 +205,11 @@ impl<W> ProgressWriter<W> {
             receiver,
         )
     }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.inner.into_parts().0
+    }
 }
 
 impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {

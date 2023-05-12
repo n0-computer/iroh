@@ -36,13 +36,7 @@ pub enum Commands {
         private_key: Option<String>,
 
         #[clap(long, default_value_t = 1024 * 1024 * 16)]
-        min_size: u64,
-
-        #[clap(long, default_value_t = 1024 * 1024 * 16)]
-        max_size: u64,
-
-        #[clap(long, default_value_t = 16)]
-        size_multiplier: u64,
+        size: u64,
 
         #[clap(long, default_value_t = -1)]
         iterations: i64,
@@ -71,38 +65,98 @@ pub enum Commands {
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
 enum TestStreamRequest {
-    Echo,
-    Drain,
+    Echo { bytes: u64 },
+    Drain { bytes: u64 },
     Send { bytes: u64, block_size: u32 },
 }
 
 struct TestConfig {
-    min_size: u64,
-    max_size: u64,
-    size_multiplier: u64,
+    size: u64,
     iterations: Option<u64>,
+}
+
+fn update_pb(
+    pb: ProgressBar,
+    total_bytes: u64,
+    mut updates: sync::mpsc::Receiver<u64>,
+) -> tokio::task::JoinHandle<()> {
+    pb.set_position(0);
+    pb.set_length(total_bytes);
+    tokio::spawn(async move {
+        loop {
+            while let Some(position) = updates.recv().await {
+                pb.set_position(position);
+            }
+        }
+    })
 }
 
 /// handle a test stream request
 async fn handle_test_request(
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
+    gui: &Gui,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     recv.read_exact(&mut buf).await?;
     let request: TestStreamRequest = postcard::from_bytes(&buf)?;
     match request {
-        TestStreamRequest::Echo => {
+        TestStreamRequest::Echo { bytes } => {
             // copy the stream back
+            let (mut send, mut updates) = ProgressWriter::new(&mut send);
+            gui.pb.set_length(bytes);
+            gui.pb.set_position(0);
+            gui.pb.set_message("echo");
+            let t0 = Instant::now();
+            let pb2 = gui.pb.clone();
+            let progress = tokio::spawn(async move {
+                while let Some(position) = updates.recv().await {
+                    pb2.set_position(position);
+                }
+            });
             tokio::io::copy(&mut recv, &mut send).await?;
+            let elapsed = t0.elapsed();
+            drop(send);
+            progress.await?;
+            gui.set_echo(bytes, elapsed);
         }
-        TestStreamRequest::Drain => {
+        TestStreamRequest::Drain { bytes } => {
             // drain the stream
-            tokio::io::copy(&mut recv, &mut tokio::io::sink()).await?;
+            let (mut send, mut updates) = ProgressWriter::new(tokio::io::sink());
+            gui.pb.set_length(bytes);
+            gui.pb.set_position(0);
+            gui.pb.set_message("recv");
+            let pb2 = gui.pb.clone();
+            let progress = tokio::spawn(async move {
+                while let Some(position) = updates.recv().await {
+                    pb2.set_position(position);
+                }
+            });
+            let t0 = Instant::now();
+            tokio::io::copy(&mut recv, &mut send).await?;
+            let elapsed = t0.elapsed();
+            drop(send);
+            progress.await?;
+            gui.set_recv(bytes, elapsed);
         }
         TestStreamRequest::Send { bytes, block_size } => {
             // send the requested number of bytes, in blocks of the requested size
+            let (mut send, mut updates) = ProgressWriter::new(&mut send);
+            gui.pb.set_length(bytes);
+            gui.pb.set_position(0);
+            gui.pb.set_message("send");
+            let pb2 = gui.pb.clone();
+            let progress = tokio::spawn(async move {
+                while let Some(position) = updates.recv().await {
+                    pb2.set_position(position);
+                }
+            });
+            let t0 = Instant::now();
             send_blocks(&mut send, bytes, block_size).await?;
+            drop(send);
+            let elapsed = t0.elapsed();
+            progress.await?;
+            gui.set_send(bytes, elapsed);
         }
     }
     send.finish().await?;
@@ -139,41 +193,74 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
-    let n = config.iterations.unwrap_or(u64::MAX);
-    let mp = MultiProgress::new();
-    mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
-    let pb = indicatif::ProgressBar::hidden();
-    let send_pb = mp.add(ProgressBar::hidden());
-    let recv_pb = mp.add(ProgressBar::hidden());
-    let echo_pb = mp.add(ProgressBar::hidden());
-    let style = indicatif::ProgressStyle::default_bar()
-        .template("{msg}")
-        .unwrap();
-    send_pb.set_style(style.clone());
-    recv_pb.set_style(style.clone());
-    echo_pb.set_style(style.clone());
-    let pb = mp.add(pb);
-    pb.enable_steady_tick(Duration::from_millis(100));
-    pb.set_style(indicatif::ProgressStyle::default_bar()
-        .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
-        .progress_chars("█▉▊▋▌▍▎▏ "));
-    for _ in 0..n {
-        let (b, d) = send_test(&connection, config, &pb).await?;
-        send_pb.set_message(format!(
-            "send: {}/s",
-            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
-        ));
-        let (b, d) = recv_test(&connection, config, &pb).await?;
-        recv_pb.set_message(format!(
+/// Contain all the gui state
+struct Gui {
+    mp: MultiProgress,
+    pb: ProgressBar,
+    send_pb: ProgressBar,
+    recv_pb: ProgressBar,
+    echo_pb: ProgressBar,
+}
+
+impl Gui {
+    fn new() -> Self {
+        let mp = MultiProgress::new();
+        mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
+        let pb = indicatif::ProgressBar::hidden();
+        let send_pb = mp.add(ProgressBar::hidden());
+        let recv_pb = mp.add(ProgressBar::hidden());
+        let echo_pb = mp.add(ProgressBar::hidden());
+        let style = indicatif::ProgressStyle::default_bar()
+            .template("{msg}")
+            .unwrap();
+        send_pb.set_style(style.clone());
+        recv_pb.set_style(style.clone());
+        echo_pb.set_style(style.clone());
+        let pb = mp.add(pb);
+        pb.enable_steady_tick(Duration::from_millis(100));
+        pb.set_style(indicatif::ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏ "));
+        Self {
+            mp,
+            pb,
+            send_pb,
+            recv_pb,
+            echo_pb,
+        }
+    }
+
+    fn set_send(&self, b: u64, d: Duration) {
+        Self::set_bench_speed(&self.send_pb, b, d);
+    }
+
+    fn set_recv(&self, b: u64, d: Duration) {
+        Self::set_bench_speed(&self.recv_pb, b, d);
+    }
+
+    fn set_echo(&self, b: u64, d: Duration) {
+        Self::set_bench_speed(&self.echo_pb, b, d);
+    }
+
+    fn set_bench_speed(pb: &ProgressBar, b: u64, d: Duration) {
+        pb.set_message(format!(
             "recv: {}/s",
             HumanBytes((b as f64 / d.as_secs_f64()) as u64)
         ));
-        let (b, d) = echo_test(&connection, config, &pb).await?;
-        echo_pb.set_message(format!(
-            "echo: {}/s",
-            HumanBytes((b as f64 / d.as_secs_f64()) as u64)
-        ));
+    }
+}
+
+async fn active_side(connection: quinn::Connection, config: &TestConfig) -> anyhow::Result<()> {
+    let n = config.iterations.unwrap_or(u64::MAX);
+    let gui = Gui::new();
+    let Gui { pb, .. } = &gui;
+    for _ in 0..n {
+        let d = send_test(&connection, config, pb).await?;
+        gui.set_send(config.size, d);
+        let d = recv_test(&connection, config, pb).await?;
+        gui.set_recv(config.size, d);
+        let d = echo_test(&connection, config, pb).await?;
+        gui.set_echo(config.size, d);
     }
     Ok(())
 }
@@ -192,122 +279,105 @@ async fn echo_test(
     connection: &quinn::Connection,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
-) -> anyhow::Result<(u64, Duration)> {
-    let mut total_bytes = 0;
-    let mut total_duration = Duration::ZERO;
-    let mut size = config.min_size;
-    while size <= config.max_size {
-        pb.set_length(size);
-        pb.set_position(0);
-        pb.set_message("echo");
-        let (mut send, mut recv) = connection.open_bi().await?;
-        send_test_request(&mut send, &TestStreamRequest::Echo).await?;
-        let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
-        let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-        let pb2 = pb.clone();
-        let progress = tokio::spawn(async move {
-            while let Some(position) = updates.recv().await {
-                pb2.set_position(position);
-            }
-        });
-        let t0 = Instant::now();
-        send_blocks(&mut send, size, 1024 * 1024).await?;
-        send.finish().await?;
-        let received = copying.await??;
-        anyhow::ensure!(received == size);
-        total_duration += t0.elapsed();
-        total_bytes += received;
-        progress.await?;
-        size *= config.size_multiplier;
-    }
-    Ok((total_bytes, total_duration))
+) -> anyhow::Result<Duration> {
+    let size = config.size;
+    pb.set_length(size);
+    pb.set_position(0);
+    pb.set_message("echo");
+    let (mut send, mut recv) = connection.open_bi().await?;
+    send_test_request(&mut send, &TestStreamRequest::Echo { bytes: size }).await?;
+    let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
+    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+    let pb2 = pb.clone();
+    let progress = tokio::spawn(async move {
+        while let Some(position) = updates.recv().await {
+            pb2.set_position(position);
+        }
+    });
+    let t0 = Instant::now();
+    send_blocks(&mut send, size, 1024 * 1024).await?;
+    send.finish().await?;
+    let received = copying.await??;
+    anyhow::ensure!(received == size);
+    let duration = t0.elapsed();
+    progress.await?;
+    Ok(duration)
 }
 
 async fn send_test(
     connection: &quinn::Connection,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
-) -> anyhow::Result<(u64, Duration)> {
-    let mut total_bytes = 0;
-    let mut total_duration = Duration::ZERO;
-    let mut size = config.min_size;
-    while size <= config.max_size {
-        pb.set_length(size);
-        pb.set_position(0);
-        pb.set_message("send");
-        let (mut send, mut recv) = connection.open_bi().await?;
-        send_test_request(&mut send, &TestStreamRequest::Drain).await?;
-        let (mut send_with_progress, mut updates) = ProgressWriter::new(&mut send);
-        let copying =
-            tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
-        let pb2 = pb.clone();
-        let progress = tokio::spawn(async move {
-            while let Some(position) = updates.recv().await {
-                pb2.set_position(position);
-            }
-        });
-        let t0 = Instant::now();
-        send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
-        drop(send_with_progress);
-        send.finish().await?;
-        drop(send);
-        let received = copying.await??;
-        anyhow::ensure!(received == 0);
-        total_duration += t0.elapsed();
-        total_bytes += size;
-        progress.await?;
-        size *= config.size_multiplier;
-    }
-    Ok((total_bytes, total_duration))
+) -> anyhow::Result<Duration> {
+    let size = config.size;
+    pb.set_length(size);
+    pb.set_position(0);
+    pb.set_message("send");
+    let (mut send, mut recv) = connection.open_bi().await?;
+    send_test_request(&mut send, &TestStreamRequest::Drain { bytes: size }).await?;
+    let (mut send_with_progress, mut updates) = ProgressWriter::new(&mut send);
+    let copying =
+        tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
+    let pb2 = pb.clone();
+    let progress = tokio::spawn(async move {
+        while let Some(position) = updates.recv().await {
+            pb2.set_position(position);
+        }
+    });
+    let t0 = Instant::now();
+    send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
+    drop(send_with_progress);
+    send.finish().await?;
+    drop(send);
+    let received = copying.await??;
+    anyhow::ensure!(received == 0);
+    let duration = t0.elapsed();
+    progress.await?;
+    Ok(duration)
 }
 
 async fn recv_test(
     connection: &quinn::Connection,
     config: &TestConfig,
     pb: &indicatif::ProgressBar,
-) -> anyhow::Result<(u64, Duration)> {
-    let mut total_bytes = 0;
-    let mut total_duration = Duration::ZERO;
-    let mut size = config.min_size;
-    while size <= config.max_size {
-        pb.set_length(size);
-        pb.set_position(0);
-        pb.set_message("recv");
-        let (mut send, mut recv) = connection.open_bi().await?;
-        let t0 = Instant::now();
-        let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
-        send_test_request(
-            &mut send,
-            &TestStreamRequest::Send {
-                bytes: size,
-                block_size: 1024 * 1024,
-            },
-        )
-        .await?;
-        let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-        let pb2 = pb.clone();
-        let progress = tokio::spawn(async move {
-            while let Some(position) = updates.recv().await {
-                pb2.set_position(position);
-            }
-        });
-        send.finish().await?;
-        let received = copying.await??;
-        anyhow::ensure!(received == size);
-        total_duration += t0.elapsed();
-        total_bytes += received;
-        progress.await?;
-        size *= config.size_multiplier;
-    }
-    Ok((total_bytes, total_duration))
+) -> anyhow::Result<Duration> {
+    let size = config.size;
+    pb.set_length(size);
+    pb.set_position(0);
+    pb.set_message("recv");
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let t0 = Instant::now();
+    let (mut sink, mut updates) = ProgressWriter::new(tokio::io::sink());
+    send_test_request(
+        &mut send,
+        &TestStreamRequest::Send {
+            bytes: size,
+            block_size: 1024 * 1024,
+        },
+    )
+    .await?;
+    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
+    let pb2 = pb.clone();
+    let progress = tokio::spawn(async move {
+        while let Some(position) = updates.recv().await {
+            pb2.set_position(position);
+        }
+    });
+    send.finish().await?;
+    let received = copying.await??;
+    anyhow::ensure!(received == size);
+    let duration = t0.elapsed();
+    progress.await?;
+    Ok(duration)
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
 async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
+    let gui = Gui::new();
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
-                if let Err(cause) = handle_test_request(send, recv).await {
+                if let Err(cause) = handle_test_request(send, recv, &gui).await {
                     eprintln!("Error handling test request {}", cause);
                 }
             }
@@ -523,9 +593,7 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
         Commands::Accept {
             private_key,
             local_derper,
-            min_size,
-            max_size,
-            size_multiplier,
+            size,
             iterations,
         } => {
             let private_key = create_secret_key(private_key)?;
@@ -534,12 +602,7 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
             } else {
                 Some(iterations as u64)
             };
-            let config = TestConfig {
-                min_size,
-                max_size,
-                size_multiplier,
-                iterations,
-            };
+            let config = TestConfig { size, iterations };
             accept(private_key, local_derper, config).await
         }
     }
