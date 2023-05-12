@@ -38,7 +38,6 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
-const MAX_CONCURRENT_DIALS: u8 = 16;
 
 /// Send data.
 ///
@@ -167,9 +166,9 @@ enum Commands {
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// Address of the provider
+        /// Addresses of the provider.
         #[clap(long, short)]
-        addr: Option<SocketAddr>,
+        addrs: Vec<SocketAddr>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
@@ -513,13 +512,13 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            addr,
+            addrs,
             out,
             single,
         } => {
             let opts = get::Options {
-                addr,
-                peer_id: Some(peer),
+                addrs,
+                peer_id: peer,
                 keylog: cli.keylog,
                 derp_map: config.derp_map(),
             };
@@ -894,7 +893,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             ticket,
             keylog,
             derp_map,
-        } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
         GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
@@ -1047,7 +1046,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             ticket,
             keylog,
             derp_map,
-        } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
         GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;

@@ -174,13 +174,13 @@ mod tests {
             hash: Hash,
             file_hash: Hash,
             name: String,
-            addr: SocketAddr,
+            addrs: Vec<SocketAddr>,
             peer_id: PeerId,
             content: Vec<u8>,
         ) -> Result<()> {
             let opts = get::Options {
-                addr: Some(addr),
-                peer_id: Some(peer_id),
+                addrs,
+                peer_id,
                 keylog: true,
                 derp_map: None,
             };
@@ -201,7 +201,7 @@ mod tests {
                 hash,
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address().unwrap()[0],
+                provider.local_address().unwrap(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -294,10 +294,9 @@ mod tests {
         });
 
         let addrs = provider.listen_addresses()?;
-        let addr = *addrs.first().unwrap();
         let opts = get::Options {
-            addr: Some(addr),
-            peer_id: Some(provider.peer_id()),
+            addrs,
+            peer_id: provider.peer_id(),
             keylog: true,
             derp_map: None,
         };
@@ -406,8 +405,8 @@ mod tests {
         let response = get::run(
             GetRequest::all(hash).into(),
             get::Options {
-                addr: Some(provider_addr[0]),
-                peer_id: Some(peer_id),
+                addrs: provider_addr,
+                peer_id,
                 keylog: true,
                 derp_map: None,
             },
@@ -450,8 +449,8 @@ mod tests {
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
-                    addr: Some(provider_addr[0]),
-                    peer_id: Some(peer_id),
+                    addrs: provider_addr,
+                    peer_id,
                     keylog: true,
                     derp_map: None,
                 },
@@ -489,13 +488,13 @@ mod tests {
                 return;
             }
         };
-        let addr = provider.local_address().unwrap();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_address().unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
-                    addr: Some(addr[0]),
+                    addrs,
                     peer_id,
                     keylog: true,
                     derp_map: None,
@@ -522,14 +521,8 @@ mod tests {
         let _drop_guard = provider.cancel_token().drop_guard();
         let ticket = provider.ticket(hash).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let response = get::run_ticket(
-                &ticket,
-                GetRequest::all(ticket.hash()).into(),
-                true,
-                16,
-                None,
-            )
-            .await?;
+            let response =
+                get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, None).await?;
             aggregate_get_response(response).await
         })
         .await
@@ -601,11 +594,11 @@ mod tests {
                 return;
             }
         };
-        let addr = provider.local_address().unwrap();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_address().unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let connection = dial_peer(get::Options {
-                addr: Some(addr[0]),
+                addrs,
                 peer_id,
                 keylog: true,
                 derp_map: None,
@@ -682,14 +675,14 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let addr = provider.local_address().unwrap();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_address().unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
                 get::Options {
-                    addr: Some(addr[0]),
+                    addrs,
                     peer_id,
                     keylog: true,
                     derp_map: None,
@@ -718,14 +711,14 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let addr = provider.local_address().unwrap();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_address().unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
                 get::Options {
-                    addr: Some(addr[0]),
+                    addrs,
                     peer_id,
                     keylog: true,
                     derp_map: None,
