@@ -149,7 +149,6 @@ impl Deref for Conn {
 pub struct Inner {
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
-    // TODO: send transmits *together* with their destination
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
     #[debug("on_endpoints: Option<Box<..>>")]
