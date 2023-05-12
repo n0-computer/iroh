@@ -752,8 +752,11 @@ async fn provide(
         builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {:#?}", provider.local_address()?);
-    println!("Local endpoints: {:#?}", provider.local_endpoints().await?);
+    let eps = provider.local_endpoints().await?;
+    println!("Listening addresses:");
+    for ep in eps {
+        println!("  {}", ep.addr);
+    }
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)

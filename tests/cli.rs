@@ -218,7 +218,7 @@ fn cli_provide_addresses() -> Result<()> {
     let get_output = cmd.output()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert_eq!(stdout, "Listening addresses: [127.0.0.1:4333]\n");
+    assert!(stdout.starts_with("Listening addresses: [127.0.0.1:4333"));
 
     let _provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
     let mut cmd = Command::new(iroh_bin());
@@ -368,7 +368,10 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // test get stderr output
     let get_output = cmd.output()?;
-    // std::io::copy(&mut std::io::Cursor::new(&get_output.stderr), &mut std::io::stderr())?;
+    std::io::copy(
+        &mut std::io::Cursor::new(&get_output.stderr),
+        &mut std::io::stderr(),
+    )?;
     assert!(get_output.status.success());
 
     // test output
@@ -462,11 +465,12 @@ fn match_provide_output<T: Read>(
 
     let mut caps = assert_matches_line![
         reader,
-        r"Listening address: [\d.:]*"; 1,
+        r"Listening addresses:"; 1i64,
+        r"^  \S+"; -1i64,
         r"PeerID: [_\w\d-]*"; 1,
         r""; 1,
         r"Adding .*"; 1,
-        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
+        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs as i64,
         r"Total: [_\w\d-]*"; 1,
         r""; 1,
         r"Collection: [\da-z]{59}"; 1,
@@ -497,22 +501,37 @@ fn match_provide_output<T: Read>(
 macro_rules! assert_matches_line {
      ( $x:expr, $( $z:expr;$a:expr ),* ) => {
          {
-            let mut lines = $x.lines();
+            let mut lines = $x.lines().peekable();
             let mut caps = Vec::new();
             $(
-            let rx = regex::Regex::new($z)?;
-            for _ in 0..$a {
-                let line = lines.next().context("Unexpected end of stderr reader")??;
-                if let Some(cap) = rx.captures(line.trim()) {
-                    for i in 0..cap.len() {
-                        if let Some(capture_group) = cap.get(i) {
-                            caps.push(capture_group.as_str().to_string());
+                let rx = regex::Regex::new($z)?;
+                let mut num_matches = 0;
+                loop {
+                    if $a > 0 && num_matches == $a as usize {
+                        break;
+                    }
+
+                    if let Some(Ok(line)) = lines.peek() {
+                        if let Some(cap) = rx.captures(line) {
+                            for i in 0..cap.len() {
+                                if let Some(capture_group) = cap.get(i) {
+                                    caps.push(capture_group.as_str().to_string());
+                                }
+                            }
+
+                            num_matches += 1;
+                        } else {
+                            break;
                         }
                     }
+                    let _ = lines.next().context("Unexpected end of stderr reader")?;
+                }
+                if $a == -1 {
+                    assert!(num_matches > 0, "no matches found");
                 } else {
-                    anyhow::bail!(format!("no match found\nexpected match for '{}'\ngot '{line}'", $z));
-                };
-            }
+                    assert_eq!(num_matches, $a as usize, "invalid number of matches");
+                }
+
             )*
             caps
          }
