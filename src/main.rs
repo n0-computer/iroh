@@ -609,7 +609,7 @@ async fn main_impl() -> Result<()> {
                     let stream = controller.server_streaming(ProvideRequest { path }).await?;
                     let (hash, entries) = aggregate_add_response(stream).await?;
                     print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash).await?;
+                    let ticket = provider.ticket(hash)?;
                     println!("All-in-one ticket: {ticket}");
                     anyhow::Ok(tmp_path)
                 })
@@ -752,7 +752,7 @@ async fn provide(
         builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {:#?}", provider.local_address().await?);
+    println!("Listening address: {:#?}", provider.local_address()?);
     println!("Local endpoints: {:#?}", provider.local_endpoints().await?);
     println!("PeerID: {}", provider.peer_id());
     println!();

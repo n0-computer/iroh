@@ -32,7 +32,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, trace, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
@@ -265,6 +265,7 @@ where
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub async fn spawn(self) -> Result<Provider> {
+        trace!("spawning provider");
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -286,6 +287,7 @@ where
             ..Default::default()
         })
         .await?;
+        trace!("created magicsock");
         conn.set_derp_map(self.derp_map)
             .await
             .context("setting derp map")?;
@@ -296,10 +298,15 @@ where
             conn.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
+
+        trace!("created quinn endpoint");
+
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
-        tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+
+        debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(ProviderInner {
             db: self.db,
@@ -500,8 +507,8 @@ impl Provider {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the provider consider using [`Provider::listen_addresses`].  However the
     /// port will always be the concrete port.
-    pub async fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.local_address().await
+    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        self.inner.local_address()
     }
 
     /// Lists the local endpoint of this node.
@@ -512,8 +519,8 @@ impl Provider {
     /// Returns all addresses on which the provider is reachable.
     ///
     /// This will never be empty.
-    pub async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.listen_addresses().await
+    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        self.inner.listen_addresses()
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -537,9 +544,9 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = self.listen_addresses().await?;
+        let addrs = self.listen_addresses()?;
         Ticket::new(hash, self.peer_id(), addrs)
     }
 
@@ -565,16 +572,16 @@ impl ProviderInner {
         self.conn.local_endpoints().await
     }
 
-    async fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.conn.local_addr().await?;
+    fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        let (v4, v6) = self.conn.local_addr()?;
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
         }
         Ok(addrs)
     }
-    async fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(&self.local_address().await?)
+    fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
+        find_local_addresses(&self.local_address()?)
     }
 }
 
@@ -654,13 +661,13 @@ impl RpcHandler {
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
-            listen_addrs: self.inner.listen_addresses().await.unwrap_or_default(),
+            listen_addrs: self.inner.listen_addresses().unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: self.inner.listen_addresses().await.unwrap_or_default(),
+            addrs: self.inner.listen_addresses().unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -1332,7 +1339,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).await.unwrap();
+        let ticket = provider.ticket(hash).unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }
