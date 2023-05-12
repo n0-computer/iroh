@@ -41,7 +41,7 @@ pub fn iroh_config_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh config directory.
 #[allow(dead_code)]
-pub fn iroh_config_path(file_name: &Path) -> Result<PathBuf> {
+pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
     Ok(path)
 }
@@ -213,16 +213,6 @@ pub fn create_quinn_client(
 
     endpoint.set_default_client_config(client_config);
     Ok(endpoint)
-}
-
-pub fn configure_derp_map() -> DerpMap {
-    // Use google stun server for now
-    let stun_port = 3478;
-    let host_name = "derp.iroh.computer".into();
-    let derp_port = 3340;
-    let derp_ipv4 = UseIpv4::Some("35.175.99.113".parse().unwrap());
-    let derp_ipv6 = UseIpv6::None;
-    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
 }
 
 pub fn configure_local_derp_map() -> DerpMap {
