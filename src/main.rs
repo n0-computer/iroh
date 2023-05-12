@@ -12,10 +12,11 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::blobs::{Blob, Collection};
+use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
-use iroh::main_util::pathbuf_from_name;
+use iroh::main_util::{iroh_config_path, pathbuf_from_name};
 use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -26,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh::main_util::{configure_derp_map, create_quinn_client, iroh_data_root, Blake3Cid};
+use iroh::main_util::{create_quinn_client, iroh_data_root, Blake3Cid};
 use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 
@@ -63,6 +64,8 @@ struct Cli {
     #[cfg(feature = "metrics")]
     #[clap(long)]
     metrics_addr: Option<SocketAddr>,
+    #[clap(long)]
+    cfg: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -498,6 +501,18 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+    let sources = [Some(config_path.as_path()), cli.cfg.as_deref()];
+    let config = Config::load(
+        // potential config files
+        &sources,
+        // env var prefix for this config
+        ENV_PREFIX,
+        // map of present command line arguments
+        // args.make_overrides_map(),
+        HashMap::<String, String>::new(),
+    )?;
+
     #[cfg(feature = "metrics")]
     let metrics_fut = init_metrics_collection(cli.metrics_addr);
 
@@ -509,12 +524,11 @@ async fn main_impl() -> Result<()> {
             out,
             single,
         } => {
-            let dm = configure_derp_map(); // TODO: pass what is needed.
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer),
                 keylog: cli.keylog,
-                derp_map: Some(dm),
+                derp_map: config.derp_map(),
             };
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
@@ -531,11 +545,10 @@ async fn main_impl() -> Result<()> {
             }
         }
         Commands::GetTicket { out, ticket } => {
-            let dm = configure_derp_map(); // TODO: pass what is needed.
             let get = GetInteractive::Ticket {
                 ticket,
                 keylog: cli.keylog,
-                derp_map: Some(dm),
+                derp_map: config.derp_map(),
             };
             tokio::select! {
                 biased;
@@ -569,7 +582,15 @@ async fn main_impl() -> Result<()> {
             };
             let key = Some(iroh_data_root.join("keypair"));
 
-            let provider = provide(db.clone(), addr, key, cli.keylog, rpc_port.into()).await?;
+            let provider = provide(
+                db.clone(),
+                addr,
+                key,
+                cli.keylog,
+                rpc_port.into(),
+                config.derp_map(),
+            )
+            .await?;
             let controller = provider.controller();
 
             // task that will add data to the provider, either from a file or from stdin
@@ -701,7 +722,7 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
-        Commands::Doctor { command } => iroh::hp::doctor::run(command).await,
+        Commands::Doctor { command } => iroh::hp::doctor::run(command, config).await,
     };
 
     #[cfg(feature = "metrics")]
@@ -718,14 +739,15 @@ async fn provide(
     key: Option<PathBuf>,
     keylog: bool,
     rpc_port: Option<u16>,
+    dm: Option<DerpMap>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
-    let dm = configure_derp_map(); // TODO: pass what is needed.
-    let builder = provider::Provider::builder(db)
-        .keylog(keylog)
-        .derp_map(dm)
-        .bind_addr(addr);
+    let mut builder = provider::Provider::builder(db).keylog(keylog);
+    if let Some(dm) = dm {
+        builder = builder.derp_map(dm);
+    }
+    let builder = builder.bind_addr(addr);
 
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;

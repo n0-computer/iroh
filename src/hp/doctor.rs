@@ -343,15 +343,6 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
     }
 }
 
-fn configure_derp_map() -> DerpMap {
-    let stun_port = 3478;
-    let host_name = "derp.iroh.computer".into();
-    let derp_port = 3340;
-    let derp_ipv4 = UseIpv4::Some("35.175.99.113".parse().unwrap());
-    let derp_ipv6: UseIpv6 = UseIpv6::None;
-    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
-}
-
 fn configure_local_derp_map() -> DerpMap {
     let stun_port = 3478;
     let host_name = "derp.invalid".into();
@@ -365,8 +356,8 @@ const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
 const DEFAULT_DERP_REGION: u16 = 1;
 
 async fn make_endpoint(
-    local_derper: bool,
     private_key: SecretKey,
+    derp_map: Option<DerpMap>,
 ) -> anyhow::Result<(magicsock::Conn, quinn::Endpoint)> {
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
     let on_net_info = |ni: hp::cfg::NetInfo| {
@@ -386,11 +377,6 @@ async fn make_endpoint(
         "public key: {}",
         hex::encode(private_key.public_key().as_bytes())
     );
-    let derp_map = if local_derper {
-        configure_local_derp_map()
-    } else {
-        configure_derp_map()
-    };
     tracing::info!("derp map {:#?}", derp_map);
     let opts = magicsock::Options {
         port: 0,
@@ -402,7 +388,7 @@ async fn make_endpoint(
     let key = opts.private_key.clone();
     let conn = magicsock::Conn::new(opts).await?;
 
-    conn.set_derp_map(Some(derp_map)).await?;
+    conn.set_derp_map(derp_map).await?;
     tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
         .await
         .context("wait for derp connection")?;
@@ -437,10 +423,10 @@ async fn make_endpoint(
 async fn connect(
     dial: String,
     private_key: SecretKey,
-    local_derper: bool,
     remote_endpoints: Vec<SocketAddr>,
+    derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let (conn, endpoint) = make_endpoint(local_derper, private_key.clone()).await?;
+    let (conn, endpoint) = make_endpoint(private_key.clone(), derp_map).await?;
 
     let bytes = hex::decode(dial)?;
     let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
@@ -484,10 +470,10 @@ async fn connect(
 
 async fn accept(
     private_key: SecretKey,
-    local_derper: bool,
     config: TestConfig,
+    derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let (conn, endpoint) = make_endpoint(local_derper, private_key.clone()).await?;
+    let (conn, endpoint) = make_endpoint(private_key.clone(), derp_map).await?;
 
     let endpoints = conn.local_endpoints().await?;
     let remote_addrs = endpoints
@@ -529,7 +515,7 @@ fn create_secret_key(private_key: Option<String>) -> anyhow::Result<SecretKey> {
     })
 }
 
-pub async fn run(command: Commands) -> anyhow::Result<()> {
+pub async fn run(command: Commands, config: crate::config::Config) -> anyhow::Result<()> {
     match command {
         Commands::Report {
             host_name,
@@ -541,8 +527,13 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
             local_derper,
             remote_endpoint,
         } => {
+            let derp_map = if local_derper {
+                Some(configure_local_derp_map())
+            } else {
+                config.derp_map()
+            };
             let private_key = create_secret_key(private_key)?;
-            connect(dial, private_key, local_derper, remote_endpoint).await
+            connect(dial, private_key, remote_endpoint, derp_map).await
         }
         Commands::Accept {
             private_key,
@@ -550,6 +541,11 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
             size,
             iterations,
         } => {
+            let derp_map = if local_derper {
+                Some(configure_local_derp_map())
+            } else {
+                config.derp_map()
+            };
             let private_key = create_secret_key(private_key)?;
             let iterations = if iterations < 0 {
                 None
@@ -557,7 +553,7 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
                 Some(iterations as u64)
             };
             let config = TestConfig { size, iterations };
-            accept(private_key, local_derper, config).await
+            accept(private_key, config, derp_map).await
         }
     }
 }
