@@ -3193,7 +3193,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rebind_stress() {
+    async fn test_rebind_stress_single_thread() {
+        rebind_stress().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rebind_stress_multi_thread() {
+        rebind_stress().await;
+    }
+
+    async fn rebind_stress() {
         let c = new_test_conn().await;
 
         let (cancel, mut cancel_r) = sync::oneshot::channel();
@@ -3206,9 +3215,14 @@ mod tests {
             loop {
                 tokio::select! {
                     _ = &mut cancel_r => {
+                        println!("cancel");
                         return anyhow::Ok(());
                     }
                     res = futures::future::poll_fn(|cx| conn.poll_recv(cx, &mut buffs, &mut meta)) => {
+                        println!("poll_recv");
+                        if res.is_err() {
+                            println!("failed to poll_recv: {:?}", res);
+                        }
                         res?;
                     }
                 }
@@ -3217,14 +3231,16 @@ mod tests {
 
         let conn = c.clone();
         let t1 = tokio::task::spawn(async move {
-            for _i in 0..2000 {
+            for i in 0..2000 {
+                println!("[t1] rebind {}", i);
                 conn.rebind_all().await;
             }
         });
 
         let conn = c.clone();
         let t2 = tokio::task::spawn(async move {
-            for _i in 0..2000 {
+            for i in 0..2000 {
+                println!("[t2] rebind {}", i);
                 conn.rebind_all().await;
             }
         });
@@ -3233,9 +3249,9 @@ mod tests {
         t2.await.unwrap();
 
         cancel.send(()).unwrap();
+        t.await.unwrap().unwrap();
 
         c.close().await.unwrap();
-        t.await.unwrap().unwrap();
     }
 
     struct Devices {
