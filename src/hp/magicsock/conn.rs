@@ -93,6 +93,7 @@ pub struct Options {
     pub port: u16,
 
     /// Optionally provides a func to be called when endpoints change.
+    #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
     pub on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
 
@@ -151,6 +152,7 @@ pub struct Inner {
     /// Sends network messages.
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
+    #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     #[debug("on_derp_active: Option<Box<..>>")]
@@ -1180,7 +1182,7 @@ impl Actor {
         let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        let res = parts
+        parts
             .map(|part| match part {
                 Ok(part) => {
                     let meta = quinn_udp::RecvMeta {
@@ -1198,12 +1200,7 @@ impl Actor {
                 }
                 Err(e) => NetworkReadResult::Error(e),
             })
-            .collect::<Vec<_>>();
-
-        // if stats := c.stats.Load(); stats != nil {
-        // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
-        // }
-        res
+            .collect::<Vec<_>>()
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]

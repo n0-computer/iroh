@@ -416,7 +416,7 @@ where
         self
     }
 
-    pub fn is_prober(mut self, is_prober: bool) -> Self {
+    pub fn prober(mut self, is_prober: bool) -> Self {
         self.is_prober = is_prober;
         self
     }
