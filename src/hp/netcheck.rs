@@ -789,6 +789,7 @@ enum ProbeError {
     Transient(anyhow::Error),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_probe(
     report: Arc<RwLock<Report>>,
     resolver: &TokioAsyncResolver,

@@ -827,6 +827,7 @@ impl PeerMap {
     /// Stores endpoint, with a public key.
     pub(super) fn upsert_endpoint(&mut self, options: Options) -> Option<usize> {
         if let Some(public_key) = options.public_key.clone() {
+            #[allow(clippy::map_entry)]
             if !self.by_node_key.contains_key(&public_key) {
                 let id = self.insert_endpoint(options);
                 self.by_node_key.insert(public_key, id);

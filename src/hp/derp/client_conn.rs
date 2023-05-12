@@ -117,6 +117,7 @@ impl ClientConnManager {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
+    #[allow(clippy::too_many_arguments)]
     pub fn new<R, W, P>(
         key: PublicKey,
         conn_num: usize,
