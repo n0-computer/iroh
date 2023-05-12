@@ -416,7 +416,7 @@ where
         self
     }
 
-    pub fn is_prober(mut self, is_prober: bool) -> Self {
+    pub fn prober(mut self, is_prober: bool) -> Self {
         self.is_prober = is_prober;
         self
     }
@@ -621,11 +621,13 @@ pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
             len
         );
     }
-    tracing::trace!("send derp packets {} {}", transmits.len(), total_len);
-    const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
-    for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(transmits) {
-        // rate limit for each packet, but exit early if the rate limit is exceeded.
-        // it is unlikely to recover that quickly.
+    // disco packets must be sent as-is
+    if transmits.len() == 1
+        && transmits[0]
+            .as_ref()
+            .starts_with(crate::hp::disco::MAGIC.as_bytes())
+    {
+        let packet = transmits[0].as_ref();
         if let Some(rate_limiter) = rate_limiter {
             let frame_len = PUBLIC_KEY_LENGTH + packet.len();
             if rate_limiter.check_n(frame_len).is_err() {
@@ -639,6 +641,26 @@ pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
             &[dstkey.as_bytes(), packet.as_ref()],
         )
         .await?;
+    } else {
+        tracing::trace!("send derp packets {} {}", transmits.len(), total_len);
+        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(transmits) {
+            // rate limit for each packet, but exit early if the rate limit is exceeded.
+            // it is unlikely to recover that quickly.
+            if let Some(rate_limiter) = rate_limiter {
+                let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+                if rate_limiter.check_n(frame_len).is_err() {
+                    tracing::warn!("dropping send: rate limit reached");
+                    return Ok(());
+                }
+            }
+            write_frame(
+                &mut writer,
+                FrameType::SendPacket,
+                &[dstkey.as_bytes(), packet.as_ref()],
+            )
+            .await?;
+        }
     }
     writer.flush().await?;
     Ok(())
@@ -783,6 +805,16 @@ impl PacketSplitIter {
     /// Returns an error if the packet is too big.
     pub fn new(bytes: Bytes) -> Self {
         Self { bytes }
+    }
+
+    #[cfg(test)]
+    pub fn split(packet: Bytes) -> std::io::Result<Vec<Bytes>> {
+        let mut iter = Self::new(packet);
+        let mut result = Vec::new();
+        while let Some(item) = iter.next() {
+            result.push(item?);
+        }
+        Ok(result)
     }
 
     fn fail(&mut self) -> Option<std::io::Result<Bytes>> {

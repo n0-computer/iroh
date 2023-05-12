@@ -360,7 +360,7 @@ impl Client {
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
-                .is_prober(self.inner.is_prober)
+                .prober(self.inner.is_prober)
                 .server_public_key(self.inner.server_public_key.clone())
                 .build(Some(parts.read_buf))
                 .await

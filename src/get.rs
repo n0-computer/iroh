@@ -58,6 +58,24 @@ pub struct Options {
 }
 
 /// Create a quinn client endpoint
+///
+/// The *bind_addr* is the address that should be bound locally.  Even though this is an
+/// outgoing connection a socket must be bound and this is explicit.  The main choice to
+/// make here is the address family: IPv4 or IPv6.  Otherwise you normally bind to the
+/// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
+///
+/// If *peer_id* is present it will verify during the TLS connection setup that the remote
+/// connected to has the required [`PeerId`], otherwise this will connect to any peer.
+///
+/// The *alpn_protocols* are the list of Application-Layer Protocol Neotiation identifiers
+/// you are happy to accept.
+///
+/// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
+/// considered a filename to which the TLS pre-master keys are logged.  This can be useful
+/// to be able to decrypt captured traffic for debugging purposes.
+///
+/// Finally the *derp_map* specifies the DERP servers that can be used to establish this
+/// connection.
 pub async fn make_client_endpoint(
     bind_addr: SocketAddr,
     peer_id: Option<PeerId>,

@@ -117,6 +117,7 @@ impl ClientConnManager {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
+    #[allow(clippy::too_many_arguments)]
     pub fn new<R, W, P>(
         key: PublicKey,
         conn_num: usize,
@@ -733,6 +734,8 @@ fn parse_send_packet(data: &[u8]) -> Result<(PublicKey, &[u8])> {
 
 #[cfg(test)]
 mod tests {
+    use crate::hp::derp::client::PacketSplitIter;
+
     use super::*;
     use anyhow::bail;
     use std::sync::Arc;
@@ -809,9 +812,10 @@ mod tests {
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
+                let payload = PacketSplitIter::split(packet.bytes)?;
                 assert_eq!(target, got_target);
                 assert_eq!(key, packet.src);
-                assert_eq!(&data[..], &packet.bytes);
+                assert_eq!(&data[..], &payload[0]);
             }
             m => {
                 bail!("expected ServerMessage::SendPacket, got {m:?}");

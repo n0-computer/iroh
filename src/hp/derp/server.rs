@@ -572,7 +572,9 @@ mod tests {
 
     use crate::hp::{
         derp::{
-            client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
+            client::{ClientBuilder, PacketSplitIter},
+            client_conn::ClientConnBuilder,
+            types::ClientInfo,
             ReceivedMessage, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
@@ -730,9 +732,10 @@ mod tests {
         let (frame_type, _) =
             crate::hp::derp::read_frame(&mut a_reader, MAX_FRAME_SIZE, &mut buf).await?;
         let (key, frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
+        let payload = PacketSplitIter::split(frame)?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(key_b, key);
-        assert_eq!(msg, &frame[..]);
+        assert_eq!(msg, &payload[0][..]);
 
         // write disco message from b to d
         let mut disco_msg = crate::hp::disco::MAGIC.as_bytes().to_vec();
@@ -903,8 +906,9 @@ mod tests {
             .await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -918,8 +922,9 @@ mod tests {
             .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -930,9 +935,10 @@ mod tests {
         let msg = Bytes::from_static(b"can you pass this to client d?");
         client_a.send(key_c.clone(), vec![msg.clone()]).await?;
         let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
+        let payload = PacketSplitIter::split(got_packet)?;
         assert_eq!(public_key_a, got_src);
         assert_eq!(key_c, got_dst);
-        assert_eq!(&msg[..], &got_packet);
+        assert_eq!(&msg[..], payload[0]);
 
         // remove the packet forwarder for c
         handler.remove_packet_forwarder(key_c.clone())?;

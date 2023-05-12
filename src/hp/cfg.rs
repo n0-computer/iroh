@@ -148,17 +148,26 @@ pub struct PingResult {
     pub err: Option<String>,
 }
 
+/// A node or peer in the iroh network.
+///
+/// Nodes are primarily identified by their [`Node::key`].
 #[derive(Debug, PartialEq)]
 pub struct Node {
-    // DNS name
-    pub name: Option<String>,
-
+    /// The public key or PeerID, the primary identifier of this node.
     pub key: key::node::PublicKey,
-    /// IP addresses of this Node directly
+    /// DNS name of the peer.
+    pub name: Option<String>,
+    /// Direct IP addresses of this Node.
+    ///
+    /// These are the IP addresses this node is listening on.
     pub addresses: Vec<IpAddr>,
-    // IP+port (public via STUN, and local LANs)
+    /// Endpoints on which we think the node is reachable.
+    ///
+    /// These are populated from STUN results as well as local LAN addresses.
     pub endpoints: Vec<SocketAddr>,
-    /// DERP-in-IP:port ("127.3.3.40:N") endpoint
+    /// DERP-in-IP:port ("127.3.3.40:N") endpoint.
+    ///
+    /// If this nodes expected to be reachable via DERP relaying.
     pub derp: Option<SocketAddr>,
     pub hostinfo: Hostinfo,
     pub created: Instant,
