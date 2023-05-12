@@ -375,6 +375,7 @@ mod tests {
             .await
             .unwrap();
         let provider_addr = provider.local_address().unwrap();
+        let peer_id = provider.peer_id();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -406,7 +407,7 @@ mod tests {
             GetRequest::all(hash).into(),
             get::Options {
                 addr: Some(provider_addr[0]),
-                peer_id: None,
+                peer_id: Some(peer_id),
                 keylog: true,
                 derp_map: None,
             },
@@ -443,13 +444,14 @@ mod tests {
             .spawn()
             .await?;
         let provider_addr = provider.local_address()?;
+        let peer_id = provider.peer_id();
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
                     addr: Some(provider_addr[0]),
-                    peer_id: None,
+                    peer_id: Some(peer_id),
                     keylog: true,
                     derp_map: None,
                 },
