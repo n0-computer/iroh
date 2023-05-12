@@ -120,7 +120,16 @@ impl Default for Options {
     }
 }
 
-/// Routes UDP packets and actively manages a list of its endpoints.
+/// Iroh connectivity layer.
+///
+/// This is responsible for routing packets to peers based on peer IDs, it will initially
+/// route packets via a derper relay and transparently try and establish a peer-to-peer
+/// connection and upgrade to it.  It will also keep looking for better connections as the
+/// network details of both endpoints change.
+///
+/// It is usually only necessary to use a single [`Conn`] instance in an application, it
+/// means any QUIC endpoints on top will be sharing as much information about peers as
+/// possible.
 #[derive(Clone, Debug)]
 pub struct Conn {
     inner: Arc<Inner>,
@@ -3100,8 +3109,6 @@ impl QuicMappedAddr {
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
-    ///
-    /// TODO: Use the subnet to tie an address to a specific `Conn` instance.
     pub(crate) fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = Self::ADDR_PREFIXL;
