@@ -2824,7 +2824,8 @@ fn new_re_stun_timer() -> time::Interval {
 
 /// Initial connection setup.
 async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let pconn6 = match RebindingUdpConn::bind(port, Network::Ipv6).await {
+    let ip6_port = if port != 0 { port + 1 } else { 0 };
+    let pconn6 = match RebindingUdpConn::bind(ip6_port, Network::Ipv6).await {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("rebind ignoring IPv6 bind failure: {:?}", err);
