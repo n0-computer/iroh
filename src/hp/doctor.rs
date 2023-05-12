@@ -472,7 +472,7 @@ async fn accept(
         .collect::<Vec<_>>()
         .join(" ");
     println!(
-            "Run\n\niroh dr-derp connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
+            "Run\n\niroh doctor connect {} {}\n\nin another terminal or on another machine to connect by key and addr.",
             hex::encode(private_key.public_key().as_bytes()),
             remote_addrs,
         );

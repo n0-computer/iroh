@@ -105,10 +105,10 @@ impl FromStr for ProviderRpcPort {
 #[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Diagnostic commands for the derp relay protocol.
-    DrDerp {
-        /// Commands for drderp - defined in the mod
+    Doctor {
+        /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
-        command: iroh::hp::drderp::Commands,
+        command: iroh::hp::doctor::Commands,
     },
 
     /// Serve data from the given path.
@@ -701,7 +701,7 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
-        Commands::DrDerp { command } => iroh::hp::drderp::run(command).await,
+        Commands::Doctor { command } => iroh::hp::doctor::run(command).await,
     };
 
     #[cfg(feature = "metrics")]
