@@ -1,3 +1,5 @@
+//! Tool to get information about the current network environment of a node,
+//! and to test connectivity to specific other nodes.
 use std::{
     net::SocketAddr,
     sync::Arc,
@@ -5,12 +7,14 @@ use std::{
 };
 
 use crate::{
+    config::Config,
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
         magicsock,
     },
+    main_util::iroh_data_root,
     tls,
     tokio_util::ProgressWriter,
 };
@@ -20,6 +24,30 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
+
+#[derive(Debug, Clone, derive_more::Display)]
+pub enum PrivateKey {
+    /// Generate random private key
+    Random,
+    /// Use local private key
+    Local,
+    /// Explicitly specify a private key
+    Hex(String),
+}
+
+impl std::str::FromStr for PrivateKey {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(if s == "random" {
+            PrivateKey::Random
+        } else if s == "local" {
+            PrivateKey::Local
+        } else {
+            PrivateKey::Hex(s.to_string())
+        })
+    }
+}
 
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
@@ -32,14 +60,16 @@ pub enum Commands {
     },
     Accept {
         /// Our own private key, in hex. If not specified, a random key will be generated.
-        #[clap(long)]
-        private_key: Option<String>,
+        #[clap(long, default_value_t = PrivateKey::Random)]
+        private_key: PrivateKey,
 
+        /// Number of bytes to send to the remote for each test
         #[clap(long, default_value_t = 1024 * 1024 * 16)]
         size: u64,
 
-        #[clap(long, default_value_t = -1)]
-        iterations: i64,
+        /// Number of iterations to run the test for. If not specified, the test will run forever.
+        #[clap(long)]
+        iterations: Option<u64>,
 
         /// Use a local derp relay
         #[clap(long)]
@@ -54,8 +84,8 @@ pub enum Commands {
         remote_endpoint: Vec<SocketAddr>,
 
         /// Our own private key, in hex. If not specified, a random key will be generated.
-        #[clap(long)]
-        private_key: Option<String>,
+        #[clap(long, default_value_t = PrivateKey::Random)]
+        private_key: PrivateKey,
 
         /// Use a local derp relay
         #[clap(long)]
@@ -505,17 +535,25 @@ async fn accept(
     Ok(())
 }
 
-fn create_secret_key(private_key: Option<String>) -> anyhow::Result<SecretKey> {
-    Ok(if let Some(key) = private_key {
-        let bytes = hex::decode(key)?;
-        let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-        SecretKey::from(bytes)
-    } else {
-        SecretKey::generate()
+fn create_secret_key(private_key: PrivateKey, _config: &Config) -> anyhow::Result<SecretKey> {
+    Ok(match private_key {
+        PrivateKey::Random => SecretKey::generate(),
+        PrivateKey::Hex(hex) => {
+            let bytes = hex::decode(hex)?;
+            let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
+            SecretKey::from(bytes)
+        }
+        PrivateKey::Local => {
+            let iroh_data_root = iroh_data_root()?;
+            let path = iroh_data_root.join("keypair");
+            let bytes = std::fs::read(path)?;
+            let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
+            SecretKey::from(bytes)
+        }
     })
 }
 
-pub async fn run(command: Commands, config: crate::config::Config) -> anyhow::Result<()> {
+pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
     match command {
         Commands::Report {
             host_name,
@@ -532,7 +570,7 @@ pub async fn run(command: Commands, config: crate::config::Config) -> anyhow::Re
             } else {
                 config.derp_map()
             };
-            let private_key = create_secret_key(private_key)?;
+            let private_key = create_secret_key(private_key, config)?;
             connect(dial, private_key, remote_endpoint, derp_map).await
         }
         Commands::Accept {
@@ -546,12 +584,7 @@ pub async fn run(command: Commands, config: crate::config::Config) -> anyhow::Re
             } else {
                 config.derp_map()
             };
-            let private_key = create_secret_key(private_key)?;
-            let iterations = if iterations < 0 {
-                None
-            } else {
-                Some(iterations as u64)
-            };
+            let private_key = create_secret_key(private_key, config)?;
             let config = TestConfig { size, iterations };
             accept(private_key, config, derp_map).await
         }

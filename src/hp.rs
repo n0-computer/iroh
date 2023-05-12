@@ -10,5 +10,3 @@ mod disco;
 pub mod hostinfo;
 pub mod key;
 pub mod netmap;
-
-pub mod doctor;

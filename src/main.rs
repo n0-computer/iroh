@@ -111,7 +111,7 @@ enum Commands {
     Doctor {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
-        command: iroh::hp::doctor::Commands,
+        command: iroh::doctor::Commands,
     },
 
     /// Serve data from the given path.
@@ -722,7 +722,7 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
-        Commands::Doctor { command } => iroh::hp::doctor::run(command, config).await,
+        Commands::Doctor { command } => iroh::doctor::run(command, &config).await,
     };
 
     #[cfg(feature = "metrics")]
