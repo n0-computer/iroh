@@ -19,6 +19,7 @@ base64 = "0.21.0"
 blake3 = "1.3.3"
 bytes = { version = "1.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"], optional = true }
+config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"] }
 console = { version = "0.15.5", optional = true }
 crypto_box = { version = "0.9.0-pre", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.2"
