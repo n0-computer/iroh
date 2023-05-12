@@ -62,7 +62,7 @@ macro_rules! make_metric_recorders {
             #[derive(Default, Clone, Debug)]
                 pub(crate) struct Metrics {
                     $(
-                        [<$name:snake>]: $type,
+                        pub(crate) [<$name:snake>]: $type,
                     )+
                 }
 

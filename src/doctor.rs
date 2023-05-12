@@ -206,9 +206,12 @@ struct Gui {
     #[allow(dead_code)]
     mp: MultiProgress,
     pb: ProgressBar,
+    #[allow(dead_code)]
+    counters: ProgressBar,
     send_pb: ProgressBar,
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
+    counter_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Gui {
@@ -219,23 +222,50 @@ impl Gui {
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
+        let counters = mp.add(ProgressBar::hidden());
         let style = indicatif::ProgressStyle::default_bar()
             .template("{msg}")
             .unwrap();
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
+        counters.set_style(style.clone());
         let pb = mp.add(pb);
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
+        let counters2 = counters.clone();
+        let counter_task = tokio::spawn(async move {
+            loop {
+                Self::update_counters(&counters2);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
         Self {
             mp,
             pb,
+            counters,
             send_pb,
             recv_pb,
             echo_pb,
+            counter_task: Some(counter_task),
+        }
+    }
+
+    fn update_counters(target: &ProgressBar) {
+        let metrics = &crate::metrics::core::CORE;
+        if metrics.is_enabled() {
+            let mm = metrics.magicsock_metrics();
+            let send_udp = mm.send_udp.get();
+            let send_derp = mm.send_derp.get();
+            let recv_data_derp = mm.recv_data_derp.get();
+            let recv_data_i_pv4 = mm.recv_data_i_pv4.get();
+            let recv_data_i_pv6 = mm.recv_data_i_pv6.get();
+            let text = format!(
+                "send_udp: {send_udp} send_derp: {send_derp} recv_data_derp: {recv_data_derp} recv_data_ipv4: {recv_data_i_pv4} recv_data_ipv6: {recv_data_i_pv6}",
+            );
+            target.set_message(text);
         }
     }
 
@@ -257,6 +287,14 @@ impl Gui {
             text,
             HumanBytes((b as f64 / d.as_secs_f64()) as u64)
         ));
+    }
+}
+
+impl Drop for Gui {
+    fn drop(&mut self) {
+        if let Some(task) = self.counter_task.take() {
+            task.abort();
+        }
     }
 }
 
