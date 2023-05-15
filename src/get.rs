@@ -15,21 +15,18 @@ use crate::hp::cfg::DERP_MAGIC_IP;
 use crate::hp::derp::DerpMap;
 use crate::hp::hostinfo::Hostinfo;
 use crate::hp::{cfg, netmap};
-use crate::net::subnet::{same_subnet_v4, same_subnet_v6};
 use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
-use default_net::Interface;
-use futures::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -45,12 +42,12 @@ pub use crate::util::Hash;
 pub const DEFAULT_PROVIDER_ADDR: (Ipv4Addr, u16) = crate::provider::DEFAULT_BIND_ADDR;
 
 /// Options for the client
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Options {
-    /// The address to connect to
-    pub addr: Option<SocketAddr>,
+    /// The addresses to connect to.
+    pub addrs: Vec<SocketAddr>,
     /// The peer id to expect
-    pub peer_id: Option<PeerId>,
+    pub peer_id: PeerId,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
     pub keylog: bool,
     /// The configuration of the derp services.
@@ -78,14 +75,15 @@ pub struct Options {
 /// connection.
 pub async fn make_client_endpoint(
     bind_addr: SocketAddr,
-    peer_id: Option<PeerId>,
+    peer_id: PeerId,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
     derp_map: Option<DerpMap>,
 ) -> Result<(quinn::Endpoint, crate::hp::magicsock::Conn)> {
     let keypair = Keypair::generate();
 
-    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
+    let tls_client_config =
+        tls::make_client_config(&keypair, Some(peer_id), alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
 
     let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
@@ -113,9 +111,10 @@ pub async fn make_client_endpoint(
 
 /// Establishes a QUIC connection to the provided peer.
 pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
-    let bind_addr = match opts.addr.map(|a| a.is_ipv6()) {
-        Some(true) => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
-        Some(false) | None => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
+    let bind_addr = if opts.addrs.iter().any(|addr| addr.ip().is_ipv6()) {
+        SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into()
+    } else {
+        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into()
     };
 
     let (endpoint, magicsock) = make_client_endpoint(
@@ -128,7 +127,7 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     .await?;
 
     // Only a single peer in our network currently.
-    let peer_id = opts.peer_id.expect("need peer");
+    let peer_id = opts.peer_id;
     let node_key: crate::hp::key::node::PublicKey = peer_id.into();
     const DEFAULT_DERP_REGION: u16 = 1;
 
@@ -136,9 +135,9 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let mut endpoints = Vec::new();
 
     // Add the provided address as a starting point.
-    if let Some(addr) = opts.addr {
+    for addr in &opts.addrs {
         addresses.push(addr.ip());
-        endpoints.push(addr);
+        endpoints.push(*addr);
     }
     magicsock
         .set_network_map(netmap::NetworkMap {
@@ -164,7 +163,7 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
         .expect("just inserted");
     debug!(
         "connecting to {}: (via {} - {:?})",
-        peer_id, addr, opts.addr
+        peer_id, addr, opts.addrs
     );
     let connect = endpoint.connect(addr, "localhost")?;
     let connection = connect.await.context("failed connecting to provider")?;
@@ -196,67 +195,17 @@ pub async fn run_ticket(
     ticket: &Ticket,
     request: AnyGetRequest,
     keylog: bool,
-    max_concurrent: u8,
     derp_map: Option<DerpMap>,
 ) -> Result<get_response_machine::AtInitial> {
-    let connection = dial_ticket(ticket, keylog, max_concurrent.into(), derp_map).await?;
+    let connection = dial_peer(Options {
+        addrs: ticket.addrs().to_vec(),
+        peer_id: ticket.peer(),
+        keylog,
+        derp_map,
+    })
+    .await?;
+
     Ok(run_connection(connection, request))
-}
-
-async fn dial_ticket(
-    ticket: &Ticket,
-    keylog: bool,
-    max_concurrent: usize,
-    derp_map: Option<DerpMap>,
-) -> Result<quinn::Connection> {
-    // Sort the interfaces to make sure local ones are at the front of the list.
-    let interfaces = default_net::get_interfaces();
-    let (mut addrs, other_addrs) = ticket
-        .addrs()
-        .iter()
-        .partition::<Vec<_>, _>(|addr| is_same_subnet(addr, &interfaces));
-    addrs.extend(other_addrs);
-
-    let mut conn_stream = futures::stream::iter(addrs)
-        .map(|addr| {
-            let opts = Options {
-                addr: Some(addr),
-                peer_id: Some(ticket.peer()),
-                keylog,
-                derp_map: derp_map.clone(),
-            };
-            dial_peer(opts)
-        })
-        .buffer_unordered(max_concurrent);
-    while let Some(res) = conn_stream.next().await {
-        match res {
-            Ok(conn) => return Ok(conn),
-            Err(_) => continue,
-        }
-    }
-    Err(anyhow!("Failed to establish connection to peer"))
-}
-
-fn is_same_subnet(addr: &SocketAddr, interfaces: &[Interface]) -> bool {
-    for interface in interfaces {
-        match addr {
-            SocketAddr::V4(peer_addr) => {
-                for net in interface.ipv4.iter() {
-                    if same_subnet_v4(net.addr, *peer_addr.ip(), net.prefix_len) {
-                        return true;
-                    }
-                }
-            }
-            SocketAddr::V6(peer_addr) => {
-                for net in interface.ipv6.iter() {
-                    if same_subnet_v6(net.addr, *peer_addr.ip(), net.prefix_len) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Finite state machine for get responses

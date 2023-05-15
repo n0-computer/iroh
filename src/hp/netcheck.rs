@@ -1,5 +1,5 @@
 //! Checks the network conditions from the current host.
-//! Based on https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go
+//! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
 use std::{
     collections::HashMap,
@@ -120,7 +120,7 @@ impl Report {
 ///
 /// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
 /// While running it expects to be passed received stun packets using
-/// [`Client::receive_stun_packet`], the [`Conn`] using this client needs to be wired up to
+/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
 /// do so.
 #[derive(Debug)]
 pub struct Client {
@@ -169,7 +169,7 @@ impl Client {
         Ok(Client { msg_sender, actor })
     }
 
-    /// Used by [`Conn`] to pass received stun packets to the running netcheck actor.
+    /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running netcheck actor.
     pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
         if let Err(err) = self
             .msg_sender
