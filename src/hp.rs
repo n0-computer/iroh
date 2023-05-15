@@ -1,4 +1,5 @@
 pub mod derp;
+mod dns;
 pub mod magicsock;
 pub mod netcheck;
 pub mod ping;
