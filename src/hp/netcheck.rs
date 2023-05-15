@@ -17,7 +17,7 @@ use futures::{
 };
 use rand::seq::IteratorRandom;
 use tokio::{
-    net,
+    net::UdpSocket,
     sync::{self, broadcast, mpsc, RwLock},
     task::JoinSet,
     time::{self, Duration, Instant},
@@ -196,12 +196,75 @@ impl Client {
     pub async fn get_report(
         &mut self,
         dm: &DerpMap,
-        stun_conn4: Option<Arc<net::UdpSocket>>,
-        stun_conn6: Option<Arc<net::UdpSocket>>,
+        stun_conn4: Option<Arc<UdpSocket>>,
+        stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
-        // TODO: consider if DerpMap should be made to easily clone?  It is expensive right
-        // now.
+        // If not given  UdpSockets to send stun packets, create them.
+        // TODO: Is failure really fatal?
+        let stun_conn4 = match stun_conn4 {
+            Some(stun_conn4) => stun_conn4,
+            None => {
+                let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+                let sock = UdpSocket::bind(addr)
+                    .await
+                    .context("netcheck: failed to bind udp 0.0.0.0:0")?;
+                let sock = Arc::new(sock);
+                self.spawn_udp_listener(sock.clone(), self.msg_sender.clone());
+                sock
+            }
+        };
+        let stun_conn6 = match stun_conn6 {
+            Some(stun_conn6) => stun_conn6,
+            None => {
+                let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
+                let sock = UdpSocket::bind(addr)
+                    .await
+                    .context("netcheck: failed to bind udp6 [::]:0")?;
+                let sock = Arc::new(sock);
+                self.spawn_udp_listener(sock.clone(), self.msg_sender.clone());
+                sock
+            }
+        };
+
+        // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
+        // right now.
         self.actor.run(dm.clone(), stun_conn4, stun_conn6).await
+    }
+
+    /// Spawns a tokio task reading stun packets from the UDP socket.
+    fn spawn_udp_listener(&self, sock: Arc<UdpSocket>, sender: mpsc::Sender<ActorMessage>) {
+        tokio::spawn(async move {
+            debug!("udp stun socket listener started");
+            // TODO: Can we do better for buffers here?  Probably doesn't matter
+            // much.
+            let mut buf = vec![0u8; 64 << 10];
+            loop {
+                if let Err(err) = Self::recv_stun_socket(&sock, &mut buf, &sender).await {
+                    // TODO: handle socket closed nicely
+                    warn!(%err, "stun recv failed");
+                    break;
+                }
+            }
+            debug!("udp stun socket listener stopped");
+        });
+    }
+
+    /// Receive STUN response from a UDP socket, pass it to the actor.
+    async fn recv_stun_socket(
+        sock: &UdpSocket,
+        buf: &mut [u8],
+        sender: &mpsc::Sender<ActorMessage>,
+    ) -> Result<()> {
+        let (count, mut from_addr) = sock
+            .recv_from(buf)
+            .await
+            .context("Error reading from stun socket")?;
+        let payload = &buf[..count];
+        from_addr.set_ip(to_canonical(from_addr.ip()));
+        sender
+            .send(ActorMessage::StunPacket(payload.to_vec(), from_addr))
+            .await
+            .context("actor stopped")
     }
 }
 
@@ -428,9 +491,9 @@ struct ReportState {
     got_hair_stun: broadcast::Receiver<SocketAddr>,
     // notified on hair pin timeout
     hair_timeout: Arc<sync::Notify>,
-    pc4: Option<Arc<net::UdpSocket>>,
-    pc6: Option<Arc<net::UdpSocket>>,
-    pc4_hair: Arc<net::UdpSocket>,
+    pc4: Arc<UdpSocket>,
+    pc6: Arc<UdpSocket>,
+    pc4_hair: Arc<UdpSocket>,
     incremental: bool, // doing a lite, follow-up netcheck
     stop_probe: Arc<sync::Notify>,
     wait_port_map: wg::AsyncWaitGroup,
@@ -802,8 +865,8 @@ enum ProbeError {
 async fn run_probe(
     report: Arc<RwLock<Report>>,
     resolver: &TokioAsyncResolver,
-    pc4: Option<Arc<net::UdpSocket>>,
-    pc6: Option<Arc<net::UdpSocket>>,
+    pc4: Arc<UdpSocket>,
+    pc6: Arc<UdpSocket>,
     node: DerpNode,
     probe: Probe,
     in_flight: sync::mpsc::Sender<Inflight>,
@@ -843,33 +906,29 @@ async fn run_probe(
         Probe::Ipv4 { .. } => {
             // TODO:
             // metricSTUNSend4.Add(1)
-            if let Some(ref pc4) = pc4 {
-                let n = pc4.send_to(&req, addr).await;
-                debug!("sending probe IPV4: {:?} to {}", n, addr);
-                // TODO:  || neterror.TreatAsLostUDP(err)
-                if n.is_ok() && n.unwrap() == req.len() {
-                    result.ipv4_can_send = true;
+            let n = pc4.send_to(&req, addr).await;
+            debug!("sending probe IPV4: {:?} to {}", n, addr);
+            // TODO:  || neterror.TreatAsLostUDP(err)
+            if n.is_ok() && n.unwrap() == req.len() {
+                result.ipv4_can_send = true;
 
-                    let (delay, addr) = r.await.map_err(|e| ProbeError::Transient(e.into()))?;
-                    result.delay = Some(delay);
-                    result.addr = Some(addr);
-                }
+                let (delay, addr) = r.await.map_err(|e| ProbeError::Transient(e.into()))?;
+                result.delay = Some(delay);
+                result.addr = Some(addr);
             }
         }
         Probe::Ipv6 { .. } => {
-            if let Some(ref pc6) = pc6 {
-                // TODO:
-                // metricSTUNSend6.Add(1)
-                let n = pc6.send_to(&req, addr).await;
-                debug!("sending probe IPV6: {:?} to {}", n, addr);
-                // TODO:  || neterror.TreatAsLostUDP(err)
-                if n.is_ok() && n.unwrap() == req.len() {
-                    result.ipv6_can_send = true;
+            // TODO:
+            // metricSTUNSend6.Add(1)
+            let n = pc6.send_to(&req, addr).await;
+            debug!("sending probe IPV6: {:?} to {}", n, addr);
+            // TODO:  || neterror.TreatAsLostUDP(err)
+            if n.is_ok() && n.unwrap() == req.len() {
+                result.ipv6_can_send = true;
 
-                    let (delay, addr) = r.await.map_err(|e| ProbeError::Transient(e.into()))?;
-                    result.delay = Some(delay);
-                    result.addr = Some(addr);
-                }
+                let (delay, addr) = r.await.map_err(|e| ProbeError::Transient(e.into()))?;
+                result.delay = Some(delay);
+                result.addr = Some(addr);
             }
         }
         Probe::Https { reg, .. } => {
@@ -1019,8 +1078,8 @@ impl Actor {
     async fn run(
         &mut self,
         dm: DerpMap,
-        stun_sock_v4: Option<Arc<net::UdpSocket>>,
-        stun_sock_v6: Option<Arc<net::UdpSocket>>,
+        stun_sock_v4: Arc<UdpSocket>,
+        stun_sock_v6: Arc<UdpSocket>,
     ) -> Result<Arc<Report>> {
         let report_state = self
             .create_report_state(&dm, stun_sock_v4.clone(), stun_sock_v6.clone())
@@ -1036,8 +1095,6 @@ impl Actor {
                     .await
             }))
         };
-        let mut buf4 = vec![0u8; 64 << 10];
-        let mut buf6 = vec![0u8; 64 << 10];
         let mut in_flight = HashMap::new();
 
         loop {
@@ -1050,20 +1107,6 @@ impl Actor {
                         None => bail!("client dropped, abort"),
                         Some(ActorMessage::StunPacket(pkt, source)) =>
                             self.receive_stun_packet(&mut in_flight, &pkt, source).await,
-                    }
-                }
-                res = maybe_pending(stun_sock_v4.as_ref().map(|c| c.recv_from(&mut buf4))) => {
-                    match res {
-                        Err(err) => warn!("failed to read ipv4: {:?}", err),
-                        Ok((n, addr)) =>
-                            self.process_packet(&mut in_flight, &buf4[..n], addr).await,
-                    }
-                }
-                res = maybe_pending(stun_sock_v6.as_ref().map(|c| c.recv_from(&mut buf6))) => {
-                    match res {
-                        Err(err) => warn!("failed to read ipv6: {:?}", err),
-                        Ok((n, addr)) =>
-                            self.process_packet(&mut in_flight, &buf6[..n], addr).await,
                     }
                 }
                 res = &mut running => {
@@ -1089,13 +1132,13 @@ impl Actor {
     async fn create_report_state(
         &mut self,
         dm: &DerpMap,
-        pc4: Option<Arc<net::UdpSocket>>,
-        pc6: Option<Arc<net::UdpSocket>>,
+        pc4: Arc<UdpSocket>,
+        pc6: Arc<UdpSocket>,
     ) -> Result<ReportState> {
         let now = Instant::now();
 
         // Create a UDP4 socket used for sending to our discovered IPv4 address.
-        let pc4_hair = net::UdpSocket::bind("0.0.0.0:0")
+        let pc4_hair = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("udp4: failed to bind")?;
 
@@ -1106,12 +1149,6 @@ impl Actor {
 
         let got_hair_stun_r = self.got_hair_stun.subscribe();
         let if_state = interfaces::State::new().await;
-        let pc4 = Some(self.init_stun_conn4(pc4).await?);
-        let pc6 = if if_state.have_v6 {
-            Some(self.init_stun_conn6(pc6).await?)
-        } else {
-            None
-        };
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
@@ -1154,34 +1191,6 @@ impl Actor {
         })
     }
 
-    async fn init_stun_conn4(
-        &self,
-        pc4: Option<Arc<net::UdpSocket>>,
-    ) -> Result<Arc<net::UdpSocket>> {
-        if let Some(pc4) = pc4 {
-            return Ok(pc4);
-        }
-        let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-        let u4 = net::UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("udp4: failed to bind to: {}", addr))?;
-        Ok(Arc::new(u4))
-    }
-
-    async fn init_stun_conn6(
-        &self,
-        pc6: Option<Arc<net::UdpSocket>>,
-    ) -> Result<Arc<net::UdpSocket>> {
-        if let Some(pc6) = pc6 {
-            return Ok(pc6);
-        }
-        let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
-        let u6 = net::UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("udp6: failed to bind to: {}", addr))?;
-        Ok(Arc::new(u6))
-    }
-
     async fn receive_stun_packet(
         &self,
         in_flight: &mut HashMap<stun::TransactionId, Inflight>,
@@ -1221,21 +1230,6 @@ impl Actor {
                 );
             }
         }
-    }
-
-    /// Reads STUN packets from pc until there's an error. In either case, it closes `pc`.
-    async fn process_packet(
-        &self,
-        in_flight: &mut HashMap<stun::TransactionId, Inflight>,
-        pkt: &[u8],
-        mut addr: SocketAddr,
-    ) {
-        if !stun::is(pkt) {
-            // ignore non stun packets
-            return;
-        }
-        addr.set_ip(to_canonical(addr.ip()));
-        self.receive_stun_packet(in_flight, pkt, addr).await;
     }
 
     async fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
@@ -1394,7 +1388,7 @@ impl Actor {
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 async fn os_has_ipv6() -> bool {
     // TODO: use socket2 to specify binding to ipv6
-    let udp = net::UdpSocket::bind("[::1]:0").await;
+    let udp = UdpSocket::bind("[::1]:0").await;
     udp.is_ok()
 }
 
@@ -1410,14 +1404,6 @@ async fn os_has_ipv6() -> bool {
 // 	metricSTUNRecv6 = clientmetric.NewCounter("netcheck_stun_recv_ipv6")
 // 	metricHTTPSend  = clientmetric.NewCounter("netcheck_https_measure")
 // )
-
-/// Resolves to pending if the future is `None`.
-async fn maybe_pending<T>(maybe_fut: Option<impl Future<Output = T>>) -> T {
-    match maybe_fut {
-        Some(t) => t.await,
-        None => futures::future::pending().await,
-    }
-}
 
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
@@ -1547,7 +1533,7 @@ mod tests {
         let local_addr = "127.0.0.1";
         let bind_addr = "0.0.0.0";
 
-        let server = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
+        let server = UdpSocket::bind(format!("{bind_addr}:0")).await?;
         let addr = server.local_addr()?;
 
         let server_task = tokio::task::spawn(async move {
@@ -1558,7 +1544,7 @@ mod tests {
             server.send_to(&buf[..n], addr).await.unwrap();
         });
 
-        let client = net::UdpSocket::bind(format!("{bind_addr}:0")).await?;
+        let client = UdpSocket::bind(format!("{bind_addr}:0")).await?;
         let data = b"foobar";
         println!("client: send");
         let server_addr = format!("{local_addr}:{}", addr.port());
