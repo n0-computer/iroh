@@ -335,7 +335,7 @@ impl Conn {
     }
 
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        Ok(self.local_addrs.read().unwrap().clone())
+        Ok(*self.local_addrs.read().unwrap())
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.

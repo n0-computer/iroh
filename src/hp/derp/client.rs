@@ -638,7 +638,7 @@ pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
         write_frame(
             &mut writer,
             FrameType::SendPacket,
-            &[dstkey.as_bytes(), packet.as_ref()],
+            &[dstkey.as_bytes(), packet],
         )
         .await?;
     } else {
@@ -809,12 +809,7 @@ impl PacketSplitIter {
 
     #[cfg(test)]
     pub fn split(packet: Bytes) -> std::io::Result<Vec<Bytes>> {
-        let mut iter = Self::new(packet);
-        let mut result = Vec::new();
-        while let Some(item) = iter.next() {
-            result.push(item?);
-        }
-        Ok(result)
+        Self::new(packet).collect()
     }
 
     fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
