@@ -5,8 +5,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use hyper::upgrade::Upgraded;
 use hyper::{header::UPGRADE, Body, Request};
 use rand::Rng;
 use reqwest::Url;
@@ -16,6 +18,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
+use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
     UseIpv6,
@@ -57,8 +60,8 @@ pub enum ClientError {
     Hyper(#[from] hyper::Error),
     #[error("unexpected status code: expected {0}, got {1}")]
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
-    #[error("failed to upgrade connection")]
-    Upgrade,
+    #[error("failed to upgrade connection: {0}")]
+    Upgrade(String),
     #[error("failed to build derp client: {0}")]
     Build(String),
     #[error("ping timeout")]
@@ -99,7 +102,7 @@ struct InnerClient {
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
     is_preferred: Mutex<bool>,
-    derp_client: Mutex<Option<DerpClient<tokio::net::tcp::OwnedReadHalf>>>,
+    derp_client: Mutex<Option<DerpClient>>,
     is_closed: AtomicBool,
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
@@ -263,9 +266,7 @@ impl Client {
     ///
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::hp::derp::client::Client`].
-    pub async fn connect(
-        &self,
-    ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
+    pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
         let key = self.inner.secret_key.public_key();
         debug!("client {key:?} - connect");
         if self.inner.is_closed.load(Ordering::Relaxed) {
@@ -349,7 +350,7 @@ impl Client {
         true
     }
 
-    async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
+    async fn connect_0(&self) -> Result<DerpClient, ClientError> {
         debug!("connect_0");
         let region = self.current_region().await?;
         debug!("connect_0 region: {:?}", region);
@@ -406,13 +407,13 @@ impl Client {
                 // polling `connection` drives the HTTP exchange
                 // this will poll until we upgrade the connection, but not shutdown the underlying
                 // stream
-                debug!("connect: waiting for connection");
+                debug!("waiting for connection");
                 if let Err(err) = connection.await {
                     warn!("client connection error: {:?}", err);
                 }
-                debug!("connect: connection done");
+                debug!("connection done");
             });
-            debug!("connect: sending upgrade request");
+            debug!("sending upgrade request");
             request_sender
                 .send_request(req)
                 .await
@@ -427,13 +428,13 @@ impl Client {
                 // polling `connection` drives the HTTP exchange
                 // this will poll until we upgrade the connection, but not shutdown the underlying
                 // stream
-                debug!("connect: waiting for connection");
+                debug!("waiting for connection");
                 if let Err(err) = connection.await {
                     warn!("client connection error: {:?}", err);
                 }
-                debug!("connect: connection done");
+                debug!("connection done");
             });
-            debug!("connect: sending upgrade request");
+            debug!("sending upgrade request");
             request_sender
                 .send_request(req)
                 .await
@@ -441,38 +442,36 @@ impl Client {
         };
 
         if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            warn!("connect: invalid status received: {:?}", res.status());
+            warn!("invalid status received: {:?}", res.status());
             return Err(ClientError::UnexpectedStatusCode(
                 hyper::StatusCode::SWITCHING_PROTOCOLS,
                 res.status(),
             ));
         }
 
-        debug!("connect: starting upgrade");
+        debug!("starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
             Err(err) => {
-                warn!("connect: upgrade failed: {:?}", err);
+                warn!("upgrade failed: {:?}", err);
                 return Err(ClientError::Hyper(err));
             }
         };
 
-        debug!("connect: connection upgraded");
-        let parts = upgraded
-            .downcast::<TcpStream>()
-            .map_err(|_| ClientError::Upgrade)?;
+        debug!("connection upgraded");
+        let (io, read_buf) =
+            downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let (reader, writer) = parts.io.into_split();
-        debug!("connect: buf: {:?}", parts.read_buf);
+        // TODO: unify client loop
+        let (reader, writer) = tokio::io::split(io);
 
-        debug!("connect: building..");
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
                 .prober(self.inner.is_prober)
                 .server_public_key(self.inner.server_public_key.clone())
-                .build(Some(parts.read_buf))
+                .build(Some(read_buf))
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -481,7 +480,7 @@ impl Client {
             derp_client.close().await;
             return Err(ClientError::Send);
         }
-        debug!("connect: built");
+        debug!("built");
         Ok(derp_client)
     }
 
@@ -823,6 +822,25 @@ impl PacketForwarder for Client {
 enum UseIp {
     Ipv4(UseIpv4),
     Ipv6(UseIpv6),
+}
+
+fn downcast_upgrade(
+    upgraded: Upgraded,
+) -> anyhow::Result<(Box<dyn Io + Send + Sync + 'static>, Bytes)> {
+    match upgraded.downcast::<tokio::net::TcpStream>() {
+        Ok(parts) => Ok((Box::new(parts.io), parts.read_buf)),
+        Err(upgraded) => {
+            if let Ok(parts) =
+                upgraded.downcast::<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>()
+            {
+                return Ok((Box::new(parts.io), parts.read_buf));
+            }
+
+            bail!(
+                "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
+            )
+        }
+    }
 }
 
 /// Used to allow self signed certificates in tests
