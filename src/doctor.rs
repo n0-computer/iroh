@@ -61,8 +61,8 @@ pub enum Commands {
         stun_port: u16,
     },
     Accept {
-        /// Our own private key, in hex. If not specified, a random key will be generated.
-        #[clap(long, default_value_t = PrivateKey::Random)]
+        /// Our own private key, in hex. If not specified, the locally configured key will be used.
+        #[clap(long, default_value_t = PrivateKey::Local)]
         private_key: PrivateKey,
 
         /// Number of bytes to send to the remote for each test
@@ -206,9 +206,12 @@ struct Gui {
     #[allow(dead_code)]
     mp: MultiProgress,
     pb: ProgressBar,
+    #[allow(dead_code)]
+    counters: ProgressBar,
     send_pb: ProgressBar,
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
+    counter_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Gui {
@@ -216,6 +219,7 @@ impl Gui {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let pb = indicatif::ProgressBar::hidden();
+        let counters = mp.add(ProgressBar::hidden());
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -225,17 +229,55 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
+        counters.set_style(style);
         let pb = mp.add(pb);
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
+        let counters2 = counters.clone();
+        let counter_task = tokio::spawn(async move {
+            loop {
+                Self::update_counters(&counters2);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
         Self {
             mp,
             pb,
+            counters,
             send_pb,
             recv_pb,
             echo_pb,
+            counter_task: Some(counter_task),
+        }
+    }
+
+    fn update_counters(target: &ProgressBar) {
+        let metrics = &crate::metrics::core::CORE;
+        if metrics.is_enabled() {
+            let mm = metrics.magicsock_metrics();
+            let send_ipv4 = HumanBytes(mm.send_ipv4.get());
+            let send_ipv6 = HumanBytes(mm.send_ipv6.get());
+            let send_derp = HumanBytes(mm.send_derp.get());
+            let recv_data_derp = HumanBytes(mm.recv_data_derp.get());
+            let recv_data_ipv4 = HumanBytes(mm.recv_data_ipv4.get());
+            let recv_data_ipv6 = HumanBytes(mm.recv_data_ipv6.get());
+            let text = format!(
+                r#"Counters
+
+Derp:
+  send: {send_derp}
+  recv: {recv_data_derp}
+Ipv4:
+  send: {send_ipv4}
+  recv: {recv_data_ipv4}
+Ipv6:
+  send: {send_ipv6}
+  recv: {recv_data_ipv6}
+"#,
+            );
+            target.set_message(text);
         }
     }
 
@@ -257,6 +299,14 @@ impl Gui {
             text,
             HumanBytes((b as f64 / d.as_secs_f64()) as u64)
         ));
+    }
+}
+
+impl Drop for Gui {
+    fn drop(&mut self) {
+        if let Some(task) = self.counter_task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -548,9 +598,17 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
         PrivateKey::Local => {
             let iroh_data_root = iroh_data_root()?;
             let path = iroh_data_root.join("keypair");
-            let bytes = std::fs::read(&path)?;
-            let keypair = Keypair::try_from_openssh(bytes)?;
-            SecretKey::from(keypair.secret().to_bytes())
+            if path.exists() {
+                let bytes = std::fs::read(&path)?;
+                let keypair = Keypair::try_from_openssh(bytes)?;
+                SecretKey::from(keypair.secret().to_bytes())
+            } else {
+                println!(
+                    "Local key not found in {}. Using random key.",
+                    path.display()
+                );
+                SecretKey::generate()
+            }
         }
     })
 }

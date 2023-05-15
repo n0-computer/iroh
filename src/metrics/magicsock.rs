@@ -13,8 +13,10 @@ make_metric_recorders! {
     SendDerpErrorChan:   Counter: "send_derp_error_chan",
     SendDerpErrorClosed: Counter: "send_derp_error_closed",
     SendDerpErrorQueue:  Counter: "send_derp_error_queue",
-    SendUdp:             Counter: "send_udp",
-    SendUdpError:        Counter: "send_udp_error",
+    SendIpv4:            Counter: "send_ipv4",
+    SendIpv4Error:       Counter: "send_ipv4_error",
+    SendIpv6:            Counter: "send_ipv6",
+    SendIpv6Error:       Counter: "send_ipv6_error",
     SendDerp:            Counter: "send_derp",
     SendDerpError:       Counter: "send_derp_error",
 
@@ -22,8 +24,8 @@ make_metric_recorders! {
     SendData:            Counter: "send_data",
     SendDataNetworkDown: Counter: "send_data_network_down",
     RecvDataDerp:        Counter: "recv_data_derp",
-    RecvDataIPv4:        Counter: "recv_data_ipv4",
-    RecvDataIPv6:        Counter: "recv_data_ipv6",
+    RecvDataIpv4:        Counter: "recv_data_ipv4",
+    RecvDataIpv6:        Counter: "recv_data_ipv6",
 
      // Disco packets
     SendDiscoUdp:         Counter: "disco_send_udp",
