@@ -65,8 +65,8 @@ pub enum ClientError {
     PingTimeout,
     #[error("cannot acknowledge pings")]
     CannotAckPings,
-    #[error("invalid url: {0:?}")]
-    InvalidUrl(Option<Url>),
+    #[error("invalid url")]
+    InvalidUrl,
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
@@ -313,6 +313,19 @@ impl Client {
         self.inner.url.as_ref()
     }
 
+    fn tls_servername(&self, node: Option<&DerpNode>) -> Option<rustls::ServerName> {
+        if let Some(url) = self.url() {
+            return url
+                .host_str()
+                .and_then(|s| rustls::ServerName::try_from(s).ok());
+        }
+        if let Some(node) = node {
+            return rustls::ServerName::try_from(node.host_name.as_str()).ok();
+        }
+
+        None
+    }
+
     fn url_port(&self) -> Option<u16> {
         if let Some(port) = self.inner.url.as_ref().and_then(|url| url.port()) {
             return Some(port);
@@ -340,10 +353,12 @@ impl Client {
         debug!("connect_0");
         let region = self.current_region().await?;
         debug!("connect_0 region: {:?}", region);
-        let tcp_stream = if self.url().is_some() {
-            self.dial_url().await?
+
+        let (tcp_stream, derp_node) = if self.url().is_some() {
+            (self.dial_url().await?, None)
         } else {
-            self.dial_region(region).await?.0
+            let (tcp_stream, derp_node) = self.dial_region(region).await?;
+            (tcp_stream, Some(derp_node))
         };
 
         let local_addr = tcp_stream
@@ -357,6 +372,7 @@ impl Client {
             .unwrap();
 
         let res = if self.use_https() {
+            debug!("Starting TLS handshake");
             // TODO: review TLS config
             let mut roots = rustls::RootCertStore::empty();
             roots.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -366,19 +382,20 @@ impl Client {
                     ta.name_constraints,
                 )
             }));
-            let config = rustls::client::ClientConfig::builder()
+            #[allow(unused_mut)]
+            let mut config = rustls::client::ClientConfig::builder()
                 .with_safe_defaults()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
+            #[cfg(test)]
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertVerifier));
 
             let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
             let hostname = self
-                .url()
-                .expect("just checked")
-                .host_str()
-                .ok_or_else(|| ClientError::InvalidUrl(self.url().cloned()))?
-                .try_into()
-                .map_err(|_| ClientError::InvalidUrl(self.url().cloned()))?;
+                .tls_servername(derp_node.as_ref())
+                .ok_or_else(|| ClientError::InvalidUrl)?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
 
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
@@ -401,6 +418,7 @@ impl Client {
                 .await
                 .map_err(ClientError::Hyper)?
         } else {
+            debug!("Starting handshake");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tcp_stream)
                 .await
@@ -478,9 +496,9 @@ impl Client {
         let host = if let Some(host_str) = self.url().and_then(|url| url.host_str()) {
             host_str
         } else {
-            return Err(ClientError::InvalidUrl(self.url().cloned()));
+            return Err(ClientError::InvalidUrl);
         };
-
+        debug!("dial url: {}", host);
         let dst_ip: IpAddr = if let Ok(ip) = host.parse() {
             // Already a valid IP address
             ip
@@ -494,11 +512,12 @@ impl Client {
                 .next();
             addr.ok_or_else(|| ClientError::Dns(None))?
         };
-        let port = self
-            .url_port()
-            .ok_or_else(|| ClientError::InvalidUrl(self.url().cloned()))?;
 
-        let tcp_stream = TcpStream::connect(SocketAddr::new(dst_ip, port)).await?;
+        let port = self.url_port().ok_or_else(|| ClientError::InvalidUrl)?;
+        let addr = SocketAddr::new(dst_ip, port);
+
+        debug!("connecting to {}", addr);
+        let tcp_stream = TcpStream::connect(addr).await?;
         Ok(tcp_stream)
     }
 
@@ -804,4 +823,23 @@ impl PacketForwarder for Client {
 enum UseIp {
     Ipv4(UseIpv4),
     Ipv6(UseIpv6),
+}
+
+/// Used to allow self signed certificates in tests
+#[cfg(test)]
+struct NoCertVerifier;
+
+#[cfg(test)]
+impl rustls::client::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
 }

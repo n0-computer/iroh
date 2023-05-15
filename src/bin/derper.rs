@@ -22,10 +22,7 @@ use hyper::{
 use iroh::hp::{derp, key, stun};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream,
-    },
+    net::{TcpListener, TcpStream},
     task::JoinSet,
 };
 use tokio_rustls_acme::AcmeConfig;
@@ -295,7 +292,7 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient> =
+        let derp_server: derp::Server<derp::HttpClient> =
             derp::Server::new(cfg.private_key, mesh_key);
         info!("DERP server configured");
         Some(derp_server)
@@ -372,8 +369,7 @@ const TLS_HEADERS: [(&str, &str); 2] = [
 #[derive(Clone)]
 struct Derper {
     /// If this is a derper server, the derp handler.
-    client_conn_handler:
-        Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient>>,
+    client_conn_handler: Option<derp::ClientConnHandler<derp::HttpClient>>,
     /// TLS config if used.
     tls_config: Option<(Arc<rustls::ServerConfig>, TlsAcceptor)>,
 }

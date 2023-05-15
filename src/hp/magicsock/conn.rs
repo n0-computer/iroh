@@ -2610,11 +2610,8 @@ mod tests {
 
     async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
         // TODO: pass a mesh_key?
-        let derp_server: derp::Server<
-            net::tcp::OwnedReadHalf,
-            net::tcp::OwnedWriteHalf,
-            derp::http::Client,
-        > = derp::Server::new(key::node::SecretKey::generate(), None);
+        let derp_server: derp::Server<derp::http::Client> =
+            derp::Server::new(key::node::SecretKey::generate(), None);
 
         let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
         let http_addr = http_listener.local_addr()?;

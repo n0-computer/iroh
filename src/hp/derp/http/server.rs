@@ -1,14 +1,13 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use anyhow::Result;
+use anyhow::{bail, ensure, Result};
 use futures::future::FutureExt;
 use futures::Future;
 use hyper::header::{HeaderValue, UPGRADE};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Request, Response, StatusCode};
 
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tracing::debug;
 
 use super::HTTP_UPGRADE_PROTOCOL;
@@ -16,35 +15,48 @@ use crate::hp::derp::{server::ClientConnHandler, types::PacketForwarder};
 
 /// The server HTTP handler to do HTTP upgrades
 pub async fn derp_connection_handler<P>(
-    conn_handler: &ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>,
+    conn_handler: &ClientConnHandler<P>,
     upgraded: Upgraded,
 ) -> Result<()>
 where
     P: PacketForwarder,
 {
     debug!("derp_connection upgraded");
+
     // get the underlying TcpStream
-    let parts = match upgraded.downcast::<tokio::net::TcpStream>() {
-        Ok(p) => p,
-        Err(_) => {
-            anyhow::bail!("could not downcast the upgraded connection to a tokio::net::TcpStream")
+    match upgraded.downcast::<tokio::net::TcpStream>() {
+        Ok(parts) => {
+            ensure!(
+                parts.read_buf.is_empty(),
+                "can not deal with buffered data yet: {:?}",
+                parts.read_buf
+            );
+
+            // send to the derp server
+            conn_handler.accept(Box::new(parts.io)).await
         }
-    };
-    anyhow::ensure!(
-        parts.read_buf.is_empty(),
-        "can not deal with buffered data yet: {:?}",
-        parts.read_buf
-    );
+        Err(upgraded) => {
+            if let Ok(parts) =
+                upgraded.downcast::<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>()
+            {
+                ensure!(
+                    parts.read_buf.is_empty(),
+                    "can not deal with buffered data yet: {:?}",
+                    parts.read_buf
+                );
 
-    // split into the reader and writer parts
-    let (reader, writer) = parts.io.into_split();
+                // send to the derp server
+                return conn_handler.accept(Box::new(parts.io)).await;
+            }
 
-    // send to the derp server
-    conn_handler.accept(reader, writer).await
+            bail!(
+                "could not downcast the upgraded connection to a TcpStream or TlsStream<TcpStream>"
+            )
+        }
+    }
 }
 
-impl<P> hyper::service::Service<Request<Body>>
-    for ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>
+impl<P> hyper::service::Service<Request<Body>> for ClientConnHandler<P>
 where
     P: PacketForwarder,
 {
@@ -199,8 +211,7 @@ mod tests {
 
         // create derp_server
         let server_key = SecretKey::generate();
-        let derp_server: DerpServer<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder> =
-            DerpServer::new(server_key, None);
+        let derp_server: DerpServer<MockPacketForwarder> = DerpServer::new(server_key, None);
 
         // create handler that sends new connections to the client
         let derp_client_handler = derp_server.client_conn_handler(Default::default());
