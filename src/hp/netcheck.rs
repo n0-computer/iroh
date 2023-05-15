@@ -1,10 +1,10 @@
 //! Checks the network conditions from the current host.
-//! Based on https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go
+//! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -78,14 +78,11 @@ pub struct Report {
     pub os_has_ipv6: bool,
     /// an ICMPv4 round trip completed
     pub icmpv4: bool,
-
-    /// Wwhether STUN results depend which STUN server you're talking to (on IPv4).
+    /// Whether STUN results depend which STUN server you're talking to (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
-
     /// Whether the router supports communicating between two local devices through the NATted
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
-
     /// Whether UPnP appears present on the LAN.
     /// None means not checked.
     pub upnp: Option<bool>,
@@ -95,7 +92,6 @@ pub struct Report {
     /// Whether PCP appears present on the LAN.
     /// None means not checked.
     pub pcp: Option<bool>,
-
     /// or 0 for unknown
     pub preferred_derp: usize,
     /// keyed by DERP Region ID
@@ -104,12 +100,10 @@ pub struct Report {
     pub region_v4_latency: HashMap<usize, Duration>,
     /// keyed by DERP Region ID
     pub region_v6_latency: HashMap<usize, Duration>,
-
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
     pub global_v6: Option<SocketAddr>,
-
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
@@ -129,6 +123,12 @@ impl fmt::Display for Report {
 }
 
 /// Generates a netcheck [`Report`].
+/// Client to generate netcheck [`Report`]s.
+///
+/// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
+/// While running it expects to be passed received stun packets using
+/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
+/// do so.
 #[derive(Debug)]
 pub struct Client {
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -168,7 +168,6 @@ impl Client {
                 current_hair_tx: None,
             },
             skip_external_network: false,
-            udp_bind_addr: "0.0.0.0:0".parse().unwrap(),
             port_mapper,
             got_hair_stun,
             dns_resolver,
@@ -177,6 +176,7 @@ impl Client {
         Ok(Client { msg_sender, actor })
     }
 
+    /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running netcheck actor.
     pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
         if let Err(err) = self
             .msg_sender
@@ -187,18 +187,28 @@ impl Client {
         }
     }
 
-    /// Gets a report.
+    /// Runs a netcheck, returning the report.
     ///
-    /// It may not be called concurrently with itself.
+    /// It may not be called concurrently with itself, `&mut self` takes care of that.
+    ///
+    /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
+    /// STUN packets.  This function **will not read from the sockets**, as they may be
+    /// receiving other traffic as well, normally they are the sockets carrying the real
+    /// traffic.  Thus all stun packets received on those sockets should be passed to
+    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// responses and function correctly.
+    ///
+    /// If these are not passed in this will bind sockets for STUN itself, though results
+    /// may not be as reliable.
     pub async fn get_report(
         &mut self,
         dm: &DerpMap,
         stun_conn4: Option<Arc<net::UdpSocket>>,
         stun_conn6: Option<Arc<net::UdpSocket>>,
     ) -> Result<Arc<Report>> {
-        let report = self.actor.run(dm.clone(), stun_conn4, stun_conn6).await?;
-
-        Ok(report)
+        // TODO: consider if DerpMap should be made to easily clone?  It is expensive right
+        // now.
+        self.actor.run(dm.clone(), stun_conn4, stun_conn6).await
     }
 }
 
@@ -991,23 +1001,16 @@ impl ProbeReport {
 
 #[derive(Debug)]
 struct Actor {
+    /// Actor messages channel.
     receiver: mpsc::Receiver<ActorMessage>,
     reports: Reports,
-    /// Controls whether the client should not try
-    /// to reach things other than localhost. This is set to true
-    /// in tests to avoid probing the local LAN's router, etc.
+    /// Whether the client should try to reach things other than localhost.
+    ///
+    /// This is set to true in tests to avoid probing the local LAN's router, etc.
     skip_external_network: bool,
-
-    /// If set, is the address to listen on for UDP.
-    /// It defaults to ":0".
-    udp_bind_addr: SocketAddr,
-
-    // Used for portmap queries.
-    // If `None`, portmap discovery is not done.
+    /// Whether to run port mapping queries.
     port_mapper: Option<portmapper::Client>,
-
     got_hair_stun: broadcast::Sender<SocketAddr>,
-
     dns_resolver: TokioAsyncResolver,
 }
 
@@ -1017,24 +1020,29 @@ enum ActorMessage {
 }
 
 impl Actor {
+    /// Performs a single netcheck run.
+    ///
+    /// See [`Client::get_report`] for the arguments.
     async fn run(
         &mut self,
         dm: DerpMap,
-        pc4: Option<Arc<net::UdpSocket>>,
-        pc6: Option<Arc<net::UdpSocket>>,
+        stun_sock_v4: Option<Arc<net::UdpSocket>>,
+        stun_sock_v6: Option<Arc<net::UdpSocket>>,
     ) -> Result<Arc<Report>> {
-        let report_state = self.create_report_state(&dm, pc4, pc6).await?;
-        let pc4 = report_state.pc4.clone();
-        let pc6 = report_state.pc6.clone();
-        let port_mapper = self.port_mapper.clone();
-        let skip_external = self.skip_external_network;
+        let report_state = self
+            .create_report_state(&dm, stun_sock_v4.clone(), stun_sock_v6.clone())
+            .await?;
         let (in_flight_s, mut in_flight_r) = sync::mpsc::channel(8);
-        let resolver = self.dns_resolver.clone();
-        let mut running = Box::pin(time::timeout(OVERALL_PROBE_TIMEOUT, async move {
-            report_state
-                .run(in_flight_s, dm, port_mapper, skip_external, &resolver)
-                .await
-        }));
+        let mut running = {
+            let port_mapper = self.port_mapper.clone();
+            let skip_external = self.skip_external_network;
+            let resolver = self.dns_resolver.clone(); // not a cheap clone
+            Box::pin(time::timeout(OVERALL_PROBE_TIMEOUT, async move {
+                report_state
+                    .run(in_flight_s, dm, port_mapper, skip_external, &resolver)
+                    .await
+            }))
+        };
         let mut buf4 = vec![0u8; 64 << 10];
         let mut buf6 = vec![0u8; 64 << 10];
         let mut in_flight = HashMap::new();
@@ -1046,32 +1054,23 @@ impl Actor {
                 }
                 msg = self.receiver.recv() => {
                     match msg {
-                        None => {
-                            bail!("aborted");
-                        }
-                        Some(ActorMessage::StunPacket(pkt, source)) => {
-                            self.receive_stun_packet(&mut in_flight, &pkt, source).await;
-                        }
+                        None => bail!("client dropped, abort"),
+                        Some(ActorMessage::StunPacket(pkt, source)) =>
+                            self.receive_stun_packet(&mut in_flight, &pkt, source).await,
                     }
                 }
-                res = maybe_pending(pc4.as_ref().map(|c| c.recv_from(&mut buf4))) => {
+                res = maybe_pending(stun_sock_v4.as_ref().map(|c| c.recv_from(&mut buf4))) => {
                     match res {
-                        Err(err) => {
-                            warn!("failed to read ipv4: {:?}", err);
-                        }
-                        Ok((n, addr)) => {
-                            self.process_packet(&mut in_flight, &buf4[..n], addr).await;
-                        }
+                        Err(err) => warn!("failed to read ipv4: {:?}", err),
+                        Ok((n, addr)) =>
+                            self.process_packet(&mut in_flight, &buf4[..n], addr).await,
                     }
                 }
-                res = maybe_pending(pc6.as_ref().map(|c| c.recv_from(&mut buf6))) => {
+                res = maybe_pending(stun_sock_v6.as_ref().map(|c| c.recv_from(&mut buf6))) => {
                     match res {
-                        Err(err) => {
-                            warn!("failed to read ipv6: {:?}", err);
-                        }
-                        Ok((n, addr)) => {
-                            self.process_packet(&mut in_flight, &buf6[..n], addr).await;
-                        }
+                        Err(err) => warn!("failed to read ipv6: {:?}", err),
+                        Ok((n, addr)) =>
+                            self.process_packet(&mut in_flight, &buf6[..n], addr).await,
                     }
                 }
                 res = &mut running => {
@@ -1169,7 +1168,7 @@ impl Actor {
         if let Some(pc4) = pc4 {
             return Ok(pc4);
         }
-        let addr = self.udp_bind_addr_v4();
+        let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
         let u4 = net::UdpSocket::bind(addr)
             .await
             .with_context(|| format!("udp4: failed to bind to: {}", addr))?;
@@ -1183,7 +1182,7 @@ impl Actor {
         if let Some(pc6) = pc6 {
             return Ok(pc6);
         }
-        let addr = self.udp_bind_addr_v6();
+        let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
         let u6 = net::UdpSocket::bind(addr)
             .await
             .with_context(|| format!("udp6: failed to bind to: {}", addr))?;
@@ -1244,22 +1243,6 @@ impl Actor {
         }
         addr.set_ip(to_canonical(addr.ip()));
         self.receive_stun_packet(in_flight, pkt, addr).await;
-    }
-
-    fn udp_bind_addr_v6(&self) -> SocketAddr {
-        if self.udp_bind_addr.is_ipv6() {
-            return self.udp_bind_addr;
-        }
-
-        "[::1]:0".parse().unwrap()
-    }
-
-    fn udp_bind_addr_v4(&self) -> SocketAddr {
-        if self.udp_bind_addr.is_ipv4() {
-            return self.udp_bind_addr;
-        }
-
-        "0.0.0.0:0".parse().unwrap()
     }
 
     async fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
@@ -1435,7 +1418,7 @@ async fn os_has_ipv6() -> bool {
 // 	metricHTTPSend  = clientmetric.NewCounter("netcheck_https_measure")
 // )
 
-/// Resoles to pending if the future is `None`.
+/// Resolves to pending if the future is `None`.
 async fn maybe_pending<T>(maybe_fut: Option<impl Future<Output = T>>) -> T {
     match maybe_fut {
         Some(t) => t.await,
@@ -1526,16 +1509,24 @@ mod tests {
             .try_init()
             .ok();
 
-        let mut client = Client::new(None).await?;
+        let mut client = Client::new(None)
+            .await
+            .context("failed to create netcheck client")?;
         let stun_port = 19302;
         let host_name = "stun.l.google.com".into();
-
         let derp_port = 0;
-        let derp_ipv4 = UseIpv4::None;
-        let derp_ipv6 = UseIpv6::None;
-        let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
+        let dm = DerpMap::default_from_node(
+            host_name,
+            stun_port,
+            derp_port,
+            UseIpv4::None,
+            UseIpv6::None,
+        );
 
-        let r = client.get_report(&dm, None, None).await?;
+        let r = client
+            .get_report(&dm, None, None)
+            .await
+            .context("failed to get netcheck report")?;
         assert!(r.udp, "want UDP");
         assert_eq!(
             r.region_latency.len(),

@@ -117,7 +117,7 @@ where
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
     CreateClient(ClientConnBuilder<R, W, P>),
-    RemoveClient(PublicKey),
+    RemoveClient((PublicKey, usize)),
     AddPacketForwarder((PublicKey, P)),
     RemovePacketForwarder(PublicKey),
     Shutdown,

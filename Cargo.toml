@@ -64,7 +64,7 @@ serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 serdect = "0.2.0"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
-socket2 = "0.4.7"
+socket2 = "0.5.3"
 ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 subtle = "2.4.1"
@@ -87,7 +87,7 @@ wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-route = "0.15.0"
 rtnetlink = "0.12.0"
 

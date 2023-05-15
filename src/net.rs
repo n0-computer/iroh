@@ -2,4 +2,3 @@
 
 pub mod interfaces;
 pub mod ip;
-pub mod subnet;

@@ -75,6 +75,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     #[tokio::test]
+    #[ignore] // Doesn't work in CI
     async fn test_ping_google() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
