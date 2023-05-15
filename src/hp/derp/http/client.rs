@@ -329,11 +329,11 @@ impl Client {
     }
 
     fn use_https(&self) -> bool {
-        self.inner
-            .url
-            .as_ref()
-            .map(|url| url.scheme() == "https")
-            .unwrap_or_default()
+        // only disable https if we are explicitly dialing a http url
+        if let Some(true) = self.inner.url.as_ref().map(|url| url.scheme() == "http") {
+            return false;
+        }
+        true
     }
 
     async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
