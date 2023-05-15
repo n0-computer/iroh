@@ -1656,6 +1656,7 @@ dependencies = [
  "trust-dns-resolver",
  "walkdir",
  "webpki",
+ "webpki-roots 0.23.0",
  "wg",
  "wmi",
  "x509-parser 0.14.0",

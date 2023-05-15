@@ -25,7 +25,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
-use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::net::{interfaces, ip::to_canonical};
 
@@ -33,6 +32,7 @@ use self::probe::{Probe, ProbePlan, ProbeProto};
 
 use super::{
     derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
+    dns::DNS_RESOLVER,
     ping::Pinger,
     portmapper, stun,
 };
@@ -377,11 +377,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     Ok(has_captive)
 }
 
-async fn measure_icmp_latency(
-    resolver: &TokioAsyncResolver,
-    reg: &DerpRegion,
-    p: &Pinger,
-) -> Result<Duration> {
+async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {
     if reg.nodes.is_empty() {
         anyhow::bail!(
             "no nodes for region {} ({})",
@@ -395,7 +391,7 @@ async fn measure_icmp_latency(
 
     // Get the IPAddr by asking for the UDP address that we would use for
     // STUN and then using that IP.
-    let node_addr = get_node_addr(resolver, node, ProbeProto::Ipv4)
+    let node_addr = get_node_addr(node, ProbeProto::Ipv4)
         .await
         .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
 
@@ -419,11 +415,7 @@ async fn measure_icmp_latency(
     Ok(d)
 }
 
-async fn get_node_addr(
-    resolver: &TokioAsyncResolver,
-    n: &DerpNode,
-    proto: ProbeProto,
-) -> Option<SocketAddr> {
+async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
         port = 3478;
@@ -453,7 +445,7 @@ async fn get_node_addr(
     }
 
     // TODO: add singleflight+dnscache here.
-    if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
+    if let Ok(addrs) = DNS_RESOLVER.lookup_ip(&n.host_name).await {
         for addr in addrs {
             if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
                 let addr = to_canonical(addr);
@@ -470,15 +462,6 @@ async fn get_node_addr(
     }
 
     None
-}
-
-async fn dns_lookup(
-    resolver: &TokioAsyncResolver,
-    host: &str,
-) -> Result<trust_dns_resolver::lookup_ip::LookupIp> {
-    let response = resolver.lookup_ip(host).await?;
-
-    Ok(response)
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
@@ -520,7 +503,6 @@ impl ReportState {
         dm: DerpMap,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
-        resolver: &TokioAsyncResolver,
     ) -> Result<(Report, DerpMap)> {
         debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
@@ -598,7 +580,7 @@ impl ReportState {
                 let pinger = pinger.clone();
 
                 set.push(Box::pin(async move {
-                    run_probe(report, resolver, pc4, pc6, node, probe, actor_addr, pinger).await
+                    run_probe(report, pc4, pc6, node, probe, actor_addr, pinger).await
                 }));
             }
 
@@ -875,7 +857,6 @@ enum ProbeError {
 #[instrument(level = "debug", skip_all, fields(probe = ?probe))]
 async fn run_probe(
     report: Arc<RwLock<Report>>,
-    resolver: &TokioAsyncResolver,
     pc4: Arc<UdpSocket>,
     pc6: Arc<UdpSocket>,
     node: DerpNode,
@@ -892,7 +873,7 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
     }
 
-    let addr = get_node_addr(resolver, &node, probe.proto()).await;
+    let addr = get_node_addr(&node, probe.proto()).await;
     if addr.is_none() {
         return Err(ProbeError::Transient(anyhow!("no node addr"), probe));
     }
@@ -952,7 +933,7 @@ async fn run_probe(
                 tokio::join!(
                     time::timeout(
                         ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(resolver, &reg, pinger).map(Some)
+                        measure_icmp_latency(&reg, pinger).map(Some)
                     ),
                     measure_https_latency(&reg)
                 )
@@ -1168,7 +1149,6 @@ struct Actor {
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
     /// and open ports.
     port_mapper: Option<portmapper::Client>,
-    dns_resolver: TokioAsyncResolver,
 
     // Actor state.
     got_hair_stun: broadcast::Sender<SocketAddr>,
@@ -1192,8 +1172,7 @@ impl Actor {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         let (got_hair_stun, _) = broadcast::channel(1);
-        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()
-            .context("failed to create DNS resolver")?;
+
         Ok(Self {
             receiver,
             sender,
@@ -1201,7 +1180,6 @@ impl Actor {
             skip_external_network: false,
             port_mapper,
             got_hair_stun,
-            dns_resolver,
             in_flight_stun_requests: Default::default(),
             current_check_run: None,
         })
@@ -1318,18 +1296,12 @@ impl Actor {
             .context("failed to create ReportState")?;
         let port_mapper = self.port_mapper.clone();
         let skip_external = self.skip_external_network;
-        let resolver = self.dns_resolver.clone(); // not a cheap clone, maybe Arc it
         let addr = self.addr();
+
         tokio::spawn(async move {
             match time::timeout(
                 OVERALL_PROBE_TIMEOUT,
-                report_state.run(
-                    addr.clone(),
-                    derp_map,
-                    port_mapper,
-                    skip_external,
-                    &resolver,
-                ),
+                report_state.run(addr.clone(), derp_map, port_mapper, skip_external),
             )
             .await
             {

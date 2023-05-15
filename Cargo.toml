@@ -84,6 +84,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trust-dns-resolver = "0.22.0"
 walkdir = "2"
 webpki = { version = "0.22", features = ["std"] }
+webpki-roots = "0.23.0"
 wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
