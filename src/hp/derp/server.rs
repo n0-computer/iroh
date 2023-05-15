@@ -485,15 +485,18 @@ where
                             self.broadcast_peer_state_change(key, true);
 
                         }
-                       ServerMessage::RemoveClient(key) => {
+                       ServerMessage::RemoveClient((key, conn_num)) => {
                            tracing::trace!("remove client: {:?}", key);
-                           // remove the client from the map of clients, & notify any peers that it
-                           // has sent messages that it has left the network
-                           self.clients.unregister(&key);
-                           // remove from mesh
-                           self.client_mesh.remove(&key);
-                           // broadcast to watchers that this peer has left the network
-                           self.broadcast_peer_state_change(key, false);
+                           // ensure we still have the client in question
+                           if self.clients.has_client(&key, conn_num) {
+                               // remove the client from the map of clients, & notify any peers that it
+                               // has sent messages that it has left the network
+                               self.clients.unregister(&key);
+                               // remove from mesh
+                               self.client_mesh.remove(&key);
+                               // broadcast to watchers that this peer has left the network
+                               self.broadcast_peer_state_change(key, false);
+                            }
                        }
                        ServerMessage::AddPacketForwarder((key, packet_forwarder)) => {
                            tracing::trace!("add packet forwarder: {:?}", key);
@@ -579,6 +582,7 @@ mod tests {
         },
         key::node::PUBLIC_KEY_LENGTH,
     };
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
@@ -752,7 +756,7 @@ mod tests {
 
         // remove b
         server_channel
-            .send(ServerMessage::RemoveClient(key_b.clone()))
+            .send(ServerMessage::RemoveClient((key_b.clone(), 2)))
             .await?;
 
         // get peer gone message on a about b leaving the network
@@ -956,6 +960,111 @@ mod tests {
             .send(public_key_b, vec![Bytes::from_static(b"try to send")])
             .await?;
         assert!(client_b.recv().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_server_replace_client() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        // create the server!
+        let server_key = SecretKey::generate();
+        let mesh_key = Some([1u8; 32]);
+        let server: Server<DuplexStream, DuplexStream, MockPacketForwarder> =
+            Server::new(server_key, mesh_key);
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public_key();
+        let (reader_a, writer_a, client_a_builder) = make_test_client(key_a);
+        let handler = server.client_conn_handler(Default::default());
+        let handler_task = tokio::spawn(async move { handler.accept(reader_a, writer_a).await });
+        let client_a = client_a_builder.build(None).await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public_key();
+        let (reader_b, writer_b, client_b_builder) = make_test_client(key_b.clone());
+        let handler = server.client_conn_handler(Default::default());
+        let handler_task = tokio::spawn(async move { handler.accept(reader_b, writer_b).await });
+        let client_b = client_b_builder.build(None).await?;
+        handler_task.await??;
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        match client_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        match client_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // create client b and connect it to the server
+        let (new_reader_b, new_writer_b, new_client_b_builder) = make_test_client(key_b);
+        let handler = server.client_conn_handler(Default::default());
+        let handler_task =
+            tokio::spawn(async move { handler.accept(new_reader_b, new_writer_b).await });
+        let new_client_b = new_client_b_builder.build(None).await?;
+        handler_task.await??;
+
+        // assert!(client_b.recv().await.is_err());
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"are you still there, b?!");
+        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        match new_client_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
+        new_client_b.send(public_key_a.clone(), msg.clone()).await?;
+        match client_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // close the server and clients
+        server.close().await;
+
+        // client connections have been shutdown
+        client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await?;
+        assert!(new_client_b.recv().await.is_err());
         Ok(())
     }
 }
