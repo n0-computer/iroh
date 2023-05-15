@@ -71,7 +71,7 @@ where
 impl<R: AsyncRead + Unpin> Client<R> {
     /// Sends a packet to the node identified by `dstkey`
     ///
-    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
+    /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Vec<Bytes>) -> Result<()> {
         debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
 
@@ -159,7 +159,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// The returned message may alias memory owned by the [`Client`]; if
     /// should only be accessed until the next call to [`Client`].
     ///
-    /// Once [`recv`] returns an error, the [`Client`] is dead forever.
+    /// Once it returns an error, the [`Client`] is dead forever.
     pub async fn recv(&self) -> Result<ReceivedMessage> {
         if self.is_closed().await {
             bail!("client is closed");
