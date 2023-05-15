@@ -997,11 +997,14 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a
+            .send(public_key_b.clone(), vec![msg.clone()])
+            .await?;
         match client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -1010,11 +1013,14 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a.clone(), msg.clone()).await?;
+        client_b
+            .send(public_key_a.clone(), vec![msg.clone()])
+            .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -1033,11 +1039,14 @@ mod tests {
 
         // send message from a to b!
         let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b.clone(), msg.clone()).await?;
+        client_a
+            .send(public_key_b.clone(), vec![msg.clone()])
+            .await?;
         match new_client_b.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_a, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -1046,11 +1055,14 @@ mod tests {
 
         // send message from b to a!
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a.clone(), msg.clone()).await?;
+        new_client_b
+            .send(public_key_a.clone(), vec![msg.clone()])
+            .await?;
         match client_a.recv().await? {
             ReceivedMessage::ReceivedPacket { source, data } => {
+                let payload = PacketSplitIter::split(data)?;
                 assert_eq!(public_key_b, source);
-                assert_eq!(&msg[..], data);
+                assert_eq!(&msg[..], payload[0]);
             }
             msg => {
                 anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
@@ -1062,7 +1074,7 @@ mod tests {
 
         // client connections have been shutdown
         client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(public_key_b, vec![Bytes::from_static(b"try to send")])
             .await?;
         assert!(new_client_b.recv().await.is_err());
         Ok(())
