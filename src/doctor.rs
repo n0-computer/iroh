@@ -229,7 +229,7 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
-        counters.set_style(style.clone());
+        counters.set_style(style);
         let pb = mp.add(pb);
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(indicatif::ProgressStyle::default_bar()

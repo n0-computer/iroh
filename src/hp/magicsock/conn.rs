@@ -1471,7 +1471,7 @@ impl Actor {
         for content in &contents {
             trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
         }
-        let total_bytes = contents.iter().map(|c| c.len() as u64).sum();
+        let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
 
         match derp_client.send(peer.clone(), contents).await {
             Ok(_) => {
@@ -1654,6 +1654,7 @@ impl Actor {
 
         macro_rules! add_addr {
             ($already:expr, $eps:expr, $ipp:expr, $et:expr) => {
+                #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
                     $eps.push(cfg::Endpoint {

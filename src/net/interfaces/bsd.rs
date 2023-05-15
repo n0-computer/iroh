@@ -810,6 +810,7 @@ mod tests {
 
     struct ParseAddrsTest {
         attrs: i32,
+        #[allow(clippy::type_complexity)]
         parse_fn: Box<dyn Fn(i32, &[u8]) -> Result<(i32, Addr), RouteError>>,
         b: Vec<u8>,
         addrs: Vec<Addr>,
