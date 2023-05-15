@@ -10,7 +10,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek, Write},
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     result,
     str::FromStr,
 };
@@ -313,6 +313,15 @@ impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
         }
         Ok(())
     }
+}
+
+/// Create a pathbuf from a name.
+pub fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
+    }
+    path
 }
 
 #[cfg(test)]

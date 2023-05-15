@@ -187,14 +187,6 @@ impl FromStr for Blake3Cid {
         }
     }
 }
-/// Create a pathbuf from a name.
-pub fn pathbuf_from_name(name: &str) -> PathBuf {
-    let mut path = PathBuf::new();
-    for part in name.split('/') {
-        path.push(part);
-    }
-    path
-}
 
 pub fn create_quinn_client(
     bind_addr: SocketAddr,

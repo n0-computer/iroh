@@ -17,10 +17,10 @@ mod map;
 mod server;
 pub(crate) mod types;
 
-pub use self::client::ReceivedMessage;
+pub use self::client::{Client as DerpClient, ReceivedMessage};
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
-pub use self::server::{ClientConnHandler, Server};
+pub use self::server::{ClientConnHandler, PacketForwarderHandler, Server};
 pub use self::types::{MeshKey, PacketForwarder};
 
 use std::time::Duration;
@@ -37,7 +37,7 @@ use types::ClientInfo;
 /// The maximum size of a packet sent over DERP.
 /// (This only includes the data bytes visible to magicsock, not
 /// including its on-wire framing overhead)
-const MAX_PACKET_SIZE: usize = 64 * 1024;
+pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 

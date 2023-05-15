@@ -8,6 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     pub regions: HashMap<usize, DerpRegion>,
@@ -21,6 +22,7 @@ impl DerpMap {
         ids
     }
 
+    /// Creates a new [`DerpMap`] with a single Derp server configured.
     pub fn default_from_node(
         host_name: String,
         stun_port: u16,

@@ -16,7 +16,7 @@ use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
-use iroh::main_util::{iroh_config_path, pathbuf_from_name};
+use iroh::pathbuf_from_name;
 use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
@@ -27,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh::main_util::{create_quinn_client, iroh_data_root, Blake3Cid};
+use iroh::main_util::{create_quinn_client, iroh_config_path, iroh_data_root, Blake3Cid};
 use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
 
@@ -38,7 +38,6 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
-const MAX_CONCURRENT_DIALS: u8 = 16;
 
 /// Send data.
 ///
@@ -174,9 +173,9 @@ enum Commands {
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// Address of the provider
+        /// Addresses of the provider.
         #[clap(long, short)]
-        addr: Option<SocketAddr>,
+        addrs: Vec<SocketAddr>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
@@ -520,13 +519,13 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            addr,
+            addrs,
             out,
             single,
         } => {
             let opts = get::Options {
-                addr,
-                peer_id: Some(peer),
+                addrs,
+                peer_id: peer,
                 keylog: cli.keylog,
                 derp_map: config.derp_map(),
             };
@@ -616,7 +615,7 @@ async fn main_impl() -> Result<()> {
                     let stream = controller.server_streaming(ProvideRequest { path }).await?;
                     let (hash, entries) = aggregate_add_response(stream).await?;
                     print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash).await?;
+                    let ticket = provider.ticket(hash)?;
                     println!("All-in-one ticket: {ticket}");
                     anyhow::Ok(tmp_path)
                 })
@@ -760,8 +759,11 @@ async fn provide(
         builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {:#?}", provider.local_address().await?);
-    println!("Local endpoints: {:#?}", provider.local_endpoints().await?);
+    let eps = provider.local_endpoints().await?;
+    println!("Listening addresses:");
+    for ep in eps {
+        println!("  {}", ep.addr);
+    }
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)
@@ -899,7 +901,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             ticket,
             keylog,
             derp_map,
-        } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
         GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
@@ -1052,7 +1054,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
             ticket,
             keylog,
             derp_map,
-        } => get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS, derp_map).await?,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
         GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;

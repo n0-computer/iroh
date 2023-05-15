@@ -75,7 +75,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
         loop {
             ready!(io.poll_send_ready(cx))?;
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(io.into(), state, transmits)
+                inner.send(Arc::as_ref(io).into(), state, transmits)
             }) {
                 for t in transmits.iter().take(res) {
                     trace!(
@@ -100,7 +100,7 @@ impl AsyncUdpSocket for RebindingUdpConn {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.state.recv((&self.io).into(), bufs, meta)
+                self.state.recv(Arc::as_ref(&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(

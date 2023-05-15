@@ -57,8 +57,8 @@ struct Cli {
     #[clap(long, short)]
     config_path: PathBuf,
     /// Mode for getting a cert. possible options: manual, letsencrypt
-    /// When using manual mode, a certificate will be read from <hostname>.crt and a private key from
-    /// <hostname>.key, with the <hostname> being the escaped hostname.
+    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a private key from
+    /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
     #[clap(long, value_enum, default_value_t = CertMode::LetsEncrypt)]
     cert_mode: CertMode,
     /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.

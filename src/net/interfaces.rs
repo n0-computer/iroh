@@ -10,7 +10,7 @@ use std::{collections::HashMap, net::IpAddr};
     target_os = "ios"
 ))]
 mod bsd;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
@@ -27,7 +27,7 @@ use crate::net::ip::{is_loopback, is_private_v6, is_up};
     target_os = "ios"
 ))]
 use self::bsd::default_route;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use self::linux::default_route;
 #[cfg(target_os = "windows")]
 use self::windows::default_route;
