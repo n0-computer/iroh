@@ -241,6 +241,7 @@ fn cli_provide_addresses() -> Result<()> {
         .unwrap()
         .split(',')
         .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
         .collect::<Vec<_>>();
 
     for address in addresses {
