@@ -852,14 +852,12 @@ mod tests {
         secret_key: SecretKey,
     ) -> (
         tokio::io::DuplexStream,
-        ClientBuilder<
-            tokio::io::WriteHalf<tokio::io::DuplexStream>,
-            tokio::io::ReadHalf<tokio::io::DuplexStream>,
-        >,
+        ClientBuilder<tokio::io::WriteHalf<Box<dyn Io + Send + Sync + 'static>>>,
     ) {
         let (client, server) = tokio::io::duplex(10);
 
-        let (client_reader, client_writer) = tokio::io::split(client);
+        let boxed: Box<dyn Io + Send + Sync + 'static> = Box::new(client);
+        let (client_reader, client_writer) = tokio::io::split(boxed);
         (
             server,
             ClientBuilder::new(

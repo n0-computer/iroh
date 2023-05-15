@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use anyhow::{bail, ensure, Result};
+use bytes::Bytes;
 use futures::future::FutureExt;
 use futures::Future;
 use hyper::header::{HeaderValue, UPGRADE};
@@ -11,7 +12,25 @@ use hyper::{Body, Request, Response, StatusCode};
 use tracing::debug;
 
 use super::HTTP_UPGRADE_PROTOCOL;
+use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{server::ClientConnHandler, types::PacketForwarder};
+
+fn downcast_upgrade(upgraded: Upgraded) -> Result<(Box<dyn Io + Send + Sync + 'static>, Bytes)> {
+    match upgraded.downcast::<tokio::net::TcpStream>() {
+        Ok(parts) => Ok((Box::new(parts.io), parts.read_buf)),
+        Err(upgraded) => {
+            if let Ok(parts) =
+                upgraded.downcast::<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>()
+            {
+                return Ok((Box::new(parts.io), parts.read_buf));
+            }
+
+            bail!(
+                "could not downcast the upgraded connection to a TcpStream or server::TlsStream<TcpStream>"
+            )
+        }
+    }
+}
 
 /// The server HTTP handler to do HTTP upgrades
 pub async fn derp_connection_handler<P>(
@@ -22,38 +41,14 @@ where
     P: PacketForwarder,
 {
     debug!("derp_connection upgraded");
+    let (io, read_buf) = downcast_upgrade(upgraded)?;
+    ensure!(
+        read_buf.is_empty(),
+        "can not deal with buffered data yet: {:?}",
+        read_buf
+    );
 
-    // get the underlying TcpStream
-    match upgraded.downcast::<tokio::net::TcpStream>() {
-        Ok(parts) => {
-            ensure!(
-                parts.read_buf.is_empty(),
-                "can not deal with buffered data yet: {:?}",
-                parts.read_buf
-            );
-
-            // send to the derp server
-            conn_handler.accept(Box::new(parts.io)).await
-        }
-        Err(upgraded) => {
-            if let Ok(parts) =
-                upgraded.downcast::<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>()
-            {
-                ensure!(
-                    parts.read_buf.is_empty(),
-                    "can not deal with buffered data yet: {:?}",
-                    parts.read_buf
-                );
-
-                // send to the derp server
-                return conn_handler.accept(Box::new(parts.io)).await;
-            }
-
-            bail!(
-                "could not downcast the upgraded connection to a TcpStream or TlsStream<TcpStream>"
-            )
-        }
-    }
+    conn_handler.accept(io).await
 }
 
 impl<P> hyper::service::Service<Request<Body>> for ClientConnHandler<P>
