@@ -2469,7 +2469,6 @@ impl std::fmt::Display for QuicMappedAddr {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use hyper::server::conn::Http;
     use rand::RngCore;
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
@@ -2608,48 +2607,16 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
+    async fn run_derp_and_stun(
+        stun_ip: IpAddr,
+    ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
         // TODO: pass a mesh_key?
-        let derp_server: derp::Server<derp::http::Client> =
-            derp::Server::new(key::node::SecretKey::generate(), None);
 
-        let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
-        let http_addr = http_listener.local_addr()?;
+        let server_key = key::node::SecretKey::generate();
+        let (http_addr, shutdown_server, server_task) =
+            crate::hp::derp::http::run_server_tls("127.0.0.1:0".parse().unwrap(), server_key).await;
+
         println!("DERP listening on {:?}", http_addr);
-
-        let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
-
-        // TODO: TLS
-        // httpsrv.StartTLS()
-
-        tokio::task::spawn(async move {
-            let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut rx => {
-                        derp_server.close().await;
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    conn = http_listener.accept() => {
-                        trace!("accepted derp connection");
-                        let (stream, _) = conn?;
-                        let derp_client_handler = derp_client_handler.clone();
-                        tokio::task::spawn(async move {
-                            if let Err(err) = Http::new()
-                                .serve_connection(stream, derp_client_handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                eprintln!("Failed to serve connection: {:?}", err);
-                            }
-                        });
-                    }
-                }
-            }
-        });
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
         let m = DerpMap {
@@ -2677,10 +2644,13 @@ mod tests {
             .collect(),
         };
 
-        let cleanup = || {
-            println!("CLEANUP");
-            stun_cleanup.send(()).unwrap();
-            derp_shutdown.send(()).unwrap();
+        let cleanup = move || {
+            Box::pin(async move {
+                println!("CLEANUP");
+                stun_cleanup.send(()).unwrap();
+                shutdown_server.cancel();
+                server_task.await.unwrap().unwrap();
+            }) as BoxFuture<'static, ()>
         };
 
         Ok((m, cleanup))
@@ -3017,7 +2987,7 @@ mod tests {
         }
 
         println!("cleaning up");
-        cleanup();
+        cleanup().await;
         cleanup_mesh();
         Ok(())
     }
@@ -3067,7 +3037,7 @@ mod tests {
             assert!(m2.conn.is_closed());
 
             println!("cleaning up");
-            cleanup();
+            cleanup().await;
             cleanup_mesh();
         }
         Ok(())
