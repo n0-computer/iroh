@@ -18,17 +18,13 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-int32_t add_numbers (
-    int32_t number1,
-    int32_t number2);
-
-uint32_t get (
+uint32_t iroh_get (
     char const * hash,
     char const * peer,
     char const * peer_addr,
     char const * out_path);
 
-uint32_t get_ticket (
+uint32_t iroh_get_ticket (
     char const * ticket,
     char const * out_path);
 
