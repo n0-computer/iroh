@@ -1,9 +1,8 @@
 mod client;
 mod server;
 
-pub use client::{Client, ClientBuilder, ClientError};
-
-pub use server::derp_connection_handler;
+pub use self::client::{Client, ClientBuilder, ClientError};
+pub use self::server::derp_connection_handler;
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
@@ -59,7 +58,7 @@ pub(crate) async fn run_server_tls(
                     tasks.spawn(async move {
                         let tls_stream = tls_acceptor.accept(stream).await.unwrap();
                         if let Err(err) = hyper::server::conn::Http::new()
-                            .serve_connection(tls_stream, derp_client_handler)
+                            .serve_connection(super::server::MaybeTlsStream::Tls(tls_stream), derp_client_handler)
                             .with_upgrades()
                             .await
                         {
@@ -92,7 +91,9 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
+    use crate::hp::derp::{
+        DerpNode, DerpRegion, MaybeTlsStreamServer, ReceivedMessage, UseIpv4, UseIpv6,
+    };
     use crate::hp::{
         derp::Server as DerpServer,
         key::node::{PublicKey, SecretKey},
@@ -122,7 +123,7 @@ mod tests {
                         let derp_client_handler = derp_client_handler.clone();
                         tasks.spawn(async move {
                             if let Err(err) = Http::new()
-                                .serve_connection(stream, derp_client_handler)
+                                .serve_connection(MaybeTlsStreamServer::Plain(stream), derp_client_handler)
                                 .with_upgrades()
                                 .await
                             {

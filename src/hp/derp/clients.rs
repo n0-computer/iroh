@@ -281,7 +281,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Box::new(io),
+                io: crate::hp::derp::server::MaybeTlsStream::Test(io),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,

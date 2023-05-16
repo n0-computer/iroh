@@ -20,7 +20,9 @@ pub(crate) mod types;
 pub use self::client::{Client as DerpClient, ReceivedMessage};
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
-pub use self::server::{ClientConnHandler, PacketForwarderHandler, Server};
+pub use self::server::{
+    ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, PacketForwarderHandler, Server,
+};
 pub use self::types::{MeshKey, PacketForwarder};
 
 use std::time::Duration;

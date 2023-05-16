@@ -15,6 +15,7 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
+use super::server::MaybeTlsStream;
 use super::{
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
@@ -83,7 +84,7 @@ where
 {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
-    pub(crate) io: Box<dyn Io + Send + Sync>,
+    pub(crate) io: MaybeTlsStream,
     pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
@@ -117,7 +118,7 @@ impl ClientConnManager {
     pub fn new<P>(
         key: PublicKey,
         conn_num: usize,
-        io: Box<dyn Io + Send + Sync + 'static>,
+        io: MaybeTlsStream,
         can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
@@ -241,7 +242,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     /// Indicates whether this client can mesh
     can_mesh: bool,
     /// Io to talk to the client
-    io: Box<dyn Io + Send + Sync + 'static>,
+    io: MaybeTlsStream,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -707,7 +708,7 @@ mod tests {
 
         let conn_io = ClientConnIo::<MockPacketForwarder> {
             can_mesh: true,
-            io: Box::new(io),
+            io: MaybeTlsStream::Test(io),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,

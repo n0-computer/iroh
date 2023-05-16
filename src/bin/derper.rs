@@ -422,7 +422,10 @@ impl Derper {
                             let handler = handler.clone();
                             tokio::task::spawn(async move {
                                 if let Err(err) = Http::new()
-                                    .serve_connection(stream, handler)
+                                    .serve_connection(
+                                        derp::MaybeTlsStreamServer::Plain(stream),
+                                        handler,
+                                    )
                                     .with_upgrades()
                                     .await
                                 {
@@ -452,7 +455,10 @@ impl Derper {
                     let handler = HttpService(self.clone());
 
                     tokio::task::spawn(async move {
-                        if let Err(err) = Http::new().serve_connection(stream, handler).await {
+                        if let Err(err) = Http::new()
+                            .serve_connection(derp::MaybeTlsStreamServer::Plain(stream), handler)
+                            .await
+                        {
                             error!("[HTTP] Failed to serve connection: {:?}", err);
                         }
                     });
@@ -505,12 +511,16 @@ impl HttpsService {
                 }
                 Some(start_handshake) => {
                     let tls_stream = start_handshake.into_stream(rustls_config).await?;
-                    Http::new().serve_connection(tls_stream, self).await?;
+                    Http::new()
+                        .serve_connection(derp::MaybeTlsStreamServer::Tls(tls_stream), self)
+                        .await?;
                 }
             },
             TlsAcceptor::Manual(a) => {
                 let tls_stream = a.accept(stream).await?;
-                Http::new().serve_connection(tls_stream, self).await?;
+                Http::new()
+                    .serve_connection(derp::MaybeTlsStreamServer::Tls(tls_stream), self)
+                    .await?;
             }
         }
         Ok(())

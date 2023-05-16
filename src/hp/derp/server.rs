@@ -1,14 +1,16 @@
 //! based on tailscale/derp/derp_server.go
 use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use bytes::BytesMut;
 use hyper::HeaderMap;
 use postcard::experimental::max_size::MaxSize;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -16,7 +18,7 @@ use tracing::{instrument, trace};
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
-use super::client_conn::{ClientConnBuilder, Io};
+use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
     types::{PacketForwarder, PeerConnState, ServerMessage},
@@ -287,7 +289,7 @@ where
     /// and is unable to verify this one, or if there is some issue communicating with the server.
     ///
     /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
-    pub async fn accept(&self, mut io: Box<dyn Io + Send + Sync + 'static>) -> Result<()> {
+    pub async fn accept(&self, mut io: MaybeTlsStream) -> Result<()> {
         trace!("accept: start");
         self.send_server_key(&mut io)
             .await
@@ -570,13 +572,90 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
         .expect("fixed allocations")
 }
 
+#[derive(Debug)]
+pub enum MaybeTlsStream {
+    Plain(tokio::net::TcpStream),
+    Tls(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
+    #[cfg(test)]
+    Test(tokio::io::DuplexStream),
+}
+
+impl AsyncRead for MaybeTlsStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(test)]
+            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for MaybeTlsStream {
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        match &mut *self {
+            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_flush(cx),
+            #[cfg(test)]
+            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        match &mut *self {
+            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(test)]
+            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        match &mut *self {
+            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(test)]
+            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        match &mut *self {
+            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            #[cfg(test)]
+            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::hp::{
         derp::{
-            client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
+            client::ClientBuilder,
+            client_conn::{ClientConnBuilder, Io},
+            types::ClientInfo,
             ReceivedMessage, MAX_FRAME_SIZE,
         },
         key::node::PUBLIC_KEY_LENGTH,
@@ -614,7 +693,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Box::new(io),
+                io: MaybeTlsStream::Test(io),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
@@ -835,7 +914,7 @@ mod tests {
         });
 
         // attempt to add the connection to the server
-        handler.accept(Box::new(server_io)).await?;
+        handler.accept(MaybeTlsStream::Test(server_io)).await?;
         client_task.await??;
 
         // ensure we inform the server to create the client from the connection!
@@ -881,7 +960,8 @@ mod tests {
         let public_key_a = key_a.public_key();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task = tokio::spawn(async move { handler.accept(Box::new(rw_a)).await });
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
         let client_a = client_a_builder.build(None).await?;
         handler_task.await??;
 
@@ -890,7 +970,8 @@ mod tests {
         let public_key_b = key_b.public_key();
         let (rw_b, client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task = tokio::spawn(async move { handler.accept(Box::new(rw_b)).await });
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
         let client_b = client_b_builder.build(None).await?;
         handler_task.await??;
 
@@ -971,7 +1052,8 @@ mod tests {
         let public_key_a = key_a.public_key();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task = tokio::spawn(async move { handler.accept(Box::new(rw_a)).await });
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_a)).await });
         let client_a = client_a_builder.build(None).await?;
         handler_task.await??;
 
@@ -980,7 +1062,8 @@ mod tests {
         let public_key_b = key_b.public_key();
         let (rw_b, client_b_builder) = make_test_client(key_b.clone());
         let handler = server.client_conn_handler(Default::default());
-        let handler_task = tokio::spawn(async move { handler.accept(Box::new(rw_b)).await });
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
         let client_b = client_b_builder.build(None).await?;
         handler_task.await??;
 
@@ -1013,7 +1096,8 @@ mod tests {
         // create client b and connect it to the server
         let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
         let handler = server.client_conn_handler(Default::default());
-        let handler_task = tokio::spawn(async move { handler.accept(Box::new(new_rw_b)).await });
+        let handler_task =
+            tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(new_rw_b)).await });
         let new_client_b = new_client_b_builder.build(None).await?;
         handler_task.await??;
 
