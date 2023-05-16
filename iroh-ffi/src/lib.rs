@@ -10,7 +10,7 @@ use crate::util::Blake3Cid;
 use iroh::blobs::{Blob, Collection};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{self, get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
-use iroh::protocol::{AuthToken, GetRequest};
+use iroh::protocol::{GetRequest};
 use iroh::provider::Ticket;
 use iroh::tokio_util::SeekOptimized;
 use iroh::{Hash, PeerId};
@@ -20,29 +20,14 @@ mod util;
 const MAX_CONCURRENT_DIALS: u8 = 16;
 
 #[ffi_export]
-fn add_numbers(number1: i32, number2: i32) -> i32 {
-    let result = std::panic::catch_unwind(|| {
-        println!("Hello from rust!");
-        number1 + number2
-    });
-    if result.is_err() {
-        eprintln!("error: rust panicked");
-        return -1;
-    }
-    result.unwrap()
-}
-
-#[ffi_export]
-fn get(
+fn iroh_get(
     hash: char_p::Ref<'_>,
-    auth_token: char_p::Ref<'_>,
     peer: char_p::Ref<'_>,
     peer_addr: char_p::Ref<'_>,
     out_path: char_p::Ref<'_>,
 ) -> u32 {
     let result = std::panic::catch_unwind(|| {
         let hash = hash.to_str().parse::<Hash>().unwrap();
-        let token = auth_token.to_str().parse::<AuthToken>().unwrap();
         let peer = peer.to_str().parse::<PeerId>().unwrap();
         let peer_addr = peer_addr.to_str().parse().unwrap();
         let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
@@ -56,7 +41,6 @@ fn get(
                     addr: peer_addr,
                     keylog: false,
                 },
-                token,
                 single: false,
             },
             out_path,
@@ -72,7 +56,7 @@ fn get(
 }
 
 #[ffi_export]
-fn get_ticket(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> u32 {
+fn iroh_get_ticket(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> u32 {
     let result = std::panic::catch_unwind(|| {
         let ticket = ticket.to_str().parse::<Ticket>().unwrap();
         let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
@@ -103,7 +87,6 @@ enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
-        token: AuthToken,
         single: bool,
     },
 }
@@ -165,7 +148,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         GetInteractive::Ticket { ticket, keylog } => {
             get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
         }
-        GetInteractive::Hash { opts, token, .. } => get::run(request, token, opts).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     println!("[2/3] Requesting ...");
@@ -173,7 +156,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
         init_download_progress(count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
-        ConnectedNext::StartCollection(curr) => {
+        ConnectedNext::StartRoot(curr) => {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
                 .context("unable to create directory {temp_dir}")?;
@@ -181,9 +164,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
                 .await
                 .context("Unable to create directory {out_dir}")?;
             let curr = curr.next();
-            let (curr, size) = curr.next().await?;
-            let mut collection_data = Vec::with_capacity(size as usize);
-            let curr = curr.concatenate(&mut collection_data, |_, _| {}).await?;
+            let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
             init_download_progress(collection.total_entries(), collection.total_blobs_size());
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
@@ -241,12 +222,8 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             } else {
                 None
             };
-            let on_write = |_offset, _size| {
-                // println!("offset: {}/{}", offset, pb.length().unwrap());
-                // pb.set_position(offset);
-            };
             let curr = curr
-                .write_all_with_outboard(&mut outboard_file, &mut data_file, on_write)
+                .write_all_with_outboard(&mut outboard_file, &mut data_file)
                 .await?;
             tokio::fs::create_dir_all(
                 final_path
@@ -290,7 +267,7 @@ mod tests {
     #[test]
     fn generate_headers() -> ::std::io::Result<()> {
         ::safer_ffi::headers::builder()
-            .to_file("iroh.h")?
+            .to_file("libiroh.h")?
             .generate()
     }
 
