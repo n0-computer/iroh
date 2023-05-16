@@ -1759,12 +1759,7 @@ mod tests {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(
-                    client
-                        .actor
-                        .add_report_history_and_set_preferred_derp(r)
-                        ,
-                );
+                s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
             }
             let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
             let got = client.actor.reports.prev.len();
