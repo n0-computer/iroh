@@ -260,7 +260,6 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     /// The following test function is necessary for the header generation.
     #[::safer_ffi::cfg_headers]
@@ -269,12 +268,6 @@ mod tests {
         ::safer_ffi::headers::builder()
             .to_file("libiroh.h")?
             .generate()
-    }
-
-    #[test]
-    fn add_numbers_test() {
-        let result = add_numbers(2, 2);
-        assert_eq!(result, 4);
     }
 
     #[test]
