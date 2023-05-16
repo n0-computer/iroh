@@ -62,7 +62,7 @@ const ENOUGH_REGIONS: usize = 3;
 // Chosen semi-arbitrarily
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
-// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
+/// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
