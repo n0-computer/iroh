@@ -72,7 +72,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
-    pub async fn send(&self, dstkey: PublicKey, packet: Vec<Bytes>) -> Result<()> {
+    pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
         debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
 
         self.inner
@@ -304,7 +304,7 @@ impl<R: AsyncRead + Unpin> Client<R> {
 #[derive(Debug)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
-    Packet((PublicKey, Vec<Bytes>)),
+    Packet((PublicKey, Bytes)),
     /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
     /// Should only be used for mesh clients.
     FwdPacket((PublicKey, PublicKey, Bytes)),
@@ -345,7 +345,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                 Some(ClientWriterMessage::Packet((key, bytes))) => {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
                     // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
-                    send_packets(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
+                    send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
                 }
                 Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {
                     tokio::time::timeout(
@@ -603,65 +603,30 @@ pub enum ReceivedMessage {
     },
 }
 
-pub(crate) async fn send_packets<W: AsyncWrite + Unpin>(
+pub(crate) async fn send_packet<W: AsyncWrite + Unpin>(
     mut writer: W,
     rate_limiter: &Option<RateLimiter>,
     dstkey: PublicKey,
-    transmits: &[impl AsRef<[u8]>],
+    packet: &[u8],
 ) -> Result<()> {
-    let mut total_len: usize = 0;
-    // make sure no transmit is too big for a derp packet.
-    // also compute the total length of all transmits for logging.
-    for transmit in transmits {
-        let len = transmit.as_ref().len();
-        total_len += len;
-        ensure!(
-            len + PUBLIC_KEY_LENGTH <= MAX_PACKET_SIZE,
-            "packet too big: {}",
-            len
-        );
-    }
-    // disco packets must be sent as-is
-    if transmits.len() == 1
-        && transmits[0]
-            .as_ref()
-            .starts_with(crate::hp::disco::MAGIC.as_bytes())
-    {
-        let packet = transmits[0].as_ref();
-        if let Some(rate_limiter) = rate_limiter {
-            let frame_len = PUBLIC_KEY_LENGTH + packet.len();
-            if rate_limiter.check_n(frame_len).is_err() {
-                tracing::warn!("dropping send: rate limit reached");
-                return Ok(());
-            }
-        }
-        write_frame(
-            &mut writer,
-            FrameType::SendPacket,
-            &[dstkey.as_bytes(), packet],
-        )
-        .await?;
-    } else {
-        tracing::trace!("send derp packets {} {}", transmits.len(), total_len);
-        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
-        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(transmits) {
-            // rate limit for each packet, but exit early if the rate limit is exceeded.
-            // it is unlikely to recover that quickly.
-            if let Some(rate_limiter) = rate_limiter {
-                let frame_len = PUBLIC_KEY_LENGTH + packet.len();
-                if rate_limiter.check_n(frame_len).is_err() {
-                    tracing::warn!("dropping send: rate limit reached");
-                    return Ok(());
-                }
-            }
-            write_frame(
-                &mut writer,
-                FrameType::SendPacket,
-                &[dstkey.as_bytes(), packet.as_ref()],
-            )
-            .await?;
+    ensure!(
+        packet.len() <= MAX_PACKET_SIZE,
+        "packet too big: {}",
+        packet.len()
+    );
+    let frame_len = PUBLIC_KEY_LENGTH + packet.len();
+    if let Some(rate_limiter) = rate_limiter {
+        if rate_limiter.check_n(frame_len).is_err() {
+            tracing::warn!("dropping send: rate limit reached");
+            return Ok(());
         }
     }
+    write_frame(
+        &mut writer,
+        FrameType::SendPacket,
+        &[dstkey.as_bytes(), packet],
+    )
+    .await?;
     writer.flush().await?;
     Ok(())
 }
@@ -746,130 +711,4 @@ pub(crate) fn parse_recv_frame(frame: BytesMut) -> Result<(PublicKey, Bytes)> {
         PublicKey::try_from(&frame[..PUBLIC_KEY_LENGTH])?,
         frame.freeze().slice(PUBLIC_KEY_LENGTH..),
     ))
-}
-
-/// Combines blobs into packets of at most MAX_PACKET_SIZE.
-///
-/// Each item in a packet has a little-endian 2-byte length prefix.
-pub struct PacketizeIter<I: Iterator, const N: usize> {
-    iter: std::iter::Peekable<I>,
-    buffer: BytesMut,
-}
-
-impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
-    /// Create a new new PacketizeIter from something that can be turned into an
-    /// iterator of slices, like a Vec<Bytes>.
-    pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
-        Self {
-            iter: iter.into_iter().peekable(),
-            buffer: BytesMut::with_capacity(N),
-        }
-    }
-}
-
-impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
-where
-    I::Item: AsRef<[u8]>,
-{
-    type Item = Bytes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use bytes::BufMut;
-        while let Some(next_bytes) = self.iter.peek() {
-            let next_bytes = next_bytes.as_ref();
-            assert!(next_bytes.len() + 2 <= N);
-            let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
-            if self.buffer.len() + next_bytes.len() + 2 > N {
-                break;
-            }
-            self.buffer.put_u16_le(next_length);
-            self.buffer.put_slice(next_bytes);
-            self.iter.next();
-        }
-        if !self.buffer.is_empty() {
-            Some(self.buffer.split().freeze())
-        } else {
-            None
-        }
-    }
-}
-
-/// Splits a packet into its component items.
-pub struct PacketSplitIter {
-    bytes: Bytes,
-}
-
-impl PacketSplitIter {
-    /// Create a new PacketSplitIter from a packet.
-    ///
-    /// Returns an error if the packet is too big.
-    pub fn new(bytes: Bytes) -> Self {
-        Self { bytes }
-    }
-
-    #[cfg(test)]
-    pub fn split(packet: Bytes) -> std::io::Result<Vec<Bytes>> {
-        Self::new(packet).collect()
-    }
-
-    fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
-        self.bytes.clear();
-        Some(Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "",
-        )))
-    }
-}
-
-impl Iterator for PacketSplitIter {
-    type Item = std::io::Result<Bytes>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use bytes::Buf;
-        if self.bytes.has_remaining() {
-            if self.bytes.remaining() < 2 {
-                return self.fail();
-            }
-            let len = self.bytes.get_u16_le() as usize;
-            if self.bytes.remaining() < len {
-                return self.fail();
-            }
-            let item = self.bytes.split_to(len);
-            Some(Ok(item))
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty() {
-        let empty_vec: Vec<Bytes> = Vec::new();
-        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(empty_vec);
-        assert_eq!(None, iter.next());
-    }
-
-    #[test]
-    fn test_single_result() {
-        let single_vec = vec!["Hello"];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(single_vec);
-        let result = iter.collect::<Vec<_>>();
-        assert_eq!(1, result.len());
-        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
-    }
-
-    #[test]
-    fn test_multiple_results() {
-        let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
-        let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(multiple_vec);
-        let result = iter.collect::<Vec<_>>();
-        assert_eq!(2, result.len());
-        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
-        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
-    }
 }
