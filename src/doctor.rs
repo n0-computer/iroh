@@ -550,6 +550,15 @@ async fn connect(
     Ok(())
 }
 
+/// format a socket addr so that it does not have to be escaped on the console
+fn format_addr(addr: SocketAddr) -> String {
+    if addr.is_ipv6() {
+        format!("'{}'", addr)
+    } else {
+        format!("{}", addr)
+    }
+}
+
 async fn accept(
     private_key: SecretKey,
     config: TestConfig,
@@ -560,7 +569,7 @@ async fn accept(
     let endpoints = conn.local_endpoints().await?;
     let remote_addrs = endpoints
         .iter()
-        .map(|endpoint| format!("--remote-endpoint {}", endpoint.addr))
+        .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
         .join(" ");
     println!(
