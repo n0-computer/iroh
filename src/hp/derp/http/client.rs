@@ -397,6 +397,7 @@ impl Client {
             let hostname = self
                 .tls_servername(derp_node.as_ref())
                 .ok_or_else(|| ClientError::InvalidUrl)?;
+            debug!("connecting with hostname: {:?}", hostname);
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
 
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
@@ -585,7 +586,7 @@ impl Client {
                         first_err = Some(err);
                     }
                     if dials.is_empty() {
-                        return Err(ClientError::DialIO(first_err.unwrap()));
+                        return Err(first_err.unwrap());
                     }
                 }
             }
@@ -609,15 +610,29 @@ impl Client {
         &self,
         node: &DerpNode,
         dst_primary: UseIp,
-    ) -> Result<TcpStream, std::io::Error> {
+    ) -> Result<TcpStream, ClientError> {
         if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
             tokio::time::sleep(Duration::from_millis(200)).await;
             // Start v4 dial
         }
-        let host = match dst_primary {
-            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.to_string(),
-            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.to_string(),
-            _ => node.host_name.clone(),
+        let host: IpAddr = match dst_primary {
+            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
+            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
+            _ => {
+                if let Ok(ip) = node.host_name.parse() {
+                    // Already a valid IP address
+                    ip
+                } else {
+                    // Need to do a DNS lookup
+                    let addr = DNS_RESOLVER
+                        .lookup_ip(&node.host_name)
+                        .await
+                        .map_err(|e| ClientError::Dns(Some(e)))?
+                        .iter()
+                        .next();
+                    addr.ok_or_else(|| ClientError::Dns(None))?
+                }
+            }
         };
         let port = if node.derp_port != 0 {
             node.derp_port
@@ -631,7 +646,9 @@ impl Client {
                 DIAL_NODE_TIMEOUT,
                 async move { TcpStream::connect(dst).await },
             )
-            .await??;
+            .await
+            .map_err(|_| ClientError::ConnectTimeout)?
+            .map_err(ClientError::DialIO)?;
         // TODO: ipv6 vs ipv4 specific connection
 
         Ok(tcp_stream)
