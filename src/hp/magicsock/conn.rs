@@ -20,7 +20,7 @@ use futures::{future::BoxFuture, Stream, StreamExt};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
-    sync::{self, Mutex},
+    sync::{self, mpsc, Mutex},
     task::JoinHandle,
     time,
 };
@@ -181,6 +181,8 @@ pub struct Inner {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
+    /// Are we currently processing STUN responses (set during a netcheck report).
+    enable_stun_packets: AtomicBool,
 }
 
 impl Inner {
@@ -271,6 +273,7 @@ impl Conn {
             network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             network_sender,
+            enable_stun_packets: AtomicBool::new(false),
         });
 
         let conn = inner.clone();
@@ -293,8 +296,6 @@ impl Conn {
                 disco_info: HashMap::new(),
                 peer_map: Default::default(),
                 port_mapper,
-                net_checker,
-                enable_stun_packets: false,
                 pconn4,
                 pconn6,
                 udp_state: quinn_udp::UdpState::default(),
@@ -303,6 +304,7 @@ impl Conn {
                 my_derp: 0,
                 ipv6_reported: Arc::new(AtomicBool::new(false)),
                 no_v4_send: false,
+                net_checker,
             };
 
             if let Err(err) = actor.run().await {
@@ -799,11 +801,6 @@ struct Actor {
     pconn6: Option<RebindingUdpConn>,
     udp_state: quinn_udp::UdpState,
 
-    /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
-    net_checker: netcheck::Client,
-
-    enable_stun_packets: bool,
-
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
 
@@ -824,6 +821,17 @@ struct Actor {
 
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: u16,
+    /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
+    net_checker: netcheck::Client,
+}
+
+enum IpPacket {
+    Disco {
+        source: [u8; disco::KEY_LEN],
+        sealed_box: Bytes,
+        src: SocketAddr,
+    },
+    Forward(NetworkReadResult),
 }
 
 impl Actor {
@@ -843,6 +851,80 @@ impl Actor {
             self.pconn4.clone(),
             self.pconn6.clone(),
         );
+
+        let (ip_sender, mut ip_receiver) = mpsc::channel(128);
+        let stun_packet_channel = self.net_checker.get_stun_packet_channel();
+
+        // Process incoming packets in an independent task of the other work.
+
+        let conn = self.conn.clone();
+        // TODO: add shutdown for this and the main run loop
+        tokio::task::spawn(async move {
+            while let Some(ip_msgs) = ip_stream.next().await {
+                trace!("tick: ip_msgs");
+                match ip_msgs {
+                    Ok((packet, network, meta)) => {
+                        // Classify packets
+
+                        // Stun?
+                        if stun::is(&packet) {
+                            let enable_stun_packets =
+                                conn.enable_stun_packets.load(Ordering::Relaxed);
+                            debug!("on_stun_receive, processing {}", enable_stun_packets);
+                            if enable_stun_packets {
+                                stun_packet_channel.try_send((packet, meta.addr)).ok();
+                            }
+                            continue;
+                        }
+                        // Disco?
+                        if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
+                            if ip_sender
+                                .send(IpPacket::Disco {
+                                    source,
+                                    sealed_box: packet.slice_ref(sealed_box),
+                                    src: meta.addr,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                warn!("ip_sender gone");
+                                break;
+                            };
+                            continue;
+                        }
+
+                        // Foward
+                        let forward = match network {
+                            Network::Ipv4 => NetworkReadResult::Ok {
+                                source: NetworkSource::Ipv4,
+                                bytes: packet,
+                                meta,
+                            },
+                            Network::Ipv6 => NetworkReadResult::Ok {
+                                source: NetworkSource::Ipv6,
+                                bytes: packet,
+                                meta,
+                            },
+                        };
+
+                        if ip_sender.send(IpPacket::Forward(forward)).await.is_err() {
+                            warn!("ip_sender gone");
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if ip_sender
+                            .send(IpPacket::Forward(NetworkReadResult::Error(err)))
+                            .await
+                            .is_err()
+                        {
+                            warn!("ip_sender gone");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
 
         loop {
             tokio::select! {
@@ -935,6 +1017,24 @@ impl Actor {
                         }
                     }
                 }
+                Some(msg) = ip_receiver.recv() => {
+                    match msg {
+                        IpPacket::Disco { source, sealed_box, src } => {
+                            self.handle_disco_message(source, &sealed_box, src, None).await;
+                        }
+                        IpPacket::Forward(mut forward) => {
+                            if let NetworkReadResult::Ok { meta, bytes, .. } = &mut forward {
+                                self.receive_ip(bytes, meta);
+                            }
+
+                            let _ = self.derp_recv_sender.send_async(forward).await;
+                            let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
+                            while let Some(waker) = wakers.take() {
+                                waker.wake();
+                            }
+                        }
+                    }
+                }
                 Some((rs, result, action)) = recvs.next() => {
                     trace!("tick: recvs: {:?}, {:?}", result, action);
                     match action {
@@ -972,42 +1072,6 @@ impl Actor {
                         }
                     }
                 }
-                Some(ip_msgs) = ip_stream.next() => {
-                    trace!("tick: ip_msgs");
-                    match ip_msgs {
-                        Ok((bytes, network, mut meta)) => {
-                            if self.receive_ip(&bytes, &mut meta, network).await {
-                                match network {
-                                    Network::Ipv4 => {
-                                        let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                            source: NetworkSource::Ipv4,
-                                            bytes,
-                                            meta,
-                                        }).await;
-                                    }
-                                    Network::Ipv6 => {
-                                        let _ = self.derp_recv_sender.send_async(NetworkReadResult::Ok {
-                                            source: NetworkSource::Ipv6,
-                                            bytes,
-                                            meta,
-                                        }).await;
-                                    }
-                                }
-                                let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                                if let Some(waker) = wakers.take() {
-                                    waker.wake();
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            let _ = self.derp_recv_sender.send_async(NetworkReadResult::Error(err)).await;
-                            let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                            while let Some(waker) = wakers.take() {
-                                waker.wake();
-                            }
-                        }
-                    }
-                }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
@@ -1037,33 +1101,11 @@ impl Actor {
         }
     }
 
-    /// Decides if a received UDP packet should be passed to the above QUIC layer or not.
-    ///
-    /// This also modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
+    /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
     /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
     /// [`QuicMappedAddr`] instead of the actual remote.
-    ///
-    /// Returns `false` if this is an internal packet and it should not be reported.
-    async fn receive_ip(
-        &mut self,
-        bytes: &Bytes,
-        meta: &mut quinn_udp::RecvMeta,
-        network: Network,
-    ) -> bool {
-        debug!(
-            "received data {} from {} on {:?}",
-            meta.len, meta.addr, network
-        );
-
-        if stun::is(bytes) {
-            debug!("received STUN message {}", bytes.len());
-            self.on_stun_receive(bytes, meta.addr).await;
-            return false;
-        }
-        if self.handle_disco_message(bytes, meta.addr, None).await {
-            debug!("received DISCO message {}", bytes.len());
-            return false;
-        }
+    fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) {
+        debug!("received data {} from {}", meta.len, meta.addr);
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
                 info!("no peer_map state found for {}", meta.addr);
@@ -1096,8 +1138,6 @@ impl Actor {
         // }
 
         debug!("received passthrough message {}", bytes.len());
-
-        true
     }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
@@ -1120,13 +1160,6 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    async fn on_stun_receive(&self, packet: &[u8], addr: SocketAddr) {
-        if self.enable_stun_packets {
-            let packet = packet.to_vec();
-            self.net_checker.receive_stun_packet(&packet, addr).await;
-        }
-    }
-
     async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<NetworkReadResult> {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
@@ -1137,7 +1170,7 @@ impl Actor {
         let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
 
         if self
-            .handle_disco_message(&dm.buf, ipp, Some(dm.src.clone()))
+            .handle_derp_disco_message(&dm.buf, ipp, dm.src.clone())
             .await
         {
             // Message was internal, do not bubble up.
@@ -1704,8 +1737,6 @@ impl Actor {
             add_addr!(already, eps, global_v6, cfg::EndpointType::Stun);
         }
 
-        self.ignore_stun_packets().await;
-
         let local_addr_v4 = self.pconn4.local_addr().ok();
         let local_addr_v6 = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -1853,17 +1884,22 @@ impl Actor {
             return Ok(Default::default());
         }
 
-        self.enable_stun_packets = true;
         let dm = self.derp_map.as_ref().unwrap();
         let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
+        info!("START REPORT, STUN PACKETS");
+        self.conn.enable_stun_packets.store(true, Ordering::Relaxed);
         let report = time::timeout(Duration::from_secs(10), async move {
             net_checker.get_report(dm, pconn4, pconn6).await
         })
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
+        self.conn
+            .enable_stun_packets
+            .store(false, Ordering::Relaxed);
+        info!("STOP REPORT, STUN PACKETS");
         let r = &report;
         debug!(
             "setting no_v4_send {} -> {}",
@@ -1905,7 +1941,6 @@ impl Actor {
 
         // TODO: set link type
         self.call_net_info_callback(ni).await;
-        self.ignore_stun_packets().await;
 
         Ok(report)
     }
@@ -1945,12 +1980,6 @@ impl Actor {
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         *ids.choose(&mut rng).unwrap()
-    }
-
-    /// Sets a STUN packet processing func that does nothing.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn ignore_stun_packets(&mut self) {
-        self.enable_stun_packets = false;
     }
 
     /// Records the new endpoints, reporting whether they're changed.
@@ -2235,32 +2264,35 @@ impl Actor {
         }
     }
 
-    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
-    ///
-    /// A discovery message has the form:
-    ///
-    ///   - magic             [6]byte
-    ///   - senderDiscoPubKey [32]byte
-    ///   - nonce             [24]byte
-    ///   - naclbox of payload (see disco package for inner payload format)
-    ///
-    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
-    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn handle_disco_message(
+    async fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
         src: SocketAddr,
-        derp_node_src: Option<key::node::PublicKey>,
+        derp_node_src: key::node::PublicKey,
     ) -> bool {
-        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         let source = disco::source_and_box(msg);
         if source.is_none() {
             return false;
         }
 
         let (source, sealed_box) = source.unwrap();
+        self.handle_disco_message(source, sealed_box, src, Some(derp_node_src))
+            .await
+    }
 
+    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
+    ///
+    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
+    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
+    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    async fn handle_disco_message(
+        &mut self,
+        source: [u8; disco::KEY_LEN],
+        sealed_box: &[u8],
+        src: SocketAddr,
+        derp_node_src: Option<key::node::PublicKey>,
+    ) -> bool {
+        debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         if self.conn.is_closed() {
             return true;
         }
@@ -2733,6 +2765,10 @@ impl IpStream {
             out_buffer: VecDeque::new(),
         }
     }
+
+    fn handle_packet(&mut self, packet: Bytes, network: Network, meta: quinn_udp::RecvMeta) {
+        self.out_buffer.push_back((packet, network, meta));
+    }
 }
 
 impl Stream for IpStream {
@@ -2772,7 +2808,7 @@ impl Stream for IpStream {
                             // set stride to len, as we are cutting it into pieces here
                             meta.len = buf.len();
                             meta.stride = buf.len();
-                            self.out_buffer.push_back((buf, Network::Ipv6, meta));
+                            self.handle_packet(buf, Network::Ipv6, meta);
                         }
                     }
                     if let Some(res) = self.out_buffer.pop_front() {
@@ -2796,7 +2832,7 @@ impl Stream for IpStream {
                         // set stride to len, as we are cutting it into pieces here
                         meta.len = buf.len();
                         meta.stride = buf.len();
-                        self.out_buffer.push_back((buf, Network::Ipv6, meta));
+                        self.handle_packet(buf, Network::Ipv4, meta);
                     }
                 }
                 if let Some(res) = self.out_buffer.pop_front() {
