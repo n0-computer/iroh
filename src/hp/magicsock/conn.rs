@@ -30,8 +30,10 @@ use tracing::{debug, error, info, instrument, trace, warn};
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
-        derp::{self, client::PacketSplitIter, DerpMap, DerpRegion},
-        disco, key, netcheck, netmap, portmapper, stun,
+        derp::{self, DerpMap, DerpRegion, MAX_PACKET_SIZE},
+        disco,
+        key::{self, node::PUBLIC_KEY_LENGTH},
+        netcheck, netmap, portmapper, stun,
     },
     inc,
     metrics::magicsock::MagicsockMetrics,
@@ -1473,13 +1475,20 @@ impl Actor {
         }
         let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
 
-        match derp_client.send(peer.clone(), contents).await {
-            Ok(_) => {
-                record!(MagicsockMetrics::SendDerp, total_bytes);
-            }
-            Err(err) => {
-                warn!("derp.send: failed {:?}", err);
-                inc!(MagicsockMetrics::SendDerpError);
+        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        // split into multiple packets if needed.
+        // In almost all cases this will be a single packet.
+        // But we have no guarantee that the total size of the contents including
+        // length prefix will be smaller than the payload size.
+        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
+            match derp_client.send(peer.clone(), packet).await {
+                Ok(_) => {
+                    record!(MagicsockMetrics::SendDerp, total_bytes);
+                }
+                Err(err) => {
+                    warn!("derp.send: failed {:?}", err);
+                    inc!(MagicsockMetrics::SendDerpError);
+                }
             }
         }
     }
@@ -3081,6 +3090,95 @@ impl Iterator for TransmitIter<'_> {
     }
 }
 
+/// Combines blobs into packets of at most MAX_PACKET_SIZE.
+///
+/// Each item in a packet has a little-endian 2-byte length prefix.
+pub struct PacketizeIter<I: Iterator, const N: usize> {
+    iter: std::iter::Peekable<I>,
+    buffer: BytesMut,
+}
+
+impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
+    /// Create a new new PacketizeIter from something that can be turned into an
+    /// iterator of slices, like a Vec<Bytes>.
+    pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
+        Self {
+            iter: iter.into_iter().peekable(),
+            buffer: BytesMut::with_capacity(N),
+        }
+    }
+}
+
+impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
+where
+    I::Item: AsRef<[u8]>,
+{
+    type Item = Bytes;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::BufMut;
+        while let Some(next_bytes) = self.iter.peek() {
+            let next_bytes = next_bytes.as_ref();
+            assert!(next_bytes.len() + 2 <= N);
+            let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
+            if self.buffer.len() + next_bytes.len() + 2 > N {
+                break;
+            }
+            self.buffer.put_u16_le(next_length);
+            self.buffer.put_slice(next_bytes);
+            self.iter.next();
+        }
+        if !self.buffer.is_empty() {
+            Some(self.buffer.split().freeze())
+        } else {
+            None
+        }
+    }
+}
+
+/// Splits a packet into its component items.
+pub struct PacketSplitIter {
+    bytes: Bytes,
+}
+
+impl PacketSplitIter {
+    /// Create a new PacketSplitIter from a packet.
+    ///
+    /// Returns an error if the packet is too big.
+    pub fn new(bytes: Bytes) -> Self {
+        Self { bytes }
+    }
+
+    fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
+        self.bytes.clear();
+        Some(Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "",
+        )))
+    }
+}
+
+impl Iterator for PacketSplitIter {
+    type Item = std::io::Result<Bytes>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::Buf;
+        if self.bytes.has_remaining() {
+            if self.bytes.remaining() < 2 {
+                return self.fail();
+            }
+            let len = self.bytes.get_u16_le() as usize;
+            if self.bytes.remaining() < len {
+                return self.fail();
+            }
+            let item = self.bytes.split_to(len);
+            Some(Ok(item))
+        } else {
+            None
+        }
+    }
+}
+
 /// The fake address used by the QUIC layer to address a peer.
 ///
 /// You can consider this as nothing more than a lookup key for a peer the [`Conn`] knows
@@ -3187,6 +3285,27 @@ mod tests {
         dbg!(&groups);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);
+    }
+
+    #[test]
+    fn test_packetze_iter() {
+        let empty_vec: Vec<Bytes> = Vec::new();
+        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(empty_vec);
+        assert_eq!(None, iter.next());
+
+        let single_vec = vec!["Hello"];
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(single_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(1, result.len());
+        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
+
+        let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
+        let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(multiple_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(2, result.len());
+        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
+        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
     }
 
     async fn pick_port() -> u16 {
