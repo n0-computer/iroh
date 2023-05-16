@@ -37,7 +37,7 @@ pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
 /// Current Version.
 const V0: u8 = 0;
 
-const KEY_LEN: usize = 32;
+pub(crate) const KEY_LEN: usize = 32;
 const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 const TX_LEN: usize = 12;
 

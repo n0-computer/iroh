@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use bytes::Bytes;
 use futures::{
     stream::{FuturesUnordered, StreamExt},
     Future, FutureExt,
@@ -127,11 +128,11 @@ impl fmt::Display for Report {
 ///
 /// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
 /// While running it expects to be passed received stun packets using
-/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
+/// [`Client::get_stun_packet_channel`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
 /// do so.
 #[derive(Debug)]
 pub struct Client {
-    msg_sender: mpsc::Sender<ActorMessage>,
+    msg_sender: mpsc::Sender<(Bytes, SocketAddr)>,
     actor: Actor,
 }
 
@@ -177,14 +178,8 @@ impl Client {
     }
 
     /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running netcheck actor.
-    pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
-        if let Err(err) = self
-            .msg_sender
-            .send(ActorMessage::StunPacket(pkt.to_vec(), src))
-            .await
-        {
-            warn!("failed to receive stun packet: {:?}", err);
-        }
+    pub fn get_stun_packet_channel(&self) -> mpsc::Sender<(Bytes, SocketAddr)> {
+        self.msg_sender.clone()
     }
 
     /// Runs a netcheck, returning the report.
@@ -195,7 +190,7 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// [`Client::get_stun_packet_channel`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -239,7 +234,7 @@ impl Client {
     }
 
     /// Spawns a tokio task reading stun packets from the UDP socket.
-    fn spawn_udp_listener(&self, sock: Arc<UdpSocket>, sender: mpsc::Sender<ActorMessage>) {
+    fn spawn_udp_listener(&self, sock: Arc<UdpSocket>, sender: mpsc::Sender<(Bytes, SocketAddr)>) {
         tokio::spawn(async move {
             debug!("udp stun socket listener started");
             // TODO: Can we do better for buffers here?  Probably doesn't matter
@@ -260,7 +255,7 @@ impl Client {
     async fn recv_stun_socket(
         sock: &UdpSocket,
         buf: &mut [u8],
-        sender: &mpsc::Sender<ActorMessage>,
+        sender: &mpsc::Sender<(Bytes, SocketAddr)>,
     ) -> Result<()> {
         let (count, mut from_addr) = sock
             .recv_from(buf)
@@ -269,7 +264,7 @@ impl Client {
         let payload = &buf[..count];
         from_addr.set_ip(to_canonical(from_addr.ip()));
         sender
-            .send(ActorMessage::StunPacket(payload.to_vec(), from_addr))
+            .send((Bytes::from(payload.to_vec()), from_addr))
             .await
             .context("actor stopped")
     }
@@ -650,6 +645,7 @@ impl ReportState {
                 probe_report = probes.next() => {
                     match probe_report {
                         Some(Ok(probe_report)) => {
+                            debug!("finished probe: {:?}", probe_report);
                             match probe_report.probe {
                                 Probe::Https { reg, .. } => {
                                     if let Some(delay) = probe_report.delay {
@@ -1061,7 +1057,7 @@ impl ProbeReport {
 #[derive(Debug)]
 struct Actor {
     /// Actor messages channel.
-    receiver: mpsc::Receiver<ActorMessage>,
+    receiver: mpsc::Receiver<(Bytes, SocketAddr)>,
     reports: Reports,
     /// Whether the client should try to reach things other than localhost.
     ///
@@ -1071,11 +1067,6 @@ struct Actor {
     port_mapper: Option<portmapper::Client>,
     got_hair_stun: broadcast::Sender<SocketAddr>,
     dns_resolver: TokioAsyncResolver,
-}
-
-#[derive(Debug)]
-enum ActorMessage {
-    StunPacket(Vec<u8>, SocketAddr),
 }
 
 impl Actor {
@@ -1110,9 +1101,10 @@ impl Actor {
                     in_flight.insert(inf.tx, inf);
                 }
                 msg = self.receiver.recv() => {
+                    debug!("incoming stun packet: {:?}", msg);
                     match msg {
                         None => bail!("client dropped, abort"),
-                        Some(ActorMessage::StunPacket(pkt, source)) =>
+                        Some((pkt, source)) =>
                             self.receive_stun_packet(&mut in_flight, &pkt, source).await,
                     }
                 }
