@@ -106,6 +106,13 @@ impl FromStr for ProviderRpcPort {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
+    /// Diagnostic commands for the derp relay protocol.
+    Doctor {
+        /// Commands for doctor - defined in the mod
+        #[clap(subcommand)]
+        command: iroh::doctor::Commands,
+    },
+
     /// Serve data from the given path.
     ///
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
@@ -714,6 +721,7 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
+        Commands::Doctor { command } => iroh::doctor::run(command, &config).await,
     };
 
     #[cfg(feature = "metrics")]

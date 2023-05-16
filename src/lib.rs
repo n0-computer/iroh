@@ -3,6 +3,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod config;
+#[cfg(feature = "cli")]
+pub mod doctor;
 pub mod get;
 #[cfg(feature = "cli")]
 pub mod main_util;

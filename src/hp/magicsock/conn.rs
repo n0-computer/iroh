@@ -639,10 +639,10 @@ impl AsyncUdpSocket for Conn {
                                     record!(MagicsockMetrics::RecvDataDerp, bytes.len() as _);
                                 }
                                 NetworkSource::Ipv4 => {
-                                    record!(MagicsockMetrics::RecvDataIPv4, bytes.len() as _);
+                                    record!(MagicsockMetrics::RecvDataIpv4, bytes.len() as _);
                                 }
                                 NetworkSource::Ipv6 => {
-                                    record!(MagicsockMetrics::RecvDataIPv6, bytes.len() as _);
+                                    record!(MagicsockMetrics::RecvDataIpv6, bytes.len() as _);
                                 }
                             }
                             trace!(
@@ -1473,6 +1473,7 @@ impl Actor {
         for content in &contents {
             trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
         }
+        let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
 
         const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
         // split into multiple packets if needed.
@@ -1482,7 +1483,7 @@ impl Actor {
         for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
             match derp_client.send(peer.clone(), packet).await {
                 Ok(_) => {
-                    inc!(MagicsockMetrics::SendDerp);
+                    record!(MagicsockMetrics::SendDerp, total_bytes);
                 }
                 Err(err) => {
                     warn!("derp.send: failed {:?}", err);
@@ -1662,6 +1663,7 @@ impl Actor {
 
         macro_rules! add_addr {
             ($already:expr, $eps:expr, $ipp:expr, $et:expr) => {
+                #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
                     $eps.push(cfg::Endpoint {
@@ -2654,6 +2656,16 @@ impl Actor {
         }
         let sum =
             futures::future::poll_fn(|cx| conn.poll_send(&self.udp_state, cx, &transmits)).await?;
+        let total_bytes: u64 = transmits
+            .iter()
+            .take(sum)
+            .map(|x| x.contents.len() as u64)
+            .sum();
+        if addr.is_ipv6() {
+            record!(MagicsockMetrics::SendIpv6, total_bytes);
+        } else {
+            record!(MagicsockMetrics::SendIpv4, total_bytes);
+        }
 
         debug!("sent {} packets to {}", sum, addr);
         debug_assert!(

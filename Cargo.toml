@@ -7,6 +7,7 @@ description = "IPFS reimagined"
 license = "MIT/Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
+default-run = "iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.65"

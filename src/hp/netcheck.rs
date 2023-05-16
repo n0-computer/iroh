@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{self, Debug},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -116,6 +116,13 @@ impl Report {
     }
 }
 
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
+    }
+}
+
+/// Generates a netcheck [`Report`].
 /// Client to generate netcheck [`Report`]s.
 ///
 /// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
