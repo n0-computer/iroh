@@ -131,7 +131,10 @@ fn is_link_local(ip: IpAddr) -> bool {
     }
 }
 
-/// Converts this address to an IpAddr::V4 if it is an IPv4-mapped IPv6 addresses, otherwise it return self as-is.
+/// Converts IPv4-mappend IPv6 addresses to IPv4.
+///
+/// Converts this address to an [`IpAddr::V4`] if it is an IPv4-mapped IPv6 addresses,
+/// otherwise it return self as-is.
 // TODO: replace with IpAddr::to_canoncial once stabilized.
 pub fn to_canonical(ip: IpAddr) -> IpAddr {
     match ip {
