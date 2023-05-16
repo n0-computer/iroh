@@ -1105,13 +1105,13 @@ impl Actor {
                     match msg {
                         None => bail!("client dropped, abort"),
                         Some((pkt, source)) =>
-                            self.receive_stun_packet(&mut in_flight, &pkt, source).await,
+                            self.receive_stun_packet(&mut in_flight, &pkt, source),
                     }
                 }
                 res = &mut running => {
                     match res {
                         Ok(Ok((report, dm))) => {
-                            let report = self.finish_and_store_report(report, &dm).await;
+                            let report = self.finish_and_store_report(report, &dm);
                             return Ok(report)
                         }
                         Err(err) => {
@@ -1190,7 +1190,7 @@ impl Actor {
         })
     }
 
-    async fn receive_stun_packet(
+    fn receive_stun_packet(
         &self,
         in_flight: &mut HashMap<stun::TransactionId, Inflight>,
         pkt: &[u8],
@@ -1206,7 +1206,7 @@ impl Actor {
         // metricSTUNRecv6.Add(1)
         // }
 
-        if self.handle_hair_stun(pkt, src).await {
+        if self.handle_hair_stun(pkt, src) {
             return;
         }
 
@@ -1231,14 +1231,14 @@ impl Actor {
         }
     }
 
-    async fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
-        let report = self.add_report_history_and_set_preferred_derp(report).await;
-        self.log_concise_report(&report, dm).await;
+    fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
+        let report = self.add_report_history_and_set_preferred_derp(report);
+        self.log_concise_report(&report, dm);
 
         report
     }
 
-    async fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
+    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
         let mut log = "report: ".to_string();
         log += &format!("udp={}", r.udp);
         if !r.ipv4 {
@@ -1298,7 +1298,7 @@ impl Actor {
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
     /// `r` is stored ref counted and a reference is returned.
-    async fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
+    fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
         let mut prev_derp = 0;
         if let Some(ref last) = self.reports.last {
             prev_derp = last.preferred_derp;
@@ -1371,7 +1371,7 @@ impl Actor {
     }
 
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    async fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
+    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
         if let Some(ref hair_tx) = self.reports.current_hair_tx {
             if let Ok(ref tx) = stun::parse_binding_request(pkt) {
                 if tx == hair_tx {
@@ -1763,7 +1763,7 @@ mod tests {
                     client
                         .actor
                         .add_report_history_and_set_preferred_derp(r)
-                        .await,
+                        ,
                 );
             }
             let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
