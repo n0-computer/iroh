@@ -698,10 +698,12 @@ async fn server_stun_listener(pc: tokio::net::UdpSocket) {
             Ok((n, ua)) => {
                 let pkt = &buffer[..n];
                 if !stun::is(pkt) {
+                    debug!("STUN: ignoring non stun packet from {}", ua);
                     continue;
                 }
                 match stun::parse_binding_request(pkt) {
                     Ok(txid) => {
+                        debug!("STUN: received binding request from {}", ua);
                         let res = stun::response(txid, ua);
                         if let Err(err) = pc.send_to(&res, ua).await {
                             warn!("STUN: failed to write response to {}: {:?}", ua, err);
@@ -714,7 +716,7 @@ async fn server_stun_listener(pc: tokio::net::UdpSocket) {
                 }
             }
             Err(err) => {
-                warn!("STUN recv: {:?}", err);
+                warn!("STUN: failed to recv: {:?}", err);
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
