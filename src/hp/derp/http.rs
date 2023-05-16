@@ -8,16 +8,84 @@ pub use server::derp_connection_handler;
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
 #[cfg(test)]
+pub(crate) async fn run_server_tls(
+    addr: std::net::SocketAddr,
+    key: crate::hp::key::node::SecretKey,
+) -> (
+    std::net::SocketAddr,
+    tokio_util::sync::CancellationToken,
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+) {
+    println!("starting derp tls server on {}", addr);
+    // create derp_server
+    let derp_server: super::Server<Client> = super::Server::new(key, None);
+
+    // create handler that sends new connections to the client
+    let derp_client_handler = derp_server.client_conn_handler(Default::default());
+
+    // TLS prep
+    let subject_alt_names = vec!["localhost".to_string()];
+
+    let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
+    let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
+    let rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+    let config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(vec![(rustls_certificate)], rustls_key)
+        .unwrap();
+
+    let config = std::sync::Arc::new(config);
+    let tls_acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let done = tokio_util::sync::CancellationToken::new();
+    let server_shutdown = done.clone();
+    let server_task = tokio::task::spawn(async move {
+        let mut tasks = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                biased;
+                _ = server_shutdown.cancelled() => {
+                    derp_server.close().await;
+                    break;
+                }
+                conn = listener.accept() => {
+                    let (stream, _) = conn?;
+                    let derp_client_handler = derp_client_handler.clone();
+                    let tls_acceptor = tls_acceptor.clone();
+                    tasks.spawn(async move {
+                        let tls_stream = tls_acceptor.accept(stream).await.unwrap();
+                        if let Err(err) = hyper::server::conn::Http::new()
+                            .serve_connection(tls_stream, derp_client_handler)
+                            .with_upgrades()
+                            .await
+                        {
+                            eprintln!("Failed to serve connection: {:?}", err);
+                        }
+                    });
+                }
+            }
+        }
+        tasks.abort_all();
+
+        println!("shutdown complete");
+        Ok::<_, anyhow::Error>(())
+    });
+    (addr, done, server_task)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::net::SocketAddr;
-    use std::sync::Arc;
 
     use anyhow::Result;
     use bytes::Bytes;
     use hyper::server::conn::Http;
     use reqwest::Url;
+    use std::net::SocketAddr;
     use tokio::net::TcpListener;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
@@ -32,97 +100,29 @@ mod tests {
 
     async fn run_server(key: SecretKey) -> (SocketAddr, CancellationToken, JoinHandle<Result<()>>) {
         let addr = "127.0.0.1:0";
-
-        // create derp_server
         let derp_server: DerpServer<super::Client> = DerpServer::new(key, None);
-
-        // create handler that sends new connections to the client
         let derp_client_handler = derp_server.client_conn_handler(Default::default());
 
         let listener = TcpListener::bind(&addr).await.unwrap();
-        // We need the assigned address for the client to send it messages.
         let addr = listener.local_addr().unwrap();
-
         let done = CancellationToken::new();
         let server_shutdown = done.clone();
-        // Spawn server on the default executor,
-        // which is usually a thread-pool from tokio default runtime.
         let server_task = tokio::task::spawn(async move {
+            let mut tasks = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     biased;
                     _ = server_shutdown.cancelled() => {
                         derp_server.close().await;
+                        tasks.abort_all();
                         return Ok::<_, anyhow::Error>(());
                     }
-
                     conn = listener.accept() => {
                         let (stream, _) = conn?;
                         let derp_client_handler = derp_client_handler.clone();
-                        tokio::task::spawn(async move {
+                        tasks.spawn(async move {
                             if let Err(err) = Http::new()
                                 .serve_connection(stream, derp_client_handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                eprintln!("Failed to serve connection: {:?}", err);
-                            }
-                        });
-                    }
-                }
-            }
-        });
-        (addr, done, server_task)
-    }
-
-    async fn run_server_tls(
-        key: SecretKey,
-    ) -> (SocketAddr, CancellationToken, JoinHandle<Result<()>>) {
-        let addr = "127.0.0.1:0";
-
-        // create derp_server
-        let derp_server: DerpServer<super::Client> = DerpServer::new(key, None);
-
-        // create handler that sends new connections to the client
-        let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-        // TLS prep
-        let subject_alt_names = vec!["localhost".to_string()];
-
-        let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-        let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
-        let rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
-        let config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(vec![(rustls_certificate)], rustls_key)
-            .unwrap();
-
-        let config = Arc::new(config);
-        let tls_acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
-
-        let listener = TcpListener::bind(&addr).await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let done = CancellationToken::new();
-        let server_shutdown = done.clone();
-        let server_task = tokio::task::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = server_shutdown.cancelled() => {
-                        derp_server.close().await;
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    conn = listener.accept() => {
-                        let (stream, _) = conn?;
-                        let derp_client_handler = derp_client_handler.clone();
-                        let tls_acceptor = tls_acceptor.clone();
-                        tokio::task::spawn(async move {
-                            let tls_stream = tls_acceptor.accept(stream).await.unwrap();
-                            if let Err(err) = Http::new()
-                                .serve_connection(tls_stream, derp_client_handler)
                                 .with_upgrades()
                                 .await
                             {
@@ -278,7 +278,8 @@ mod tests {
         let b_key = SecretKey::generate();
 
         // start server
-        let (addr, shutdown_server, server_task) = run_server_tls(server_key).await;
+        let (addr, shutdown_server, server_task) =
+            run_server_tls("127.0.0.1:0".parse().unwrap(), server_key).await;
 
         // get dial info & create region
         let port = addr.port();
@@ -289,7 +290,7 @@ mod tests {
                 anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
-        println!("addr: {addr}:{port}");
+        println!("DERP listening on: {addr}:{port}");
 
         let region = DerpRegion {
             region_id: 1,
