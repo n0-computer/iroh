@@ -7,8 +7,8 @@
  *                                         *
  *******************************************/
 
-#ifndef __RUST_IROH__
-#define __RUST_IROH__
+#ifndef __RUST_IROH_FFI__
+#define __RUST_IROH_FFI__
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,7 +24,6 @@ int32_t add_numbers (
 
 uint32_t get (
     char const * hash,
-    char const * auth_token,
     char const * peer,
     char const * peer_addr,
     char const * out_path);
@@ -38,4 +37,4 @@ uint32_t get_ticket (
 } /* extern "C" */
 #endif
 
-#endif /* __RUST_IROH__ */
+#endif /* __RUST_IROH_FFI__ */
