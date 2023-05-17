@@ -350,16 +350,12 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     let home = testdir!();
     let mut provider = make_provider(&path, &input, home, None, None)?;
-    // std::io::copy(
-    //     &mut provider.child.stderr.take().unwrap(),
-    //     &mut std::io::stderr(),
-    // )?;
 
-    let stdout = provider.child.stdout.take().unwrap();
-    let stdout = BufReader::new(stdout);
+    let mut stdout = provider.child.stdout.take().unwrap();
+    let mut stderr = provider.child.stderr.take().unwrap();
 
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(stdout, num_blobs, input)?;
+    let all_in_one = match_provide_output(BufReader::new(&mut stdout), num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
     let mut cmd = Command::new(iroh_bin());
@@ -369,6 +365,16 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     } else {
         &mut cmd
     };
+
+    std::thread::spawn(move || {
+        // change to stderr to see the log output
+        std::io::copy(&mut stderr, &mut std::io::sink()).unwrap();
+    });
+
+    std::thread::spawn(move || {
+        // change to stdout to see the output
+        std::io::copy(&mut stdout, &mut std::io::sink()).unwrap();
+    });
 
     // test get stderr output
     let get_output = cmd.output()?;
