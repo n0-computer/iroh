@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use bytes::Bytes;
 use futures::{
     stream::{FuturesUnordered, StreamExt},
     Future, FutureExt,
@@ -62,6 +63,9 @@ const ENOUGH_REGIONS: usize = 3;
 
 // Chosen semi-arbitrarily
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
+
+/// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
+const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
@@ -128,11 +132,11 @@ impl fmt::Display for Report {
 ///
 /// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
 /// While running it expects to be passed received stun packets using
-/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
+/// [`Client::get_stun_packet_channel`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
 /// do so.
 #[derive(Debug)]
 pub struct Client {
-    msg_sender: mpsc::Sender<ActorMessage>,
+    msg_sender: mpsc::Sender<(Bytes, SocketAddr)>,
     actor: Actor,
 }
 
@@ -178,14 +182,8 @@ impl Client {
     }
 
     /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running netcheck actor.
-    pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
-        if let Err(err) = self
-            .msg_sender
-            .send(ActorMessage::StunPacket(pkt.to_vec(), src))
-            .await
-        {
-            warn!("failed to receive stun packet: {:?}", err);
-        }
+    pub fn get_stun_packet_channel(&self) -> mpsc::Sender<(Bytes, SocketAddr)> {
+        self.msg_sender.clone()
     }
 
     /// Runs a netcheck, returning the report.
@@ -196,7 +194,7 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
+    /// [`Client::get_stun_packet_channel`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -255,7 +253,7 @@ impl Client {
     /// is fine since the socket is already bound so packets will not be lost.
     fn spawn_udp_listener(
         sock: Arc<UdpSocket>,
-        sender: mpsc::Sender<ActorMessage>,
+        sender: mpsc::Sender<(Bytes, SocketAddr)>,
         cancel_token: CancellationToken,
     ) {
         let span = debug_span!(
@@ -293,7 +291,7 @@ impl Client {
     async fn recv_stun_once(
         sock: &UdpSocket,
         buf: &mut [u8],
-        sender: &mpsc::Sender<ActorMessage>,
+        sender: &mpsc::Sender<(Bytes, SocketAddr)>,
     ) -> Result<()> {
         let (count, mut from_addr) = sock
             .recv_from(buf)
@@ -302,7 +300,7 @@ impl Client {
         let payload = &buf[..count];
         from_addr.set_ip(to_canonical(from_addr.ip()));
         sender
-            .send(ActorMessage::StunPacket(payload.to_vec(), from_addr))
+            .send((Bytes::from(payload.to_vec()), from_addr))
             .await
             .context("actor stopped")
     }
@@ -598,10 +596,18 @@ impl ReportState {
                 inner: Some(Box::pin(async move {
                     // wait
                     time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                    match check_captive_portal(&dm, preferred_derp).await {
-                        Ok(found) => Some(found),
-                        Err(err) => {
+                    let captive_portal_check = tokio::time::timeout(
+                        CAPTIVE_PORTAL_TIMEOUT,
+                        check_captive_portal(&dm, preferred_derp),
+                    );
+                    match captive_portal_check.await {
+                        Ok(Ok(found)) => Some(found),
+                        Ok(Err(err)) => {
                             info!("check_captive_portal error: {:?}", err);
+                            None
+                        }
+                        Err(_) => {
+                            info!("check_captive_portal timed out");
                             None
                         }
                     }
@@ -686,6 +692,7 @@ impl ReportState {
                 probe_report = probes.next() => {
                     match probe_report {
                         Some(Ok(probe_report)) => {
+                            debug!("finished probe: {:?}", probe_report);
                             match probe_report.probe {
                                 Probe::Https { reg, .. } => {
                                     if let Some(delay) = probe_report.delay {
@@ -1101,7 +1108,7 @@ impl ProbeReport {
 #[derive(Debug)]
 struct Actor {
     /// Actor messages channel.
-    receiver: mpsc::Receiver<ActorMessage>,
+    receiver: mpsc::Receiver<(Bytes, SocketAddr)>,
     reports: Reports,
     /// Whether the client should try to reach things other than localhost.
     ///
@@ -1111,11 +1118,6 @@ struct Actor {
     port_mapper: Option<portmapper::Client>,
     got_hair_stun: broadcast::Sender<SocketAddr>,
     dns_resolver: TokioAsyncResolver,
-}
-
-#[derive(Debug)]
-enum ActorMessage {
-    StunPacket(Vec<u8>, SocketAddr),
 }
 
 impl Actor {
@@ -1152,16 +1154,17 @@ impl Actor {
                     in_flight.insert(inf.tx, inf);
                 }
                 msg = self.receiver.recv() => {
+                    debug!("incoming stun packet: {:?}", msg);
                     match msg {
                         None => bail!("client dropped, abort"),
-                        Some(ActorMessage::StunPacket(pkt, source)) =>
-                            self.receive_stun_packet(&mut in_flight, &pkt, source).await,
+                        Some((pkt, source)) =>
+                            self.receive_stun_packet(&mut in_flight, &pkt, source),
                     }
                 }
                 res = &mut running => {
                     match res {
                         Ok(Ok((report, dm))) => {
-                            let report = self.finish_and_store_report(report, &dm).await;
+                            let report = self.finish_and_store_report(report, &dm);
                             return Ok(report)
                         }
                         Err(err) => {
@@ -1240,7 +1243,7 @@ impl Actor {
         })
     }
 
-    async fn receive_stun_packet(
+    fn receive_stun_packet(
         &self,
         in_flight: &mut HashMap<stun::TransactionId, Inflight>,
         pkt: &[u8],
@@ -1256,7 +1259,7 @@ impl Actor {
         // metricSTUNRecv6.Add(1)
         // }
 
-        if self.handle_hair_stun(pkt, src).await {
+        if self.handle_hair_stun(pkt, src) {
             return;
         }
 
@@ -1281,14 +1284,14 @@ impl Actor {
         }
     }
 
-    async fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
-        let report = self.add_report_history_and_set_preferred_derp(report).await;
-        self.log_concise_report(&report, dm).await;
+    fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
+        let report = self.add_report_history_and_set_preferred_derp(report);
+        self.log_concise_report(&report, dm);
 
         report
     }
 
-    async fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
+    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
         let mut log = "report: ".to_string();
         log += &format!("udp={}", r.udp);
         if !r.ipv4 {
@@ -1348,7 +1351,7 @@ impl Actor {
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
     /// `r` is stored ref counted and a reference is returned.
-    async fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
+    fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
         let mut prev_derp = 0;
         if let Some(ref last) = self.reports.last {
             prev_derp = last.preferred_derp;
@@ -1421,7 +1424,7 @@ impl Actor {
     }
 
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    async fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
+    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
         if let Some(ref hair_tx) = self.reports.current_hair_tx {
             if let Ok(ref tx) = stun::parse_binding_request(pkt) {
                 if tx == hair_tx {
@@ -1544,13 +1547,14 @@ mod tests {
         let stun_port = 19302;
         let host_name = "stun.l.google.com".into();
         let derp_port = 0;
-        let dm = DerpMap::default_from_node(
+        let mut dm = DerpMap::default_from_node(
             host_name,
             stun_port,
             derp_port,
             UseIpv4::None,
             UseIpv6::None,
         );
+        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
         dbg!(&dm);
 
         let r = client
@@ -1811,12 +1815,7 @@ mod tests {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(
-                    client
-                        .actor
-                        .add_report_history_and_set_preferred_derp(r)
-                        .await,
-                );
+                s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
             }
             let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
             let got = client.actor.reports.prev.len();
