@@ -65,22 +65,12 @@ mod tests {
 
     #[tokio::test]
     async fn basics() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
     #[tokio::test]
     async fn multi_file() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let file_opts = vec![
             ("1", 10),
@@ -112,11 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn sizes() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let sizes = [
             0,
@@ -210,7 +196,8 @@ mod tests {
         }
 
         futures::future::join_all(tasks).await;
-
+        provider.shutdown();
+        provider.await.unwrap();
         Ok(())
     }
 
@@ -302,6 +289,7 @@ mod tests {
             keylog: true,
             derp_map: None,
         };
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
         let (collection, children, _stats) = aggregate_get_response(response).await?;
@@ -467,6 +455,7 @@ mod tests {
         })
         .await;
         provider.shutdown();
+        provider.await.unwrap();
 
         timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
@@ -474,8 +463,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ipv6() {
+        setup_logging();
+
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
@@ -492,7 +483,10 @@ mod tests {
         };
         let addrs = provider.local_address().unwrap();
         let peer_id = provider.peer_id();
+        println!("addrs: {:?}", addrs);
+        println!("peer_id: {:?}", peer_id);
         tokio::time::timeout(Duration::from_secs(10), async move {
+            println!("Get run");
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
@@ -530,6 +524,8 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get ticket failed");
+        provider.shutdown();
+        provider.await.unwrap();
     }
 
     /// Utility to validate that the children of a collection are correct
@@ -554,12 +550,15 @@ mod tests {
         use get_response_machine::*;
         let mut items = BTreeMap::new();
         let connected = initial.next().await?;
+        println!("I am connected");
         // we assume that the request includes the entire collection
         let (mut next, collection) = {
             let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
+            println!("getting collection");
             let (done, data) = sc.next().concatenate_into_vec().await?;
+            println!("got collection {}", data.len());
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children
@@ -615,6 +614,8 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+        provider.shutdown();
+        provider.await.unwrap();
     }
 
     fn readme_path() -> PathBuf {
@@ -702,6 +703,8 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+        provider.shutdown();
+        provider.await.unwrap();
     }
 
     #[tokio::test]
@@ -736,5 +739,7 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+        provider.shutdown();
+        provider.await.unwrap();
     }
 }
