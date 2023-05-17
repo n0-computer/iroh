@@ -289,7 +289,6 @@ mod tests {
             keylog: true,
             derp_map: None,
         };
-        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
         let (collection, children, _stats) = aggregate_get_response(response).await?;
@@ -463,7 +462,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn test_ipv6() {
         setup_logging();
 
@@ -483,10 +482,7 @@ mod tests {
         };
         let addrs = provider.local_address().unwrap();
         let peer_id = provider.peer_id();
-        println!("addrs: {:?}", addrs);
-        println!("peer_id: {:?}", peer_id);
         tokio::time::timeout(Duration::from_secs(10), async move {
-            println!("Get run");
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
