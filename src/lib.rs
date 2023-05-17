@@ -1,5 +1,6 @@
 //! Send data over the internet.
 // #![deny(missing_docs)] TODO: fix me before merging
+#![recursion_limit = "256"]
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod config;
