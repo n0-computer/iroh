@@ -136,7 +136,7 @@ impl fmt::Display for Report {
 /// do so.
 #[derive(Debug)]
 pub struct Client {
-    msg_sender: mpsc::Sender<(Bytes, SocketAddr)>,
+    msg_sender: mpsc::Sender<ActorMessage>,
     actor: Actor,
 }
 
@@ -181,8 +181,11 @@ impl Client {
         Ok(Client { msg_sender, actor })
     }
 
-    /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running netcheck actor.
-    pub fn get_stun_packet_channel(&self) -> mpsc::Sender<(Bytes, SocketAddr)> {
+    /// Returns the sender which can send messages to the actor.
+    ///
+    /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running
+    /// netcheck actor.
+    pub(crate) fn get_msg_sender(&self) -> mpsc::Sender<ActorMessage> {
         self.msg_sender.clone()
     }
 
@@ -253,7 +256,7 @@ impl Client {
     /// is fine since the socket is already bound so packets will not be lost.
     fn spawn_udp_listener(
         sock: Arc<UdpSocket>,
-        sender: mpsc::Sender<(Bytes, SocketAddr)>,
+        sender: mpsc::Sender<ActorMessage>,
         cancel_token: CancellationToken,
     ) {
         let span = debug_span!(
@@ -291,7 +294,7 @@ impl Client {
     async fn recv_stun_once(
         sock: &UdpSocket,
         buf: &mut [u8],
-        sender: &mpsc::Sender<(Bytes, SocketAddr)>,
+        sender: &mpsc::Sender<ActorMessage>,
     ) -> Result<()> {
         let (count, mut from_addr) = sock
             .recv_from(buf)
@@ -299,10 +302,8 @@ impl Client {
             .context("Error reading from stun socket")?;
         let payload = &buf[..count];
         from_addr.set_ip(to_canonical(from_addr.ip()));
-        sender
-            .send((Bytes::from(payload.to_vec()), from_addr))
-            .await
-            .context("actor stopped")
+        let msg = ActorMessage::StunPacket(Bytes::from(payload.to_vec()), from_addr);
+        sender.send(msg).await.context("actor stopped")
     }
 }
 
@@ -1106,9 +1107,14 @@ impl ProbeReport {
 }
 
 #[derive(Debug)]
+pub(crate) enum ActorMessage {
+    StunPacket(Bytes, SocketAddr),
+}
+
+#[derive(Debug)]
 struct Actor {
     /// Actor messages channel.
-    receiver: mpsc::Receiver<(Bytes, SocketAddr)>,
+    receiver: mpsc::Receiver<ActorMessage>,
     reports: Reports,
     /// Whether the client should try to reach things other than localhost.
     ///
@@ -1157,7 +1163,7 @@ impl Actor {
                     debug!("incoming stun packet: {:?}", msg);
                     match msg {
                         None => bail!("client dropped, abort"),
-                        Some((pkt, source)) =>
+                        Some(ActorMessage::StunPacket(pkt, source)) =>
                             self.receive_stun_packet(&mut in_flight, &pkt, source),
                     }
                 }

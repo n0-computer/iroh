@@ -853,7 +853,7 @@ impl Actor {
         );
 
         let (ip_sender, mut ip_receiver) = mpsc::channel(128);
-        let stun_packet_channel = self.net_checker.get_stun_packet_channel();
+        let stun_packet_channel = self.net_checker.get_msg_sender();
 
         // Process incoming packets in an independent task of the other work.
 
@@ -872,7 +872,8 @@ impl Actor {
                                 conn.enable_stun_packets.load(Ordering::Relaxed);
                             debug!("on_stun_receive, processing {}", enable_stun_packets);
                             if enable_stun_packets {
-                                stun_packet_channel.try_send((packet, meta.addr)).ok();
+                                let msg = netcheck::ActorMessage::StunPacket(packet, meta.addr);
+                                stun_packet_channel.try_send(msg).ok();
                             }
                             continue;
                         }
