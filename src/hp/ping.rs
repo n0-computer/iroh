@@ -2,7 +2,7 @@
 
 use std::{fmt::Debug, net::IpAddr, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
 
@@ -24,8 +24,10 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Pinger {
     pub async fn new() -> Result<Self> {
-        let client_v4 = Client::new(&Config::builder().kind(ICMP::V4).build())?;
-        let client_v6 = Client::new(&Config::builder().kind(ICMP::V6).build())?;
+        let client_v4 = Client::new(&Config::builder().kind(ICMP::V4).build())
+            .context("failed creating IPv4 pinger")?;
+        let client_v6 = Client::new(&Config::builder().kind(ICMP::V6).build())
+            .context("failed creating IPv6 pinger")?;
 
         Ok(Self(Arc::new(Inner {
             client_v4,

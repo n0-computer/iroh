@@ -181,8 +181,6 @@ pub struct Inner {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-    /// Are we currently processing STUN responses (set during a netcheck report).
-    enable_stun_packets: AtomicBool,
 }
 
 impl Inner {
@@ -273,7 +271,6 @@ impl Conn {
             network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             network_sender,
-            enable_stun_packets: AtomicBool::new(false),
         });
 
         let conn = inner.clone();
@@ -853,11 +850,10 @@ impl Actor {
         );
 
         let (ip_sender, mut ip_receiver) = mpsc::channel(128);
-        let stun_packet_channel = self.net_checker.get_msg_sender();
+        let net_checker = self.net_checker.clone();
 
         // Process incoming packets in an independent task of the other work.
 
-        let conn = self.conn.clone();
         // TODO: add shutdown for this and the main run loop
         tokio::task::spawn(async move {
             while let Some(ip_msgs) = ip_stream.next().await {
@@ -868,13 +864,9 @@ impl Actor {
 
                         // Stun?
                         if stun::is(&packet) {
-                            let enable_stun_packets =
-                                conn.enable_stun_packets.load(Ordering::Relaxed);
-                            debug!("on_stun_receive, processing {}", enable_stun_packets);
-                            if enable_stun_packets {
-                                let msg = netcheck::ActorMessage::StunPacket(packet, meta.addr);
-                                stun_packet_channel.try_send(msg).ok();
-                            }
+                            // TODO: BEFORE MERGING PR: what if this blocks?
+                            // TODO: what with the error?
+                            net_checker.receive_stun_packet(packet, meta.addr).await;
                             continue;
                         }
                         // Disco?
@@ -1890,17 +1882,13 @@ impl Actor {
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
-        info!("START REPORT, STUN PACKETS");
-        self.conn.enable_stun_packets.store(true, Ordering::Relaxed);
+        info!("START REPORT");
         let report = time::timeout(Duration::from_secs(10), async move {
             net_checker.get_report(dm, pconn4, pconn6).await
         })
         .await??;
         self.ipv6_reported.store(report.ipv6, Ordering::Relaxed);
-        self.conn
-            .enable_stun_packets
-            .store(false, Ordering::Relaxed);
-        info!("STOP REPORT, STUN PACKETS");
+        info!("STOP REPORT");
         let r = &report;
         debug!(
             "setting no_v4_send {} -> {}",
