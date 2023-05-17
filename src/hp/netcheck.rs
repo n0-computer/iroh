@@ -63,6 +63,9 @@ const ENOUGH_REGIONS: usize = 3;
 // Chosen semi-arbitrarily
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
+/// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
+const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
@@ -557,10 +560,18 @@ impl ReportState {
                 inner: Some(Box::pin(async move {
                     // wait
                     time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                    match check_captive_portal(&dm, preferred_derp).await {
-                        Ok(found) => Some(found),
-                        Err(err) => {
+                    let captive_portal_check = tokio::time::timeout(
+                        CAPTIVE_PORTAL_TIMEOUT,
+                        check_captive_portal(&dm, preferred_derp),
+                    );
+                    match captive_portal_check.await {
+                        Ok(Ok(found)) => Some(found),
+                        Ok(Err(err)) => {
                             info!("check_captive_portal error: {:?}", err);
+                            None
+                        }
+                        Err(_) => {
+                            info!("check_captive_portal timed out");
                             None
                         }
                     }
@@ -1493,13 +1504,14 @@ mod tests {
         let stun_port = 19302;
         let host_name = "stun.l.google.com".into();
         let derp_port = 0;
-        let dm = DerpMap::default_from_node(
+        let mut dm = DerpMap::default_from_node(
             host_name,
             stun_port,
             derp_port,
             UseIpv4::None,
             UseIpv6::None,
         );
+        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
 
         let r = client
             .get_report(&dm, None, None)
