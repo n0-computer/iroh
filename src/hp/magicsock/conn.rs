@@ -150,6 +150,7 @@ impl Deref for Conn {
 
 #[derive(derive_more::Debug)]
 pub struct Inner {
+    rt: tokio::runtime::Handle,
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
@@ -259,6 +260,7 @@ impl Conn {
         let (network_sender, network_receiver) = flume::bounded(128);
 
         let inner = Arc::new(Inner {
+            rt: tokio::runtime::Handle::current(),
             name,
             on_endpoints,
             on_derp_active,
@@ -475,6 +477,24 @@ impl Conn {
             .await
             .unwrap();
         r.await.unwrap();
+    }
+}
+
+impl Drop for Conn {
+    fn drop(&mut self) {
+        if self.is_closed() {
+            return;
+        }
+        // the actor holds a strong ref to us, so 2 means we're the last conn
+        if Arc::strong_count(&self.inner) > 2 {
+            return;
+        }
+        let this = self.clone();
+        self.inner.rt.spawn(async move {
+            if let Err(cause) = this.close().await {
+                warn!("error closing Conn: {}", cause);
+            }
+        });
     }
 }
 
