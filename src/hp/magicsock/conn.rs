@@ -21,7 +21,6 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     sync::{self, mpsc, Mutex},
-    task::JoinHandle,
     time,
 };
 use tokio_util::sync::CancellationToken;
@@ -39,6 +38,7 @@ use crate::{
     metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
     record,
+    tokio_util::OwnedJoinHandle,
 };
 
 use super::{
@@ -137,7 +137,7 @@ impl Default for Options {
 pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
-    actor_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    actor_task: Arc<Mutex<Option<OwnedJoinHandle<()>>>>,
 }
 
 impl Deref for Conn {
@@ -314,7 +314,7 @@ impl Conn {
 
         let c = Conn {
             inner,
-            actor_task: Arc::new(Mutex::new(Some(derp_task))),
+            actor_task: Arc::new(Mutex::new(Some(derp_task.into()))),
         };
 
         Ok(c)
@@ -475,26 +475,6 @@ impl Conn {
             .await
             .unwrap();
         r.await.unwrap();
-    }
-}
-
-impl Drop for Conn {
-    fn drop(&mut self) {
-        if self.is_closed() {
-            return;
-        }
-        // the actor holds a strong ref to us, so 2 means we're the last conn
-        if Arc::strong_count(&self.inner) > 2 {
-            return;
-        }
-        self.inner.closing.store(true, Ordering::Relaxed);
-        self.inner.closed.store(true, Ordering::SeqCst);
-        // the block in place is needed because otherwise tokio will panic if Drop is called from
-        // within a runtime. We want Drop to work both inside and outside of a runtime.
-        let task = tokio::task::block_in_place(|| self.actor_task.blocking_lock().take());
-        if let Some(task) = task {
-            task.abort();
-        }
     }
 }
 

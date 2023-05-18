@@ -7,7 +7,7 @@ use std::{
 
 use bao_tree::io::fsm::AsyncSliceWriter;
 use bytes::Bytes;
-use futures::{future::BoxFuture, ready, FutureExt};
+use futures::{future::BoxFuture, ready, Future, FutureExt};
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt},
@@ -400,5 +400,29 @@ pub(crate) async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> i
             file.read_to_end(&mut buf).await?;
             Ok(buf.into())
         }
+    }
+}
+
+/// A join handle that owns the task it is running, and aborts it when dropped.
+#[derive(Debug)]
+pub(crate) struct OwnedJoinHandle<T>(tokio::task::JoinHandle<T>);
+
+impl<T> From<tokio::task::JoinHandle<T>> for OwnedJoinHandle<T> {
+    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self(handle)
+    }
+}
+
+impl<T> Future for OwnedJoinHandle<T> {
+    type Output = std::result::Result<T, tokio::task::JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx)
+    }
+}
+
+impl<T> Drop for OwnedJoinHandle<T> {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
