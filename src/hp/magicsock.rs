@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 mod conn;
+mod derp_actor;
 mod endpoint;
 mod rebinding_conn;
 mod timer;

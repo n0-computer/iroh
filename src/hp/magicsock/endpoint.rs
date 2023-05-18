@@ -13,7 +13,6 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
-        derp::DerpRegion,
         disco, key, stun,
     },
     net::ip::is_unicast_link_local,
@@ -560,7 +559,7 @@ impl Endpoint {
                     let ep = sp.to;
                     let region_id = usize::from(ep.port());
                     // FIXME: this creates a deadlock as it needs to interact with the run loop in the conn::Actor
-                    let region_code = self.get_derp_region(region_id).await.map(|r| r.region_code);
+                    // let region_code = self.get_derp_region(region_id).await.map(|r| r.region_code);
 
                     for PendingCliPing { mut res, cb } in self.pending_cli_pings.drain(..) {
                         res.latency_seconds = Some(latency.as_secs_f64());
@@ -568,7 +567,7 @@ impl Endpoint {
                             res.endpoint = Some(ep);
                         } else {
                             res.derp_region_id = Some(region_id);
-                            res.derp_region_code = region_code.clone();
+                            // res.derp_region_code = region_code.clone();
                         }
                         tokio::task::spawn(async move {
                             cb(res).await;
@@ -603,15 +602,6 @@ impl Endpoint {
                 (known_tx_id, peer_map_insert)
             }
         }
-    }
-
-    async fn get_derp_region(&self, region: usize) -> Option<DerpRegion> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        self.conn_sender
-            .send_async(ActorMessage::GetDerpRegion(region, s))
-            .await
-            .ok()?;
-        r.await.ok()?
     }
 
     /// Handles a CallMeMaybe discovery message via DERP. The contract for use of

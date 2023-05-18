@@ -204,7 +204,7 @@ impl Client {
     /// may not be as reliable.
     pub(crate) async fn get_report(
         &mut self,
-        dm: &DerpMap,
+        dm: DerpMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
@@ -1511,7 +1511,7 @@ mod tests {
 
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(&dm, None, None).await?;
+            let r = client.get_report(dm.clone(), None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1564,7 +1564,7 @@ mod tests {
         dbg!(&dm);
 
         let r = client
-            .get_report(&dm, None, None)
+            .get_report(dm, None, None)
             .await
             .context("failed to get netcheck report")?;
         assert!(r.udp, "want UDP");
@@ -1633,7 +1633,7 @@ mod tests {
 
         let mut client = Client::new(None).await?;
 
-        let r = client.get_report(&dm, None, None).await?;
+        let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.upnp = None;
         r.pmp = None;
