@@ -3698,13 +3698,17 @@ mod tests {
         })
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
+    fn setup_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
+        setup_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -3876,11 +3880,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -3929,11 +3929,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
             let key = key::node::SecretKey::generate();
@@ -4077,11 +4073,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = key::node::SecretKey::generate();

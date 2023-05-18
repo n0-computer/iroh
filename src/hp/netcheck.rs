@@ -1491,13 +1491,17 @@ mod tests {
     use super::*;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    #[tokio::test]
-    async fn test_basic() -> Result<()> {
+    fn setup_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
+    }
+
+    #[tokio::test]
+    async fn test_basic() -> Result<()> {
+        setup_logging();
 
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
@@ -1541,11 +1545,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_stun() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let mut client = Client::new(None)
             .await
@@ -1591,6 +1591,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
+        setup_logging();
         let local_addr = "127.0.0.1";
         let bind_addr = "0.0.0.0";
 
@@ -1623,11 +1624,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
