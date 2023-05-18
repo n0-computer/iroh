@@ -285,8 +285,6 @@ impl Conn {
                 conn,
                 net_map: None,
                 derp_recv_sender: network_recv_ch_sender,
-                active_derp: HashMap::default(),
-                derp_route: HashMap::new(),
                 endpoints_update_state: EndpointUpdateState::new(),
                 last_endpoints: Vec::new(),
                 last_endpoints_time: None,
@@ -301,7 +299,6 @@ impl Conn {
                 udp_state: quinn_udp::UdpState::default(),
                 derp_map: Default::default(),
                 private_key,
-                my_derp: 0,
                 ipv6_reported: Arc::new(AtomicBool::new(false)),
                 no_v4_send: false,
                 net_checker,
@@ -767,14 +764,6 @@ struct Actor {
     network_receiver: flume::Receiver<Vec<quinn_udp::Transmit>>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<NetworkReadResult>,
-    /// DERP regionID -> connection to a node in that region
-    active_derp: HashMap<u16, ActiveDerp>,
-    /// Contains optional alternate routes to use as an optimization instead of
-    /// contacting a peer via their home DERP connection.  If they sent us a message
-    /// on a different DERP connection (which should really only be on our DERP
-    /// home connection, or what was once our home), then we remember that route here to optimistically
-    /// use instead of creating a new DERP connection back to their home.
-    derp_route: HashMap<key::node::PublicKey, DerpRoute>,
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
     /// Records the endpoints found during the previous
@@ -819,8 +808,6 @@ struct Actor {
     /// Tracked outside to avoid deadlock issues (replaces atomic acess from go)
     derp_map: Option<DerpMap>,
 
-    /// Nearest DERP region ID; 0 means none/unknown.
-    my_derp: u16,
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
 }
@@ -837,10 +824,6 @@ enum IpPacket {
 impl Actor {
     #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
-        let mut cleanup_timer = time::interval_at(
-            time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
-            DERP_CLEAN_STALE_INTERVAL,
-        );
         let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
@@ -869,16 +852,25 @@ impl Actor {
             .await;
         });
 
+        let (derp_actor_sender, mut derp_actor_receiver) = mpsc::channel(256);
+
+        let derp_actor = DerpActor {
+            conn: self.conn.clone(),
+            receiver: derp_actor_receiver,
+            active_derp: HashMap::default(),
+            derp_route: HashMap::new(),
+            my_derp: 0,
+            msg_sender: self.msg_sender.clone(),
+        };
+        let derp_actor_handle = tokio::task::spawn(async move {
+            derp_actor.run().await;
+        });
+
         loop {
             tokio::select! {
                 transmits = self.network_receiver.recv_async() => {
                     trace!("tick: network send");
-                    self.send_network(transmits?).await;
-                    // Wake up the send waker if one is waiting for space in the channel
-                    let mut wakers = self.conn.network_send_wakers.lock().unwrap();
-                    if let Some(waker) = wakers.take() {
-                        waker.wake();
-                    }
+                    self.send_network(transmits?, derp_actor_sender.clone()).await;
                 }
                 msg = self.msg_receiver.recv_async() => {
                     trace!("tick: msg");
@@ -914,8 +906,8 @@ impl Actor {
                             for (_, ep) in self.peer_map.endpoints_mut() {
                                 ep.stop_and_reset();
                             }
-                            self.close_all_derp("conn-close").await;
                             self.port_mapper.close();
+                            derp_actor_sender.try_send(DerpActorMessage::Shutdown).ok();
 
                             // Ignore errors from pconnN
                             // They will frequently have been closed already by a call to connBind.Close.
@@ -925,8 +917,13 @@ impl Actor {
                             self.pconn4.close().await.ok();
                             break;
                         }
-                        ActorMessage::CloseOrReconnect(rid, reason) => {
-                            self.close_or_reconnect_derp(rid, reason).await;
+                        ActorMessage::CloseOrReconnect(region_id, reason) => {
+                            Self::send_derp_actor(
+                                derp_actor_sender,
+                                DerpActorMessage::CloseOrReconnect {
+                                    region_id,
+                                    reason,
+                                });
                         }
                         ActorMessage::ReStun(reason) => {
                             self.re_stun(reason).await;
@@ -941,7 +938,7 @@ impl Actor {
                             self.enqueue_call_me_maybe(derp_addr, endpoint_id).await;
                         }
                         ActorMessage::RebindAll(s) => {
-                            self.rebind_all().await;
+                            self.rebind_all(derp_actor_sender.clone()).await;
                             let _ = s.send(());
                         }
                         ActorMessage::SetPreferredPort(port, s) => {
@@ -951,7 +948,7 @@ impl Actor {
                         ActorMessage::SendDiscoMessage {
                             dst, dst_key, msg,
                         } => {
-                            let _res = self.send_disco_message(dst, dst_key, msg).await;
+                            let _res = self.send_disco_message(dst, dst_key, msg, derp_actor_sender.clone()).await;
                         }
                         ActorMessage::SetNetworkMap(nm, s) => {
                             self.set_network_map(nm);
@@ -962,7 +959,7 @@ impl Actor {
                 Some(msg) = ip_receiver.recv() => {
                     match msg {
                         IpPacket::Disco { source, sealed_box, src } => {
-                            self.handle_disco_message(source, &sealed_box, src, None).await;
+                            self.handle_disco_message(source, &sealed_box, src, None, derp_actor_sender.clone()).await;
                         }
                         IpPacket::Forward(mut forward) => {
                             if let NetworkReadResult::Ok { meta, bytes, .. } = &mut forward {
@@ -982,14 +979,14 @@ impl Actor {
                     match action {
                         ReadAction::None => {},
                         ReadAction::AddPeerRoute { peers, region, derp_client } => {
-                            for peer in peers {
-                                self.add_derp_peer_route(peer, region, derp_client.clone());
-                            }
+                            Self::send_derp_actor(derp_actor_sender, DerpActorMessage::AddPeerRoute {
+                                peers, region, derp_client,
+                            });
                         },
                         ReadAction::RemovePeerRoute { peers, region, derp_client } => {
-                            for peer in peers {
-                                self.remove_derp_peer_route(peer, region, &derp_client);
-                            }
+                            Self::send_derp_actor(derp_actor_sender, DerpActorMessage::RemovePeerRoute {
+                                peers, region, derp_client,
+                            });
                         }
                     }
                     match result {
@@ -1001,7 +998,7 @@ impl Actor {
                             recvs.push(rs.recv())
                         }
                         ReadResult::Yield(read_result) => {
-                            let passthroughs = self.process_derp_read_result(read_result).await;
+                            let passthroughs = self.process_derp_read_result(read_result, derp_actor_sender.clone()).await;
                             for passthrough in passthroughs {
                                 self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
                                 let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
@@ -1029,21 +1026,18 @@ impl Actor {
                     let reason = *endpoints_update_receiver.borrow();
                     trace!("tick: endpoints update receiver {:?}", reason);
                     if let Some(reason) = reason {
-                        self.update_endpoints(reason).await;
+                        self.update_endpoints(reason, derp_actor_sender.clone()).await;
                     }
-                }
-                _ = cleanup_timer.tick() => {
-                    trace!("tick: cleanup");
-                    self.clean_stale_derp().await;
                 }
                 else => {
                     trace!("tick: other");
                 }
             }
         }
-
         // Shutdown IO loop
         io_cancel_token.cancel();
+
+        derp_actor_handle.await?;
         io_handle.await?;
         Ok(())
     }
@@ -1107,7 +1101,11 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<NetworkReadResult> {
+    async fn process_derp_read_result(
+        &mut self,
+        dm: DerpReadResult,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) -> Vec<NetworkReadResult> {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
             return Vec::new();
@@ -1117,7 +1115,7 @@ impl Actor {
         let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
 
         if self
-            .handle_derp_disco_message(&dm.buf, ipp, dm.src.clone())
+            .handle_derp_disco_message(&dm.buf, ipp, dm.src.clone(), derp_actor_sender)
             .await
         {
             // Message was internal, do not bubble up.
@@ -1171,179 +1169,11 @@ impl Actor {
             .collect::<Vec<_>>()
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn clean_stale_derp(&mut self) {
-        debug!("cleanup {} derps", self.active_derp.len());
-        let now = Instant::now();
-
-        let mut to_close = Vec::new();
-        for (i, ad) in &self.active_derp {
-            if *i == self.my_derp {
-                continue;
-            }
-            if ad.last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
-                to_close.push(*i);
-            }
-        }
-
-        let dirty = !to_close.is_empty();
-        debug!(
-            "closing {}/{} derps",
-            to_close.len(),
-            self.active_derp.len()
-        );
-        for i in to_close {
-            self.close_derp(i, "idle").await;
-        }
-        if dirty {
-            self.log_active_derp();
-        }
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn close_all_derp(&mut self, why: &'static str) {
-        if self.active_derp.is_empty() {
-            return;
-        }
-        // Need to collect to avoid double borrow
-        let regions: Vec<_> = self.active_derp.keys().copied().collect();
-        for region in regions {
-            self.close_derp(region, why).await;
-        }
-        self.log_active_derp();
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn close_derp(&mut self, region_id: u16, why: &'static str) {
-        if let Some(ad) = self.active_derp.remove(&region_id) {
-            debug!(
-                "closing connection to derp-{} ({:?}), age {}s",
-                region_id,
-                why,
-                ad.create_time.elapsed().as_secs()
-            );
-
-            let ActiveDerp { c, cancel, .. } = ad;
-            c.close().await;
-            cancel.cancel();
-
-            inc!(MagicsockMetrics::NumDerpConnsRemoved);
-        }
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn connect(
+    async fn send_network(
         &mut self,
-        region_id: u16,
-        peer: Option<&key::node::PublicKey>,
-    ) -> derp::http::Client {
-        // See if we have a connection open to that DERP node ID
-        // first. If so, might as well use it. (It's a little
-        // arbitrary whether we use this one vs. the reverse route
-        // below when we have both.)
-
-        if let Some(ad) = self.active_derp.get_mut(&region_id) {
-            ad.last_write = Instant::now();
-            return ad.c.clone();
-        }
-
-        // If we don't have an open connection to the peer's home DERP
-        // node, see if we have an open connection to a DERP node
-        // where we'd heard from that peer already. For instance,
-        // perhaps peer's home is Frankfurt, but they dialed our home DERP
-        // node in SF to reach us, so we can reply to them using our
-        // SF connection rather than dialing Frankfurt.
-        if let Some(peer) = peer {
-            if let Some(r) = self.derp_route.get(peer) {
-                if let Some(ad) = self.active_derp.get_mut(&r.derp_id) {
-                    if ad.c == r.dc {
-                        ad.last_write = Instant::now();
-                        return ad.c.clone();
-                    }
-                }
-            }
-        }
-
-        let why = if let Some(peer) = peer {
-            format!("{:?}", peer)
-        } else {
-            "home-keep-alive".to_string()
-        };
-        info!("adding connection to derp-{} for {}", region_id, why);
-
-        let my_derp = self.my_derp;
-
-        // Note that derp::http.new_region_client does not dial the server
-        // (it doesn't block) so it is safe to do under the state lock.
-
-        let conn1 = self.conn.clone();
-        let ipv6_reported = self.ipv6_reported.clone();
-        let dc = derp::http::ClientBuilder::new()
-            .address_family_selector(move || {
-                let ipv6_reported = ipv6_reported.clone();
-                Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
-            })
-            .can_ack_pings(true)
-            .is_preferred(my_derp == region_id)
-            .new_region(self.private_key.clone(), move || {
-                let conn = conn1.clone();
-                Box::pin(async move {
-                    // Warning: it is not legal to acquire
-                    // magicsock.Conn.mu from this callback.
-                    // It's run from derp::http::Client.connect (via Send, etc)
-                    // and the lock ordering rules are that magicsock.Conn.mu
-                    // must be acquired before derp::http.Client.mu
-
-                    if conn.is_closing() {
-                        // We're closing anyway; return to stop dialing.
-                        return None;
-                    }
-
-                    // Need to load the derp map without aquiring the lock
-                    conn.get_derp_region(usize::from(region_id)).await
-                })
-            });
-
-        let cancel = CancellationToken::new();
-        let ad = ActiveDerp {
-            c: dc.clone(),
-            cancel: cancel.clone(),
-            last_write: Instant::now(),
-            create_time: Instant::now(),
-        };
-        self.active_derp.insert(region_id, ad);
-
-        inc!(MagicsockMetrics::NumDerpConnsAdded);
-        self.log_active_derp();
-
-        let d = dc.clone();
-        let c = self.conn.clone();
-        let msg_sender = self.msg_sender.clone();
-
-        // Needs to be done in a different task, to avoid deadlocking.
-        tokio::task::spawn(async move {
-            // Make sure we can establish a connection.
-            if let Err(err) = d.connect().await {
-                // TODO: what to do?
-                warn!("failed to connect to derp server: {:?}", err);
-            }
-
-            if let Some(ref f) = c.on_derp_active {
-                // TODO: spawn
-                f();
-            }
-
-            let rs = ReaderState::new(region_id, cancel, d);
-            msg_sender
-                .send_async(ActorMessage::Connected(rs))
-                .await
-                .unwrap();
-        });
-
-        dc
-    }
-
-    async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
+        transmits: Vec<quinn_udp::Transmit>,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) {
         trace!(
             "sending:\n{}",
             transmits
@@ -1383,8 +1213,8 @@ impl Actor {
                                 derp_addr.port(),
                                 public_key,
                                 transmits.into_iter().map(|t| t.contents).collect(),
-                            )
-                            .await;
+                                derp_actor_sender,
+                            );
                             res
                         } else {
                             self.send_raw(udp_addr, transmits).await
@@ -1399,8 +1229,8 @@ impl Actor {
                                 derp_addr.port(),
                                 public_key,
                                 transmits.into_iter().map(|t| t.contents).collect(),
-                            )
-                            .await;
+                                derp_actor_sender,
+                            );
                         } else {
                             warn!("no public key for endpoint available, and only DERP address");
                         }
@@ -1430,7 +1260,13 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(
+        &mut self,
+        port: u16,
+        peer: key::node::PublicKey,
+        contents: Vec<Bytes>,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) {
         debug!("sending derp region: {} - {:?}", port, peer);
         let region_id = port;
 
@@ -1448,109 +1284,14 @@ impl Actor {
             warn!("unknown region id {}", region_id);
             return;
         }
-
-        let derp_client = self.connect(region_id, Some(&peer)).await;
-        for content in &contents {
-            trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
-        }
-        let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
-
-        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
-        // split into multiple packets if needed.
-        // In almost all cases this will be a single packet.
-        // But we have no guarantee that the total size of the contents including
-        // length prefix will be smaller than the payload size.
-        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
-            match derp_client.send(peer.clone(), packet).await {
-                Ok(_) => {
-                    record!(MagicsockMetrics::SendDerp, total_bytes);
-                }
-                Err(err) => {
-                    warn!("derp.send: failed {:?}", err);
-                    inc!(MagicsockMetrics::SendDerpError);
-                }
-            }
-        }
-    }
-
-    /// Removes a DERP route entry previously added by add_derp_peer_route.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    fn remove_derp_peer_route(
-        &mut self,
-        peer: key::node::PublicKey,
-        derp_id: u16,
-        dc: &derp::http::Client,
-    ) {
-        if let hash_map::Entry::Occupied(r) = self.derp_route.entry(peer) {
-            if r.get().derp_id == derp_id && &r.get().dc == dc {
-                r.remove();
-            }
-        }
-    }
-
-    /// Adds a DERP route entry, noting that peer was seen on DERP node `derp_id`, at least on the
-    /// connection identified by `dc`.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    fn add_derp_peer_route(
-        &mut self,
-        peer: key::node::PublicKey,
-        derp_id: u16,
-        dc: derp::http::Client,
-    ) {
-        self.derp_route.insert(peer, DerpRoute { derp_id, dc });
-    }
-
-    /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
-    /// and pings all those that do.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn maybe_close_derps_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
-        let mut tasks = Vec::new();
-        for (region_id, ad) in &self.active_derp {
-            let la = match ad.c.local_addr().await {
-                None => {
-                    tasks.push((*region_id, "rebind-no-localaddr"));
-                    continue;
-                }
-                Some(la) => la,
-            };
-
-            if !okay_local_ips.contains(&la.ip()) {
-                tasks.push((*region_id, "rebind-default-route-change"));
-                continue;
-            }
-
-            let dc = ad.c.clone();
-            let region_id = *region_id;
-            let msg_sender = self.msg_sender.clone();
-            tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
-                if let Err(_err) = dc.ping().await {
-                    msg_sender
-                        .send_async(ActorMessage::CloseOrReconnect(
-                            region_id,
-                            "rebind-ping-fail",
-                        ))
-                        .await
-                        .unwrap();
-                    return;
-                }
-                debug!("post-rebind ping of DERP region {} okay", region_id);
-            }));
-        }
-        for (region_id, why) in tasks {
-            self.close_or_reconnect_derp(region_id, why).await;
-        }
-
-        self.log_active_derp();
-    }
-
-    /// Closes the DERP connection to the provided `region_id` and starts reconnecting it if it's
-    /// our current home DERP.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
-        self.close_derp(region_id, why).await;
-        if self.my_derp == region_id {
-            self.connect(region_id, None).await;
-        }
+        Self::send_derp_actor(
+            derp_actor_sender,
+            DerpActorMessage::Send {
+                region_id,
+                contents,
+                peer,
+            },
+        );
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
@@ -1576,7 +1317,11 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn update_endpoints(&mut self, why: &'static str) {
+    async fn update_endpoints(
+        &mut self,
+        why: &'static str,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) {
         inc!(MagicsockMetrics::UpdateEndpoints);
 
         debug!("starting endpoint update ({})", why);
@@ -1586,10 +1331,10 @@ impl Actor {
                 self.no_v4_send,
                 self.conn.is_closed()
             );
-            self.rebind_all().await;
+            self.rebind_all(derp_actor_sender.clone()).await;
         }
 
-        match self.determine_endpoints().await {
+        match self.determine_endpoints(derp_actor_sender.clone()).await {
             Ok(endpoints) => {
                 if self.set_endpoints(&endpoints).await {
                     log_endpoint_change(&endpoints);
@@ -1629,12 +1374,18 @@ impl Actor {
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
+    async fn determine_endpoints(
+        &mut self,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) -> Result<Vec<cfg::Endpoint>> {
         let mut portmap_ext = self
             .port_mapper
             .get_cached_mapping_or_start_creating_one()
             .await;
-        let nr = self.update_net_info().await.context("update_net_info")?;
+        let nr = self
+            .update_net_info(derp_actor_sender)
+            .await
+            .context("update_net_info")?;
 
         // endpoint -> how it was found
         let mut already = HashMap::new();
@@ -1825,7 +1576,10 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
+    async fn update_net_info(
+        &mut self,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    ) -> Result<Arc<netcheck::Report>> {
         if self.derp_map.is_none() {
             debug!("skipping netcheck, no Derp Map");
             return Ok(Default::default());
@@ -1882,7 +1636,10 @@ impl Actor {
             // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
             ni.preferred_derp = self.pick_derp_fallback().await;
         }
-        if !self.set_nearest_derp(ni.preferred_derp.try_into()?).await {
+        if !self
+            .set_nearest_derp(ni.preferred_derp.try_into()?, derp_actor_sender)
+            .await
+        {
             ni.preferred_derp = 0;
         }
 
@@ -2011,7 +1768,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn rebind_all(&mut self) {
+    async fn rebind_all(&mut self, derp_actor_sender: mpsc::Sender<DerpActorMessage>) {
         inc!(MagicsockMetrics::RebindCalls);
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
             debug!("{:?}", err);
@@ -2019,7 +1776,10 @@ impl Actor {
         }
 
         let ifs = Default::default(); // TODO: load actual interfaces from the monitor
-        self.maybe_close_derps_on_rebind(ifs).await;
+        Self::send_derp_actor(
+            derp_actor_sender,
+            DerpActorMessage::MaybeCloseDerpsOnRebind(ifs),
+        );
         self.reset_endpoint_states();
     }
 
@@ -2079,48 +1839,13 @@ impl Actor {
         self.reset_endpoint_states();
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
-        if self.derp_map.is_none() {
-            self.my_derp = 0;
-            return false;
-        }
-        let my_derp = self.my_derp;
-        if derp_num == my_derp {
-            // No change.
-            return true;
-        }
-        if my_derp != 0 && derp_num != 0 {
-            inc!(MagicsockMetrics::DerpHomeChange);
-        }
-        self.my_derp = derp_num;
-
-        // On change, notify all currently connected DERP servers and
-        // start connecting to our home DERP if we are not already.
-        match self
-            .derp_map
-            .as_ref()
-            .expect("already checked")
-            .regions
-            .get(&usize::from(derp_num))
-        {
-            Some(dr) => {
-                info!("home is now derp-{} ({})", derp_num, dr.region_code);
-            }
-            None => {
-                warn!("derp_map.regions[{}] is empty", derp_num);
+    fn send_derp_actor(sender: mpsc::Sender<DerpActorMessage>, msg: DerpActorMessage) {
+        match sender.try_send(msg) {
+            Ok(_) => {}
+            Err(err) => {
+                // TODO: loggin
             }
         }
-
-        let my_derp = self.my_derp;
-        futures::future::join_all(self.active_derp.iter().map(|(i, ad)| async move {
-            let b = *i == my_derp;
-            ad.c.note_preferred(b).await;
-        }))
-        .await;
-
-        self.connect(derp_num, None).await;
-        true
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
@@ -2129,6 +1854,7 @@ impl Actor {
         dst: SocketAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     ) -> Result<bool> {
         debug!("sending disco message to {}: {:?}", dst, msg);
         if self.conn.is_closed() {
@@ -2145,7 +1871,9 @@ impl Actor {
         }
 
         let pkt = disco::encode_message(&self.conn.public_key, seal);
-        let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
+        let sent = self
+            .send_addr(dst, Some(&dst_key), pkt.into(), derp_actor_sender)
+            .await;
         match sent {
             Ok(0) => {
                 // Can't send. (e.g. no IPv6 locally)
@@ -2186,6 +1914,7 @@ impl Actor {
         addr: SocketAddr,
         pub_key: Option<&key::node::PublicKey>,
         pkt: Bytes,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     ) -> io::Result<usize> {
         if addr.ip() != DERP_MAGIC_IP {
             let transmits = vec![quinn_udp::Transmit {
@@ -2204,8 +1933,7 @@ impl Actor {
                 "missing pub key for derp route",
             )),
             Some(pub_key) => {
-                self.send_derp(addr.port(), pub_key.clone(), vec![pkt])
-                    .await;
+                self.send_derp(addr.port(), pub_key.clone(), vec![pkt], derp_actor_sender);
                 Ok(1)
             }
         }
@@ -2216,6 +1944,7 @@ impl Actor {
         msg: &[u8],
         src: SocketAddr,
         derp_node_src: key::node::PublicKey,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     ) -> bool {
         let source = disco::source_and_box(msg);
         if source.is_none() {
@@ -2223,8 +1952,14 @@ impl Actor {
         }
 
         let (source, sealed_box) = source.unwrap();
-        self.handle_disco_message(source, sealed_box, src, Some(derp_node_src))
-            .await
+        self.handle_disco_message(
+            source,
+            sealed_box,
+            src,
+            Some(derp_node_src),
+            derp_actor_sender,
+        )
+        .await
     }
 
     /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
@@ -2238,6 +1973,7 @@ impl Actor {
         sealed_box: &[u8],
         src: SocketAddr,
         derp_node_src: Option<key::node::PublicKey>,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
         if self.conn.is_closed() {
@@ -2314,7 +2050,8 @@ impl Actor {
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics::RecvDiscoPing);
-                self.handle_ping(ping, &sender, src, derp_node_src).await;
+                self.handle_ping(ping, &sender, src, derp_node_src, derp_actor_sender)
+                    .await;
                 true
             }
             disco::Message::Pong(pong) => {
@@ -2373,6 +2110,7 @@ impl Actor {
         sender: &key::node::PublicKey,
         src: SocketAddr,
         derp_node_src: Option<key::node::PublicKey>,
+        derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     ) {
         let di = get_disco_info(&mut self.disco_info, &self.private_key, sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
@@ -2479,7 +2217,10 @@ impl Actor {
             src,
         });
         let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
-        if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
+        if let Err(err) = self
+            .send_disco_message(ip_dst, dst_key, pong, derp_actor_sender)
+            .await
+        {
             warn!("failed to send disco message to {}: {:?}", ip_dst, err);
         }
     }
@@ -2656,33 +2397,6 @@ impl Actor {
 
         Ok(sum)
     }
-
-    fn log_active_derp(&self) {
-        let now = Instant::now();
-        debug!("{} active derp conns{}", self.active_derp.len(), {
-            let mut s = String::new();
-            if !self.active_derp.is_empty() {
-                s += ":";
-                for (node, ad) in self.active_derp_sorted() {
-                    s += &format!(
-                        " derp-{}=cr{},wr{}",
-                        node,
-                        now.duration_since(ad.create_time).as_secs(),
-                        now.duration_since(ad.last_write).as_secs()
-                    );
-                }
-            }
-            s
-        });
-    }
-
-    fn active_derp_sorted(&self) -> impl Iterator<Item = (u16, &'_ ActiveDerp)> + '_ {
-        let mut ids: Vec<_> = self.active_derp.keys().copied().collect();
-        ids.sort();
-
-        ids.into_iter()
-            .map(|id| (id, self.active_derp.get(&id).unwrap()))
-    }
 }
 
 /// Executes the IO over the UDP sockets
@@ -2770,6 +2484,442 @@ async fn run_io_loop(
                 }
             }
         }
+    }
+}
+
+enum DerpActorMessage {
+    Send {
+        region_id: u16,
+        contents: Vec<Bytes>,
+        peer: key::node::PublicKey,
+    },
+    Connect {
+        region_id: u16,
+        peer: Option<key::node::PublicKey>,
+    },
+    CloseOrReconnect {
+        region_id: u16,
+        reason: &'static str,
+    },
+    RemovePeerRoute {
+        peers: Vec<key::node::PublicKey>,
+        region: u16,
+        derp_client: derp::http::Client,
+    },
+    AddPeerRoute {
+        peers: Vec<key::node::PublicKey>,
+        region: u16,
+        derp_client: derp::http::Client,
+    },
+    MaybeCloseDerpsOnRebind(Vec<IpAddr>),
+    Shutdown,
+}
+
+struct DerpActor {
+    conn: Arc<Inner>,
+    receiver: mpsc::Receiver<DerpActorMessage>,
+    /// DERP regionID -> connection to a node in that region
+    active_derp: HashMap<u16, ActiveDerp>,
+    /// Contains optional alternate routes to use as an optimization instead of
+    /// contacting a peer via their home DERP connection.  If they sent us a message
+    /// on a different DERP connection (which should really only be on our DERP
+    /// home connection, or what was once our home), then we remember that route here to optimistically
+    /// use instead of creating a new DERP connection back to their home.
+    derp_route: HashMap<key::node::PublicKey, DerpRoute>,
+    /// Nearest DERP region ID; 0 means none/unknown.
+    my_derp: u16,
+    msg_sender: flume::Sender<ActorMessage>,
+}
+
+impl DerpActor {
+    async fn run(mut self) {
+        let mut cleanup_timer = time::interval_at(
+            time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
+            DERP_CLEAN_STALE_INTERVAL,
+        );
+
+        loop {
+            tokio::select! {
+                Some(msg) = self.receiver.recv() => {
+                    match msg {
+                        DerpActorMessage::Send { region_id, contents, peer } => {
+                            self.send_derp(region_id, contents, peer).await;
+                        }
+                        DerpActorMessage::Connect { region_id, peer } => {
+                            self.connect_derp(region_id, peer.as_ref()).await;
+                        }
+                        DerpActorMessage::CloseOrReconnect { region_id, reason } => {
+                            self.close_or_reconnect_derp(region_id, reason).await;
+                        }
+                        DerpActorMessage::Shutdown => {
+                            self.close_all_derp("conn-close").await;
+                        }
+                    }
+                }
+                _ = cleanup_timer.tick() => {
+                    trace!("tick: cleanup");
+                    self.clean_stale_derp().await;
+                }
+                else => {
+                    trace!("shutting down derp recv loop");
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn send_derp(
+        &mut self,
+        region_id: u16,
+        contents: Vec<Bytes>,
+        peer: key::node::PublicKey,
+    ) {
+        // Derp Send
+        let derp_client = self.connect_derp(region_id, Some(&peer)).await;
+        for content in &contents {
+            trace!("[DERP] -> {} ({}b) {:?}", region_id, content.len(), peer);
+        }
+        let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
+
+        const PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+
+        // Split into multiple packets if needed.
+        // In almost all cases this will be a single packet.
+        // But we have no guarantee that the total size of the contents including
+        // length prefix will be smaller than the payload size.
+        for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
+            match derp_client.send(peer.clone(), packet).await {
+                Ok(_) => {
+                    record!(MagicsockMetrics::SendDerp, total_bytes);
+                }
+                Err(err) => {
+                    warn!("derp.send: failed {:?}", err);
+                    inc!(MagicsockMetrics::SendDerpError);
+                }
+            }
+        }
+
+        // Wake up the send waker if one is waiting for space in the channel
+        let mut wakers = self.conn.network_send_wakers.lock().unwrap();
+        if let Some(waker) = wakers.take() {
+            waker.wake();
+        }
+    }
+
+    /// Connect to the given derp region.
+    async fn connect_derp(
+        &mut self,
+        region_id: u16,
+        peer: Option<&key::node::PublicKey>,
+    ) -> derp::http::Client {
+        // See if we have a connection open to that DERP node ID first. If so, might as
+        // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
+        // below when we have both.)
+
+        if let Some(ad) = self.active_derp.get_mut(&region_id) {
+            ad.last_write = Instant::now();
+            return ad.c.clone();
+        }
+
+        // If we don't have an open connection to the peer's home DERP
+        // node, see if we have an open connection to a DERP node
+        // where we'd heard from that peer already. For instance,
+        // perhaps peer's home is Frankfurt, but they dialed our home DERP
+        // node in SF to reach us, so we can reply to them using our
+        // SF connection rather than dialing Frankfurt.
+        if let Some(peer) = peer {
+            if let Some(r) = self.derp_route.get(peer) {
+                if let Some(ad) = self.active_derp.get_mut(&r.derp_id) {
+                    if ad.c == r.dc {
+                        ad.last_write = Instant::now();
+                        return ad.c.clone();
+                    }
+                }
+            }
+        }
+
+        let why = if let Some(peer) = peer {
+            format!("{:?}", peer)
+        } else {
+            "home-keep-alive".to_string()
+        };
+        info!("adding connection to derp-{} for {}", region_id, why);
+
+        let my_derp = self.my_derp;
+
+        // Note that derp::http.new_region_client does not dial the server
+        // (it doesn't block) so it is safe to do under the state lock.
+
+        let conn1 = self.conn.clone();
+        let ipv6_reported = self.ipv6_reported.clone();
+        let dc = derp::http::ClientBuilder::new()
+            .address_family_selector(move || {
+                let ipv6_reported = ipv6_reported.clone();
+                Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
+            })
+            .can_ack_pings(true)
+            .is_preferred(my_derp == region_id)
+            .new_region(self.private_key.clone(), move || {
+                let conn = conn1.clone();
+                Box::pin(async move {
+                    // Warning: it is not legal to acquire
+                    // magicsock.Conn.mu from this callback.
+                    // It's run from derp::http::Client.connect (via Send, etc)
+                    // and the lock ordering rules are that magicsock.Conn.mu
+                    // must be acquired before derp::http.Client.mu
+
+                    if conn.is_closing() {
+                        // We're closing anyway; return to stop dialing.
+                        return None;
+                    }
+
+                    // TODO: make sure this never blocks
+
+                    // Need to load the derp map without aquiring the lock
+                    conn.get_derp_region(usize::from(region_id)).await
+                })
+            });
+
+        let cancel = CancellationToken::new();
+        let ad = ActiveDerp {
+            c: dc.clone(),
+            cancel: cancel.clone(),
+            last_write: Instant::now(),
+            create_time: Instant::now(),
+        };
+        self.active_derp.insert(region_id, ad);
+
+        inc!(MagicsockMetrics::NumDerpConnsAdded);
+        self.log_active_derp();
+
+        let d = dc.clone();
+        let c = self.conn.clone();
+        let msg_sender = self.msg_sender.clone();
+
+        // Needs to be done in a different task, to avoid deadlocking.
+        tokio::task::spawn(async move {
+            // Make sure we can establish a connection.
+            if let Err(err) = d.connect().await {
+                // TODO: what to do?
+                warn!("failed to connect to derp server: {:?}", err);
+            }
+
+            if let Some(ref f) = c.on_derp_active {
+                // TODO: spawn
+                f();
+            }
+
+            let rs = ReaderState::new(region_id, cancel, d);
+            msg_sender
+                .send_async(ActorMessage::Connected(rs))
+                .await
+                .unwrap();
+        });
+
+        dc
+    }
+
+    /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
+    /// and pings all those that do.
+    async fn maybe_close_derps_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
+        let mut tasks = Vec::new();
+        for (region_id, ad) in &self.active_derp {
+            let la = match ad.c.local_addr().await {
+                None => {
+                    tasks.push((*region_id, "rebind-no-localaddr"));
+                    continue;
+                }
+                Some(la) => la,
+            };
+
+            if !okay_local_ips.contains(&la.ip()) {
+                tasks.push((*region_id, "rebind-default-route-change"));
+                continue;
+            }
+
+            let dc = ad.c.clone();
+            let region_id = *region_id;
+            let msg_sender = self.msg_sender.clone();
+            tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
+                if let Err(_err) = dc.ping().await {
+                    msg_sender
+                        .send_async(ActorMessage::CloseOrReconnect(
+                            region_id,
+                            "rebind-ping-fail",
+                        ))
+                        .await
+                        .unwrap();
+                    return;
+                }
+                debug!("post-rebind ping of DERP region {} okay", region_id);
+            }));
+        }
+        for (region_id, why) in tasks {
+            self.close_or_reconnect_derp(region_id, why).await;
+        }
+
+        self.log_active_derp();
+    }
+
+    /// Closes the DERP connection to the provided `region_id` and starts reconnecting it if it's
+    /// our current home DERP.
+    async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
+        self.close_derp(region_id, why).await;
+        if self.my_derp == region_id {
+            self.connect_derp(region_id, None).await;
+        }
+    }
+
+    async fn clean_stale_derp(&mut self) {
+        debug!("cleanup {} derps", self.active_derp.len());
+        let now = Instant::now();
+
+        let mut to_close = Vec::new();
+        for (i, ad) in &self.active_derp {
+            if *i == self.my_derp {
+                continue;
+            }
+            if ad.last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
+                to_close.push(*i);
+            }
+        }
+
+        let dirty = !to_close.is_empty();
+        debug!(
+            "closing {}/{} derps",
+            to_close.len(),
+            self.active_derp.len()
+        );
+        for i in to_close {
+            self.close_derp(i, "idle").await;
+        }
+        if dirty {
+            self.log_active_derp();
+        }
+    }
+
+    async fn close_all_derp(&mut self, why: &'static str) {
+        if self.active_derp.is_empty() {
+            return;
+        }
+        // Need to collect to avoid double borrow
+        let regions: Vec<_> = self.active_derp.keys().copied().collect();
+        for region in regions {
+            self.close_derp(region, why).await;
+        }
+        self.log_active_derp();
+    }
+
+    async fn close_derp(&mut self, region_id: u16, why: &'static str) {
+        if let Some(ad) = self.active_derp.remove(&region_id) {
+            debug!(
+                "closing connection to derp-{} ({:?}), age {}s",
+                region_id,
+                why,
+                ad.create_time.elapsed().as_secs()
+            );
+
+            let ActiveDerp { c, cancel, .. } = ad;
+            c.close().await;
+            cancel.cancel();
+
+            inc!(MagicsockMetrics::NumDerpConnsRemoved);
+        }
+    }
+
+    fn log_active_derp(&self) {
+        let now = Instant::now();
+        debug!("{} active derp conns{}", self.active_derp.len(), {
+            let mut s = String::new();
+            if !self.active_derp.is_empty() {
+                s += ":";
+                for (node, ad) in self.active_derp_sorted() {
+                    s += &format!(
+                        " derp-{}=cr{},wr{}",
+                        node,
+                        now.duration_since(ad.create_time).as_secs(),
+                        now.duration_since(ad.last_write).as_secs()
+                    );
+                }
+            }
+            s
+        });
+    }
+
+    fn active_derp_sorted(&self) -> impl Iterator<Item = (u16, &'_ ActiveDerp)> + '_ {
+        let mut ids: Vec<_> = self.active_derp.keys().copied().collect();
+        ids.sort();
+
+        ids.into_iter()
+            .map(|id| (id, self.active_derp.get(&id).unwrap()))
+    }
+
+    async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
+        if self.derp_map.is_none() {
+            self.my_derp = 0;
+            return false;
+        }
+        let my_derp = self.my_derp;
+        if derp_num == my_derp {
+            // No change.
+            return true;
+        }
+        if my_derp != 0 && derp_num != 0 {
+            inc!(MagicsockMetrics::DerpHomeChange);
+        }
+        self.my_derp = derp_num;
+
+        // On change, notify all currently connected DERP servers and
+        // start connecting to our home DERP if we are not already.
+        match self
+            .derp_map
+            .as_ref()
+            .expect("already checked")
+            .regions
+            .get(&usize::from(derp_num))
+        {
+            Some(dr) => {
+                info!("home is now derp-{} ({})", derp_num, dr.region_code);
+            }
+            None => {
+                warn!("derp_map.regions[{}] is empty", derp_num);
+            }
+        }
+
+        let my_derp = self.my_derp;
+        futures::future::join_all(self.active_derp.iter().map(|(i, ad)| async move {
+            let b = *i == my_derp;
+            ad.c.note_preferred(b).await;
+        }))
+        .await;
+
+        self.connect_derp(derp_num, None).await;
+        true
+    }
+
+    /// Removes a DERP route entry previously added by add_derp_peer_route.
+    fn remove_derp_peer_route(
+        &mut self,
+        peer: key::node::PublicKey,
+        derp_id: u16,
+        dc: &derp::http::Client,
+    ) {
+        if let hash_map::Entry::Occupied(r) = self.derp_route.entry(peer) {
+            if r.get().derp_id == derp_id && &r.get().dc == dc {
+                r.remove();
+            }
+        }
+    }
+
+    /// Adds a DERP route entry, noting that peer was seen on DERP node `derp_id`, at least on the
+    /// connection identified by `dc`.
+    fn add_derp_peer_route(
+        &mut self,
+        peer: key::node::PublicKey,
+        derp_id: u16,
+        dc: derp::http::Client,
+    ) {
+        self.derp_route.insert(peer, DerpRoute { derp_id, dc });
     }
 }
 
