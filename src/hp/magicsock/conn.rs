@@ -1,10 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    io::{self, IoSliceMut},
-    mem::MaybeUninit,
+    collections::{HashMap, HashSet},
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
-    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
@@ -14,8 +12,8 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
-use bytes::{Bytes, BytesMut};
-use futures::{future::BoxFuture, Stream, StreamExt};
+use bytes::Bytes;
+use futures::{future::BoxFuture, StreamExt};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -30,7 +28,7 @@ use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
         derp::{self, DerpMap, DerpRegion},
-        disco, key, netcheck, netmap, portmapper, stun,
+        disco, key, netcheck, netmap, portmapper,
     },
     inc,
     metrics::magicsock::MagicsockMetrics,
@@ -44,6 +42,7 @@ use super::{
     },
     endpoint::{Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
+    udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor},
     ENDPOINTS_FRESH_ENOUGH_DURATION, HEARTBEAT_INTERVAL,
 };
 
@@ -182,7 +181,7 @@ pub struct Inner {
     /// Close was called.
     closed: AtomicBool,
     /// Are we currently processing STUN responses (set during a netcheck report).
-    enable_stun_packets: AtomicBool,
+    pub(super) enable_stun_packets: AtomicBool,
     /// If the last netcheck report, reports IPv6 to be available.
     pub(super) ipv6_reported: Arc<AtomicBool>,
 
@@ -213,7 +212,7 @@ impl Inner {
         self.closing.load(Ordering::Relaxed)
     }
 
-    fn is_closed(&self) -> bool {
+    pub(super) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 }
@@ -689,23 +688,6 @@ impl AsyncUdpSocket for Conn {
     }
 }
 
-#[derive(Debug)]
-enum NetworkReadResult {
-    Error(io::Error),
-    Ok {
-        source: NetworkSource,
-        meta: quinn_udp::RecvMeta,
-        bytes: Bytes,
-    },
-}
-
-#[derive(Debug)]
-enum NetworkSource {
-    Ipv4,
-    Ipv6,
-    Derp,
-}
-
 /// Simple DropGuard for decrementing a Waitgroup.
 struct WgGuard(wg::AsyncWaitGroup);
 impl Drop for WgGuard {
@@ -787,15 +769,6 @@ struct Actor {
     net_checker: netcheck::Client,
 }
 
-enum IpPacket {
-    Disco {
-        source: [u8; disco::KEY_LEN],
-        sealed_box: Bytes,
-        src: SocketAddr,
-    },
-    Forward(NetworkReadResult),
-}
-
 impl Actor {
     #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
@@ -803,32 +776,25 @@ impl Actor {
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
         let mut recvs = futures::stream::FuturesUnordered::new();
 
-        let ip_stream = IpStream::new(
+        let (ip_sender, mut ip_receiver) = mpsc::channel(128);
+
+        let io_cancel_token = CancellationToken::new();
+        let cloned_token = io_cancel_token.clone();
+        let udp_actor = UdpActor::new(
             &self.udp_state,
             self.conn.clone(),
             self.pconn4.clone(),
             self.pconn6.clone(),
         );
-        let (ip_sender, mut ip_receiver) = mpsc::channel(128);
-        let stun_packet_channel = self.net_checker.get_msg_sender();
+        let stun_packet_sender = self.net_checker.get_msg_sender();
 
-        // Process incoming packets in an independent task of the other work.
-        let io_cancel_token = CancellationToken::new();
-        let cloned_token = io_cancel_token.clone();
-        let conn = self.conn.clone();
-        let io_handle = tokio::task::spawn(async move {
-            run_io_loop(
-                ip_stream,
-                cloned_token,
-                conn,
-                stun_packet_channel,
-                ip_sender,
-            )
-            .await;
+        let udp_actor_handle = tokio::task::spawn(async move {
+            udp_actor
+                .run(stun_packet_sender, ip_sender, cloned_token)
+                .await;
         });
 
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
-
         let derp_actor = DerpActor::new(
             self.conn.clone(),
             derp_actor_receiver,
@@ -1001,7 +967,7 @@ impl Actor {
         io_cancel_token.cancel();
 
         derp_actor_handle.await?;
-        io_handle.await?;
+        udp_actor_handle.await?;
         Ok(())
     }
 
@@ -2374,204 +2340,6 @@ impl Actor {
     }
 }
 
-/// Executes the IO over the UDP sockets
-async fn run_io_loop(
-    mut ip_stream: IpStream,
-    cancel_token: CancellationToken,
-    conn: Arc<Inner>,
-    stun_packet_channel: mpsc::Sender<netcheck::ActorMessage>,
-    ip_sender: mpsc::Sender<IpPacket>,
-) {
-    loop {
-        tokio::select! {
-            biased;
-            _ = cancel_token.cancelled() => {
-                break;
-            }
-            msg = ip_stream.next() => {
-                match msg {
-                    None => break,
-                    Some(ip_msgs) => {
-                        trace!("tick: ip_msgs");
-                        match ip_msgs {
-                            Ok((packet, network, meta)) => {
-                                // Classify packets
-
-                                // Stun?
-                                if stun::is(&packet) {
-                                    let enable_stun_packets =
-                                        conn.enable_stun_packets.load(Ordering::Relaxed);
-                                    debug!("on_stun_receive, processing {}", enable_stun_packets);
-                                    if enable_stun_packets {
-                                        let msg = netcheck::ActorMessage::StunPacket(packet, meta.addr);
-                                        stun_packet_channel.try_send(msg).ok();
-                                    }
-                                    continue;
-                                }
-                                // Disco?
-                                if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
-                                    if ip_sender
-                                        .send(IpPacket::Disco {
-                                            source,
-                                            sealed_box: packet.slice_ref(sealed_box),
-                                            src: meta.addr,
-                                        })
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!("ip_sender gone");
-                                        break;
-                                    };
-                                    continue;
-                                }
-
-                                // Foward
-                                let forward = match network {
-                                    Network::Ipv4 => NetworkReadResult::Ok {
-                                        source: NetworkSource::Ipv4,
-                                        bytes: packet,
-                                        meta,
-                                    },
-                                    Network::Ipv6 => NetworkReadResult::Ok {
-                                        source: NetworkSource::Ipv6,
-                                        bytes: packet,
-                                        meta,
-                                    },
-                                };
-
-                                if ip_sender.send(IpPacket::Forward(forward)).await.is_err() {
-                                    warn!("ip_sender gone");
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                if ip_sender
-                                    .send(IpPacket::Forward(NetworkReadResult::Error(err)))
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!("ip_sender gone");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct IpStream {
-    conn: Arc<Inner>,
-    pconn4: RebindingUdpConn,
-    pconn6: Option<RebindingUdpConn>,
-    recv_buf: Box<[u8]>,
-    out_buffer: VecDeque<(Bytes, Network, quinn_udp::RecvMeta)>,
-}
-
-impl IpStream {
-    fn new(
-        udp_state: &quinn_udp::UdpState,
-        conn: Arc<Inner>,
-        pconn4: RebindingUdpConn,
-        pconn6: Option<RebindingUdpConn>,
-    ) -> Self {
-        // 1480 MTU size based on default from quinn
-        let target_recv_buf_len = 1480 * udp_state.gro_segments() * quinn_udp::BATCH_SIZE;
-        let recv_buf = vec![0u8; target_recv_buf_len];
-
-        Self {
-            recv_buf: recv_buf.into(),
-            conn,
-            pconn4,
-            pconn6,
-            out_buffer: VecDeque::new(),
-        }
-    }
-
-    fn handle_packet(&mut self, packet: Bytes, network: Network, meta: quinn_udp::RecvMeta) {
-        self.out_buffer.push_back((packet, network, meta));
-    }
-}
-
-impl Stream for IpStream {
-    type Item = io::Result<(Bytes, Network, quinn_udp::RecvMeta)>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.conn.is_closed() {
-            return Poll::Ready(None);
-        }
-        if let Some(res) = self.out_buffer.pop_front() {
-            return Poll::Ready(Some(Ok(res)));
-        }
-
-        let mut metas = [quinn_udp::RecvMeta::default(); quinn_udp::BATCH_SIZE];
-        let mut iovs = MaybeUninit::<[IoSliceMut; quinn_udp::BATCH_SIZE]>::uninit();
-        let chunk_size = self.recv_buf.len() / quinn_udp::BATCH_SIZE;
-        self.recv_buf
-            .chunks_mut(chunk_size)
-            .enumerate()
-            .for_each(|(i, buf)| unsafe {
-                iovs.as_mut_ptr()
-                    .cast::<IoSliceMut>()
-                    .add(i)
-                    .write(IoSliceMut::new(buf));
-            });
-        let mut iovs = unsafe { iovs.assume_init() };
-
-        if let Some(ref pconn6) = self.pconn6 {
-            match pconn6.poll_recv(cx, &mut iovs, &mut metas) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(msgs)) => {
-                    for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
-                        let mut data: BytesMut = buf[0..meta.len].into();
-                        let stride = meta.stride;
-                        while !data.is_empty() {
-                            let buf = data.split_to(stride.min(data.len())).freeze();
-                            // set stride to len, as we are cutting it into pieces here
-                            meta.len = buf.len();
-                            meta.stride = buf.len();
-                            self.handle_packet(buf, Network::Ipv6, meta);
-                        }
-                    }
-                    if let Some(res) = self.out_buffer.pop_front() {
-                        return Poll::Ready(Some(Ok(res)));
-                    }
-                }
-                Poll::Ready(Err(err)) => {
-                    return Poll::Ready(Some(Err(err)));
-                }
-            }
-        }
-
-        match self.pconn4.poll_recv(cx, &mut iovs, &mut metas) {
-            Poll::Pending => {}
-            Poll::Ready(Ok(msgs)) => {
-                for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
-                    let mut data: BytesMut = buf[0..meta.len].into();
-                    let stride = meta.stride;
-                    while !data.is_empty() {
-                        let buf = data.split_to(stride.min(data.len())).freeze();
-                        // set stride to len, as we are cutting it into pieces here
-                        meta.len = buf.len();
-                        meta.stride = buf.len();
-                        self.handle_packet(buf, Network::Ipv4, meta);
-                    }
-                }
-                if let Some(res) = self.out_buffer.pop_front() {
-                    return Poll::Ready(Some(Ok(res)));
-                }
-            }
-            Poll::Ready(Err(err)) => {
-                return Poll::Ready(Some(Err(err)));
-            }
-        }
-
-        Poll::Pending
-    }
-}
-
 /// Returns the previous or new DiscoInfo for `k`.
 fn get_disco_info<'a>(
     disco_info: &'a mut HashMap<key::node::PublicKey, DiscoInfo>,
@@ -2778,6 +2546,7 @@ mod tests {
         hp::{
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
             hostinfo::Hostinfo,
+            stun,
         },
         tls,
     };

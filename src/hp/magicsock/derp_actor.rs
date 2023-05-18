@@ -15,17 +15,19 @@ use crate::{
     hp::{
         derp::{self, DerpMap, MAX_PACKET_SIZE},
         key::{self, node::PUBLIC_KEY_LENGTH},
-        magicsock::DERP_INACTIVE_CLEANUP_TIME,
     },
     inc,
     metrics::magicsock::MagicsockMetrics,
     record,
 };
 
-use super::{
-    conn::{ActorMessage, Inner},
-    DERP_CLEAN_STALE_INTERVAL,
-};
+use super::conn::{ActorMessage, Inner};
+
+/// How long a non-home DERP connection needs to be idle (last written to) before we close it.
+const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
+
+/// How often `clean_stale_derp` runs when there are potentially-stale DERP connections to close.
+const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
 pub(super) enum DerpActorMessage {
     Send {
@@ -354,25 +356,22 @@ impl DerpActor {
         let c = self.conn.clone();
         let msg_sender = self.msg_sender.clone();
 
-        // Needs to be done in a different task, to avoid deadlocking.
-        tokio::task::spawn(async move {
-            // Make sure we can establish a connection.
-            if let Err(err) = d.connect().await {
-                // TODO: what to do?
-                warn!("failed to connect to derp server: {:?}", err);
-            }
+        // Make sure we can establish a connection.
+        if let Err(err) = d.connect().await {
+            // TODO: what to do?
+            warn!("failed to connect to derp server: {:?}", err);
+        }
 
-            if let Some(ref f) = c.on_derp_active {
-                // TODO: spawn
-                f();
-            }
+        if let Some(ref f) = c.on_derp_active {
+            // TODO: spawn
+            f();
+        }
 
-            let rs = ReaderState::new(region_id, cancel, d);
-            msg_sender
-                .send_async(ActorMessage::Connected(rs))
-                .await
-                .unwrap();
-        });
+        let rs = ReaderState::new(region_id, cancel, d);
+        msg_sender
+            .send_async(ActorMessage::Connected(rs))
+            .await
+            .unwrap();
 
         dc
     }

@@ -9,6 +9,7 @@ mod derp_actor;
 mod endpoint;
 mod rebinding_conn;
 mod timer;
+mod udp_actor;
 
 pub use self::conn::{Conn, Options};
 pub use self::timer::Timer;
@@ -29,12 +30,6 @@ const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 /// The latency at or under which we don't try to upgrade to a better path.
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
-
-/// How long a non-home DERP connection needs to be idle (last written to) before we close it.
-const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
-
-/// How often `clean_stale_derp` runs when there are potentially-stale DERP connections to close.
-const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
