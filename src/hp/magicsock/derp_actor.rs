@@ -143,7 +143,9 @@ impl DerpActor {
                             self.maybe_close_derps_on_rebind(&ifs).await;
                         }
                         DerpActorMessage::Shutdown => {
+                            debug!("shutting down");
                             self.close_all_derp("conn-close").await;
+                            break;
                         }
                     }
                 }

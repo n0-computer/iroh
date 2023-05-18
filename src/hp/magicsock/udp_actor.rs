@@ -12,7 +12,6 @@ use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use quinn::AsyncUdpSocket;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::hp::{disco, netcheck, stun};
@@ -21,6 +20,10 @@ use super::{
     conn::{Inner, Network},
     rebinding_conn::RebindingUdpConn,
 };
+
+pub(super) enum UdpActorMessage {
+    Shutdown,
+}
 
 #[derive(Debug)]
 pub(super) enum NetworkReadResult {
@@ -66,6 +69,7 @@ impl UdpActor {
         // 1480 MTU size based on default from quinn
         let target_recv_buf_len = 1480 * udp_state.gro_segments() * quinn_udp::BATCH_SIZE;
         let recv_buf = vec![0u8; target_recv_buf_len];
+
         UdpActor {
             conn,
             pconn4,
@@ -77,15 +81,20 @@ impl UdpActor {
 
     pub(super) async fn run(
         mut self,
+        mut msg_receiver: mpsc::Receiver<UdpActorMessage>,
         stun_packet_channel: mpsc::Sender<netcheck::ActorMessage>,
         ip_sender: mpsc::Sender<IpPacket>,
-        cancel_token: CancellationToken,
     ) {
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => {
-                    break;
+                Some(msg) = msg_receiver.recv() => {
+                    match msg {
+                        UdpActorMessage::Shutdown => {
+                            debug!("shutting down");
+                            break;
+                        }
+                    }
                 }
                 msg = (&mut self).next() => {
                     match msg {
