@@ -150,7 +150,6 @@ impl Deref for Conn {
 
 #[derive(derive_more::Debug)]
 pub struct Inner {
-    rt: tokio::runtime::Handle,
     actor_sender: flume::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
@@ -260,7 +259,6 @@ impl Conn {
         let (network_sender, network_receiver) = flume::bounded(128);
 
         let inner = Arc::new(Inner {
-            rt: tokio::runtime::Handle::current(),
             name,
             on_endpoints,
             on_derp_active,
@@ -489,12 +487,14 @@ impl Drop for Conn {
         if Arc::strong_count(&self.inner) > 2 {
             return;
         }
-        let this = self.clone();
-        self.inner.rt.spawn(async move {
-            if let Err(cause) = this.close().await {
-                warn!("error closing Conn: {}", cause);
-            }
-        });
+        self.inner.closing.store(true, Ordering::Relaxed);
+        self.inner.closed.store(true, Ordering::SeqCst);
+        // the block in place is needed because otherwise tokio will panic if Drop is called from
+        // within a runtime. We want Drop to work both inside and outside of a runtime.
+        let task = tokio::task::block_in_place(|| self.actor_task.blocking_lock().take());
+        if let Some(task) = task {
+            task.abort();
+        }
     }
 }
 
