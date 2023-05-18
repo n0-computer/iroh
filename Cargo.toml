@@ -83,7 +83,7 @@ tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trust-dns-resolver = "0.22.0"
 walkdir = "2"
-webpki = "0.22"
+webpki = { version = "0.22", features = ["std"] }
 wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
