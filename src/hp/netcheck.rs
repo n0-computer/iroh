@@ -132,10 +132,10 @@ impl fmt::Display for Report {
 ///
 /// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
 /// While running it expects to be passed received stun packets using
-/// [`Client::get_stun_packet_channel`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
+/// [`Client::get_msg_sender`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
 /// do so.
 #[derive(Debug)]
-pub struct Client {
+pub(crate) struct Client {
     msg_sender: mpsc::Sender<ActorMessage>,
     actor: Actor,
 }
@@ -155,7 +155,7 @@ struct Reports {
 }
 
 impl Client {
-    pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+    pub(crate) async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let last_full = Instant::now();
         let (got_hair_stun, _) = broadcast::channel(1);
 
@@ -197,12 +197,12 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_stun_packet_channel`] in order for this function to receive the stun
+    /// [`Client::get_msg_sender`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
-    pub async fn get_report(
+    pub(crate) async fn get_report(
         &mut self,
         dm: &DerpMap,
         stun_conn4: Option<Arc<UdpSocket>>,
