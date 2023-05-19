@@ -344,7 +344,8 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                 }
                 Some(ClientWriterMessage::Packet((key, bytes))) => {
                     // TODO: the rate limiter is only used on this method, is it because it's the only method that
-                    // theoretically sends a bunch of data, or is it an oversight? For example, the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
+                    // theoretically sends a bunch of data, or is it an oversight? For example,
+                    // the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
                     send_packet(&mut self.writer, &self.rate_limiter, key, &bytes).await?;
                 }
                 Some(ClientWriterMessage::FwdPacket((srckey, dstkey, bytes))) => {

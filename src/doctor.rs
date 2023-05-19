@@ -196,7 +196,7 @@ async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
     let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
     println!("getting report using derp map {:#?}", dm);
 
-    let r = client.get_report(&dm, None, None).await?;
+    let r = client.get_report(dm, None, None).await?;
     println!("{:#?}", r);
     Ok(())
 }
