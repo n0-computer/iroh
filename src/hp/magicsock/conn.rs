@@ -76,6 +76,14 @@ impl Network {
             Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn local_addr(&self) -> IpAddr {
+        match self {
+            Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
+            Self::Ipv6 => Ipv6Addr::LOCALHOST.into(),
+        }
+    }
 }
 
 impl From<Network> for socket2::Domain {

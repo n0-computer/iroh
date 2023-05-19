@@ -203,6 +203,12 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net:
         );
     }
     socket.set_nonblocking(true)?; // UdpSocketState::configure also does this
+
+    if network == Network::Ipv6 {
+        // Avoid dualstack
+        socket.set_only_v6(true)?;
+    }
+
     socket.bind(&addr.into())?;
     let socket: std::net::UdpSocket = socket.into();
 
@@ -242,14 +248,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rebinding_conn_send_recv() -> Result<()> {
-        let m1 = RebindingUdpConn::bind(0, Network::Ipv4).await?;
+    async fn test_rebinding_conn_send_recv_ipv4() -> Result<()> {
+        rebinding_conn_send_recv(Network::Ipv4).await
+    }
+
+    #[tokio::test]
+    async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
+        rebinding_conn_send_recv(Network::Ipv6).await
+    }
+
+    async fn rebinding_conn_send_recv(network: Network) -> Result<()> {
+        let m1 = RebindingUdpConn::bind(0, network).await?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = RebindingUdpConn::bind(0, Network::Ipv6).await?;
+        let m2 = RebindingUdpConn::bind(0, network).await?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
-        let m1_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), m1.local_addr()?.port());
+        let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
         let (m1_send, m1_recv) = flume::bounded(8);
 
         let m1_task = tokio::task::spawn(async move {
