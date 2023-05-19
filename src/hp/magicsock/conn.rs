@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, StreamExt};
+use futures::future::BoxFuture;
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -36,14 +36,17 @@ use crate::{
 };
 
 use super::{
-    derp_actor::{
-        DerpActor, DerpActorMessage, DerpReadResult, ReadAction, ReadResult, ReaderState,
-    },
+    derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     endpoint::{Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
-    ENDPOINTS_FRESH_ENOUGH_DURATION, HEARTBEAT_INTERVAL,
 };
+
+/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
+/// expire at 30 seconds, so this is a few seconds shy of that.
+const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(super) enum CurrentPortFate {
@@ -146,9 +149,9 @@ impl Deref for Conn {
 
 #[derive(derive_more::Debug)]
 pub struct Inner {
-    actor_sender: flume::Sender<ActorMessage>,
+    actor_sender: mpsc::Sender<ActorMessage>,
     /// Sends network messages.
-    network_sender: flume::Sender<Vec<quinn_udp::Transmit>>,
+    network_sender: mpsc::Sender<Vec<quinn_udp::Transmit>>,
     pub(super) name: String,
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
@@ -267,8 +270,8 @@ impl Conn {
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
         let net_checker = netcheck::Client::new(Some(port_mapper.clone())).await?;
-        let (actor_sender, actor_receiver) = flume::bounded(128);
-        let (network_sender, network_receiver) = flume::bounded(128);
+        let (actor_sender, actor_receiver) = mpsc::channel(128);
+        let (network_sender, network_receiver) = mpsc::channel(128);
 
         let inner = Arc::new(Inner {
             name,
@@ -305,9 +308,9 @@ impl Conn {
         });
 
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
-        let derp_actor = DerpActor::new(inner.clone(), derp_actor_receiver, actor_sender.clone());
+        let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
         let derp_actor_task = tokio::task::spawn(async move {
-            derp_actor.run().await;
+            derp_actor.run(derp_actor_receiver).await;
         });
 
         let conn = inner.clone();
@@ -358,7 +361,7 @@ impl Conn {
     pub async fn tracked_endpoints(&self) -> Result<Vec<key::node::PublicKey>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::TrackedEndpoints(s))
+            .send(ActorMessage::TrackedEndpoints(s))
             .await?;
         let res = r.await?;
         Ok(res)
@@ -367,7 +370,7 @@ impl Conn {
     pub async fn local_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::LocalEndpoints(s))
+            .send(ActorMessage::LocalEndpoints(s))
             .await?;
         let res = r.await?;
         Ok(res)
@@ -381,7 +384,7 @@ impl Conn {
     #[instrument(skip_all, fields(self.name = %self.name))]
     pub async fn re_stun(&self, why: &'static str) {
         self.actor_sender
-            .send_async(ActorMessage::ReStun(why))
+            .send(ActorMessage::ReStun(why))
             .await
             .unwrap();
     }
@@ -394,7 +397,7 @@ impl Conn {
         let (s, r) = tokio::sync::oneshot::channel();
         if self
             .actor_sender
-            .send_async(ActorMessage::GetMappingAddr(node_key.clone(), s))
+            .send(ActorMessage::GetMappingAddr(node_key.clone(), s))
             .await
             .is_ok()
         {
@@ -443,7 +446,7 @@ impl Conn {
     pub async fn set_preferred_port(&self, port: u16) {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::SetPreferredPort(port, s))
+            .send(ActorMessage::SetPreferredPort(port, s))
             .await
             .unwrap();
         r.await.unwrap();
@@ -454,7 +457,7 @@ impl Conn {
     pub async fn set_derp_map(&self, dm: Option<derp::DerpMap>) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::SetDerpMap(dm, s))
+            .send(ActorMessage::SetDerpMap(dm, s))
             .await?;
         r.await?;
         Ok(())
@@ -467,7 +470,7 @@ impl Conn {
     pub async fn set_network_map(&self, nm: netmap::NetworkMap) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::SetNetworkMap(nm, s))
+            .send(ActorMessage::SetNetworkMap(nm, s))
             .await?;
         r.await?;
         Ok(())
@@ -481,7 +484,7 @@ impl Conn {
         if self.is_closed() {
             return Ok(());
         }
-        self.actor_sender.send_async(ActorMessage::Shutdown).await?;
+        self.actor_sender.send(ActorMessage::Shutdown).await?;
 
         self.closing.store(true, Ordering::Relaxed);
         self.closed.store(true, Ordering::SeqCst);
@@ -509,7 +512,7 @@ impl Conn {
     pub async fn rebind_all(&self) {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
-            .send_async(ActorMessage::RebindAll(s))
+            .send(ActorMessage::RebindAll(s))
             .await
             .unwrap();
         r.await.unwrap();
@@ -591,23 +594,26 @@ impl AsyncUdpSocket for Conn {
         // Split up transmits by destination, as the rest of the code assumes single dest.
         let groups = TransmitIter::new(transmits);
         for group in groups {
-            if self.network_sender.is_full() {
-                // TODO: add counter?
-                self.network_send_wakers
-                    .lock()
-                    .unwrap()
-                    .replace(cx.waker().clone());
-                break;
+            match self.network_sender.try_reserve() {
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // TODO: add counter?
+                    self.network_send_wakers
+                        .lock()
+                        .unwrap()
+                        .replace(cx.waker().clone());
+                    break;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "connection closed",
+                    )));
+                }
+                Ok(permit) => {
+                    n += group.len();
+                    permit.send(group);
+                }
             }
-            if self.network_sender.is_disconnected() {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "connection closed",
-                )));
-            }
-
-            n += group.len();
-            self.network_sender.try_send(group).expect("just checked");
         }
         if n > 0 {
             return Poll::Ready(Ok(n));
@@ -691,12 +697,6 @@ impl AsyncUdpSocket for Conn {
                 }
             }
         }
-        debug!(
-            "poll_recv: received: {} - requested: {} - msg_buffer: {}",
-            num_msgs,
-            bufs.len(),
-            self.network_recv_ch.len(),
-        );
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
@@ -737,7 +737,6 @@ pub(super) enum ActorMessage {
     Shutdown,
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
-    Connected(ReaderState),
     EnqueueCallMeMaybe {
         derp_addr: SocketAddr,
         endpoint_id: usize,
@@ -748,16 +747,17 @@ pub(super) enum ActorMessage {
         msg: disco::Message,
     },
     SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
+    ReceiveDerp(DerpReadResult),
 }
 
 struct Actor {
     conn: Arc<Inner>,
     net_map: Option<netmap::NetworkMap>,
-    msg_receiver: flume::Receiver<ActorMessage>,
-    msg_sender: flume::Sender<ActorMessage>,
+    msg_receiver: mpsc::Receiver<ActorMessage>,
+    msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
     udp_actor_sender: mpsc::Sender<UdpActorMessage>,
-    network_receiver: flume::Receiver<Vec<quinn_udp::Transmit>>,
+    network_receiver: mpsc::Receiver<Vec<quinn_udp::Transmit>>,
     ip_receiver: mpsc::Receiver<IpPacket>,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<NetworkReadResult>,
@@ -804,95 +804,17 @@ impl Actor {
     async fn run(mut self) -> Result<()> {
         let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
-        let mut recvs = futures::stream::FuturesUnordered::new();
 
         loop {
             tokio::select! {
-                transmits = self.network_receiver.recv_async() => {
+                Some(transmits) = self.network_receiver.recv() => {
                     trace!("tick: network send");
-                    self.send_network(transmits?).await;
+                    self.send_network(transmits).await;
                 }
-                msg = self.msg_receiver.recv_async() => {
+                Some(msg) = self.msg_receiver.recv() => {
                     trace!("tick: msg");
-                    match msg? {
-                        ActorMessage::SetDerpMap(dm, s) => {
-                            self.set_derp_map(dm);
-                            let _ = s.send(());
-                        }
-                        ActorMessage::TrackedEndpoints(s) => {
-                            let eps: Vec<_> = self.peer_map.endpoints().filter_map(|(_, ep)| ep.public_key.clone()).collect();
-                            let _ = s.send(eps);
-                        }
-                        ActorMessage::LocalEndpoints(s) => {
-                            let eps: Vec<_> = self.last_endpoints.clone();
-                            let _ = s.send(eps);
-                        }
-                        ActorMessage::GetMappingAddr(node_key, s) => {
-                            let res = self.peer_map
-                                .endpoint_for_node_key(&node_key)
-                                .map(|ep| ep.quic_mapped_addr);
-                            let _ = s.send(res);
-                        }
-                        ActorMessage::Shutdown => {
-                            debug!("shutting down");
-                            for (_, ep) in self.peer_map.endpoints_mut() {
-                                ep.stop_and_reset();
-                            }
-                            self.port_mapper.close();
-                            self.derp_actor_sender
-                                .send(DerpActorMessage::Shutdown)
-                                .await.ok();
-                            self.udp_actor_sender
-                                .send(UdpActorMessage::Shutdown)
-                                .await.ok();
-
-                            // Ignore errors from pconnN
-                            // They will frequently have been closed already by a call to connBind.Close.
-                            debug!("stopping connections");
-                            if let Some(ref conn) = self.pconn6 {
-                                conn.close().await.ok();
-                            }
-                            self.pconn4.close().await.ok();
-
-                            debug!("shutdown complete");
-                            return Ok(());
-                        }
-                        ActorMessage::CloseOrReconnect(region_id, reason) => {
-                            self.send_derp_actor(
-                                DerpActorMessage::CloseOrReconnect {
-                                    region_id,
-                                    reason,
-                                });
-                        }
-                        ActorMessage::ReStun(reason) => {
-                            self.re_stun(reason).await;
-                        }
-                        ActorMessage::Connected(rs) => {
-                            recvs.push(rs.recv())
-                        }
-                        ActorMessage::EnqueueCallMeMaybe {
-                            derp_addr,
-                            endpoint_id,
-                        } => {
-                            self.enqueue_call_me_maybe(derp_addr, endpoint_id).await;
-                        }
-                        ActorMessage::RebindAll(s) => {
-                            self.rebind_all().await;
-                            let _ = s.send(());
-                        }
-                        ActorMessage::SetPreferredPort(port, s) => {
-                            self.set_preferred_port(port).await;
-                            let _ = s.send(());
-                        }
-                        ActorMessage::SendDiscoMessage {
-                            dst, dst_key, msg,
-                        } => {
-                            let _res = self.send_disco_message(dst, dst_key, msg).await;
-                        }
-                        ActorMessage::SetNetworkMap(nm, s) => {
-                            self.set_network_map(nm);
-                            s.send(()).unwrap();
-                        }
+                    if self.handle_actor_message(msg).await {
+                        return Ok(());
                     }
                 }
                 Some(msg) = self.ip_receiver.recv() => {
@@ -910,43 +832,6 @@ impl Actor {
                             while let Some(waker) = wakers.take() {
                                 waker.wake();
                             }
-                        }
-                    }
-                }
-                Some((rs, result, action)) = recvs.next() => {
-                    trace!("tick: recvs: {:?}, {:?}", result, action);
-                    match action {
-                        ReadAction::None => {},
-                        ReadAction::AddPeerRoutes { peers, region, derp_client } => {
-                            self.send_derp_actor(DerpActorMessage::AddPeerRoutes {
-                                peers, region, derp_client,
-                            });
-                        },
-                        ReadAction::RemovePeerRoutes { peers, region, derp_client } => {
-                            self.send_derp_actor(DerpActorMessage::RemovePeerRoutes {
-                                peers, region, derp_client,
-                            });
-                        }
-                    }
-                    match result {
-                        ReadResult::Break => {
-                            // drop client
-                            continue;
-                        }
-                        ReadResult::Continue => {
-                            recvs.push(rs.recv())
-                        }
-                        ReadResult::Yield(read_result) => {
-                            let passthroughs = self.process_derp_read_result(read_result).await;
-                            for passthrough in passthroughs {
-                                self.derp_recv_sender.send_async(passthrough).await.expect("missing recv sender");
-                                let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
-                                if let Some(waker) = wakers.take() {
-                                    waker.wake();
-                                }
-                            }
-                            recvs.push(rs.recv());
-
                         }
                     }
                 }
@@ -973,6 +858,105 @@ impl Actor {
                 }
             }
         }
+    }
+
+    /// Processes an incoming actor message.
+    ///
+    /// Returns `true` if it was a shutdown.
+    async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
+        match msg {
+            ActorMessage::SetDerpMap(dm, s) => {
+                self.set_derp_map(dm);
+                let _ = s.send(());
+            }
+            ActorMessage::TrackedEndpoints(s) => {
+                let eps: Vec<_> = self
+                    .peer_map
+                    .endpoints()
+                    .filter_map(|(_, ep)| ep.public_key.clone())
+                    .collect();
+                let _ = s.send(eps);
+            }
+            ActorMessage::LocalEndpoints(s) => {
+                let eps: Vec<_> = self.last_endpoints.clone();
+                let _ = s.send(eps);
+            }
+            ActorMessage::GetMappingAddr(node_key, s) => {
+                let res = self
+                    .peer_map
+                    .endpoint_for_node_key(&node_key)
+                    .map(|ep| ep.quic_mapped_addr);
+                let _ = s.send(res);
+            }
+            ActorMessage::Shutdown => {
+                debug!("shutting down");
+                for (_, ep) in self.peer_map.endpoints_mut() {
+                    ep.stop_and_reset();
+                }
+                self.port_mapper.close();
+                self.derp_actor_sender
+                    .send(DerpActorMessage::Shutdown)
+                    .await
+                    .ok();
+                self.udp_actor_sender
+                    .send(UdpActorMessage::Shutdown)
+                    .await
+                    .ok();
+
+                // Ignore errors from pconnN
+                // They will frequently have been closed already by a call to connBind.Close.
+                debug!("stopping connections");
+                if let Some(ref conn) = self.pconn6 {
+                    conn.close().await.ok();
+                }
+                self.pconn4.close().await.ok();
+
+                debug!("shutdown complete");
+                return true;
+            }
+            ActorMessage::CloseOrReconnect(region_id, reason) => {
+                self.send_derp_actor(DerpActorMessage::CloseOrReconnect { region_id, reason });
+            }
+            ActorMessage::ReStun(reason) => {
+                self.re_stun(reason).await;
+            }
+            ActorMessage::EnqueueCallMeMaybe {
+                derp_addr,
+                endpoint_id,
+            } => {
+                self.enqueue_call_me_maybe(derp_addr, endpoint_id).await;
+            }
+            ActorMessage::RebindAll(s) => {
+                self.rebind_all().await;
+                let _ = s.send(());
+            }
+            ActorMessage::SetPreferredPort(port, s) => {
+                self.set_preferred_port(port).await;
+                let _ = s.send(());
+            }
+            ActorMessage::SendDiscoMessage { dst, dst_key, msg } => {
+                let _res = self.send_disco_message(dst, dst_key, msg).await;
+            }
+            ActorMessage::SetNetworkMap(nm, s) => {
+                self.set_network_map(nm);
+                s.send(()).unwrap();
+            }
+            ActorMessage::ReceiveDerp(read_result) => {
+                let passthroughs = self.process_derp_read_result(read_result).await;
+                for passthrough in passthroughs {
+                    self.derp_recv_sender
+                        .send_async(passthrough)
+                        .await
+                        .expect("missing recv sender");
+                    let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
+                    if let Some(waker) = wakers.take() {
+                        waker.wake();
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
@@ -1663,7 +1647,7 @@ impl Actor {
                     Box::pin(async move {
                         info!("STUN done; sending call-me-maybe",);
                         msg_sender
-                            .send_async(ActorMessage::EnqueueCallMeMaybe {
+                            .send(ActorMessage::EnqueueCallMeMaybe {
                                 derp_addr,
                                 endpoint_id,
                             })
@@ -1674,7 +1658,7 @@ impl Actor {
             );
 
             self.msg_sender
-                .send_async(ActorMessage::ReStun("refresh-for-peering"))
+                .send(ActorMessage::ReStun("refresh-for-peering"))
                 .await
                 .unwrap();
         } else if let Some(public_key) = endpoint.public_key() {
@@ -1684,7 +1668,7 @@ impl Actor {
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
                 if let Err(err) = msg_sender
-                    .send_async(ActorMessage::SendDiscoMessage {
+                    .send(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
                         dst_key: public_key,
                         msg,
@@ -2704,7 +2688,7 @@ mod tests {
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
-            let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
+            let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
                 on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {

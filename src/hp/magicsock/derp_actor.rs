@@ -43,16 +43,6 @@ pub(super) enum DerpActorMessage {
         region_id: u16,
         reason: &'static str,
     },
-    RemovePeerRoutes {
-        peers: Vec<key::node::PublicKey>,
-        region: u16,
-        derp_client: derp::http::Client,
-    },
-    AddPeerRoutes {
-        peers: Vec<key::node::PublicKey>,
-        region: u16,
-        derp_client: derp::http::Client,
-    },
     NotePreferred(u16),
     SetDerpMap(Option<DerpMap>),
     MaybeCloseDerpsOnRebind(Vec<IpAddr>),
@@ -68,6 +58,7 @@ struct ActiveDerp {
     /// channel (currently even if there was no write).
     last_write: Instant,
     create_time: Instant,
+    reader: ReaderState,
 }
 
 /// A route entry for a public key, saying that a certain peer should be available at DERP
@@ -81,7 +72,6 @@ struct DerpRoute {
 
 pub(super) struct DerpActor {
     conn: Arc<Inner>,
-    receiver: mpsc::Receiver<DerpActorMessage>,
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<u16, ActiveDerp>,
     /// Contains optional alternate routes to use as an optimization instead of
@@ -90,25 +80,20 @@ pub(super) struct DerpActor {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
     derp_route: HashMap<key::node::PublicKey, DerpRoute>,
-    msg_sender: flume::Sender<ActorMessage>,
+    msg_sender: mpsc::Sender<ActorMessage>,
 }
 
 impl DerpActor {
-    pub(super) fn new(
-        conn: Arc<Inner>,
-        receiver: mpsc::Receiver<DerpActorMessage>,
-        msg_sender: flume::Sender<ActorMessage>,
-    ) -> Self {
+    pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         DerpActor {
             conn,
-            receiver,
             active_derp: HashMap::default(),
             derp_route: HashMap::new(),
             msg_sender,
         }
     }
 
-    pub(super) async fn run(mut self) {
+    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<DerpActorMessage>) {
         let mut cleanup_timer = time::interval_at(
             time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
             DERP_CLEAN_STALE_INTERVAL,
@@ -116,7 +101,7 @@ impl DerpActor {
 
         loop {
             tokio::select! {
-                Some(msg) = self.receiver.recv() => {
+                Some(msg) = receiver.recv() => {
                     match msg {
                         DerpActorMessage::Send { region_id, contents, peer } => {
                             self.send_derp(region_id, contents, peer).await;
@@ -126,12 +111,6 @@ impl DerpActor {
                         }
                         DerpActorMessage::CloseOrReconnect { region_id, reason } => {
                             self.close_or_reconnect_derp(region_id, reason).await;
-                        }
-                        DerpActorMessage::AddPeerRoutes { peers, region, derp_client } => {
-                            self.add_derp_peer_routes(peers, region, derp_client);
-                        }
-                        DerpActorMessage::RemovePeerRoutes { peers, region, derp_client } => {
-                            self.remove_derp_peer_routes(peers, region, &derp_client);
                         }
                         DerpActorMessage::NotePreferred(my_derp) => {
                             self.note_preferred(my_derp).await;
@@ -149,6 +128,28 @@ impl DerpActor {
                         }
                     }
                 }
+                (region_id, result, action) = self.recv_all() => {
+                    trace!("tick: recvs: {:?}, {:?}", result, action);
+                    match action {
+                        ReadAction::None => {},
+                        ReadAction::AddPeerRoutes { peers, region, derp_client } => {
+                            self.add_derp_peer_routes(peers, region, derp_client);
+                        },
+                        ReadAction::RemovePeerRoutes { peers, region, derp_client } => {
+                            self.remove_derp_peer_routes(peers, region, &derp_client);
+                        }
+                    }
+                    match result {
+                        ReadResult::Break => {
+                            // drop client
+                            self.close_derp(region_id, "read error").await;
+                        }
+                        ReadResult::Continue => {}
+                        ReadResult::Yield(read_result) => {
+                            self.msg_sender.send(ActorMessage::ReceiveDerp(read_result)).await.ok();
+                        }
+                    }
+                }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
                     self.clean_stale_derp().await;
@@ -159,6 +160,23 @@ impl DerpActor {
                 }
             }
         }
+    }
+
+    async fn recv_all(&mut self) -> (u16, ReadResult, ReadAction) {
+        if self.active_derp.is_empty() {
+            futures::future::pending::<(u16, ReadResult, ReadAction)>().await;
+        }
+
+        let ((region, (result, action)), _, _) =
+            futures::future::select_all(self.active_derp.iter_mut().map(|(region, ad)| {
+                Box::pin(async move {
+                    let res = ad.reader.recv().await;
+                    (*region, res)
+                })
+            }))
+            .await;
+
+        (region, result, action)
     }
 
     async fn set_derp_map(&mut self, dm: Option<DerpMap>) {
@@ -209,7 +227,7 @@ impl DerpActor {
 
         // TOOD: Maybe try_send?
         self.msg_sender
-            .send_async(ActorMessage::ReStun("derp-map-update"))
+            .send(ActorMessage::ReStun("derp-map-update"))
             .await
             .ok();
     }
@@ -348,32 +366,24 @@ impl DerpActor {
             cancel: cancel.clone(),
             last_write: Instant::now(),
             create_time: Instant::now(),
+            reader: ReaderState::new(region_id, cancel, dc.clone()),
         };
+
+        // Make sure we can establish a connection.
+        if let Err(err) = dc.connect().await {
+            // TODO: what to do?
+            warn!("failed to connect to derp server: {:?}", err);
+        }
+
         self.active_derp.insert(region_id, ad);
 
         inc!(MagicsockMetrics::NumDerpConnsAdded);
         self.log_active_derp();
 
-        let d = dc.clone();
-        let c = self.conn.clone();
-        let msg_sender = self.msg_sender.clone();
-
-        // Make sure we can establish a connection.
-        if let Err(err) = d.connect().await {
-            // TODO: what to do?
-            warn!("failed to connect to derp server: {:?}", err);
-        }
-
-        if let Some(ref f) = c.on_derp_active {
+        if let Some(ref f) = self.conn.on_derp_active {
             // TODO: spawn
             f();
         }
-
-        let rs = ReaderState::new(region_id, cancel, d);
-        msg_sender
-            .send_async(ActorMessage::Connected(rs))
-            .await
-            .unwrap();
 
         dc
     }
@@ -402,7 +412,7 @@ impl DerpActor {
             tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
                 if let Err(_err) = dc.ping().await {
                     msg_sender
-                        .send_async(ActorMessage::CloseOrReconnect(
+                        .send(ActorMessage::CloseOrReconnect(
                             region_id,
                             "rebind-ping-fail",
                         ))
@@ -560,7 +570,7 @@ pub(super) struct DerpReadResult {
 
 /// Manages reading state for a single derp connection.
 #[derive(Debug)]
-pub(super) struct ReaderState {
+struct ReaderState {
     region: u16,
     derp_client: derp::http::Client,
     /// The set of senders we know are present on this connection, based on
@@ -610,13 +620,13 @@ impl ReaderState {
         }
     }
 
-    pub(super) async fn recv(mut self) -> (Self, ReadResult, ReadAction) {
+    async fn recv(&mut self) -> (ReadResult, ReadAction) {
         let msg = tokio::select! {
             msg = self.derp_client.recv_detail() => {
                 msg
             }
             _ = self.cancel.cancelled() => {
-                return (self, ReadResult::Break, ReadAction::None);
+                return (ReadResult::Break, ReadAction::None);
             }
         };
         debug!("derp.recv(derp-{}) received: {:?}", self.region, msg);
@@ -641,7 +651,7 @@ impl ReaderState {
                     derp::http::ClientError::Closed | derp::http::ClientError::IPDisabled
                 ) {
                     // drop client
-                    return (self, ReadResult::Break, action);
+                    return (ReadResult::Break, action);
                 }
 
                 // If our DERP connection broke, it might be because our network
@@ -654,9 +664,9 @@ impl ReaderState {
                     Some(t) => {
                         debug!("backoff sleep: {}ms", t.as_millis());
                         time::sleep(t).await;
-                        (self, ReadResult::Continue, action)
+                        (ReadResult::Continue, action)
                     }
-                    None => (self, ReadResult::Break, action),
+                    None => (ReadResult::Break, action),
                 }
             }
             Ok((msg, conn_gen)) => {
@@ -672,7 +682,7 @@ impl ReaderState {
                 match msg {
                     derp::ReceivedMessage::ServerInfo { .. } => {
                         info!("derp-{} connected; connGen={}", self.region, conn_gen);
-                        (self, ReadResult::Continue, ReadAction::None)
+                        (ReadResult::Continue, ReadAction::None)
                     }
                     derp::ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!("[DERP] <- {} ({}b)", self.region, data.len());
@@ -702,21 +712,22 @@ impl ReaderState {
                             src: source,
                             buf: data,
                         };
-                        (self, ReadResult::Yield(res), action)
+                        (ReadResult::Yield(res), action)
                     }
                     derp::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.derp_client.clone();
+                        let region = self.region;
                         tokio::task::spawn(async move {
                             if let Err(err) = dc.send_pong(data).await {
-                                info!("derp-{} send_pong error: {:?}", self.region, err);
+                                info!("derp-{} send_pong error: {:?}", region, err);
                             }
                         });
-                        (self, ReadResult::Continue, ReadAction::None)
+                        (ReadResult::Continue, ReadAction::None)
                     }
                     derp::ReceivedMessage::Health { .. } => {
                         // health.SetDERPRegionHealth(regionID, m.Problem);
-                        (self, ReadResult::Continue, ReadAction::None)
+                        (ReadResult::Continue, ReadAction::None)
                     }
                     derp::ReceivedMessage::PeerGone(key) => {
                         let read_action = ReadAction::RemovePeerRoutes {
@@ -725,11 +736,11 @@ impl ReaderState {
                             derp_client: self.derp_client.clone(),
                         };
 
-                        (self, ReadResult::Continue, read_action)
+                        (ReadResult::Continue, read_action)
                     }
                     _ => {
                         // Ignore.
-                        (self, ReadResult::Continue, ReadAction::None)
+                        (ReadResult::Continue, ReadAction::None)
                     }
                 }
             }

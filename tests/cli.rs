@@ -200,13 +200,14 @@ fn cli_provide_addresses() -> Result<()> {
     make_rand_file(1000, &path)?;
     let input = Input::Path;
 
-    let _provider = make_provider(
+    let mut provider = make_provider(
         &path,
         &input,
         home.clone(),
         Some("127.0.0.1:4333"),
         Some(RPC_PORT),
     )?;
+    provider.drain();
 
     // wait for the provider to start
     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -218,9 +219,11 @@ fn cli_provide_addresses() -> Result<()> {
     let get_output = cmd.output()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert!(stdout.starts_with("Listening addresses: [127.0.0.1:4333"));
+    assert!(stdout.starts_with("Listening addresses:"));
+    assert!(stdout.contains("127.0.0.1:4333"));
 
-    let _provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
+    let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
+    provider.drain();
     let mut cmd = Command::new(iroh_bin());
     cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
 
@@ -352,10 +355,12 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let mut provider = make_provider(&path, &input, home, None, None)?;
 
     let mut stdout = provider.child.stdout.take().unwrap();
-    let mut stderr = provider.child.stderr.take().unwrap();
+    let stderr = provider.child.stderr.take().unwrap();
 
     // test provide output & get all in one ticket from stderr
+    drain(stderr);
     let all_in_one = match_provide_output(BufReader::new(&mut stdout), num_blobs, input)?;
+    drain(stdout);
 
     // create a `get-ticket` cmd & optionally provide out path
     let mut cmd = Command::new(iroh_bin());
@@ -365,16 +370,6 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     } else {
         &mut cmd
     };
-
-    std::thread::spawn(move || {
-        // change to stderr to see the log output
-        std::io::copy(&mut stderr, &mut std::io::sink()).unwrap();
-    });
-
-    std::thread::spawn(move || {
-        // change to stdout to see the output
-        std::io::copy(&mut stdout, &mut std::io::sink()).unwrap();
-    });
 
     // test get stderr output
     let get_output = cmd.output()?;
@@ -397,10 +392,25 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)
 }
+
+fn drain(mut reader: impl Read + Send + 'static) {
+    std::thread::spawn(move || {
+        // change to stderr to see the log output
+        std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
+    });
+}
+
 /// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
 /// process is killed when it goes out of scope.
 struct ProvideProcess {
     child: Child,
+}
+
+impl ProvideProcess {
+    fn drain(&mut self) {
+        drain(self.child.stderr.take().unwrap());
+        drain(self.child.stdout.take().unwrap());
+    }
 }
 
 impl Drop for ProvideProcess {
@@ -516,12 +526,15 @@ macro_rules! assert_matches_line {
             $(
                 let rx = regex::Regex::new($z)?;
                 let mut num_matches = 0;
+                let mut res = Vec::new();
                 loop {
                     if $a > 0 && num_matches == $a as usize {
                         break;
                     }
 
                     if let Some(Ok(line)) = lines.peek() {
+                        println!("|{}", line);
+                        res.push(line.clone());
                         if let Some(cap) = rx.captures(line) {
                             for i in 0..cap.len() {
                                 if let Some(capture_group) = cap.get(i) {
@@ -537,9 +550,21 @@ macro_rules! assert_matches_line {
                     let _ = lines.next().context("Unexpected end of stderr reader")?;
                 }
                 if $a == -1 {
-                    assert!(num_matches > 0, "no matches found");
+                    if num_matches == 0 {
+                        println!("Expected at least one match for regex: {}", $z);
+                        for line in res {
+                            println!(">{}", line);
+                        }
+                        panic!("no matches found");
+                    }
                 } else {
-                    assert_eq!(num_matches, $a as usize, "invalid number of matches");
+                    if num_matches != $a as usize {
+                        println!("Expected {} matches for regex: {}", $a, $z);
+                        for line in res {
+                            println!(">{}", line);
+                        }
+                        panic!("invalid number of matches");
+                    }
                 }
 
             )*

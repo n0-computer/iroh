@@ -66,6 +66,7 @@ mod tests {
 
     #[tokio::test]
     async fn basics() -> Result<()> {
+        setup_logging();
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
