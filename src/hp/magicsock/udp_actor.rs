@@ -96,7 +96,7 @@ impl UdpActor {
                         }
                     }
                 }
-                msg = (&mut self).next() => {
+                msg = self.next() => {
                     match msg {
                         None => break,
                         Some(ip_msgs) => {
