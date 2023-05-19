@@ -850,7 +850,8 @@ dependencies = [
 [[package]]
 name = "crypto_box"
 version = "0.9.0-rc.0"
-source = "git+https://github.com/RustCrypto/nacl-compat?branch=master#9926d28edc51a89a5cffc9eb228e94deede00a74"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46371baeea312993a57fa3d1eb70e131210c64d15a2f677b2ca8025dd5eae421"
 dependencies = [
  "aead",
  "chacha20",
@@ -864,7 +865,8 @@ dependencies = [
 [[package]]
 name = "crypto_secretbox"
 version = "0.1.1"
-source = "git+https://github.com/RustCrypto/nacl-compat?branch=master#9926d28edc51a89a5cffc9eb228e94deede00a74"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9d6cf87adf719ddf43a805e92c6870a531aedda35ff640442cbaf8674e141e1"
 dependencies = [
  "aead",
  "chacha20",
@@ -1900,7 +1902,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tokio-util",
- "toml 0.7.3",
+ "toml 0.7.4",
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
@@ -3520,9 +3522,9 @@ dependencies = [
 
 [[package]]
 name = "security-framework"
-version = "2.9.0"
+version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca2855b3715770894e67cbfa3df957790aa0c9edc3bf06efa1a84d77fa0839d1"
+checksum = "1fc758eb7bffce5b308734e9b0c1468893cae9ff70ebf13e7090be8dcbcc83a8"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -3604,9 +3606,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0efd8caf556a6cebd3b285caf480045fcc1ac04f6bd786b09a6f11af30c4fcf4"
+checksum = "93107647184f6027e3b7dcb2e11034cf95ffa1e3a682c67951963ac69c1c007d"
 dependencies = [
  "serde",
 ]
@@ -4140,9 +4142,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.7.3"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b403acf6f2bb0859c93c7f0d967cb4a75a7ac552100f9322faf64dc047669b21"
+checksum = "d6135d499e69981f9ff0ef2167955a5333c35e36f6937d382974566b3d5b94ec"
 dependencies = [
  "serde",
  "serde_spanned",
@@ -4152,18 +4154,18 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ab8ed2edee10b50132aed5f331333428b011c99402b5a534154ed15746f9622"
+checksum = "5a76a9312f5ba4c2dec6b9161fdf25d87ad8a09256ccea5a556fef03c706a10f"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "toml_edit"
-version = "0.19.8"
+version = "0.19.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "239410c8609e8125456927e6707163a3b1fdb40561e4b803bc041f466ccfdc13"
+checksum = "92d964908cec0d030b812013af25a0e57fddfadb1e066ecc6681d86253129d4f"
 dependencies = [
  "indexmap",
  "serde",
