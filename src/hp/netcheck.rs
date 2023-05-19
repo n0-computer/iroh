@@ -188,6 +188,10 @@ impl Default for Reports {
 }
 
 impl Client {
+    /// Creates a new netcheck client.
+    ///
+    /// This starts a connected actor in the background.  Once the client is dropped it will
+    /// stop running.
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
@@ -201,6 +205,19 @@ impl Client {
         })
     }
 
+    /// Pass a received STUN packet to the netchecker.
+    ///
+    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
+    /// packets are sent from the sockets that carry the real traffic.  However because
+    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
+    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
+    /// packet on the socket you should pass it to this method.
+    ///
+    /// It is safe to call this even when the netcheck actor does not currently have any
+    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
+    ///
+    /// There is an implicit queue here which may drop packets if the actor does not keep up
+    /// consuming them.
     pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
         self.addr
             .try_send(ActorMessage::StunPacket {
@@ -1122,8 +1139,12 @@ impl ActorAddr {
     }
 }
 
+/// The netcheck actor.
+///
+/// This actor runs for the entire duration there's a [`Client`] connected.
 #[derive(Debug)]
 struct Actor {
+    // Actor plumbing.
     /// Actor messages channel.
     ///
     /// If there are no more senders the actor stops.
@@ -1132,14 +1153,12 @@ struct Actor {
     ///
     /// This allows creating new [`ActorAddr`]s from the actor.
     sender: mpsc::Sender<ActorMessage>,
-    // /// Channel to signal the actor should terminate.
-    // ///
-    // /// Either sending a message or dropping the sender will terminate the actor.
-    // exit_rx: oneshot::Receiver<()>,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
     reports: Reports,
+
+    // Actor configuration.
     /// Whether the client should try to reach things other than localhost.
     ///
     /// This is set to true in tests to avoid probing the local LAN's router, etc.
@@ -1149,8 +1168,10 @@ struct Actor {
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
     /// and open ports.
     port_mapper: Option<portmapper::Client>,
-    got_hair_stun: broadcast::Sender<SocketAddr>,
     dns_resolver: TokioAsyncResolver,
+
+    // Actor state.
+    got_hair_stun: broadcast::Sender<SocketAddr>,
     /// Information about the currently in-flight STUN requests.
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
@@ -1163,6 +1184,10 @@ struct Actor {
 }
 
 impl Actor {
+    /// Creates a new actor.
+    ///
+    /// This does not start the actor, see [`Actor::main`] for this.  You should not
+    /// normally create this directly but rather create a [`Client`].
     fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
@@ -1222,17 +1247,6 @@ impl Actor {
                     self.handle_in_flight_stun(inflight);
                 }
             }
-        }
-    }
-
-    /// Handles the [`ActorMessage::ReportReady`] message.
-    ///
-    /// Finishes the report, sends it to the response channel.
-    fn handle_report_ready(&mut self, report: Report, derp_map: DerpMap) {
-        let report = self.finish_and_store_report(report, &derp_map);
-        if let Some(response_tx) = self.current_check_run.take() {
-            // If no one want the report anymore just drop it.
-            response_tx.send(Ok(report)).ok();
         }
     }
 
@@ -1407,6 +1421,17 @@ impl Actor {
         })
     }
 
+    /// Handles the [`ActorMessage::ReportReady`] message.
+    ///
+    /// Finishes the report, sends it to the response channel.
+    fn handle_report_ready(&mut self, report: Report, derp_map: DerpMap) {
+        let report = self.finish_and_store_report(report, &derp_map);
+        if let Some(response_tx) = self.current_check_run.take() {
+            // If no one want the report anymore just drop it.
+            response_tx.send(Ok(report)).ok();
+        }
+    }
+
     /// Handles [`ActorMesage::StunPacket`].
     ///
     /// If there are currently no in-flight stun requests registerd this is dropped,
@@ -1451,6 +1476,20 @@ impl Actor {
         }
     }
 
+    /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent
+    /// to ourselves.
+    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
+        if let Some(ref hair_tx) = self.reports.current_hair_tx {
+            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
+                if tx == hair_tx {
+                    self.got_hair_stun.send(src).ok();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Handles [`ActorMessage::InFlightStun`].
     ///
     /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
@@ -1464,64 +1503,6 @@ impl Actor {
         self.log_concise_report(&report, dm);
 
         report
-    }
-
-    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        let mut log = "report: ".to_string();
-        log += &format!("udp={}", r.udp);
-        if !r.ipv4 {
-            log += &format!(" v4={}", r.ipv4)
-        }
-        if !r.udp {
-            log += &format!(" icmpv4={}", r.icmpv4)
-        }
-
-        log += &format!(" v6={}", r.ipv6);
-        if !r.ipv6 {
-            log += &format!(" v6os={}", r.os_has_ipv6);
-        }
-        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
-        log += &format!(" hair={:?}", r.hair_pinning);
-        if r.any_port_mapping_checked() {
-            log += &format!(
-                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
-                r.upnp, r.pmp, r.pcp
-            );
-        } else {
-            log += " portmap=?";
-        }
-        if let Some(ipp) = r.global_v4 {
-            log += &format!(" v4a={}", ipp);
-        }
-        if let Some(ipp) = r.global_v6 {
-            log += &format!(" v6a={}", ipp);
-        }
-        if let Some(c) = r.captive_portal {
-            log += &format!(" captiveportal={}", c);
-        }
-        log += &format!(" derp={}", r.preferred_derp);
-        if r.preferred_derp != 0 {
-            log += " derpdist=";
-            let mut need_comma = false;
-            for rid in &dm.region_ids() {
-                if let Some(d) = r.region_v4_latency.get(rid) {
-                    if need_comma {
-                        log += ",";
-                    }
-                    log += &format!("{}v4:{}", rid, d.as_millis());
-                    need_comma = true;
-                }
-                if let Some(d) = r.region_v6_latency.get(rid) {
-                    if need_comma {
-                        log += ",";
-                    }
-                    log += &format!("{}v6:{}", rid, d.as_millis());
-                    need_comma = true;
-                }
-            }
-        }
-
-        info!("{}", log);
     }
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
@@ -1598,17 +1579,62 @@ impl Actor {
         r
     }
 
-    /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
-        if let Some(ref hair_tx) = self.reports.current_hair_tx {
-            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
-                if tx == hair_tx {
-                    self.got_hair_stun.send(src).ok();
-                    return true;
+    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
+        let mut log = "report: ".to_string();
+        log += &format!("udp={}", r.udp);
+        if !r.ipv4 {
+            log += &format!(" v4={}", r.ipv4)
+        }
+        if !r.udp {
+            log += &format!(" icmpv4={}", r.icmpv4)
+        }
+
+        log += &format!(" v6={}", r.ipv6);
+        if !r.ipv6 {
+            log += &format!(" v6os={}", r.os_has_ipv6);
+        }
+        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
+        log += &format!(" hair={:?}", r.hair_pinning);
+        if r.any_port_mapping_checked() {
+            log += &format!(
+                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
+                r.upnp, r.pmp, r.pcp
+            );
+        } else {
+            log += " portmap=?";
+        }
+        if let Some(ipp) = r.global_v4 {
+            log += &format!(" v4a={}", ipp);
+        }
+        if let Some(ipp) = r.global_v6 {
+            log += &format!(" v6a={}", ipp);
+        }
+        if let Some(c) = r.captive_portal {
+            log += &format!(" captiveportal={}", c);
+        }
+        log += &format!(" derp={}", r.preferred_derp);
+        if r.preferred_derp != 0 {
+            log += " derpdist=";
+            let mut need_comma = false;
+            for rid in &dm.region_ids() {
+                if let Some(d) = r.region_v4_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v4:{}", rid, d.as_millis());
+                    need_comma = true;
+                }
+                if let Some(d) = r.region_v6_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v6:{}", rid, d.as_millis());
+                    need_comma = true;
                 }
             }
         }
-        false
+
+        info!("{}", log);
     }
 }
 
@@ -2037,22 +2063,6 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            // let mut client = Client::new(None).await?;
-
-            // for s in &mut tt.steps {
-            //     // trigger the timer
-            //     time::advance(Duration::from_secs(s.after)).await;
-            //     let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-            //     s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
-            // }
-            // let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
-            // let got = client.actor.reports.prev.len();
-            // let want = tt.want_prev_len;
-            // assert_eq!(got, want, "prev length");
-            // let got = last_report.preferred_derp;
-            // let want = tt.want_derp;
-            // assert_eq!(got, want, "preferred_derp");
-
             let mut actor = Actor::new(None).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
