@@ -165,7 +165,7 @@ impl DerpActor {
         let mut to_close = Vec::new();
         {
             let mut derp_map = self.conn.derp_map.write().await;
-            if &*derp_map == &dm {
+            if *derp_map == dm {
                 return;
             }
 
