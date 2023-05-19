@@ -19,12 +19,12 @@ use futures::{
 use rand::seq::IteratorRandom;
 use tokio::{
     net::UdpSocket,
-    sync::{self, broadcast, mpsc, RwLock},
-    task::JoinSet,
+    sync::{self, broadcast, mpsc, oneshot, RwLock},
+    task::{AbortHandle, JoinSet},
     time::{self, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, info, instrument, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::net::{interfaces, ip::to_canonical};
@@ -127,17 +127,38 @@ impl fmt::Display for Report {
     }
 }
 
-/// Generates a netcheck [`Report`].
-/// Client to generate netcheck [`Report`]s.
+/// Client to run netchecks.
 ///
-/// This has an actor inside, but it only runs when [`Client::get_report`] is being called.
-/// While running it expects to be passed received stun packets using
-/// [`Client::get_msg_sender`], the [`crate::hp::magicsock::Conn`] using this client needs to be wired up to
-/// do so.
-#[derive(Debug)]
+/// Creating this creates a netcheck actor which runs in the background.  Most of the time
+/// it is idle unless [`Client::get_report`] is called, which is the main interface.
+///
+/// The [`Client`] struct can be cloned and results multiple handles to the running actor.
+/// If all [`Client`]s are dropped the actor stops running.
+///
+/// While running the netcheck actor expects to be passed all received stun packets using
+/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this
+/// client needs to be wired up to do so.
+#[derive(Debug, Clone)]
 pub(crate) struct Client {
-    msg_sender: mpsc::Sender<ActorMessage>,
-    actor: Actor,
+    /// Channel to send message to the [`Actor`].
+    ///
+    /// If all senders are dropped, in other words all clones of this struct are dropped,
+    /// the actor will terminate.
+    addr: ActorAddr,
+    /// Ensures the actor is terminated when the client is dropped.
+    _drop_guard: Arc<ClientDropGuard>,
+}
+
+#[derive(Debug)]
+struct ClientDropGuard {
+    task: AbortHandle,
+}
+
+impl Drop for ClientDropGuard {
+    fn drop(&mut self) {
+        debug!("netcheck actor finished");
+        self.task.abort();
+    }
 }
 
 #[derive(Debug)]
@@ -154,39 +175,57 @@ struct Reports {
     current_hair_tx: Option<stun::TransactionId>,
 }
 
+impl Default for Reports {
+    fn default() -> Self {
+        Self {
+            next_full: Default::default(),
+            prev: Default::default(),
+            last: Default::default(),
+            last_full: Instant::now(),
+            current_hair_tx: Default::default(),
+        }
+    }
+}
+
 impl Client {
-    pub(crate) async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
-        let last_full = Instant::now();
-        let (got_hair_stun, _) = broadcast::channel(1);
-
-        let (msg_sender, msg_receiver) = mpsc::channel(32);
-
-        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()?;
-
-        let actor = Actor {
-            receiver: msg_receiver,
-            reports: Reports {
-                next_full: false,
-                prev: Default::default(),
-                last: None,
-                last_full,
-                current_hair_tx: None,
-            },
-            skip_external_network: false,
-            port_mapper,
-            got_hair_stun,
-            dns_resolver,
+    /// Creates a new netcheck client.
+    ///
+    /// This starts a connected actor in the background.  Once the client is dropped it will
+    /// stop running.
+    pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+        let mut actor = Actor::new(port_mapper)?;
+        let addr = actor.addr();
+        let task = tokio::spawn(async move { actor.run().await });
+        let drop_guard = ClientDropGuard {
+            task: task.abort_handle(),
         };
-
-        Ok(Client { msg_sender, actor })
+        Ok(Client {
+            addr,
+            _drop_guard: Arc::new(drop_guard),
+        })
     }
 
-    /// Returns the sender which can send messages to the actor.
+    /// Pass a received STUN packet to the netchecker.
     ///
-    /// Used by [`crate::hp::magicsock::Conn`] to pass received stun packets to the running
-    /// netcheck actor.
-    pub(crate) fn get_msg_sender(&self) -> mpsc::Sender<ActorMessage> {
-        self.msg_sender.clone()
+    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
+    /// packets are sent from the sockets that carry the real traffic.  However because
+    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
+    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
+    /// packet on the socket you should pass it to this method.
+    ///
+    /// It is safe to call this even when the netcheck actor does not currently have any
+    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
+    ///
+    /// There is an implicit queue here which may drop packets if the actor does not keep up
+    /// consuming them.
+    pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
+        self.addr
+            .try_send(ActorMessage::StunPacket {
+                payload,
+                from_addr: src,
+            })
+            .ok();
+        // TODO: metric to count number of discarded stun packets due to full inbox
     }
 
     /// Runs a netcheck, returning the report.
@@ -208,102 +247,21 @@ impl Client {
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
-        // If not given  UdpSockets to send stun packets, create them.
-        // TODO: Is failure really fatal?
-        let cancel_token = CancellationToken::new();
-        let stun_conn4 = match stun_conn4 {
-            Some(stun_conn4) => stun_conn4,
-            None => {
-                let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-                let sock = UdpSocket::bind(addr)
-                    .await
-                    .context("netcheck: failed to bind udp 0.0.0.0:0")?;
-                let sock = Arc::new(sock);
-                Self::spawn_udp_listener(
-                    sock.clone(),
-                    self.msg_sender.clone(),
-                    cancel_token.clone(),
-                );
-                sock
-            }
-        };
-        let stun_conn6 = match stun_conn6 {
-            Some(stun_conn6) => stun_conn6,
-            None => {
-                let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
-                let sock = UdpSocket::bind(addr)
-                    .await
-                    .context("netcheck: failed to bind udp6 [::]:0")?;
-                let sock = Arc::new(sock);
-                Self::spawn_udp_listener(
-                    sock.clone(),
-                    self.msg_sender.clone(),
-                    cancel_token.clone(),
-                );
-                sock
-            }
-        };
-        let _cancel_on_drop = cancel_token.drop_guard();
-
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
-        self.actor.run(dm.clone(), stun_conn4, stun_conn6).await
-    }
-
-    /// Spawns a tokio task reading stun packets from the UDP socket.
-    ///
-    /// This is a sync function and does not wait until the task is running.  However this
-    /// is fine since the socket is already bound so packets will not be lost.
-    fn spawn_udp_listener(
-        sock: Arc<UdpSocket>,
-        sender: mpsc::Sender<ActorMessage>,
-        cancel_token: CancellationToken,
-    ) {
-        let span = debug_span!(
-            "stun.listener.udp",
-            local_addr = sock
-                .local_addr()
-                .map(|a| a.to_string())
-                .unwrap_or(String::from("-")),
-        );
-        tokio::spawn(
-            async move {
-                debug!("udp stun socket listener started");
-                // TODO: Can we do better for buffers here?  Probably doesn't matter
-                // much.
-                let mut buf = vec![0u8; 64 << 10];
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = cancel_token.cancelled() => break,
-                        res = Self::recv_stun_once(&sock, &mut buf, &sender) => {
-                            if let Err(err) = res {
-                                warn!(%err, "stun recv failed");
-                                break;
-                            }
-                        }
-                    }
-                }
-                debug!("udp stun socket listener stopped");
-            }
-            .instrument(span),
-        );
-    }
-
-    /// Receive STUN response from a UDP socket, pass it to the actor.
-    async fn recv_stun_once(
-        sock: &UdpSocket,
-        buf: &mut [u8],
-        sender: &mpsc::Sender<ActorMessage>,
-    ) -> Result<()> {
-        let (count, mut from_addr) = sock
-            .recv_from(buf)
-            .await
-            .context("Error reading from stun socket")?;
-        let payload = &buf[..count];
-        from_addr.set_ip(to_canonical(from_addr.ip()));
-        let msg = ActorMessage::StunPacket(Bytes::from(payload.to_vec()), from_addr);
-        sender.send(msg).await.context("actor stopped")
+        let (tx, rx) = oneshot::channel();
+        self.addr
+            .send(ActorMessage::RunCheck {
+                derp_map: dm.clone(),
+                stun_sock_v4: stun_conn4,
+                stun_sock_v6: stun_conn6,
+                response_tx: tx,
+            })
+            .await?;
+        match rx.await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("channel closed, actor awol")),
+        }
     }
 }
 
@@ -546,8 +504,9 @@ struct ReportState {
     last: Option<Arc<Report>>,
 }
 
+// TODO: Can we not make this pub?
 #[derive(Debug)]
-struct Inflight {
+pub(crate) struct Inflight {
     tx: stun::TransactionId,
     start: Instant,
     s: sync::oneshot::Sender<(Duration, SocketAddr)>,
@@ -557,7 +516,7 @@ impl ReportState {
     #[instrument(name = "report_state", skip_all)]
     async fn run(
         mut self,
-        in_flight: sync::mpsc::Sender<Inflight>,
+        actor_addr: ActorAddr,
         dm: DerpMap,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
@@ -632,14 +591,14 @@ impl ReportState {
                 let node = named_node(&dm, probe.node());
                 ensure!(node.is_some(), "missing named node {}", probe.node());
                 let node = node.unwrap().clone();
-                let in_flight = in_flight.clone();
+                let actor_addr = actor_addr.clone();
                 let pc4 = self.pc4.clone();
                 let pc6 = self.pc6.clone();
                 let report = self.report.clone();
                 let pinger = pinger.clone();
 
                 set.push(Box::pin(async move {
-                    run_probe(report, resolver, pc4, pc6, node, probe, in_flight, pinger).await
+                    run_probe(report, resolver, pc4, pc6, node, probe, actor_addr, pinger).await
                 }));
             }
 
@@ -921,7 +880,7 @@ async fn run_probe(
     pc6: Arc<UdpSocket>,
     node: DerpNode,
     probe: Probe,
-    in_flight: sync::mpsc::Sender<Inflight>,
+    actor_addr: ActorAddr,
     pinger: Option<Pinger>,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
@@ -943,12 +902,12 @@ async fn run_probe(
     let sent = Instant::now(); // after DNS lookup above
 
     let (s, r) = sync::oneshot::channel();
-    in_flight
-        .send(Inflight {
+    actor_addr
+        .send(ActorMessage::InFlightStun(Inflight {
             tx: txid,
             start: sent,
             s,
-        })
+        }))
         .await
         .map_err(|e| ProbeError::Transient(e.into(), probe.clone()))?;
     let mut result = ProbeReport::new(probe.clone());
@@ -1106,85 +1065,297 @@ impl ProbeReport {
     }
 }
 
+/// Messages to send to the [`Actor`].
 #[derive(Debug)]
 pub(crate) enum ActorMessage {
-    StunPacket(Bytes, SocketAddr),
+    /// Run a netcheck.
+    ///
+    /// Only one netcheck can be run at a time, trying to run multiple concurrently will
+    /// fail.
+    RunCheck {
+        /// The derp configuration.
+        derp_map: DerpMap,
+        /// Socket to send IPv4 STUN probes from.
+        ///
+        /// Responses are never read from this socket, they must be passed in via the
+        /// [`ActorMessage::StunPacket`] message since the socket is also used to receive
+        /// other packets from in the magicsocket (`Conn`).
+        ///
+        /// If not provided this will attempt to bind a suitable socket itself.
+        stun_sock_v4: Option<Arc<UdpSocket>>,
+        /// Socket to send IPv6 STUN probes from.
+        ///
+        /// Like `stun_sock_v4` but for IPv6.
+        stun_sock_v6: Option<Arc<UdpSocket>>,
+        /// Channel to receive the response.
+        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+    },
+    /// A report produced by [`ReportState`].
+    ReportReady {
+        report: Box<Report>,
+        derp_map: DerpMap,
+    },
+    /// [`ReportState`] failed to produce a report.
+    ReportAborted,
+    /// An incoming STUN packet to parse.
+    StunPacket {
+        /// The raw UDP payload.
+        payload: Bytes,
+        /// The address this was claimed to be received from.
+        from_addr: SocketAddr,
+    },
+    /// A probe wants to register an in-flight STUN request.
+    InFlightStun(Inflight),
 }
 
+/// Sender to the [`Actor`].
+///
+/// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
+/// will not keep the actor alive, which makes this handy to pass to internal tasks.
+#[derive(Debug, Clone)]
+struct ActorAddr {
+    sender: mpsc::Sender<ActorMessage>,
+}
+
+impl ActorAddr {
+    async fn send(&self, msg: ActorMessage) -> Result<(), mpsc::error::SendError<ActorMessage>> {
+        self.sender.send(msg).await.map_err(|err| {
+            error!("netcheck actor lost");
+            err
+        })
+    }
+
+    fn try_send(&self, msg: ActorMessage) -> Result<(), mpsc::error::TrySendError<ActorMessage>> {
+        self.sender.try_send(msg).map_err(|err| {
+            match &err {
+                mpsc::error::TrySendError::Full(_) => {
+                    // TODO: metrics
+                    warn!("netcheck actor inbox full");
+                }
+                mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
+            }
+            err
+        })
+    }
+}
+
+/// The netcheck actor.
+///
+/// This actor runs for the entire duration there's a [`Client`] connected.
 #[derive(Debug)]
 struct Actor {
+    // Actor plumbing.
     /// Actor messages channel.
+    ///
+    /// If there are no more senders the actor stops.
     receiver: mpsc::Receiver<ActorMessage>,
+    /// The sender side of the messages channel.
+    ///
+    /// This allows creating new [`ActorAddr`]s from the actor.
+    sender: mpsc::Sender<ActorMessage>,
+    /// A collection of previously generated reports.
+    ///
+    /// Sometimes it is useful to look at past reports to decide what to do.
     reports: Reports,
+
+    // Actor configuration.
     /// Whether the client should try to reach things other than localhost.
     ///
     /// This is set to true in tests to avoid probing the local LAN's router, etc.
     skip_external_network: bool,
-    /// Whether to run port mapping queries.
+    /// The port mapper client, if those are requested.
+    ///
+    /// The port mapper is responsible for talking to routers via UPnP and the like to try
+    /// and open ports.
     port_mapper: Option<portmapper::Client>,
-    got_hair_stun: broadcast::Sender<SocketAddr>,
     dns_resolver: TokioAsyncResolver,
+
+    // Actor state.
+    got_hair_stun: broadcast::Sender<SocketAddr>,
+    /// Information about the currently in-flight STUN requests.
+    ///
+    /// This is used to complete the STUN probe when receiving STUN packets.
+    in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
+    /// The response channel if there is a check running.
+    ///
+    /// There can only ever be one check running at a time.  If it is running the response
+    /// channel is stored here.
+    current_check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
 }
 
 impl Actor {
-    /// Performs a single netcheck run.
+    /// Creates a new actor.
     ///
-    /// See [`Client::get_report`] for the arguments.
-    #[instrument(name = "get_report", skip_all)]
-    async fn run(
-        &mut self,
-        dm: DerpMap,
-        stun_sock_v4: Arc<UdpSocket>,
-        stun_sock_v6: Arc<UdpSocket>,
-    ) -> Result<Arc<Report>> {
-        let report_state = self
-            .create_report_state(&dm, stun_sock_v4.clone(), stun_sock_v6.clone())
-            .await
-            .context("failed to create ReportState")?;
-        let (in_flight_s, mut in_flight_r) = sync::mpsc::channel(8);
-        let mut running = {
-            let port_mapper = self.port_mapper.clone();
-            let skip_external = self.skip_external_network;
-            let resolver = self.dns_resolver.clone(); // not a cheap clone
-            Box::pin(time::timeout(OVERALL_PROBE_TIMEOUT, async move {
-                report_state
-                    .run(in_flight_s, dm, port_mapper, skip_external, &resolver)
-                    .await
-            }))
-        };
-        let mut in_flight = HashMap::new();
+    /// This does not start the actor, see [`Actor::main`] for this.  You should not
+    /// normally create this directly but rather create a [`Client`].
+    fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+        // TODO: consider an instrumented flume channel so we have metrics.
+        let (sender, receiver) = mpsc::channel(32);
+        let (got_hair_stun, _) = broadcast::channel(1);
+        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()
+            .context("failed to create DNS resolver")?;
+        Ok(Self {
+            receiver,
+            sender,
+            reports: Default::default(),
+            skip_external_network: false,
+            port_mapper,
+            got_hair_stun,
+            dns_resolver,
+            in_flight_stun_requests: Default::default(),
+            current_check_run: None,
+        })
+    }
 
-        loop {
-            tokio::select! {
-                Some(inf) = in_flight_r.recv() => {
-                    in_flight.insert(inf.tx, inf);
+    /// Returns the channel to send messages to the actor.
+    fn addr(&self) -> ActorAddr {
+        ActorAddr {
+            sender: self.sender.clone(),
+        }
+    }
+
+    /// Run the actor.
+    ///
+    /// It will now run and handle messages.  Once the connected [`Client`] (including all
+    /// its clones) is dropped this will terminate.
+    async fn run(&mut self) {
+        debug!("netcheck actor starting");
+        while let Some(msg) = self.receiver.recv().await {
+            match msg {
+                ActorMessage::RunCheck {
+                    derp_map,
+                    stun_sock_v4,
+                    stun_sock_v6,
+                    response_tx,
+                } => {
+                    self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx)
+                        .await;
                 }
-                msg = self.receiver.recv() => {
-                    debug!("incoming stun packet: {:?}", msg);
-                    match msg {
-                        None => bail!("client dropped, abort"),
-                        Some(ActorMessage::StunPacket(pkt, source)) =>
-                            self.receive_stun_packet(&mut in_flight, &pkt, source),
-                    }
+                ActorMessage::ReportReady { report, derp_map } => {
+                    self.handle_report_ready(*report, derp_map);
+                    self.in_flight_stun_requests.clear();
                 }
-                res = &mut running => {
-                    match res {
-                        Ok(Ok((report, dm))) => {
-                            let report = self.finish_and_store_report(report, &dm);
-                            return Ok(report)
-                        }
-                        Err(err) => {
-                            warn!("generate report timed out: {:?}", err);
-                            return Err(err.into());
-                        }
-                        Ok(Err(err)) => {
-                            warn!("failed to generate report: {:?}", err);
-                            return Err(err);
-                        }
-                    }
+                ActorMessage::ReportAborted => {
+                    self.in_flight_stun_requests.clear();
+                    self.current_check_run.take();
+                }
+                ActorMessage::StunPacket { payload, from_addr } => {
+                    self.handle_stun_packet(&payload, from_addr);
+                }
+                ActorMessage::InFlightStun(inflight) => {
+                    self.handle_in_flight_stun(inflight);
                 }
             }
         }
+    }
+
+    /// Starts a check run as requested by the [`ActorMessage::RunCheck`] message.
+    async fn handle_run_check(
+        &mut self,
+        derp_map: DerpMap,
+        stun_sock_v4: Option<Arc<UdpSocket>>,
+        stun_sock_v6: Option<Arc<UdpSocket>>,
+        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+    ) {
+        if self.current_check_run.is_some() {
+            response_tx
+                .send(Err(anyhow!("A check is already running")))
+                .ok();
+            return;
+        }
+        match self
+            .start_report_run(derp_map, stun_sock_v4, stun_sock_v6)
+            .await
+        {
+            Ok(()) => {
+                self.current_check_run = Some(response_tx);
+            }
+            Err(err) => {
+                response_tx.send(Err(err)).ok();
+            }
+        }
+    }
+
+    /// Spawns a task running a [`ReportState`] run.
+    ///
+    /// When the run is completed the task sends the result back to this actor.
+    async fn start_report_run(
+        &mut self,
+        derp_map: DerpMap,
+        stun_sock_v4: Option<Arc<UdpSocket>>,
+        stun_sock_v6: Option<Arc<UdpSocket>>,
+    ) -> Result<()> {
+        // TODO: These spawns should not be fatal on failure, see issue #1025
+        let cancel_token = CancellationToken::new();
+        let stun_sock_v4 = match stun_sock_v4 {
+            Some(stun_sock_v4) => stun_sock_v4,
+            None => {
+                let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+                let sock = UdpSocket::bind(addr)
+                    .await
+                    .context("netcheck: failed to bind udp 0.0.0.0:0")?;
+                let sock = Arc::new(sock);
+                spawn_udp_listener(sock.clone(), self.addr(), cancel_token.clone());
+                sock
+            }
+        };
+        let stun_sock_v6 = match stun_sock_v6 {
+            Some(stun_sock_v6) => stun_sock_v6,
+            None => {
+                let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
+                let sock = UdpSocket::bind(addr)
+                    .await
+                    .context("netcheck: failed to bind udp6 [::]:0")?;
+                let sock = Arc::new(sock);
+                spawn_udp_listener(sock.clone(), self.addr(), cancel_token.clone());
+                sock
+            }
+        };
+
+        let report_state = self
+            .create_report_state(&derp_map, stun_sock_v4, stun_sock_v6)
+            .await
+            .context("failed to create ReportState")?;
+        let port_mapper = self.port_mapper.clone();
+        let skip_external = self.skip_external_network;
+        let resolver = self.dns_resolver.clone(); // not a cheap clone, maybe Arc it
+        let addr = self.addr();
+        tokio::spawn(async move {
+            match time::timeout(
+                OVERALL_PROBE_TIMEOUT,
+                report_state.run(
+                    addr.clone(),
+                    derp_map,
+                    port_mapper,
+                    skip_external,
+                    &resolver,
+                ),
+            )
+            .await
+            {
+                Ok(Ok((report, derp_map))) => {
+                    addr.send(ActorMessage::ReportReady {
+                        report: Box::new(report),
+                        derp_map,
+                    })
+                    .await
+                    .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
+                }
+                Err(err) => {
+                    warn!("generate report timed out: {:?}", err);
+                    addr.send(ActorMessage::ReportAborted)
+                        .await
+                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
+                }
+                Ok(Err(err)) => {
+                    warn!("failed to generate report: {:?}", err);
+                    addr.send(ActorMessage::ReportAborted)
+                        .await
+                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
+                }
+            }
+        });
+        Ok(())
     }
 
     async fn create_report_state(
@@ -1228,7 +1399,7 @@ impl Actor {
         }
 
         let last = self.reports.last.clone();
-        let plan = ProbePlan::new(dm, &if_state, last.as_deref()).await;
+        let plan = ProbePlan::new(dm, &if_state, last.as_deref());
 
         Ok(ReportState {
             incremental: last.is_some(),
@@ -1249,12 +1420,26 @@ impl Actor {
         })
     }
 
-    fn receive_stun_packet(
-        &self,
-        in_flight: &mut HashMap<stun::TransactionId, Inflight>,
-        pkt: &[u8],
-        src: SocketAddr,
-    ) {
+    /// Handles the [`ActorMessage::ReportReady`] message.
+    ///
+    /// Finishes the report, sends it to the response channel.
+    fn handle_report_ready(&mut self, report: Report, derp_map: DerpMap) {
+        let report = self.finish_and_store_report(report, &derp_map);
+        if let Some(response_tx) = self.current_check_run.take() {
+            // If no one want the report anymore just drop it.
+            response_tx.send(Ok(report)).ok();
+        }
+    }
+
+    /// Handles [`ActorMesage::StunPacket`].
+    ///
+    /// If there are currently no in-flight stun requests registerd this is dropped,
+    /// otherwise forwarded to the probe.
+    fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
+        if self.in_flight_stun_requests.is_empty() {
+            return;
+        }
+
         trace!(%src, "received STUN packet");
 
         // if src.is_ipv4() {
@@ -1271,7 +1456,7 @@ impl Actor {
 
         match stun::parse_response(pkt) {
             Ok((tx, addr_port)) => {
-                if let Some(inf) = in_flight.remove(&tx) {
+                if let Some(inf) = self.in_flight_stun_requests.remove(&tx) {
                     let elapsed = inf.start.elapsed();
                     let _ = inf.s.send((elapsed, addr_port));
                 }
@@ -1290,69 +1475,33 @@ impl Actor {
         }
     }
 
+    /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent
+    /// to ourselves.
+    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
+        if let Some(ref hair_tx) = self.reports.current_hair_tx {
+            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
+                if tx == hair_tx {
+                    self.got_hair_stun.send(src).ok();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Handles [`ActorMessage::InFlightStun`].
+    ///
+    /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
+    /// [`Actor::handle_stun_packet`] can forward packets correctly.
+    fn handle_in_flight_stun(&mut self, inflight: Inflight) {
+        self.in_flight_stun_requests.insert(inflight.tx, inflight);
+    }
+
     fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
         let report = self.add_report_history_and_set_preferred_derp(report);
         self.log_concise_report(&report, dm);
 
         report
-    }
-
-    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        let mut log = "report: ".to_string();
-        log += &format!("udp={}", r.udp);
-        if !r.ipv4 {
-            log += &format!(" v4={}", r.ipv4)
-        }
-        if !r.udp {
-            log += &format!(" icmpv4={}", r.icmpv4)
-        }
-
-        log += &format!(" v6={}", r.ipv6);
-        if !r.ipv6 {
-            log += &format!(" v6os={}", r.os_has_ipv6);
-        }
-        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
-        log += &format!(" hair={:?}", r.hair_pinning);
-        if r.any_port_mapping_checked() {
-            log += &format!(
-                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
-                r.upnp, r.pmp, r.pcp
-            );
-        } else {
-            log += " portmap=?";
-        }
-        if let Some(ipp) = r.global_v4 {
-            log += &format!(" v4a={}", ipp);
-        }
-        if let Some(ipp) = r.global_v6 {
-            log += &format!(" v6a={}", ipp);
-        }
-        if let Some(c) = r.captive_portal {
-            log += &format!(" captiveportal={}", c);
-        }
-        log += &format!(" derp={}", r.preferred_derp);
-        if r.preferred_derp != 0 {
-            log += " derpdist=";
-            let mut need_comma = false;
-            for rid in &dm.region_ids() {
-                if let Some(d) = r.region_v4_latency.get(rid) {
-                    if need_comma {
-                        log += ",";
-                    }
-                    log += &format!("{}v4:{}", rid, d.as_millis());
-                    need_comma = true;
-                }
-                if let Some(d) = r.region_v6_latency.get(rid) {
-                    if need_comma {
-                        log += ",";
-                    }
-                    log += &format!("{}v6:{}", rid, d.as_millis());
-                    need_comma = true;
-                }
-            }
-        }
-
-        info!("{}", log);
     }
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
@@ -1429,18 +1578,118 @@ impl Actor {
         r
     }
 
-    /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
-        if let Some(ref hair_tx) = self.reports.current_hair_tx {
-            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
-                if tx == hair_tx {
-                    self.got_hair_stun.send(src).ok();
-                    return true;
+    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
+        let mut log = "report: ".to_string();
+        log += &format!("udp={}", r.udp);
+        if !r.ipv4 {
+            log += &format!(" v4={}", r.ipv4)
+        }
+        if !r.udp {
+            log += &format!(" icmpv4={}", r.icmpv4)
+        }
+
+        log += &format!(" v6={}", r.ipv6);
+        if !r.ipv6 {
+            log += &format!(" v6os={}", r.os_has_ipv6);
+        }
+        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
+        log += &format!(" hair={:?}", r.hair_pinning);
+        if r.any_port_mapping_checked() {
+            log += &format!(
+                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
+                r.upnp, r.pmp, r.pcp
+            );
+        } else {
+            log += " portmap=?";
+        }
+        if let Some(ipp) = r.global_v4 {
+            log += &format!(" v4a={}", ipp);
+        }
+        if let Some(ipp) = r.global_v6 {
+            log += &format!(" v6a={}", ipp);
+        }
+        if let Some(c) = r.captive_portal {
+            log += &format!(" captiveportal={}", c);
+        }
+        log += &format!(" derp={}", r.preferred_derp);
+        if r.preferred_derp != 0 {
+            log += " derpdist=";
+            let mut need_comma = false;
+            for rid in &dm.region_ids() {
+                if let Some(d) = r.region_v4_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v4:{}", rid, d.as_millis());
+                    need_comma = true;
+                }
+                if let Some(d) = r.region_v6_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v6:{}", rid, d.as_millis());
+                    need_comma = true;
                 }
             }
         }
-        false
+
+        info!("{}", log);
     }
+}
+
+/// Spawns a tokio task reading stun packets from the UDP socket.
+///
+/// This is a sync function and does not wait until the task is running.  However this
+/// is fine since the socket is already bound so packets will not be lost.
+fn spawn_udp_listener(
+    sock: Arc<UdpSocket>,
+    actor_addr: ActorAddr,
+    cancel_token: CancellationToken,
+) {
+    let span = debug_span!(
+        "stun.listener.udp",
+        local_addr = sock
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or(String::from("-")),
+    );
+    tokio::spawn(
+        async move {
+            debug!("udp stun socket listener started");
+            // TODO: Can we do better for buffers here?  Probably doesn't matter
+            // much.
+            let mut buf = vec![0u8; 64 << 10];
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancel_token.cancelled() => break,
+                    res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
+                        if let Err(err) = res {
+                            warn!(%err, "stun recv failed");
+                            break;
+                        }
+                    }
+                }
+            }
+            debug!("udp stun socket listener stopped");
+        }
+        .instrument(span),
+    );
+}
+
+/// Receive STUN response from a UDP socket, pass it to the actor.
+async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &ActorAddr) -> Result<()> {
+    let (count, mut from_addr) = sock
+        .recv_from(buf)
+        .await
+        .context("Error reading from stun socket")?;
+    let payload = &buf[..count];
+    from_addr.set_ip(to_canonical(from_addr.ip()));
+    let msg = ActorMessage::StunPacket {
+        payload: Bytes::from(payload.to_vec()),
+        from_addr,
+    };
+    actor_addr.send(msg).await.context("actor stopped")
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -1567,6 +1816,7 @@ mod tests {
             .get_report(dm, None, None)
             .await
             .context("failed to get netcheck report")?;
+        dbg!(&r);
         assert!(r.udp, "want UDP");
         assert_eq!(
             r.region_latency.len(),
@@ -1812,16 +2062,15 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(None).await?;
-
+            let mut actor = Actor::new(None).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
+                s.r = Some(actor.add_report_history_and_set_preferred_derp(r));
             }
-            let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
-            let got = client.actor.reports.prev.len();
+            let last_report = tt.steps.last().unwrap().r.clone().unwrap();
+            let got = actor.reports.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
             let got = last_report.preferred_derp;

@@ -4,7 +4,7 @@ use std::{
     mem::MaybeUninit,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -82,7 +82,7 @@ impl UdpActor {
     pub(super) async fn run(
         mut self,
         mut msg_receiver: mpsc::Receiver<UdpActorMessage>,
-        stun_packet_channel: mpsc::Sender<netcheck::ActorMessage>,
+        net_checker: netcheck::Client,
         ip_sender: mpsc::Sender<IpPacket>,
     ) {
         loop {
@@ -107,13 +107,7 @@ impl UdpActor {
 
                                     // Stun?
                                     if stun::is(&packet) {
-                                        let enable_stun_packets =
-                                            self.conn.enable_stun_packets.load(Ordering::Relaxed);
-                                        debug!("on_stun_receive, processing {}", enable_stun_packets);
-                                        if enable_stun_packets {
-                                            let msg = netcheck::ActorMessage::StunPacket(packet, meta.addr);
-                                            stun_packet_channel.try_send(msg).ok();
-                                        }
+                                        net_checker.receive_stun_packet(packet, meta.addr);
                                         continue;
                                     }
                                     // Disco?

@@ -103,11 +103,7 @@ impl ProbePlan {
     }
     /// Generates the probe plan for a `DerpMap`, given the most recent report and
     /// whether IPv6 is configured on an interface.
-    pub async fn new(
-        dm: &DerpMap,
-        if_state: &interfaces::State,
-        last: Option<&Report>,
-    ) -> ProbePlan {
+    pub fn new(dm: &DerpMap, if_state: &interfaces::State, last: Option<&Report>) -> ProbePlan {
         if last.is_none() || last.unwrap().region_latency.is_empty() {
             return Self::new_initial(dm, if_state);
         }

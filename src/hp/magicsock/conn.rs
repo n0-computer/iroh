@@ -182,8 +182,6 @@ pub struct Inner {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-    /// Are we currently processing STUN responses (set during a netcheck report).
-    pub(super) enable_stun_packets: AtomicBool,
     /// If the last netcheck report, reports IPv6 to be available.
     pub(super) ipv6_reported: Arc<AtomicBool>,
 
@@ -289,7 +287,6 @@ impl Conn {
             network_send_wakers: std::sync::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             network_sender,
-            enable_stun_packets: AtomicBool::new(false),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map: Default::default(),
             my_derp: AtomicU16::new(0),
@@ -299,13 +296,16 @@ impl Conn {
         let (ip_sender, ip_receiver) = mpsc::channel(128);
         let (udp_actor_sender, udp_actor_receiver) = mpsc::channel(128);
 
-        let udp_actor = UdpActor::new(&udp_state, inner.clone(), pconn4.clone(), pconn6.clone());
-        let stun_packet_sender = net_checker.get_msg_sender();
-        let udp_actor_task = tokio::task::spawn(async move {
-            udp_actor
-                .run(udp_actor_receiver, stun_packet_sender, ip_sender)
-                .await;
-        });
+        let udp_actor_task = {
+            let udp_actor =
+                UdpActor::new(&udp_state, inner.clone(), pconn4.clone(), pconn6.clone());
+            let net_checker = net_checker.clone();
+            tokio::task::spawn(async move {
+                udp_actor
+                    .run(udp_actor_receiver, net_checker, ip_sender)
+                    .await;
+            })
+        };
 
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
@@ -1459,8 +1459,7 @@ impl Actor {
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
-        info!("START REPORT, STUN PACKETS");
-        self.conn.enable_stun_packets.store(true, Ordering::Relaxed);
+        info!("START REPORT");
         let report = time::timeout(Duration::from_secs(10), async move {
             net_checker.get_report(derp_map, pconn4, pconn6).await
         })
@@ -1468,10 +1467,7 @@ impl Actor {
         self.conn
             .ipv6_reported
             .store(report.ipv6, Ordering::Relaxed);
-        self.conn
-            .enable_stun_packets
-            .store(false, Ordering::Relaxed);
-        info!("STOP REPORT, STUN PACKETS");
+        info!("STOP REPORT");
         let r = &report;
         debug!(
             "setting no_v4_send {} -> {}",
