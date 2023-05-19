@@ -24,7 +24,7 @@ use tokio::{
     time::{self, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, info, instrument, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::net::{interfaces, ip::to_canonical};
@@ -175,36 +175,23 @@ struct Reports {
     current_hair_tx: Option<stun::TransactionId>,
 }
 
+impl Default for Reports {
+    fn default() -> Self {
+        Self {
+            next_full: Default::default(),
+            prev: Default::default(),
+            last: Default::default(),
+            last_full: Instant::now(),
+            current_hair_tx: Default::default(),
+        }
+    }
+}
+
 impl Client {
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
-        let last_full = Instant::now();
-        let (got_hair_stun, _) = broadcast::channel(1);
-
-        // TODO: consider an instrumented flume channel so we have metrics.
-        let (msg_sender, msg_receiver) = mpsc::channel(32);
-
-        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()?;
-
-        let mut actor = Actor {
-            receiver: msg_receiver,
-            sender: msg_sender,
-            reports: Reports {
-                next_full: false,
-                prev: Default::default(),
-                last: None,
-                last_full,
-                current_hair_tx: None,
-            },
-            skip_external_network: false,
-            port_mapper,
-            got_hair_stun,
-            dns_resolver,
-            in_flight_stun_requests: Default::default(),
-            check_run: None,
-        };
+        let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
         tokio::spawn(async move { actor.main().await });
-
         Ok(Client {
             addr: addr.clone(),
             _drop_guard: ClientDropGuard { addr }.into(),
@@ -1156,10 +1143,29 @@ struct Actor {
     ///
     /// There can only ever be one check running at a time.  If it is running the response
     /// channel is stored here.
-    check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
+    current_check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
 }
 
 impl Actor {
+    fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+        // TODO: consider an instrumented flume channel so we have metrics.
+        let (sender, receiver) = mpsc::channel(32);
+        let (got_hair_stun, _) = broadcast::channel(1);
+        let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()
+            .context("failed to create DNS resolver")?;
+        Ok(Self {
+            receiver,
+            sender,
+            reports: Default::default(),
+            skip_external_network: false,
+            port_mapper,
+            got_hair_stun,
+            dns_resolver,
+            in_flight_stun_requests: Default::default(),
+            current_check_run: None,
+        })
+    }
+
     /// Returns the channel to send messages to the actor.
     fn addr(&self) -> ActorAddr {
         ActorAddr {
@@ -1190,7 +1196,7 @@ impl Actor {
                 }
                 ActorMessage::ReportAborted => {
                     self.in_flight_stun_requests.clear();
-                    self.check_run.take();
+                    self.current_check_run.take();
                 }
                 ActorMessage::StunPacket { payload, from_addr } => {
                     // TODO: drop package if no check is running
@@ -1210,7 +1216,7 @@ impl Actor {
     /// Finishes the report, sends it to the response channel.
     fn handle_report_ready(&mut self, report: Report, derp_map: DerpMap) {
         let report = self.finish_and_store_report(report, &derp_map);
-        if let Some(response_tx) = self.check_run.take() {
+        if let Some(response_tx) = self.current_check_run.take() {
             // If no one want the report anymore just drop it.
             response_tx.send(Ok(report)).ok();
         }
@@ -1224,8 +1230,10 @@ impl Actor {
         stun_sock_v6: Option<Arc<UdpSocket>>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
-        if self.check_run.is_some() {
-            response_tx.send(Err(anyhow!("A check is already running")));
+        if self.current_check_run.is_some() {
+            response_tx
+                .send(Err(anyhow!("A check is already running")))
+                .ok();
             return;
         }
         match self
@@ -1233,10 +1241,10 @@ impl Actor {
             .await
         {
             Ok(()) => {
-                self.check_run.insert(response_tx);
+                self.current_check_run = Some(response_tx);
             }
             Err(err) => {
-                response_tx.send(Err(err));
+                response_tx.send(Err(err)).ok();
             }
         }
     }
@@ -1300,15 +1308,20 @@ impl Actor {
             {
                 Ok(Ok((report, derp_map))) => {
                     addr.send(ActorMessage::ReportReady { report, derp_map })
-                        .await;
+                        .await
+                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
                 Err(err) => {
                     warn!("generate report timed out: {:?}", err);
-                    addr.send(ActorMessage::ReportAborted).await;
+                    addr.send(ActorMessage::ReportAborted)
+                        .await
+                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
                 Ok(Err(err)) => {
                     warn!("failed to generate report: {:?}", err);
-                    addr.send(ActorMessage::ReportAborted).await;
+                    addr.send(ActorMessage::ReportAborted)
+                        .await
+                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
             }
         });
@@ -2010,16 +2023,31 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(None).await?;
+            // let mut client = Client::new(None).await?;
 
+            // for s in &mut tt.steps {
+            //     // trigger the timer
+            //     time::advance(Duration::from_secs(s.after)).await;
+            //     let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
+            //     s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
+            // }
+            // let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
+            // let got = client.actor.reports.prev.len();
+            // let want = tt.want_prev_len;
+            // assert_eq!(got, want, "prev length");
+            // let got = last_report.preferred_derp;
+            // let want = tt.want_derp;
+            // assert_eq!(got, want, "preferred_derp");
+
+            let mut actor = Actor::new(None).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(client.actor.add_report_history_and_set_preferred_derp(r));
+                s.r = Some(actor.add_report_history_and_set_preferred_derp(r));
             }
-            let last_report = tt.steps[tt.steps.len() - 1].r.clone().unwrap();
-            let got = client.actor.reports.prev.len();
+            let last_report = tt.steps.last().unwrap().r.clone().unwrap();
+            let got = actor.reports.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
             let got = last_report.preferred_derp;
