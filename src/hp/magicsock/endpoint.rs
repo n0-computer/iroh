@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::future::BoxFuture;
-use tokio::time::Instant;
+use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
@@ -18,18 +18,37 @@ use crate::{
     net::ip::is_unicast_link_local,
 };
 
-use super::{
-    conn::{ActorMessage, DiscoInfo, QuicMappedAddr},
-    DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, PING_TIMEOUT_DURATION, PONG_HISTORY_COUNT,
-    SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
-};
+use super::conn::{ActorMessage, DiscoInfo, QuicMappedAddr};
+
+/// How long we wait for a pong reply before assuming it's never coming.
+const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
+
+/// The minimum time between pings to an endpoint. (Except in the case of CallMeMaybe frames
+/// resetting the counter, as the first pings likely didn't through the firewall)
+const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How many `PongReply` values we keep per `EndpointState`.
+const PONG_HISTORY_COUNT: usize = 64;
+
+/// The latency at or under which we don't try to upgrade to a better path.
+const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
+
+/// How long since the last activity we try to keep an established endpoint peering alive.
+/// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
+const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
+const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
+const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 /// A conneciton endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
 #[derive(Debug)]
 pub(super) struct Endpoint {
     pub(super) id: usize,
-    conn_sender: flume::Sender<ActorMessage>,
+    conn_sender: mpsc::Sender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
     /// Public key for this node/conection.
@@ -67,7 +86,7 @@ pub struct PendingCliPing {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) conn_sender: flume::Sender<ActorMessage>,
+    pub(super) conn_sender: mpsc::Sender<ActorMessage>,
     pub(super) conn_public_key: key::node::PublicKey,
     pub(super) public_key: Option<key::node::PublicKey>,
     pub(super) derp_addr: Option<SocketAddr>,
@@ -220,7 +239,7 @@ impl Endpoint {
         if let Some(pub_key) = public_key {
             sent = self
                 .conn_sender
-                .send_async(ActorMessage::SendDiscoMessage {
+                .send(ActorMessage::SendDiscoMessage {
                     dst: ep,
                     dst_key: pub_key,
                     msg: disco::Message::Ping(disco::Ping {
@@ -339,7 +358,7 @@ impl Endpoint {
                 let id = self.id;
                 let sender = self.conn_sender.clone();
                 if let Err(err) = sender
-                    .send_async(ActorMessage::EnqueueCallMeMaybe {
+                    .send(ActorMessage::EnqueueCallMeMaybe {
                         derp_addr,
                         endpoint_id: id,
                     })
