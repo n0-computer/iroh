@@ -136,10 +136,10 @@ impl fmt::Display for Report {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::get_stun_packet_channel`], the [`crate::hp::magicsock::Conn`] using this
+/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this
 /// client needs to be wired up to do so.
 #[derive(Debug, Clone)]
-pub struct Client {
+pub(crate) struct Client {
     /// Channel to send message to the [`Actor`].
     ///
     /// If all senders are dropped, in other words all clones of this struct are dropped,
