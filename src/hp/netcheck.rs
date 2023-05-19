@@ -195,7 +195,7 @@ impl Client {
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
-        let task = tokio::spawn(async move { actor.main().await });
+        let task = tokio::spawn(async move { actor.run().await });
         let drop_guard = ClientDropGuard {
             task: task.abort_handle(),
         };
@@ -1218,7 +1218,7 @@ impl Actor {
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
-    async fn main(&mut self) {
+    async fn run(&mut self) {
         debug!("netcheck actor starting");
         while let Some(msg) = self.receiver.recv().await {
             match msg {
@@ -1240,7 +1240,6 @@ impl Actor {
                     self.current_check_run.take();
                 }
                 ActorMessage::StunPacket { payload, from_addr } => {
-                    // TODO: drop package if no check is running
                     self.handle_stun_packet(&payload, from_addr);
                 }
                 ActorMessage::InFlightStun(inflight) => {
