@@ -198,14 +198,14 @@ impl Client {
         })
     }
 
-    pub(crate) async fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) -> Result<()> {
+    pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
         self.addr
-            .send(ActorMessage::StunPacket {
+            .try_send(ActorMessage::StunPacket {
                 payload,
                 from_addr: src,
             })
-            .await
-            .map_err(|_| anyhow!("actor no longer running"))
+            .ok();
+        // TODO: metric to count number of discarded stun packets due to full inbox
     }
 
     /// Runs a netcheck, returning the report.
@@ -216,14 +216,14 @@ impl Client {
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
     /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_stun_packet_channel`] in order for this function to receive the stun
+    /// [`Client::get_msg_sender`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
-    pub async fn get_report(
+    pub(crate) async fn get_report(
         &mut self,
-        dm: &DerpMap,
+        dm: DerpMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
@@ -1098,11 +1098,30 @@ struct ActorAddr {
 
 impl ActorAddr {
     async fn send(&self, msg: ActorMessage) -> Result<(), mpsc::error::SendError<ActorMessage>> {
-        self.sender.send(msg).await
+        self.sender.send(msg).await.map_err(|err| {
+            error!("netcheck actor lost");
+            err
+        })
+    }
+
+    fn try_send(&self, msg: ActorMessage) -> Result<(), mpsc::error::TrySendError<ActorMessage>> {
+        self.sender.try_send(msg).map_err(|err| {
+            match &err {
+                mpsc::error::TrySendError::Full(_) => {
+                    // TODO: metrics
+                    warn!("netcheck actor inbox full");
+                }
+                mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
+            }
+            err
+        })
     }
 
     fn blocking_send(&self, msg: ActorMessage) -> Result<(), mpsc::error::SendError<ActorMessage>> {
-        self.sender.blocking_send(msg)
+        self.sender.blocking_send(msg).map_err(|err| {
+            error!("netcheck actor lost");
+            err
+        })
     }
 }
 
@@ -1698,13 +1717,17 @@ mod tests {
     use super::*;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    #[tokio::test]
-    async fn test_basic() -> Result<()> {
+    fn setup_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
+    }
+
+    #[tokio::test]
+    async fn test_basic() -> Result<()> {
+        setup_logging();
 
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
@@ -1714,7 +1737,7 @@ mod tests {
 
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(&dm, None, None).await?;
+            let r = client.get_report(dm.clone(), None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1748,11 +1771,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_stun() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let mut client = Client::new(None)
             .await
@@ -1771,7 +1790,7 @@ mod tests {
         dbg!(&dm);
 
         let r = client
-            .get_report(&dm, None, None)
+            .get_report(dm, None, None)
             .await
             .context("failed to get netcheck report")?;
         dbg!(&r);
@@ -1799,6 +1818,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
+        setup_logging();
         let local_addr = "127.0.0.1";
         let bind_addr = "0.0.0.0";
 
@@ -1831,11 +1851,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
@@ -1844,7 +1860,7 @@ mod tests {
 
         let mut client = Client::new(None).await?;
 
-        let r = client.get_report(&dm, None, None).await?;
+        let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
         r.upnp = None;
         r.pmp = None;

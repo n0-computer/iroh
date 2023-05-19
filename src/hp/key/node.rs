@@ -191,7 +191,6 @@ impl From<SecretKey> for crate::tls::Keypair {
 }
 
 /// Shared Secret.
-#[derive(Clone)]
 pub struct SharedSecret(crypto_box::ChaChaBox);
 
 impl Debug for SharedSecret {

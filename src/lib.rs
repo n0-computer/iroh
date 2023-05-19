@@ -1,5 +1,6 @@
 //! Send data over the internet.
 // #![deny(missing_docs)] TODO: fix me before merging
+#![recursion_limit = "256"]
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod config;
@@ -65,22 +66,12 @@ mod tests {
 
     #[tokio::test]
     async fn basics() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
     #[tokio::test]
     async fn multi_file() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let file_opts = vec![
             ("1", 10),
@@ -112,11 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn sizes() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        setup_logging();
 
         let sizes = [
             0,
@@ -210,7 +197,6 @@ mod tests {
         }
 
         futures::future::join_all(tasks).await;
-
         Ok(())
     }
 
@@ -466,7 +452,6 @@ mod tests {
             // and then just hang
         })
         .await;
-        provider.shutdown();
 
         timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
@@ -476,6 +461,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipv6() {
+        setup_logging();
+
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
@@ -554,12 +541,15 @@ mod tests {
         use get_response_machine::*;
         let mut items = BTreeMap::new();
         let connected = initial.next().await?;
+        println!("I am connected");
         // we assume that the request includes the entire collection
         let (mut next, collection) = {
             let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
+            println!("getting collection");
             let (done, data) = sc.next().concatenate_into_vec().await?;
+            println!("got collection {}", data.len());
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children

@@ -4,7 +4,7 @@
 //!
 //! Header:
 //!
-//! ```no_run
+//! ```ignore
 //! magic:            [u8; 6]  // “TS💬” (0x54 53 f0 9f 92 ac)
 //! sender_disco_pub: [u8; 32] // nacl public key
 //! nonce:            [u8; 24]
@@ -12,7 +12,7 @@
 //! The recipient then decrypts the bytes following (the nacl secretbox)
 //! and then the inner payload structure is:
 //!
-//! ```no_run
+//! ```ignore
 //! message_type:    u8   // (the MessageType constants below)
 //! message_version: u8   // (0 for now; but always ignore bytes at the end)
 //! message_payload: &[u8]
