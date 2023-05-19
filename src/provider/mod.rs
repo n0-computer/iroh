@@ -281,9 +281,15 @@ where
             .transport_config(Arc::new(transport_config))
             .concurrent_connections(MAX_CONNECTIONS);
 
+        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
             port: self.bind_addr.port(),
             private_key: self.keypair.secret().clone().into(),
+            on_endpoints: Some(Box::new(move |_| {
+                if !endpoints_update_s.is_disconnected() {
+                    endpoints_update_s.send(()).ok();
+                }
+            })),
             ..Default::default()
         })
         .await?;
@@ -336,6 +342,13 @@ where
             inner,
             task: task.map_err(Arc::new).boxed().shared(),
         };
+
+        // Wait for a single endpoint update, to make sure
+        // we found some endpoints
+        endpoints_update_r
+            .recv_async()
+            .await
+            .context("waiting for endpoint")?;
 
         Ok(provider)
     }
