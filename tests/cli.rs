@@ -526,12 +526,14 @@ macro_rules! assert_matches_line {
             $(
                 let rx = regex::Regex::new($z)?;
                 let mut num_matches = 0;
+                let mut res = Vec::new();
                 loop {
                     if $a > 0 && num_matches == $a as usize {
                         break;
                     }
 
                     if let Some(Ok(line)) = lines.peek() {
+                        res.push(line.clone());
                         if let Some(cap) = rx.captures(line) {
                             for i in 0..cap.len() {
                                 if let Some(capture_group) = cap.get(i) {
@@ -547,9 +549,21 @@ macro_rules! assert_matches_line {
                     let _ = lines.next().context("Unexpected end of stderr reader")?;
                 }
                 if $a == -1 {
-                    assert!(num_matches > 0, "no matches found");
+                    if num_matches == 0 {
+                        println!("Expected at least one match for regex: {}", $z);
+                        for line in res {
+                            println!(">{}", line);
+                        }
+                        panic!("no matches found");
+                    }
                 } else {
-                    assert_eq!(num_matches, $a as usize, "invalid number of matches");
+                    if num_matches != $a as usize {
+                        println!("Expected {} matches for regex: {}", $a, $z);
+                        for line in res {
+                            println!(">{}", line);
+                        }
+                        panic!("invalid number of matches");
+                    }
                 }
 
             )*
