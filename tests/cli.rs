@@ -219,7 +219,8 @@ fn cli_provide_addresses() -> Result<()> {
     let get_output = cmd.output()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert!(stdout.starts_with("Listening addresses: [127.0.0.1:4333"));
+    assert!(stdout.starts_with("Listening addresses:"));
+    assert!(stdout.contains("127.0.0.1:4333"));
 
     let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
     provider.drain();
@@ -393,7 +394,6 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 }
 
 fn drain(mut reader: impl Read + Send + 'static) {
-
     std::thread::spawn(move || {
         // change to stderr to see the log output
         std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
