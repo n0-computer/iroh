@@ -11,6 +11,6 @@ int main (int argc, char const * const argv[]) {
 
     const char *out_path = argv[1];
     const char *ticket = argv[2];
-    get_ticket(ticket, out_path);
+    iroh_get_ticket(ticket, out_path);
     return EXIT_SUCCESS;
 }

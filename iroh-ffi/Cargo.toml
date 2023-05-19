@@ -10,7 +10,7 @@ strip = "symbols"
 
 [lib]
 name="iroh"
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "cdylib"]
 
 [features]
 c-headers = ["safer-ffi/headers"]

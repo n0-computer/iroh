@@ -1,4 +1,4 @@
 
 build:
 	cargo build --release
-	cc main.c -o main -L ../target/release -l libiroh -l pthread -l dl
+	cc main.c -o main -L ../target/release -l iroh -l pthread -l dl
