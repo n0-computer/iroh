@@ -197,8 +197,6 @@ mod tests {
         }
 
         futures::future::join_all(tasks).await;
-        provider.shutdown();
-        provider.await.unwrap();
         Ok(())
     }
 
@@ -454,8 +452,6 @@ mod tests {
             // and then just hang
         })
         .await;
-        provider.shutdown();
-        provider.await.unwrap();
 
         timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
@@ -521,8 +517,6 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get ticket failed");
-        provider.shutdown();
-        provider.await.unwrap();
     }
 
     /// Utility to validate that the children of a collection are correct
@@ -611,8 +605,6 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
-        provider.shutdown();
-        provider.await.unwrap();
     }
 
     fn readme_path() -> PathBuf {
@@ -700,8 +692,6 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
-        provider.shutdown();
-        provider.await.unwrap();
     }
 
     #[tokio::test]
@@ -736,7 +726,5 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
-        provider.shutdown();
-        provider.await.unwrap();
     }
 }

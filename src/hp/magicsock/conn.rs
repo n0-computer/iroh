@@ -18,7 +18,6 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     sync::{self, mpsc, Mutex},
-    task::JoinHandle,
     time,
 };
 use tracing::{debug, error, info, instrument, trace, warn};
@@ -33,6 +32,7 @@ use crate::{
     metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
     record,
+    tokio_util::AbortingJoinHandle,
 };
 
 use super::{
@@ -133,7 +133,7 @@ impl Default for Options {
 pub struct Conn {
     inner: Arc<Inner>,
     // Empty when closed
-    actor_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
 }
 
 impl Deref for Conn {
@@ -346,9 +346,9 @@ impl Conn {
         let c = Conn {
             inner,
             actor_tasks: Arc::new(Mutex::new(vec![
-                main_actor_task,
-                derp_actor_task,
-                udp_actor_task,
+                main_actor_task.into(),
+                derp_actor_task.into(),
+                udp_actor_task.into(),
             ])),
         };
 
