@@ -70,6 +70,9 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Default bind address for the provider.
 pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
 
+/// How long we wait at most for some endpoints to be discovered.
+const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
+
 /// Builder for the [`Provider`].
 ///
 /// You must supply a database which can be created using [`create_collection`], everything else is
@@ -285,8 +288,8 @@ where
         let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
             port: self.bind_addr.port(),
             private_key: self.keypair.secret().clone().into(),
-            on_endpoints: Some(Box::new(move |_| {
-                if !endpoints_update_s.is_disconnected() {
+            on_endpoints: Some(Box::new(move |eps| {
+                if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
                     endpoints_update_s.send(()).ok();
                 }
             })),
@@ -294,7 +297,9 @@ where
         })
         .await?;
         trace!("created magicsock");
-        conn.set_derp_map(self.derp_map)
+
+        let derp_map = self.derp_map.unwrap_or_default();
+        conn.set_derp_map(Some(derp_map))
             .await
             .context("setting derp map")?;
 
@@ -345,10 +350,11 @@ where
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
-        endpoints_update_r
-            .recv_async()
-            .await
-            .context("waiting for endpoint")?;
+        tokio::time::timeout(ENDPOINT_WAIT, async move {
+            endpoints_update_r.recv_async().await
+        })
+        .await
+        .context("waiting for endpoint")??;
 
         Ok(provider)
     }
