@@ -21,8 +21,14 @@ license-files = [
       { path = "LICENSE", hash = 0xbd0eed23 },
 ]
 
-
 [advisories]
 ignore = [
-       "RUSTSEC-2020-0168" # mach is unmaintained
+       "RUSTSEC-2020-0168", # mach is unmaintained
+       "RUSTSEC-2020-0071", # time advisory, see #1035
+]
+
+[sources]
+allow-git = [
+          "https://github.com/JelteF/derive_more", # see #1035
+          "https://github.com/dalek-cryptography/ed25519-dalek", # see #1035
 ]
