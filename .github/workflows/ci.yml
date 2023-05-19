@@ -176,6 +176,7 @@ jobs:
           - i686-unknown-linux-gnu
           - armv7-linux-androideabi
           - aarch64-linux-android
+        fail-fast: false
 
     steps:
     - name: Checkout
