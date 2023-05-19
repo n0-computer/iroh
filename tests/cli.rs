@@ -533,6 +533,7 @@ macro_rules! assert_matches_line {
                     }
 
                     if let Some(Ok(line)) = lines.peek() {
+                        println!("|{}", line);
                         res.push(line.clone());
                         if let Some(cap) = rx.captures(line) {
                             for i in 0..cap.len() {
