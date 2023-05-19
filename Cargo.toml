@@ -22,7 +22,7 @@ bytes = { version = "1.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"], optional = true }
 config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"] }
 console = { version = "0.15.5", optional = true }
-crypto_box = { version = "0.9.0-pre", features = ["serde", "chacha20"] }
+crypto_box = { version = "0.9.0-rc.0", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.2"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.14.1"
@@ -66,9 +66,9 @@ serde-error = "0.1.2"
 serdect = "0.2.0"
 smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 socket2 = "0.5.3"
-ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
+ssh-key = { version = "0.6.0-rc.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
-subtle = "2.4.1"
+subtle = "2.4"
 surge-ping = "0.8.0"
 tempfile = "3.4"
 thiserror = "1"
@@ -131,5 +131,4 @@ panic = 'abort'
 incremental = false
 
 [patch.crates-io]
-crypto_box = { git = "https://github.com/RustCrypto/nacl-compat", branch = "master" }
 ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
