@@ -1,6 +1,7 @@
 //! Linux-specific network interfaces implementations.
 
 use anyhow::{anyhow, Result};
+#[cfg(not(target_os = "android"))]
 use futures::TryStreamExt;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -103,6 +104,7 @@ fn parse_android_ip_route(stdout: &str) -> Option<&str> {
     None
 }
 
+#[cfg(not(target_os = "android"))]
 async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
     let (connection, handle, _receiver) = rtnetlink::new_connection()?;
     let task = tokio::spawn(connection);
@@ -122,6 +124,7 @@ async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
 }
 
 /// Returns the `(name, index)` of the interface for the default route.
+#[cfg(not(target_os = "android"))]
 async fn default_route_netlink_family(
     handle: &rtnetlink::Handle,
     family: rtnetlink::IpVersion,
@@ -148,6 +151,7 @@ async fn default_route_netlink_family(
     Ok(None)
 }
 
+#[cfg(not(target_os = "android"))]
 async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String> {
     let mut links = handle.link().get().match_index(index).execute();
     let msg = links
@@ -185,6 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(target_os = "android"))]
     async fn test_default_route_netlink() {
         let route = default_route_netlink().await.unwrap();
         // assert!(route.is_some());
