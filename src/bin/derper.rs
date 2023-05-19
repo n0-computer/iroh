@@ -30,7 +30,6 @@ use tokio::{
     },
     task::JoinSet,
 };
-use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -504,12 +503,12 @@ impl HttpsService {
         rustls_config: Arc<rustls::ServerConfig>,
     ) -> Result<()> {
         match acceptor {
-            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream.compat()).await? {
+            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
                 None => {
                     info!("received TLS-ALPN-01 validation request");
                 }
                 Some(start_handshake) => {
-                    let tls_stream = start_handshake.into_stream(rustls_config).await?.compat();
+                    let tls_stream = start_handshake.into_stream(rustls_config).await?;
                     Http::new().serve_connection(tls_stream, self).await?;
                 }
             },
