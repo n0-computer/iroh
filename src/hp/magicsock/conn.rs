@@ -38,7 +38,7 @@ use crate::{
     metrics::magicsock::MagicsockMetrics,
     net::ip::LocalAddresses,
     record,
-    tokio_util::OwnedJoinHandle,
+    tokio_util::AbortingJoinHandle,
 };
 
 use super::{
@@ -137,7 +137,7 @@ impl Default for Options {
 pub struct Conn {
     inner: Arc<Inner>,
     // None when closed
-    actor_task: Arc<Mutex<Option<OwnedJoinHandle<()>>>>,
+    actor_task: Arc<Mutex<Option<AbortingJoinHandle<()>>>>,
 }
 
 impl Deref for Conn {

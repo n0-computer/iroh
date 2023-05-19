@@ -405,15 +405,15 @@ pub(crate) async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> i
 
 /// A join handle that owns the task it is running, and aborts it when dropped.
 #[derive(Debug)]
-pub(crate) struct OwnedJoinHandle<T>(tokio::task::JoinHandle<T>);
+pub(crate) struct AbortingJoinHandle<T>(tokio::task::JoinHandle<T>);
 
-impl<T> From<tokio::task::JoinHandle<T>> for OwnedJoinHandle<T> {
+impl<T> From<tokio::task::JoinHandle<T>> for AbortingJoinHandle<T> {
     fn from(handle: tokio::task::JoinHandle<T>) -> Self {
         Self(handle)
     }
 }
 
-impl<T> Future for OwnedJoinHandle<T> {
+impl<T> Future for AbortingJoinHandle<T> {
     type Output = std::result::Result<T, tokio::task::JoinError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -421,7 +421,7 @@ impl<T> Future for OwnedJoinHandle<T> {
     }
 }
 
-impl<T> Drop for OwnedJoinHandle<T> {
+impl<T> Drop for AbortingJoinHandle<T> {
     fn drop(&mut self) {
         self.0.abort();
     }
