@@ -20,7 +20,7 @@ use rand::seq::IteratorRandom;
 use tokio::{
     net::UdpSocket,
     sync::{self, broadcast, mpsc, oneshot, RwLock},
-    task::JoinSet,
+    task::{AbortHandle, JoinSet},
     time::{self, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -151,13 +151,13 @@ pub struct Client {
 
 #[derive(Debug)]
 struct ClientDropGuard {
-    addr: ActorAddr,
+    task: AbortHandle,
 }
 
 impl Drop for ClientDropGuard {
     fn drop(&mut self) {
-        // If we can't send the actor is already not running so that's fine.
-        self.addr.blocking_send(ActorMessage::Exit).ok();
+        debug!("netcheck actor finished");
+        self.task.abort();
     }
 }
 
@@ -191,10 +191,12 @@ impl Client {
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
-        tokio::spawn(async move { actor.main().await });
+        let task = tokio::spawn(async move { actor.main().await });
         Ok(Client {
-            addr: addr.clone(),
-            _drop_guard: ClientDropGuard { addr }.into(),
+            addr: addr,
+            _drop_guard: Arc::new(ClientDropGuard {
+                task: task.abort_handle(),
+            }),
         })
     }
 
@@ -1086,8 +1088,6 @@ pub(crate) enum ActorMessage {
     },
     /// A probe wants to register an in-flight STUN request.
     InFlightStun(Inflight),
-    /// Terminate the actor.
-    Exit,
 }
 
 /// Sender to the [`Actor`].
@@ -1116,13 +1116,6 @@ impl ActorAddr {
                 }
                 mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
             }
-            err
-        })
-    }
-
-    fn blocking_send(&self, msg: ActorMessage) -> Result<(), mpsc::error::SendError<ActorMessage>> {
-        self.sender.blocking_send(msg).map_err(|err| {
-            error!("netcheck actor lost");
             err
         })
     }
@@ -1227,10 +1220,8 @@ impl Actor {
                 ActorMessage::InFlightStun(inflight) => {
                     self.handle_in_flight_stun(inflight);
                 }
-                ActorMessage::Exit => break,
             }
         }
-        debug!("netcheck actor finished");
     }
 
     /// Handles the [`ActorMessage::ReportReady`] message.
