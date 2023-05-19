@@ -1071,7 +1071,10 @@ pub(crate) enum ActorMessage {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
     /// A report produced by [`ReportState`].
-    ReportReady { report: Report, derp_map: DerpMap },
+    ReportReady {
+        report: Box<Report>,
+        derp_map: DerpMap,
+    },
     /// [`ReportState`] failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
@@ -1210,7 +1213,7 @@ impl Actor {
                         .await;
                 }
                 ActorMessage::ReportReady { report, derp_map } => {
-                    self.handle_report_ready(report, derp_map);
+                    self.handle_report_ready(*report, derp_map);
                     self.in_flight_stun_requests.clear();
                 }
                 ActorMessage::ReportAborted => {
@@ -1326,9 +1329,12 @@ impl Actor {
             .await
             {
                 Ok(Ok((report, derp_map))) => {
-                    addr.send(ActorMessage::ReportReady { report, derp_map })
-                        .await
-                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
+                    addr.send(ActorMessage::ReportReady {
+                        report: Box::new(report),
+                        derp_map,
+                    })
+                    .await
+                    .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
                 Err(err) => {
                     warn!("generate report timed out: {:?}", err);
