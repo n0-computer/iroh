@@ -192,11 +192,12 @@ impl Client {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
         let task = tokio::spawn(async move { actor.main().await });
+        let drop_guard = ClientDropGuard {
+            task: task.abort_handle(),
+        };
         Ok(Client {
-            addr: addr,
-            _drop_guard: Arc::new(ClientDropGuard {
-                task: task.abort_handle(),
-            }),
+            addr,
+            _drop_guard: Arc::new(drop_guard),
         })
     }
 
