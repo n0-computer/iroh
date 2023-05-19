@@ -90,14 +90,14 @@ pub(super) struct DerpActor {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
     derp_route: HashMap<key::node::PublicKey, DerpRoute>,
-    msg_sender: flume::Sender<ActorMessage>,
+    msg_sender: mpsc::Sender<ActorMessage>,
 }
 
 impl DerpActor {
     pub(super) fn new(
         conn: Arc<Inner>,
         receiver: mpsc::Receiver<DerpActorMessage>,
-        msg_sender: flume::Sender<ActorMessage>,
+        msg_sender: mpsc::Sender<ActorMessage>,
     ) -> Self {
         DerpActor {
             conn,
@@ -209,7 +209,7 @@ impl DerpActor {
 
         // TOOD: Maybe try_send?
         self.msg_sender
-            .send_async(ActorMessage::ReStun("derp-map-update"))
+            .send(ActorMessage::ReStun("derp-map-update"))
             .await
             .ok();
     }
@@ -370,10 +370,7 @@ impl DerpActor {
         }
 
         let rs = ReaderState::new(region_id, cancel, d);
-        msg_sender
-            .send_async(ActorMessage::Connected(rs))
-            .await
-            .unwrap();
+        msg_sender.send(ActorMessage::Connected(rs)).await.unwrap();
 
         dc
     }
@@ -402,7 +399,7 @@ impl DerpActor {
             tokio::task::spawn(time::timeout(Duration::from_secs(3), async move {
                 if let Err(_err) = dc.ping().await {
                     msg_sender
-                        .send_async(ActorMessage::CloseOrReconnect(
+                        .send(ActorMessage::CloseOrReconnect(
                             region_id,
                             "rebind-ping-fail",
                         ))

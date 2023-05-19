@@ -13,7 +13,10 @@ use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
 use super::conn::{CurrentPortFate, Network};
-use crate::hp::magicsock::SOCKET_BUFFER_SIZE;
+
+/// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
+/// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
+const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
 #[derive(Clone, Debug)]
