@@ -28,6 +28,55 @@ uint32_t iroh_get_ticket (
     char const * ticket,
     char const * out_path);
 
+/** \brief
+ *  Same as [`Vec<T>`][`rust::Vec`], but with guaranteed `#[repr(C)]` layout
+ */
+typedef struct Vec_uint8 {
+
+    uint8_t * ptr;
+
+    size_t len;
+
+    size_t cap;
+
+} Vec_uint8_t;
+
+/** \brief
+ *  A blob entry of a collection
+ */
+typedef struct CBlob {
+
+    Vec_uint8_t name;
+
+    Vec_uint8_t hash;
+
+} CBlob_t;
+
+/** \brief
+ *  Same as [`Vec<T>`][`rust::Vec`], but with guaranteed `#[repr(C)]` layout
+ */
+typedef struct Vec_CBlob {
+
+    CBlob_t * ptr;
+
+    size_t len;
+
+    size_t cap;
+
+} Vec_CBlob_t;
+
+typedef struct CCollection {
+
+    Vec_CBlob_t blobs;
+
+    uint64_t total_blobs_size;
+
+} CCollection_t;
+
+CCollection_t iroh_describe_collection (
+    char const * ticket,
+    char const * out_path);
+
 
 #ifdef __cplusplus
 } /* extern "C" */

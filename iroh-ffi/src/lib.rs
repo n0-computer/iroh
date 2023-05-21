@@ -10,7 +10,7 @@ use crate::util::Blake3Cid;
 use iroh::blobs::{Blob, Collection};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{self, get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
-use iroh::protocol::{GetRequest};
+use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::Ticket;
 use iroh::tokio_util::SeekOptimized;
 use iroh::{Hash, PeerId};
@@ -78,6 +78,31 @@ fn iroh_get_ticket(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> u32 {
     result.unwrap()
 }
 
+#[ffi_export]
+fn iroh_describe_collection(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> CCollection {
+    let result = std::panic::catch_unwind(|| {
+        let ticket = ticket.to_str().parse::<Ticket>().unwrap();
+        let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
+        let rt = Runtime::new().unwrap();
+        rt.block_on(describe_collection(
+            GetInteractive::Ticket {
+                ticket,
+                keylog: false,
+            },
+            out_path,
+        ))
+        .unwrap()
+    });
+    if result.is_err() {
+        eprintln!("error: rust panicked");
+        return CCollection {
+            blobs: Vec::new().into(),
+            total_blobs_size: 0,
+        };
+    }
+    result.unwrap()
+}
+
 #[derive(Debug)]
 enum GetInteractive {
     Ticket {
@@ -105,6 +130,78 @@ impl GetInteractive {
             GetInteractive::Hash { single, .. } => *single,
         }
     }
+}
+
+#[derive_ReprC]
+#[repr(C)]
+#[derive(Debug)]
+pub struct CCollection {
+    blobs: safer_ffi::Vec<CBlob>,
+    total_blobs_size: u64,
+}
+
+/// A blob entry of a collection
+#[derive_ReprC]
+#[repr(C)]
+#[derive(Debug)]
+pub struct CBlob {
+    /// The name of this blob of data
+    pub name: safer_ffi::String,
+    /// The hash of the blob of data
+    pub hash: safer_ffi::String,
+}
+
+async fn describe_collection(get: GetInteractive, out_dir: PathBuf) -> Result<CCollection> {
+    if get.single() {
+        anyhow::bail!("not supported for single");
+    };
+
+    let temp_dir = out_dir.join(".iroh-tmp");
+    let (_, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
+
+    let collection = match collection {
+        Some(collection) => collection,
+        None => {
+            let hash = get.hash();
+            let request = GetRequest::new(hash, RangeSpecSeq::empty()).into();
+            let response = match get {
+                GetInteractive::Ticket { ticket, keylog } => {
+                    get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
+                }
+                GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+            };
+            let connected = response.next().await?;
+            let collection = match connected.next().await? {
+                ConnectedNext::StartRoot(curr) => {
+                    let curr = curr.next();
+                    let (_curr, collection_data) = curr.concatenate_into_vec().await?;
+                    let collection = Collection::from_bytes(&collection_data)?;
+                    collection
+                }
+                ConnectedNext::StartChild(_) => {
+                    anyhow::bail!("not a root collection");
+                }
+                ConnectedNext::Closing(_) => {
+                    anyhow::bail!("not a root collection");
+                }
+            };
+            collection
+        }
+    };
+
+    let blobs = collection
+        .blobs()
+        .iter()
+        .map(|x| CBlob {
+            name: x.name.clone().into(),
+            hash: x.hash.to_string().into(),
+        })
+        .collect::<Vec<CBlob>>();
+
+    Ok(CCollection {
+        blobs: blobs.into(),
+        total_blobs_size: collection.total_blobs_size(),
+    })
 }
 
 /// Get into a file or directory
