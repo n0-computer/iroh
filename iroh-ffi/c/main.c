@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "libiroh.h"
+#include "iroh.h"
 
 int main (int argc, char const * const argv[]) {
     if (argc < 3) {

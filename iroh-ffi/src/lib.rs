@@ -10,7 +10,7 @@ use crate::util::Blake3Cid;
 use iroh::blobs::{Blob, Collection};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{self, get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
-use iroh::protocol::{GetRequest};
+use iroh::protocol::GetRequest;
 use iroh::provider::Ticket;
 use iroh::tokio_util::SeekOptimized;
 use iroh::{Hash, PeerId};
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn generate_headers() -> ::std::io::Result<()> {
         ::safer_ffi::headers::builder()
-            .to_file("libiroh.h")?
+            .to_file("iroh.h")?
             .generate()
     }
 

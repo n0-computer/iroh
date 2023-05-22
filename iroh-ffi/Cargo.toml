@@ -15,16 +15,6 @@ crate-type = ["staticlib", "cdylib"]
 [features]
 c-headers = ["safer-ffi/headers"]
 
-# ios build flags:
-# export RUSTFLAGS="-C lto=on -C embed-bitcode=yes"
-# export LIBRARY_PATH="/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib"
-# cargo lipo --release
-
-# needed when building for unreal engine...
-# [target.x86_64-apple-darwin]
-# rustflags=["-C", "link-arg=-mmacosx-version-min=10.7"]
-# strip = "symbols"
-
 [dependencies]
 safer-ffi = { version = "0.0.10", features = ["proc_macros"] }
 anyhow = "1.0.69"
