@@ -76,6 +76,14 @@ impl Network {
             Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn local_addr(&self) -> IpAddr {
+        match self {
+            Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
+            Self::Ipv6 => Ipv6Addr::LOCALHOST.into(),
+        }
+    }
 }
 
 impl From<Network> for socket2::Domain {
@@ -709,7 +717,15 @@ impl AsyncUdpSocket for Conn {
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
         match &*self.local_addrs.read().unwrap() {
-            (ipv4, None) => Ok(*ipv4),
+            (ipv4, None) => {
+                // Pretend to be IPv6, because our QuinnMappedAddrs
+                // need to be IPv6.
+                let ip: IpAddr = match ipv4.ip() {
+                    IpAddr::V4(ip) => ip.to_ipv6_mapped().into(),
+                    IpAddr::V6(ip) => ip.into(),
+                };
+                Ok(SocketAddr::new(ip, ipv4.port()))
+            }
             (_, Some(ipv6)) => Ok(*ipv6),
         }
     }
@@ -1372,7 +1388,7 @@ impl Actor {
             }
         }
 
-        if !is_unspecified_v4 {
+        if !is_unspecified_v4 && local_addr_v4.is_some() {
             // Our local endpoint is bound to a particular address.
             // Do not offer addresses on other local interfaces.
             add_addr!(
@@ -1383,7 +1399,7 @@ impl Actor {
             );
         }
 
-        if !is_unspecified_v6 {
+        if !is_unspecified_v6 && local_addr_v6.is_some() {
             // Our local endpoint is bound to a particular address.
             // Do not offer addresses on other local interfaces.
             add_addr!(
