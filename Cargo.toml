@@ -59,7 +59,7 @@ regex = { version = "1.7.1", optional = true }
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
-rustls-acme = { version = "0.7", optional = true, features = ["tokio"] }
+tokio-rustls-acme = { version = "0.1", optional = true }
 rustls-pemfile = { version = "1.0.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
@@ -107,7 +107,7 @@ http-body = "0.4.5"
 [features]
 default = ["cli", "derper", "metrics"]
 cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
-derper = ["tokio-rustls", "rustls-acme", "toml", "rustls-pemfile", "regex"]
+derper = ["tokio-rustls", "tokio-rustls-acme", "toml", "rustls-pemfile", "regex"]
 metrics = ["prometheus-client"]
 test = []
 
