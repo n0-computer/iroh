@@ -112,7 +112,7 @@ impl Debug for PeerId {
 /// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", util::encode(self.0.as_bytes()))
+        write!(f, "{}", zbase32::encode_full_bytes(self.0.as_bytes()))
     }
 }
 
@@ -120,8 +120,8 @@ impl Display for PeerId {
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
     /// Error when decoding the base64.
-    #[error("encoding: {0}")]
-    Base64(#[from] base64::DecodeError),
+    #[error("encoding {0}")]
+    ZBase32(&'static str),
     /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
@@ -134,7 +134,7 @@ impl FromStr for PeerId {
     type Err = PeerIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
+        let bytes = zbase32::decode_full_bytes_str(s).map_err(PeerIdError::ZBase32)?;
         let key = PublicKey::from_bytes(&bytes)?;
         Ok(PeerId(key))
     }

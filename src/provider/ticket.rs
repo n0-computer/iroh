@@ -10,7 +10,6 @@ use std::str::FromStr;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::util;
 use crate::{Hash, PeerId};
 
 /// A token containing everything to get a file from the provider.
@@ -71,7 +70,7 @@ impl Ticket {
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = self.to_bytes();
-        write!(f, "{}", util::encode(encoded))
+        write!(f, "{}", zbase32::encode_full_bytes(&encoded))
     }
 }
 
@@ -80,7 +79,9 @@ impl FromStr for Ticket {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
+        use anyhow::anyhow;
+        let bytes: Vec<u8> = zbase32::decode_full_bytes_str(s)
+            .map_err(|e| anyhow!("Invalid base32 encoding in ticket {}", e))?;
         let slf = Self::from_bytes(&bytes)?;
         Ok(slf)
     }

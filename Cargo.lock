@@ -1163,6 +1163,7 @@ dependencies = [
  "walkdir",
  "webpki",
  "x509-parser",
+ "zbase32",
  "zeroize",
 ]
 
@@ -3161,6 +3162,12 @@ checksum = "aed2e7a52e3744ab4d0c05c20aa065258e84c49fd4226f5191b2ed29712710b4"
 dependencies = [
  "time",
 ]
+
+[[package]]
+name = "zbase32"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f9079049688da5871a7558ddacb7f04958862c703e68258594cb7a862b5e33f"
 
 [[package]]
 name = "zeroize"

@@ -59,6 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
 webpki = "0.22"
 x509-parser = "0.14"
+zbase32 = "0.1.2"
 zeroize = "1.5"
 [dev-dependencies]
 proptest = "1.0.0"
