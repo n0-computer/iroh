@@ -44,36 +44,36 @@ typedef struct Vec_uint8 {
 /** \brief
  *  A blob entry of a collection
  */
-typedef struct CBlob {
+typedef struct IrohBlob {
 
     Vec_uint8_t name;
 
     Vec_uint8_t hash;
 
-} CBlob_t;
+} IrohBlob_t;
 
 /** \brief
  *  Same as [`Vec<T>`][`rust::Vec`], but with guaranteed `#[repr(C)]` layout
  */
-typedef struct Vec_CBlob {
+typedef struct Vec_IrohBlob {
 
-    CBlob_t * ptr;
+    IrohBlob_t * ptr;
 
     size_t len;
 
     size_t cap;
 
-} Vec_CBlob_t;
+} Vec_IrohBlob_t;
 
-typedef struct CCollection {
+typedef struct IrohCollection {
 
-    Vec_CBlob_t blobs;
+    Vec_IrohBlob_t blobs;
 
     uint64_t total_blobs_size;
 
-} CCollection_t;
+} IrohCollection_t;
 
-CCollection_t iroh_describe_collection (
+IrohCollection_t iroh_describe_collection (
     char const * ticket,
     char const * out_path);
 

@@ -79,7 +79,7 @@ fn iroh_get_ticket(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> u32 {
 }
 
 #[ffi_export]
-fn iroh_describe_collection(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> CCollection {
+fn iroh_describe_collection(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) -> IrohCollection {
     let result = std::panic::catch_unwind(|| {
         let ticket = ticket.to_str().parse::<Ticket>().unwrap();
         let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
@@ -95,7 +95,7 @@ fn iroh_describe_collection(ticket: char_p::Ref<'_>, out_path: char_p::Ref<'_>) 
     });
     if result.is_err() {
         eprintln!("error: rust panicked");
-        return CCollection {
+        return IrohCollection {
             blobs: Vec::new().into(),
             total_blobs_size: 0,
         };
@@ -135,8 +135,8 @@ impl GetInteractive {
 #[derive_ReprC]
 #[repr(C)]
 #[derive(Debug)]
-pub struct CCollection {
-    blobs: safer_ffi::Vec<CBlob>,
+pub struct IrohCollection {
+    blobs: safer_ffi::Vec<IrohBlob>,
     total_blobs_size: u64,
 }
 
@@ -144,14 +144,14 @@ pub struct CCollection {
 #[derive_ReprC]
 #[repr(C)]
 #[derive(Debug)]
-pub struct CBlob {
+pub struct IrohBlob {
     /// The name of this blob of data
     pub name: safer_ffi::String,
     /// The hash of the blob of data
     pub hash: safer_ffi::String,
 }
 
-async fn describe_collection(get: GetInteractive, out_dir: PathBuf) -> Result<CCollection> {
+async fn describe_collection(get: GetInteractive, out_dir: PathBuf) -> Result<IrohCollection> {
     if get.single() {
         anyhow::bail!("not supported for single");
     };
@@ -192,13 +192,13 @@ async fn describe_collection(get: GetInteractive, out_dir: PathBuf) -> Result<CC
     let blobs = collection
         .blobs()
         .iter()
-        .map(|x| CBlob {
+        .map(|x| IrohBlob {
             name: x.name.clone().into(),
             hash: x.hash.to_string().into(),
         })
-        .collect::<Vec<CBlob>>();
+        .collect::<Vec<IrohBlob>>();
 
-    Ok(CCollection {
+    Ok(IrohCollection {
         blobs: blobs.into(),
         total_blobs_size: collection.total_blobs_size(),
     })
