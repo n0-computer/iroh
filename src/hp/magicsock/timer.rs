@@ -140,24 +140,24 @@ mod tests {
         assert!(!val.load(Ordering::Relaxed));
 
         let moved_val = val.clone();
-        let timer = Timer::after(Duration::from_millis(10), async move {
+        let timer = Timer::after(Duration::from_millis(50), async move {
             moved_val.store(true, Ordering::Relaxed);
         });
 
         assert!(!val.load(Ordering::Relaxed));
-        time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(25)).await;
 
         // not yet expired
         assert!(!val.load(Ordering::Relaxed));
-        // reset for another 10ms
-        timer.reset(Duration::from_millis(20)).await;
+        // reset for another 100ms
+        timer.reset(Duration::from_millis(100)).await;
 
         // would have expired if not reset
-        time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(25)).await;
         assert!(!val.load(Ordering::Relaxed));
 
         // definitely expired now
-        time::sleep(Duration::from_millis(25)).await;
+        time::sleep(Duration::from_millis(125)).await;
         assert!(val.load(Ordering::Relaxed));
     }
 }
