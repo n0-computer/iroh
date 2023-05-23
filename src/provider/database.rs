@@ -83,8 +83,7 @@ impl DataPaths {
     }
 }
 
-/// Using base64 you have all those weird characters like + and /.
-/// So we use hex for file names.
+/// We use hex for file names.
 fn format_hash(hash: &Hash) -> String {
     hex::encode(hash.as_ref())
 }

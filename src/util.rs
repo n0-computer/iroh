@@ -1,7 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::{error::EncodeError, sync::encode_ranges_validated};
-use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
@@ -18,16 +17,6 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::IROH_BLOCK_SIZE;
-
-/// Encode the given buffer into Base64 URL SAFE without padding.
-pub fn encode(buf: impl AsRef<[u8]>) -> String {
-    general_purpose::URL_SAFE_NO_PAD.encode(buf.as_ref())
-}
-
-/// Decode the given buffer from Base64 URL SAFE without padding.
-pub fn decode(buf: impl AsRef<str>) -> Result<Vec<u8>, base64::DecodeError> {
-    general_purpose::URL_SAFE_NO_PAD.decode(buf.as_ref())
-}
 
 /// Hash type used throught.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
@@ -79,7 +68,7 @@ impl Ord for Hash {
 
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", encode(self.0.as_bytes()))
+        write!(f, "{}", zbase32::encode_full_bytes(self.0.as_bytes()))
     }
 }
 
@@ -88,7 +77,8 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut arr = [0u8; 32];
-        let val = decode(s)?;
+        let val = zbase32::decode_full_bytes_str(s)
+            .map_err(|e| anyhow::anyhow!("invalid zbase32 string: {}", e))?;
         ensure!(
             val.len() == 32,
             "invalid byte length, expected 32, got {}",

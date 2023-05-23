@@ -17,8 +17,6 @@ pub use ed25519_dalek::{PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
-use crate::util;
-
 pub(crate) const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
 
 /// A keypair.
@@ -103,11 +101,15 @@ impl From<PublicKey> for PeerId {
 
 impl Debug for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PeerId({})", util::encode(self.0.as_bytes()))
+        write!(
+            f,
+            "PeerId({})",
+            zbase32::encode_full_bytes(self.0.as_bytes())
+        )
     }
 }
 
-/// Serialises the [`PeerId`] to base64.
+/// Serialises the [`PeerId`] to zbase32.
 ///
 /// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
@@ -119,7 +121,7 @@ impl Display for PeerId {
 /// Error when deserialising a [`PeerId`].
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
-    /// Error when decoding the base64.
+    /// Error when decoding the zbase32.
     #[error("encoding {0}")]
     ZBase32(&'static str),
     /// Error when decoding the public key.
@@ -127,7 +129,7 @@ pub enum PeerIdError {
     Key(#[from] ed25519_dalek::SignatureError),
 }
 
-/// Deserialises the [`PeerId`] from it's base64 encoding.
+/// Deserialises the [`PeerId`] from it's zbase32 encoding.
 ///
 /// [`Display`] is capable of serialising this format.
 impl FromStr for PeerId {

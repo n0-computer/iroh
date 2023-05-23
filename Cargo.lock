@@ -1114,7 +1114,6 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "bao-tree",
- "base64 0.21.0",
  "blake3",
  "bytes",
  "clap",

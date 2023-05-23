@@ -17,7 +17,7 @@ use crate::{Hash, PeerId};
 /// A token containing everything to get a file from the provider.
 ///
 /// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base64.
+/// and [`FromStr`] implementations serialize to zbase32.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
@@ -66,7 +66,7 @@ impl Ticket {
     }
 }
 
-/// Serializes to base64.
+/// Serializes to zbase32.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = self.to_bytes();
@@ -74,7 +74,7 @@ impl Display for Ticket {
     }
 }
 
-/// Deserializes from base64.
+/// Deserializes from zbase32.
 impl FromStr for Ticket {
     type Err = anyhow::Error;
 
@@ -94,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ticket_base64_roundtrip() {
+    fn test_ticket_zbase32_roundtrip() {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
@@ -104,11 +104,11 @@ mod tests {
             peer,
             addrs: vec![addr],
         };
-        let base64 = ticket.to_string();
-        println!("Ticket: {base64}");
-        println!("{} bytes", base64.len());
+        let zbase32 = ticket.to_string();
+        println!("Ticket: {zbase32}");
+        println!("{} bytes", zbase32.len());
 
-        let ticket2: Ticket = base64.parse().unwrap();
+        let ticket2: Ticket = zbase32.parse().unwrap();
         assert_eq!(ticket2, ticket);
     }
 }
