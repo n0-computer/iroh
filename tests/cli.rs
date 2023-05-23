@@ -210,7 +210,7 @@ fn cli_provide_addresses() -> Result<()> {
     provider.drain();
 
     // wait for the provider to start
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     let mut cmd = Command::new(iroh_bin());
     cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
@@ -220,7 +220,8 @@ fn cli_provide_addresses() -> Result<()> {
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
-    assert!(stdout.contains("127.0.0.1:4333"));
+    println!("stdout = {}", stdout);
+    assert!(stdout.contains(":4333"));
 
     let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
     provider.drain();

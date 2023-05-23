@@ -39,7 +39,6 @@ use walkdir::WalkDir;
 use crate::blobs::Collection;
 use crate::hp::cfg::Endpoint;
 use crate::hp::derp::DerpMap;
-use crate::net::ip::find_local_addresses;
 use crate::protocol::{
     read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
@@ -524,7 +523,7 @@ impl Provider {
     /// The address on which the provider socket is bound.
     ///
     /// Note that this could be an unspecified address, if you need an address on which you
-    /// can contact the provider consider using [`Provider::listen_addresses`].  However the
+    /// can contact the provider consider using [`Provider::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
         self.inner.local_address()
@@ -536,8 +535,7 @@ impl Provider {
     }
 
     pub async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
-        let endpoints = self.inner.local_endpoints().await?;
-        Ok(endpoints.into_iter().map(|x| x.addr).collect())
+        self.inner.local_endpoint_addresses().await
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -589,6 +587,11 @@ impl ProviderInner {
         self.conn.local_endpoints().await
     }
 
+    async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
+        let endpoints = self.local_endpoints().await?;
+        Ok(endpoints.into_iter().map(|x| x.addr).collect())
+    }
+
     fn local_address(&self) -> Result<Vec<SocketAddr>> {
         let (v4, v6) = self.conn.local_addr()?;
         let mut addrs = vec![v4];
@@ -596,9 +599,6 @@ impl ProviderInner {
             addrs.push(v6);
         }
         Ok(addrs)
-    }
-    fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(&self.local_address()?)
     }
 }
 
@@ -678,13 +678,21 @@ impl RpcHandler {
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
-            listen_addrs: self.inner.listen_addresses().unwrap_or_default(),
+            listen_addrs: self
+                .inner
+                .local_endpoint_addresses()
+                .await
+                .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: self.inner.listen_addresses().unwrap_or_default(),
+            addrs: self
+                .inner
+                .local_endpoint_addresses()
+                .await
+                .unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
