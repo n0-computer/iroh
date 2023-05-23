@@ -535,11 +535,9 @@ impl Provider {
         self.inner.local_endpoints().await
     }
 
-    /// Returns all addresses on which the provider is reachable.
-    ///
-    /// This will never be empty.
-    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.listen_addresses()
+    pub async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
+        let endpoints = self.inner.local_endpoints().await?;
+        Ok(endpoints.into_iter().map(|x| x.addr).collect())
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -563,9 +561,9 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = self.listen_addresses()?;
+        let addrs = self.local_endpoint_addresses().await?;
         Ticket::new(hash, self.peer_id(), addrs)
     }
 
@@ -1358,7 +1356,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }
