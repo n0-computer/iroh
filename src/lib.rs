@@ -39,7 +39,7 @@ pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 mod tests {
     use std::{
         collections::BTreeMap,
-        net::{Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
         path::{Path, PathBuf},
         time::{Duration, Instant},
     };
@@ -362,7 +362,7 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let provider_addr = provider.local_address().unwrap();
+        let provider_addr = provider.listen_addresses().unwrap();
         let peer_id = provider.peer_id();
 
         // This tasks closes the connection on the provider side as soon as the transfer
@@ -431,7 +431,7 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
             .await?;
-        let provider_addr = provider.local_address()?;
+        let provider_addr = provider.listen_addresses()?;
         let peer_id = provider.peer_id();
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
@@ -467,7 +467,7 @@ mod tests {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
-            .bind_addr("[::1]:0".parse().unwrap())
+            .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
             .spawn()
             .await
         {
@@ -478,7 +478,7 @@ mod tests {
                 return;
             }
         };
-        let addrs = provider.local_address().unwrap();
+        let addrs = provider.listen_addresses().unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
@@ -587,7 +587,7 @@ mod tests {
                 return;
             }
         };
-        let addrs = provider.local_address().unwrap();
+        let addrs = provider.listen_addresses().unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let connection = dial_peer(get::Options {
@@ -668,7 +668,7 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let addrs = provider.local_address().unwrap();
+        let addrs = provider.listen_addresses().unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
@@ -704,7 +704,7 @@ mod tests {
             .spawn()
             .await
             .unwrap();
-        let addrs = provider.local_address().unwrap();
+        let addrs = provider.listen_addresses().unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
