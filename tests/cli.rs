@@ -461,8 +461,8 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
         r"\[1/3\] Connecting ..."; 1,
         r"\[2/3\] Requesting ..."; 1,
         r"\[3/3\] Downloading ..."; 1,
-        r"\d* file\(s\) with total transfer size [\d.]* ?[BKMGT]?i?B"; 1,
-        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d*? [BKMGT]iB/s"; 1
+        r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)"; 1,
+        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s"; 1
     ];
     Ok(())
 }
