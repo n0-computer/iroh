@@ -395,7 +395,7 @@ async fn measure_icmp_latency(
 
     // Get the IPAddr by asking for the UDP address that we would use for
     // STUN and then using that IP.
-    let node_addr = get_node_addr(resolver, node, ProbeProto::Ipv4)
+    let node_addr = get_derp_node_addr(resolver, node, ProbeProto::Ipv4)
         .await
         .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
 
@@ -419,7 +419,7 @@ async fn measure_icmp_latency(
     Ok(d)
 }
 
-async fn get_node_addr(
+async fn get_derp_node_addr(
     resolver: &TokioAsyncResolver,
     n: &DerpNode,
     proto: ProbeProto,
@@ -488,8 +488,8 @@ struct ReportState {
     got_hair_stun: broadcast::Receiver<SocketAddr>,
     // notified on hair pin timeout
     hair_timeout: Arc<sync::Notify>,
-    pc4: Arc<UdpSocket>,
-    pc6: Arc<UdpSocket>,
+    pc4: Option<Arc<UdpSocket>>,
+    pc6: Option<Arc<UdpSocket>>,
     pc4_hair: Arc<UdpSocket>,
     /// Doing a lite, follow-up netcheck
     incremental: bool,
@@ -871,13 +871,16 @@ enum ProbeError {
     Transient(anyhow::Error, Probe),
 }
 
+/// Executes a particular [`Probe`], including using a delayed start if needed.
+///
+/// If *pc4* and *pc6* are `None` the STUN probes are disabled.
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "debug", skip_all, fields(probe = ?probe))]
 async fn run_probe(
     report: Arc<RwLock<Report>>,
     resolver: &TokioAsyncResolver,
-    pc4: Arc<UdpSocket>,
-    pc6: Arc<UdpSocket>,
+    pc4: Option<Arc<UdpSocket>>,
+    pc6: Option<Arc<UdpSocket>>,
     node: DerpNode,
     probe: Probe,
     actor_addr: ActorAddr,
@@ -892,7 +895,7 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
     }
 
-    let addr = get_node_addr(resolver, &node, probe.proto()).await;
+    let addr = get_derp_node_addr(resolver, &node, probe.proto()).await;
     if addr.is_none() {
         return Err(ProbeError::Transient(anyhow!("no node addr"), probe));
     }
@@ -916,33 +919,37 @@ async fn run_probe(
         Probe::Ipv4 { .. } => {
             // TODO:
             // metricSTUNSend4.Add(1)
-            let n = pc4.send_to(&req, addr).await;
-            debug!(%addr, send_res=?n, "sending probe IPV4");
-            // TODO:  || neterror.TreatAsLostUDP(err)
-            if n.is_ok() && n.unwrap() == req.len() {
-                result.ipv4_can_send = true;
+            if let Some(ref pc4) = pc4 {
+                let n = pc4.send_to(&req, addr).await;
+                debug!(%addr, send_res=?n, "sending probe IPV4");
+                // TODO:  || neterror.TreatAsLostUDP(err)
+                if n.is_ok() && n.unwrap() == req.len() {
+                    result.ipv4_can_send = true;
 
-                let (delay, addr) = r
-                    .await
-                    .map_err(|e| ProbeError::Transient(e.into(), probe))?;
-                result.delay = Some(delay);
-                result.addr = Some(addr);
+                    let (delay, addr) = r
+                        .await
+                        .map_err(|e| ProbeError::Transient(e.into(), probe))?;
+                    result.delay = Some(delay);
+                    result.addr = Some(addr);
+                }
             }
         }
         Probe::Ipv6 { .. } => {
             // TODO:
             // metricSTUNSend6.Add(1)
-            let n = pc6.send_to(&req, addr).await;
-            debug!(%addr, snd_res=?n, "sending probe IPV6");
-            // TODO:  || neterror.TreatAsLostUDP(err)
-            if n.is_ok() && n.unwrap() == req.len() {
-                result.ipv6_can_send = true;
+            if let Some(ref pc6) = pc6 {
+                let n = pc6.send_to(&req, addr).await;
+                debug!(%addr, snd_res=?n, "sending probe IPV6");
+                // TODO:  || neterror.TreatAsLostUDP(err)
+                if n.is_ok() && n.unwrap() == req.len() {
+                    result.ipv6_can_send = true;
 
-                let (delay, addr) = r
-                    .await
-                    .map_err(|e| ProbeError::Transient(e.into(), probe))?;
-                result.delay = Some(delay);
-                result.addr = Some(addr);
+                    let (delay, addr) = r
+                        .await
+                        .map_err(|e| ProbeError::Transient(e.into(), probe))?;
+                    result.delay = Some(delay);
+                    result.addr = Some(addr);
+                }
             }
         }
         Probe::Https { reg, .. } => {
@@ -1218,6 +1225,7 @@ impl Actor {
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
+    #[instrument(name = "actor", skip_all)]
     async fn run(&mut self) {
         debug!("netcheck actor starting");
         while let Some(msg) = self.receiver.recv().await {
@@ -1279,36 +1287,37 @@ impl Actor {
     /// Spawns a task running a [`ReportState`] run.
     ///
     /// When the run is completed the task sends the result back to this actor.
+    ///
+    /// The `stun_sock_v4` and `stun_sock_v6` arguments are used to send stun probes from if
+    /// they are bound sockets.  If not this will try and bind sockets for the probes
+    /// itself.
     async fn start_report_run(
         &mut self,
         derp_map: DerpMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
     ) -> Result<()> {
-        // TODO: These spawns should not be fatal on failure, see issue #1025
         let cancel_token = CancellationToken::new();
         let stun_sock_v4 = match stun_sock_v4 {
-            Some(stun_sock_v4) => stun_sock_v4,
+            Some(sock) => Some(sock),
             None => {
-                let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
-                let sock = UdpSocket::bind(addr)
-                    .await
-                    .context("netcheck: failed to bind udp 0.0.0.0:0")?;
-                let sock = Arc::new(sock);
-                spawn_udp_listener(sock.clone(), self.addr(), cancel_token.clone());
-                sock
+                bind_local_stun_socket(
+                    SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+                    self.addr(),
+                    cancel_token.clone(),
+                )
+                .await
             }
         };
         let stun_sock_v6 = match stun_sock_v6 {
-            Some(stun_sock_v6) => stun_sock_v6,
+            Some(sock) => Some(sock),
             None => {
-                let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0));
-                let sock = UdpSocket::bind(addr)
-                    .await
-                    .context("netcheck: failed to bind udp6 [::]:0")?;
-                let sock = Arc::new(sock);
-                spawn_udp_listener(sock.clone(), self.addr(), cancel_token.clone());
-                sock
+                bind_local_stun_socket(
+                    SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+                    self.addr(),
+                    cancel_token.clone(),
+                )
+                .await
             }
         };
 
@@ -1321,6 +1330,7 @@ impl Actor {
         let resolver = self.dns_resolver.clone(); // not a cheap clone, maybe Arc it
         let addr = self.addr();
         tokio::spawn(async move {
+            let _guard = cancel_token.drop_guard();
             match time::timeout(
                 OVERALL_PROBE_TIMEOUT,
                 report_state.run(
@@ -1358,11 +1368,17 @@ impl Actor {
         Ok(())
     }
 
+    /// Creates the initial [`ReportState`].
+    ///
+    /// A bit messy as it uses a bunch of state from the [`Actor`].
+    ///
+    /// The *pc4* and *pc6* are the sockets to send STUN packets from.  If they are `None`
+    /// **STUN is disabled**.
     async fn create_report_state(
         &mut self,
         dm: &DerpMap,
-        pc4: Arc<UdpSocket>,
-        pc6: Arc<UdpSocket>,
+        pc4: Option<Arc<UdpSocket>>,
+        pc6: Option<Arc<UdpSocket>>,
     ) -> Result<ReportState> {
         let now = Instant::now();
 
@@ -1637,44 +1653,56 @@ impl Actor {
     }
 }
 
-/// Spawns a tokio task reading stun packets from the UDP socket.
+/// Attempts to bind a local socket to send STUN packets from.
 ///
-/// This is a sync function and does not wait until the task is running.  However this
-/// is fine since the socket is already bound so packets will not be lost.
-fn spawn_udp_listener(
-    sock: Arc<UdpSocket>,
+/// If successfull this returns the bound socket and will forward STUN responses to the
+/// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
+/// socket is no longer needed.
+async fn bind_local_stun_socket(
+    addr: SocketAddr,
     actor_addr: ActorAddr,
     cancel_token: CancellationToken,
-) {
+) -> Option<Arc<UdpSocket>> {
+    let sock = match UdpSocket::bind(addr).await {
+        Ok(sock) => Arc::new(sock),
+        Err(err) => {
+            debug!("failed to bind STUN socket at 0.0.0.0:0: {}", err);
+            return None;
+        }
+    };
     let span = debug_span!(
-        "stun.listener.udp",
+        "stun_udp_listener",
         local_addr = sock
             .local_addr()
             .map(|a| a.to_string())
             .unwrap_or(String::from("-")),
     );
-    tokio::spawn(
-        async move {
-            debug!("udp stun socket listener started");
-            // TODO: Can we do better for buffers here?  Probably doesn't matter
-            // much.
-            let mut buf = vec![0u8; 64 << 10];
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = cancel_token.cancelled() => break,
-                    res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
-                        if let Err(err) = res {
-                            warn!(%err, "stun recv failed");
-                            break;
+    {
+        let sock = sock.clone();
+        tokio::spawn(
+            async move {
+                debug!("udp stun socket listener started");
+                // TODO: Can we do better for buffers here?  Probably doesn't matter
+                // much.
+                let mut buf = vec![0u8; 64 << 10];
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel_token.cancelled() => break,
+                        res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
+                            if let Err(err) = res {
+                                warn!(%err, "stun recv failed");
+                                break;
+                            }
                         }
                     }
                 }
+                debug!("udp stun socket listener stopped");
             }
-            debug!("udp stun socket listener stopped");
-        }
-        .instrument(span),
-    );
+            .instrument(span),
+        );
+    }
+    Some(sock)
 }
 
 /// Receive STUN response from a UDP socket, pass it to the actor.
