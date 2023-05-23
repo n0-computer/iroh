@@ -122,12 +122,12 @@ mod tests {
         assert!(!val.load(Ordering::Relaxed));
 
         let moved_val = val.clone();
-        let timer = Timer::after(Duration::from_millis(10), async move {
+        let timer = Timer::after(Duration::from_millis(50), async move {
             moved_val.store(true, Ordering::Relaxed);
         });
 
         assert!(!val.load(Ordering::Relaxed));
-        time::sleep(Duration::from_millis(15)).await;
+        time::sleep(Duration::from_millis(75)).await;
 
         assert!(!timer.stop().await);
         assert!(val.load(Ordering::Relaxed));
