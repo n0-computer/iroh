@@ -54,13 +54,13 @@ impl Core {
     }
 }
 
-/// Defines the metric trait which provides a common interface for all value based metrics
+/// Interface for all single value based metrics.
 pub trait MetricType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
 }
 
-/// Defines the histogram trait which provides a common interface for all  based metrics
+/// Interface for all distribution based metrics.
 pub trait HistogramType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
@@ -81,22 +81,31 @@ pub trait MetricsRecorder {
         M: HistogramType + std::fmt::Display;
 }
 
-/// Interface to record metrics
+/// Interface to record metrics.
+///
 /// Helps expose the record interface when using metrics as a library
 pub trait MRecorder {
-    /// Records a value for the metric
+    /// Records a value for the metric.
+    ///
+    /// Recording is for single-value metrics, each recorded metric represents a metric
+    /// value.
     fn record(&self, value: u64);
 }
 
-/// Interface to observe metrics
-/// Helps expose the observe interface when using metrics as a library
+/// Interface to observe metrics.
+///
+/// Helps expose the observe interface when using metrics as a library.
 pub trait MObserver {
-    /// Observes a value for the metric
+    /// Observes a value for the metric.
+    ///
+    /// Observing is for distribution metrics, when multiple observations are combined in a
+    /// single metric value.
     fn observe(&self, value: f64);
 }
 
-// Internal wrapper to record metrics only if the core is enabled
-#[allow(unreachable_patterns)]
+/// Internal wrapper to record metrics only if the core is enabled.
+///
+/// Recording is for single-value metrics, each recorded metric represents a metric value.
 pub(crate) fn record<M>(c: Collector, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
@@ -105,13 +114,15 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
-            _ => unimplemented!("not enabled/implemented"),
         };
     }
 }
 
-// Internal wrapper to observe metrics only if the core is enabled
-#[allow(unreachable_patterns, dead_code)]
+/// Internal wrapper to observe metrics only if the core is enabled.
+///
+/// Observing is for distribution metrics, when multiple observations are combined in a
+/// single metric value.
+#[allow(dead_code)]
 pub(crate) fn observe<M>(c: Collector, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
@@ -120,7 +131,6 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
-            _ => unimplemented!("not enabled/implemented"),
         };
     }
 }
