@@ -28,10 +28,9 @@ use crate::{
         derp::{self, DerpMap, DerpRegion},
         disco, key, netcheck, netmap, portmapper,
     },
-    inc,
     metrics::magicsock::MagicsockMetrics,
+    metrics::{inc, record},
     net::ip::LocalAddresses,
-    record,
     tokio_util::AbortingJoinHandle,
 };
 

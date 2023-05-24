@@ -16,9 +16,8 @@ use crate::{
         derp::{self, DerpMap, MAX_PACKET_SIZE},
         key::{self, node::PUBLIC_KEY_LENGTH},
     },
-    inc,
     metrics::magicsock::MagicsockMetrics,
-    record,
+    metrics::{inc, record},
 };
 
 use super::conn::{ActorMessage, Inner};

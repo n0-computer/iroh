@@ -1,4 +1,6 @@
-/// Record a specific metric with a value
+/// Records a new value for a counter or gauge.
+///
+/// Recording is for single-value metrics, each recorded metric represents a metric value.
 #[macro_export]
 macro_rules! record {
     ( $e:expr, $v:expr) => {
@@ -14,8 +16,12 @@ macro_rules! record {
         }
     };
 }
+pub(crate) use record;
 
-/// Increment a specific metric by 1
+/// Increments a counter metric by 1.
+///
+/// Technically you can call this on any single-value metric, but the semantics are for
+/// counters.
 #[macro_export]
 macro_rules! inc {
     ( $e:expr) => {
@@ -31,8 +37,12 @@ macro_rules! inc {
         }
     };
 }
+pub(crate) use inc;
 
-/// Observe a specific metric with a value
+/// Observes a value into a histogram or summary metric.
+///
+/// Observing is for distribution metrics, when multiple observations are combined in a
+/// single metric value.
 #[macro_export]
 macro_rules! observe {
     ( $e:expr, $v:expr) => {
@@ -48,6 +58,7 @@ macro_rules! observe {
         }
     };
 }
+pub(crate) use observe;
 
 /// Generate recorder metrics for a module.
 #[macro_export]
@@ -170,10 +181,11 @@ macro_rules! make_metric_recorders {
             #[derive(Debug, Copy, Clone)]
             pub enum [<$module_name Metrics>] {
                 $(
-                    /// Metric for $name
+                    #[doc = $description]
                     $name,
                 )+
             }
         }
     }
 }
+pub(crate) use make_metric_recorders;
