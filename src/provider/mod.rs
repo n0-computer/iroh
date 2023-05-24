@@ -534,6 +534,7 @@ impl Provider {
         self.inner.local_endpoints().await
     }
 
+    /// Convenience method to get just the addr part of [`Provider::local_endpoints`].
     pub async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         self.inner.local_endpoint_addresses().await
     }

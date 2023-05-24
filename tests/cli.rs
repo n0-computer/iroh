@@ -222,7 +222,6 @@ fn cli_provide_addresses() -> Result<()> {
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
-    println!("stdout = {}", stdout);
     assert!(stdout.contains(":4333"));
 
     let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
