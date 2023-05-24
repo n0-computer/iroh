@@ -1897,8 +1897,8 @@ impl Actor {
         }
 
         let sender = key::node::PublicKey::from(source);
+        let mut unknown_sender = false;
         if self.peer_map.endpoint_for_node_key(&sender).is_none() {
-            let mut abort = true;
             // Disco Ping from seen endpoint without node key
             if let Some(ep) = self.peer_map.endpoint_for_ip_port_mut(&src) {
                 if ep.public_key().is_none() {
@@ -1906,16 +1906,12 @@ impl Actor {
                     ep.set_public_key(sender.clone());
                     let id = ep.id;
                     self.peer_map.store_node_key_mapping(id, sender.clone());
-                    abort = false;
                 }
-            }
-            if abort {
-                inc!(MagicsockMetrics::RecvDiscoBadPeer);
-                debug!(
-                    "disco: ignoring disco-looking frame, don't know endpoint for {:?}",
-                    sender
-                );
-                return true;
+            } else {
+                // Disco Ping from unseen endpoint. We will have to add the
+                // endpoint later if the message is a ping
+                tracing::info!("disco: unknown sender {:?} - {}", sender, src);
+                unknown_sender = true;
             }
         }
 
@@ -1966,6 +1962,16 @@ impl Actor {
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics::RecvDiscoPing);
+                // if we get here we got a valid ping from an unknown sender
+                // so insert an endpoint for them
+                if unknown_sender {
+                    self.peer_map.insert_endpoint(EndpointOptions {
+                        conn_sender: self.conn.actor_sender.clone(),
+                        conn_public_key: self.conn.public_key.clone(),
+                        public_key: Some(sender.clone()),
+                        derp_addr: if is_derp { Some(src) } else { None },
+                    });
+                }
                 self.handle_ping(ping, &sender, src, derp_node_src).await;
                 true
             }
