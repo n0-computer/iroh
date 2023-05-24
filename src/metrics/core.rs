@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 
-use crate::metrics::{iroh, magicsock};
+use crate::metrics::{iroh, magicsock, netcheck};
 
 pub(crate) static CORE: Lazy<Core> = Lazy::new(Core::default);
 
@@ -12,6 +12,7 @@ pub(crate) struct Core {
     registry: Registry,
     iroh_metrics: iroh::Metrics,
     magicsock_metrics: magicsock::Metrics,
+    netcheck_metrics: netcheck::Metrics,
 }
 
 impl Default for Core {
@@ -21,6 +22,7 @@ impl Default for Core {
             enabled: AtomicBool::new(false),
             iroh_metrics: iroh::Metrics::new(&mut reg),
             magicsock_metrics: magicsock::Metrics::new(&mut reg),
+            netcheck_metrics: netcheck::Metrics::new(&mut reg),
             registry: reg,
         }
     }
@@ -37,6 +39,10 @@ impl Core {
 
     pub(crate) fn magicsock_metrics(&self) -> &magicsock::Metrics {
         &self.magicsock_metrics
+    }
+
+    pub(crate) fn netcheck_metrics(&self) -> &netcheck::Metrics {
+        &self.netcheck_metrics
     }
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, std::io::Error> {
@@ -114,6 +120,7 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
+            Collector::Netcheck => CORE.netcheck_metrics().record(m, v),
         };
     }
 }
@@ -131,6 +138,7 @@ where
         match c {
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
+            Collector::Netcheck => CORE.netcheck_metrics().observe(m, v),
         };
     }
 }
@@ -143,4 +151,6 @@ pub enum Collector {
     Iroh,
     /// Magicsock related metrics.
     Magicsock,
+    /// Netcheck related metrics.
+    Netcheck,
 }
