@@ -14,11 +14,32 @@ env:
 jobs:
   build_and_test_nix:
     name: Build and test (Nix)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest]
+        name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
+        include:
+          # - name: ubuntu-arm-latest
+          #   os: ubuntu-latest
+          #   release-os: linux
+          #   release-arch: aarch64
+          #   runner: [self-hosted, linux, ARM64]
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: [self-hosted, linux, X64]
+          # - name: macOS-latest
+          #   os: macOS-latest
+          #   release-os: darwin
+          #   release-arch: x86_64
+          #   runner: [self-hosted, macOS, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: [self-hosted, macOS, ARM64]
 
     steps:
     - name: Checkout
@@ -39,14 +60,17 @@ jobs:
       
   build_and_test_windows:
     name: Build and test (Windows)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        os: [windows-latest]
+        name: [windows-latest]
         rust: [nightly, stable]
         target:
-          - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
+        include:
+          - name: windows-latest
+            os: windows
+            runner: [self-hosted, windows, x64]
 
     steps:
     - name: Checkout
@@ -55,14 +79,16 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-        target: ${{ matrix.target }}
-      
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
+        rustup toolchain default ${{ matrix.rust }}
+        rustup target add ${{ matrix.target }}
+        rustup set default-host ${{ matrix.target }}
+    
     - uses: msys2/setup-msys2@v2
+
     - name: check
-      run: cargo check --all --bins --tests --target ${{ matrix.target }}
+      run: cargo check --all --bins --tests --target ${{ matrix.target }} 
       
     - name: check bench
       if: matrix.rust == 'nightly'
@@ -169,7 +195,7 @@ jobs:
 
   cross:
     name: Cross compile
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -195,7 +221,7 @@ jobs:
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
-      run: cross test --all --target ${{ matrix.target }}
+      run: cross test --all --target ${{ matrix.target }} -- --test-threads=8
 
   check_fmt_and_docs:
     name: Checking fmt and docs
