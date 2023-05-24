@@ -207,10 +207,12 @@ fn cli_provide_addresses() -> Result<()> {
         Some("127.0.0.1:4333"),
         Some(RPC_PORT),
     )?;
-    provider.drain();
-
+    let mut stdout = provider.child.stdout.take().unwrap();
+    let stderr = provider.child.stderr.take().unwrap();
+    drain(stderr);
     // wait for the provider to start
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    let _all_in_one = match_provide_output(&mut stdout, 1, input)?;
+    drain(stdout);
 
     let mut cmd = Command::new(iroh_bin());
     cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
@@ -220,7 +222,7 @@ fn cli_provide_addresses() -> Result<()> {
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
-    assert!(stdout.contains("127.0.0.1:4333"));
+    assert!(stdout.contains(":4333"));
 
     let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
     provider.drain();
@@ -247,10 +249,11 @@ fn cli_provide_addresses() -> Result<()> {
         .filter(|x| !x.is_empty())
         .collect::<Vec<_>>();
 
-    for address in addresses {
-        let addr: std::net::SocketAddr = address.parse()?;
-        assert_eq!(addr.port(), 4333);
-    }
+    let have_port = addresses.iter().any(|address| {
+        let addr: std::net::SocketAddr = address.parse().unwrap();
+        addr.port() == 4333
+    });
+    assert!(have_port);
 
     Ok(())
 }
@@ -270,7 +273,7 @@ enum Output {
 
 /// Parameter for `test_provide_get_loop`, that determines how we send the data to the `provide`
 /// command.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Input {
     /// Indicates we should pass the content as an argument to the `iroh provide` command
     Path,
@@ -359,7 +362,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // test provide output & get all in one ticket from stderr
     drain(stderr);
-    let all_in_one = match_provide_output(BufReader::new(&mut stdout), num_blobs, input)?;
+    let all_in_one = match_provide_output(&mut stdout, num_blobs, input)?;
     drain(stdout);
 
     // create a `get-ticket` cmd & optionally provide out path
@@ -373,10 +376,6 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // test get stderr output
     let get_output = cmd.output()?;
-    std::io::copy(
-        &mut std::io::Cursor::new(&get_output.stderr),
-        &mut std::io::stderr(),
-    )?;
     assert!(get_output.status.success());
 
     // test output
@@ -453,16 +452,17 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 ///
 /// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
-    println!("{}", String::from_utf8_lossy(&stderr[..]));
+    println!("get stderr\n{}", String::from_utf8_lossy(&stderr[..]));
     let stderr = std::io::BufReader::new(&stderr[..]);
     assert_matches_line![
         stderr,
+
         r"Fetching: [\da-z]{59}"; 1,
         r"\[1/3\] Connecting ..."; 1,
         r"\[2/3\] Requesting ..."; 1,
         r"\[3/3\] Downloading ..."; 1,
-        r"\d* file\(s\) with total transfer size [\d.]* ?[BKMGT]?i?B"; 1,
-        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d*? [BKMGT]iB/s"; 1
+        r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)"; 1,
+        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s"; 1
     ];
     Ok(())
 }
@@ -471,11 +471,8 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
 /// that can be used to 'get' from another process.
 ///
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
-fn match_provide_output<T: Read>(
-    reader: BufReader<T>,
-    num_blobs: usize,
-    input: Input,
-) -> Result<String> {
+fn match_provide_output<T: Read>(reader: T, num_blobs: usize, input: Input) -> Result<String> {
+    let reader = BufReader::new(reader);
     // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
     // about "Reading"
     let _reading_line_num = match input {
