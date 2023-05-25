@@ -784,7 +784,7 @@ impl ReportState {
         let timeout = self.hair_timeout.clone();
         tokio::task::spawn(async move {
             time::sleep(HAIRPIN_CHECK_TIMEOUT).await;
-            timeout.notify_waiters();
+            timeout.notify_one();
         });
     }
 
