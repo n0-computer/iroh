@@ -491,8 +491,8 @@ async fn dns_lookup(
 struct ReportState {
     hair_tx: stun::TransactionId,
     got_hair_stun: broadcast::Receiver<SocketAddr>,
-    // notified on hair pin timeout
-    hair_timeout: Arc<sync::Notify>,
+    /// Expires when hairpinning times out.
+    hair_timeout: Option<Pin<Box<time::Sleep>>>,
     pc4: Option<Arc<UdpSocket>>,
     pc6: Option<Arc<UdpSocket>>,
     pc4_hair: Arc<UdpSocket>,
@@ -712,7 +712,9 @@ impl ReportState {
         debug!("aborting {} probes, already done", probes.len());
         drop(probes);
 
-        self.wait_hair_check().await;
+        if let Some(hair_pin) = self.wait_hair_check().await {
+            self.report.write().await.hair_pinning = Some(hair_pin);
+        }
         debug!("hair_check done");
 
         if !skip_external_network && port_mapper.is_some() {
@@ -780,34 +782,31 @@ impl ReportState {
         }
 
         debug!("sent haircheck to {}", dst);
-
-        let timeout = self.hair_timeout.clone();
-        tokio::task::spawn(async move {
-            time::sleep(HAIRPIN_CHECK_TIMEOUT).await;
-            timeout.notify_waiters();
-        });
+        self.hair_timeout = Some(Box::pin(time::sleep(HAIRPIN_CHECK_TIMEOUT)));
     }
 
-    async fn wait_hair_check(&mut self) {
+    async fn wait_hair_check(&mut self) -> Option<bool> {
         let last = self.last.as_deref();
         if self.incremental {
             if let Some(last) = last {
-                let last_val = last.hair_pinning;
-                self.report.write().await.hair_pinning = last_val;
+                return last.hair_pinning;
             }
-            return;
+            return None;
         }
         if !self.sent_hair_check {
-            return;
+            return None;
         }
 
+        let hair_timeout = self.hair_timeout.take().expect("should have been started");
+
         tokio::select! {
+            biased;
             _ = self.got_hair_stun.recv() => {
-                self.report.write().await.hair_pinning = Some(true);
+                Some(true)
             }
-            _ = self.hair_timeout.notified() => {
+            _ = hair_timeout => {
                 debug!("hair_check timeout");
-                self.report.write().await.hair_pinning = Some(false);
+                Some(false)
             }
         }
     }
@@ -1425,7 +1424,7 @@ impl Actor {
             pc4,
             pc6,
             pc4_hair: Arc::new(pc4_hair),
-            hair_timeout: Arc::new(sync::Notify::new()),
+            hair_timeout: None,
             stop_probe: Arc::new(sync::Notify::new()),
             wait_port_map: wg::AsyncWaitGroup::new(),
             report: Default::default(),
