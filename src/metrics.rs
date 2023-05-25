@@ -42,6 +42,8 @@ mod service;
 
 pub mod iroh;
 pub mod magicsock;
+pub mod netcheck;
+
 // Expose the macros in this crate.
 #[allow(unused_imports)]
 pub(crate) use macros::{inc, make_metric_recorders, observe, record};

@@ -27,7 +27,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 use trust_dns_resolver::TokioAsyncResolver;
 
-use crate::net::{interfaces, ip::to_canonical};
+use crate::{
+    metrics::inc,
+    metrics::netcheck::NetcheckMetrics,
+    net::{interfaces, ip::to_canonical},
+};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
@@ -219,13 +223,14 @@ impl Client {
     /// There is an implicit queue here which may drop packets if the actor does not keep up
     /// consuming them.
     pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
-        self.addr
-            .try_send(ActorMessage::StunPacket {
+        if let Err(mpsc::error::TrySendError::Full(_)) =
+            self.addr.try_send(ActorMessage::StunPacket {
                 payload,
                 from_addr: src,
             })
-            .ok();
-        // TODO: metric to count number of discarded stun packets due to full inbox
+        {
+            inc!(NetcheckMetrics::StunPacketsDropped);
+        };
     }
 
     /// Runs a netcheck, returning the report.
@@ -504,7 +509,6 @@ struct ReportState {
     last: Option<Arc<Report>>,
 }
 
-// TODO: Can we not make this pub?
 #[derive(Debug)]
 pub(crate) struct Inflight {
     tx: stun::TransactionId,
@@ -917,10 +921,9 @@ async fn run_probe(
 
     match probe {
         Probe::Ipv4 { .. } => {
-            // TODO:
-            // metricSTUNSend4.Add(1)
             if let Some(ref pc4) = pc4 {
                 let n = pc4.send_to(&req, addr).await;
+                inc!(NetcheckMetrics::StunPacketsSentIpv4);
                 debug!(%addr, send_res=?n, "sending probe IPV4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
@@ -935,10 +938,9 @@ async fn run_probe(
             }
         }
         Probe::Ipv6 { .. } => {
-            // TODO:
-            // metricSTUNSend6.Add(1)
             if let Some(ref pc6) = pc6 {
                 let n = pc6.send_to(&req, addr).await;
+                inc!(NetcheckMetrics::StunPacketsSentIpv6);
                 debug!(%addr, snd_res=?n, "sending probe IPV6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
@@ -1353,12 +1355,14 @@ impl Actor {
                 }
                 Err(err) => {
                     warn!("generate report timed out: {:?}", err);
+                    inc!(NetcheckMetrics::ReportsError);
                     addr.send(ActorMessage::ReportAborted)
                         .await
                         .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
                 Ok(Err(err)) => {
                     warn!("failed to generate report: {:?}", err);
+                    inc!(NetcheckMetrics::ReportsError);
                     addr.send(ActorMessage::ReportAborted)
                         .await
                         .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
@@ -1409,10 +1413,9 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-
-            // TODO
-            // metricNumGetReportFull.Add(1);
+            inc!(NetcheckMetrics::ReportsFull);
         }
+        inc!(NetcheckMetrics::Reports);
 
         let last = self.reports.last.clone();
         let plan = ProbePlan::new(dm, &if_state, last.as_deref());
@@ -1457,14 +1460,10 @@ impl Actor {
         }
 
         trace!(%src, "received STUN packet");
-
-        // if src.is_ipv4() {
-        // TODO:
-        // metricSTUNRecv4.Add(1)
-        // } else if src.is_ipv6() {
-        // TODO:
-        // metricSTUNRecv6.Add(1)
-        // }
+        match &src {
+            SocketAddr::V4(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv4),
+            SocketAddr::V6(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv6),
+        }
 
         if self.handle_hair_stun(pkt, src) {
             return;
@@ -1726,19 +1725,6 @@ async fn os_has_ipv6() -> bool {
     let udp = UdpSocket::bind("[::1]:0").await;
     udp.is_ok()
 }
-
-// TODO: Metrics
-// var (
-// 	metricNumGetReport      = clientmetric.NewCounter("netcheck_report")
-// 	metricNumGetReportFull  = clientmetric.NewCounter("netcheck_report_full")
-// 	metricNumGetReportError = clientmetric.NewCounter("netcheck_report_error")
-
-// 	metricSTUNSend4 = clientmetric.NewCounter("netcheck_stun_send_ipv4")
-// 	metricSTUNSend6 = clientmetric.NewCounter("netcheck_stun_send_ipv6")
-// 	metricSTUNRecv4 = clientmetric.NewCounter("netcheck_stun_recv_ipv4")
-// 	metricSTUNRecv6 = clientmetric.NewCounter("netcheck_stun_recv_ipv6")
-// 	metricHTTPSend  = clientmetric.NewCounter("netcheck_https_measure")
-// )
 
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]

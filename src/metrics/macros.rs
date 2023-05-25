@@ -3,7 +3,7 @@
 /// Recording is for single-value metrics, each recorded metric represents a metric value.
 #[macro_export]
 macro_rules! record {
-    ( $e:expr, $v:expr) => {
+    ( $e:expr, $v:expr) => {{
         #[cfg(feature = "metrics")]
         {
             use $crate::metrics::core::MRecorder;
@@ -14,7 +14,7 @@ macro_rules! record {
         {
             $e;
         }
-    };
+    }};
 }
 pub(crate) use record;
 
@@ -24,18 +24,20 @@ pub(crate) use record;
 /// counters.
 #[macro_export]
 macro_rules! inc {
-    ( $e:expr) => {
-        #[cfg(feature = "metrics")]
+    ( $e:expr) => {{
         {
-            use $crate::metrics::core::MRecorder;
-            $e.record(1);
+            #[cfg(feature = "metrics")]
+            {
+                use $crate::metrics::core::MRecorder;
+                $e.record(1);
+            }
+            #[cfg(not(feature = "metrics"))]
+            #[allow(path_statements)]
+            {
+                $e;
+            }
         }
-        #[cfg(not(feature = "metrics"))]
-        #[allow(path_statements)]
-        {
-            $e;
-        }
-    };
+    }};
 }
 pub(crate) use inc;
 
@@ -45,7 +47,7 @@ pub(crate) use inc;
 /// single metric value.
 #[macro_export]
 macro_rules! observe {
-    ( $e:expr, $v:expr) => {
+    ( $e:expr, $v:expr) => {{
         #[cfg(feature = "metrics")]
         {
             use $crate::metrics::core::MObserver;
@@ -56,14 +58,14 @@ macro_rules! observe {
         {
             $e;
         }
-    };
+    }};
 }
 pub(crate) use observe;
 
 /// Generate recorder metrics for a module.
 #[macro_export]
 macro_rules! make_metric_recorders {
-    ($module_name:ident, $($name:ident: $type:ident: $description:expr),+) => {
+    ($module_name:ident, $($name:ident: $type:ident: $description:expr $(,)?)+) => {
         paste::paste! {
             #[cfg(feature = "metrics")]
             #[allow(unused_imports)]
