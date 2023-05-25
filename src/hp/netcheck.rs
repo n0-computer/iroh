@@ -491,7 +491,7 @@ async fn dns_lookup(
 struct ReportState {
     hair_tx: stun::TransactionId,
     got_hair_stun: broadcast::Receiver<SocketAddr>,
-    /// Expires when hairpinning times out.
+    /// Expires when hairpinning times out. Set when a hairpin was sent.
     hair_timeout: Option<Pin<Box<time::Sleep>>>,
     pc4: Option<Arc<UdpSocket>>,
     pc6: Option<Arc<UdpSocket>>,
@@ -502,7 +502,6 @@ struct ReportState {
     wait_port_map: wg::AsyncWaitGroup,
     /// The report which will be returned.
     report: Arc<RwLock<Report>>,
-    sent_hair_check: bool,
     got_ep4: Option<SocketAddr>,
     timers: JoinSet<()>,
     plan: ProbePlan,
@@ -765,24 +764,30 @@ impl ReportState {
         self.report.read().await.udp
     }
 
+    fn sent_hair_check(&self) -> bool {
+        self.hair_timeout.is_some()
+    }
+
     /// Reports whether executing the given probe would yield any new information.
     /// The given node is provided just because the sole caller already has it
     /// and it saves a lookup.
     async fn start_hair_check(&mut self, dst: SocketAddr) {
-        if self.sent_hair_check || self.incremental {
+        if self.sent_hair_check() || self.incremental {
             return;
         }
-        self.sent_hair_check = true;
-        if let Err(err) = self
+        match self
             .pc4_hair
             .send_to(&stun::request(self.hair_tx), dst)
             .await
         {
-            debug!("failed to send haircheck to {}: {:?}", dst, err);
+            Ok(_) => {
+                debug!("sent haircheck to {}", dst);
+                self.hair_timeout = Some(Box::pin(time::sleep(HAIRPIN_CHECK_TIMEOUT)));
+            }
+            Err(err) => {
+                debug!("failed to send haircheck to {}: {:?}", dst, err);
+            }
         }
-
-        debug!("sent haircheck to {}", dst);
-        self.hair_timeout = Some(Box::pin(time::sleep(HAIRPIN_CHECK_TIMEOUT)));
     }
 
     async fn wait_hair_check(&mut self) -> Option<bool> {
@@ -793,21 +798,20 @@ impl ReportState {
             }
             return None;
         }
-        if !self.sent_hair_check {
-            return None;
-        }
-
-        let hair_timeout = self.hair_timeout.take().expect("should have been started");
-
-        tokio::select! {
-            biased;
-            _ = self.got_hair_stun.recv() => {
-                Some(true)
+        match self.hair_timeout {
+            Some(ref mut hair_timeout) => {
+                tokio::select! {
+                    biased;
+                    _ = self.got_hair_stun.recv() => {
+                        Some(true)
+                    }
+                    _ = hair_timeout => {
+                        debug!("hair_check timeout");
+                        Some(false)
+                    }
+                }
             }
-            _ = hair_timeout => {
-                debug!("hair_check timeout");
-                Some(false)
-            }
+            None => None,
         }
     }
 
@@ -1428,7 +1432,6 @@ impl Actor {
             stop_probe: Arc::new(sync::Notify::new()),
             wait_port_map: wg::AsyncWaitGroup::new(),
             report: Default::default(),
-            sent_hair_check: false,
             got_ep4: None,
             timers: Default::default(),
             hair_tx,
