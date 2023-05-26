@@ -497,7 +497,7 @@ async fn dns_lookup(
 struct ReportState {
     hair_txn_id: stun::TransactionId,
     got_hair_stun: oneshot::Receiver<(Duration, SocketAddr)>,
-    // notified on hair pin timeout
+    /// How long to wait for the hairpin message to arrive, if sent.
     hair_timeout: Option<Pin<Box<time::Sleep>>>,
     pc4: Option<Arc<UdpSocket>>,
     pc6: Option<Arc<UdpSocket>>,
