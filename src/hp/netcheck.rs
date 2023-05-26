@@ -399,7 +399,7 @@ async fn measure_icmp_latency(
     // STUN and then using that IP.
     let node_addr = get_derp_node_addr(resolver, node, ProbeProto::Ipv4)
         .await
-        .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
+        .context("no derp node addr")?;
 
     debug!(
         "ICMP ping start to {} with payload len {} - derp {} {}",
@@ -421,57 +421,66 @@ async fn measure_icmp_latency(
     Ok(d)
 }
 
+/// Returns the IP address to use to communicate to this derp node.
+///
+/// *proto* specifies the protocol we want to use to talk to the node.
 async fn get_derp_node_addr(
     resolver: &TokioAsyncResolver,
     n: &DerpNode,
     proto: ProbeProto,
-) -> Option<SocketAddr> {
+) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
         port = 3478;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
-            return None;
+            bail!("STUN test IP set has mismatching protocol");
         }
         if proto == ProbeProto::Ipv6 && ip.is_ipv4() {
-            return None;
+            bail!("STUN test IP set has mismatching protocol");
         }
-        return Some(SocketAddr::new(ip, port));
+        return Ok(SocketAddr::new(ip, port));
     }
 
     match proto {
         ProbeProto::Ipv4 => {
             if let UseIpv4::Some(ip) = n.ipv4 {
-                return Some(SocketAddr::new(IpAddr::V4(ip), port));
+                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
             }
         }
         ProbeProto::Ipv6 => {
             if let UseIpv6::Some(ip) = n.ipv6 {
-                return Some(SocketAddr::new(IpAddr::V6(ip), port));
+                return Ok(SocketAddr::new(IpAddr::V6(ip), port));
             }
         }
-        _ => {}
-    }
-
-    // TODO: add singleflight+dnscache here.
-    if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
-        for addr in addrs {
-            if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                let addr = to_canonical(addr);
-                return Some(SocketAddr::new(addr, port));
-            }
-            if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                return Some(SocketAddr::new(addr, port));
-            }
-            if proto == ProbeProto::Https {
-                // For now just return the first one
-                return Some(SocketAddr::new(addr, port));
-            }
+        _ => {
+            // TODO: original code returns None here, but that seems wrong?
         }
     }
+    async move {
+        debug!(?proto, %n.host_name, "Performing DNS lookup for derp addr");
 
-    None
+        // TODO: add singleflight+dnscache here.
+        if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
+            for addr in addrs {
+                if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
+                    let addr = to_canonical(addr);
+                    return Ok(SocketAddr::new(addr, port));
+                }
+                if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
+                    return Ok(SocketAddr::new(addr, port));
+                }
+                if proto == ProbeProto::Https {
+                    // For now just return the first one
+                    return Ok(SocketAddr::new(addr, port));
+                }
+            }
+        }
+        Err(anyhow!("no suitable addr found for derp config"))
+    }
+    .instrument(debug_span!("dns"))
+    .await
 }
 
 async fn dns_lookup(
@@ -610,11 +619,11 @@ impl ReportState {
                             return Ok(res);
                         }
                         Err(ProbeError::Transient(err, probe)) => {
-                            warn!(?probe, "probe failed: {:?}", err);
+                            debug!(?probe, "probe failed: {:#}", err);
                             continue;
                         }
                         Err(ProbeError::Fatal(err, probe)) => {
-                            warn!(?probe, "probe error fatal: {:?}", err);
+                            debug!(?probe, "probe error fatal: {:#}", err);
                             return Err(err);
                         }
                     }
@@ -896,11 +905,10 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
     }
 
-    let addr = get_derp_node_addr(resolver, &node, probe.proto()).await;
-    if addr.is_none() {
-        return Err(ProbeError::Transient(anyhow!("no node addr"), probe));
-    }
-    let addr = addr.unwrap();
+    let addr = get_derp_node_addr(resolver, &node, probe.proto())
+        .await
+        .context("no derp node addr")
+        .map_err(|e| ProbeError::Transient(e, probe.clone()))?;
     let txid = stun::TransactionId::default();
     let req = stun::request(txid);
     let sent = Instant::now(); // after DNS lookup above

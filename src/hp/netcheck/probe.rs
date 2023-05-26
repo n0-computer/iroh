@@ -69,7 +69,7 @@ impl Probe {
     pub fn proto(&self) -> ProbeProto {
         match self {
             Probe::Ipv4 { .. } => ProbeProto::Ipv4,
-            Probe::Ipv6 { .. } => ProbeProto::Ipv4,
+            Probe::Ipv6 { .. } => ProbeProto::Ipv6,
             Probe::Https { .. } => ProbeProto::Https,
         }
     }
