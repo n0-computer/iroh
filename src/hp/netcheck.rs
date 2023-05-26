@@ -720,7 +720,6 @@ impl ReportState {
         if let Some(hair_pin) = self.wait_hair_check().await {
             self.report.write().await.hair_pinning = Some(hair_pin);
         }
-        debug!("hair_check done");
 
         if !skip_external_network && port_mapper.is_some() {
             self.wait_port_map.wait().await;
@@ -806,6 +805,7 @@ impl ReportState {
                 tokio::select! {
                     biased;
                     _ = &mut self.got_hair_stun => {
+                        debug!("hair_check received");
                         Some(true)
                     }
                     _ = hair_timeout => {
@@ -1395,6 +1395,7 @@ impl Actor {
             .await
             .context("udp4: failed to bind")?;
         let hair_id = stun::TransactionId::default();
+        trace!(txn=%hair_id, "Hairpin transaction ID");
         let (hair_tx, hair_rx) = oneshot::channel();
         let inflight = Inflight {
             tx: hair_id,
@@ -1460,33 +1461,47 @@ impl Actor {
     /// If there are currently no in-flight stun requests registerd this is dropped,
     /// otherwise forwarded to the probe.
     fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
+        trace!(%src, "received STUN packet");
         if self.in_flight_stun_requests.is_empty() {
             return;
         }
+        dbg!(&self.in_flight_stun_requests);
 
-        trace!(%src, "received STUN packet");
         match &src {
             SocketAddr::V4(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv4),
             SocketAddr::V6(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv6),
         }
 
         match stun::parse_response(pkt) {
-            Ok((tx, addr_port)) => {
-                if let Some(inf) = self.in_flight_stun_requests.remove(&tx) {
+            Ok((txn, addr_port)) => match self.in_flight_stun_requests.remove(&txn) {
+                Some(inf) => {
+                    debug!(%src, %txn, "received known STUN packet");
                     let elapsed = inf.start.elapsed();
-                    let _ = inf.s.send((elapsed, addr_port));
+                    inf.s.send((elapsed, addr_port)).ok();
                 }
-            }
+                None => {
+                    debug!(%src, %txn, "received unexpected STUN message response");
+                }
+            },
             Err(err) => {
-                if stun::parse_binding_request(pkt).is_ok() {
-                    // This was probably our own netcheck hairpin
-                    // check probe coming in late. Ignore.
-                    return;
+                match stun::parse_binding_request(pkt) {
+                    Ok(txn) => {
+                        // Is this our hairpin request?
+                        match self.in_flight_stun_requests.remove(&txn) {
+                            Some(inf) => {
+                                debug!(%src, %txn, "received our hairpin STUN request");
+                                let elapsed = inf.start.elapsed();
+                                inf.s.send((elapsed, src)).ok();
+                            }
+                            None => {
+                                debug!(%src, %txn, "unknown STUN request");
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        debug!(%src, "received invalid STUN response: {err:#}");
+                    }
                 }
-                info!(
-                    "received unexpected STUN message response from {}: {:?}",
-                    src, err
-                );
             }
         }
     }
@@ -1739,6 +1754,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::BytesMut;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     fn setup_logging() {
@@ -2079,6 +2095,43 @@ mod tests {
             assert_eq!(got, want, "preferred_derp");
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hairpin() -> Result<()> {
+        setup_logging();
+
+        // Setup STUN server and create derpmap.
+        let (stun_addr, _stun_stats, _done) = stun::test::serve_v4().await?;
+        let dm = stun::test::derp_map_of([stun_addr].into_iter());
+        dbg!(&dm);
+
+        let mut client = Client::new(None).await?;
+
+        // Setup up an external socket to send STUN from, forward packets back to client
+        let sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+        let sock = Arc::new(sock);
+        info!(addr=?sock.local_addr().unwrap(), "Using local addr");
+        let task = {
+            let sock = sock.clone();
+            let client = client.clone();
+            tokio::spawn(async move {
+                let mut buf = BytesMut::zeroed(64 << 10);
+                loop {
+                    let (count, src) = sock.recv_from(&mut buf).await.unwrap();
+                    info!(addr=?sock.local_addr().unwrap(), %count, "Forwarding payload to netcheck client");
+                    let payload = buf.split_to(count).freeze();
+                    client.receive_stun_packet(payload, src);
+                }
+            })
+        };
+
+        let r = client.get_report(dm, Some(sock), None).await?;
+        dbg!(&r);
+        assert_eq!(r.hair_pinning, Some(true));
+
+        task.abort();
         Ok(())
     }
 }
