@@ -1754,6 +1754,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use super::*;
     use bytes::BytesMut;
+    use tracing::level_filters::LevelFilter;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     fn setup_logging() {
@@ -1810,7 +1811,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_stun() -> Result<()> {
-        setup_logging();
+        // TODO: remove this once this test is no longer flaky.
+        // Setup logging, use .set_default() to overrule possible earlier global init from
+        // other tests.
+        let log_layer = tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_filter(LevelFilter::TRACE);
+        let _guard = tracing_subscriber::registry().with(log_layer).set_default();
 
         let mut client = Client::new(None)
             .await
