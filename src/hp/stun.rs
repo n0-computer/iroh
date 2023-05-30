@@ -137,7 +137,7 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 #[cfg(test)]
 pub mod test {
     use std::{
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::Arc,
     };
 
@@ -178,7 +178,7 @@ pub mod test {
             let node = DerpNode {
                 name: format!("{region_id}a"),
                 region_id,
-                host_name: format!("{region_id}.invalid"),
+                host_name: format!("{region_id}.invalid."),
                 ipv4,
                 ipv6,
                 stun_port: port,
@@ -200,7 +200,17 @@ pub mod test {
         m
     }
 
+    /// Sets up a simple STUN server binding to `0.0.0.0:0`.
+    ///
+    /// See [`serve`] for more details.
+    pub async fn serve_v4() -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
+        serve(Ipv4Addr::UNSPECIFIED.into()).await
+    }
+
     /// Sets up a simple STUN server.
+    ///
+    /// The returned [`oneshot::Sender`] can be used to stop the server, either drop it or
+    /// send a message on it.
     pub async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
         let stats = StunStats::default();
 

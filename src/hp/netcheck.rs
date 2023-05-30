@@ -19,7 +19,7 @@ use futures::{
 use rand::seq::IteratorRandom;
 use tokio::{
     net::UdpSocket,
-    sync::{self, broadcast, mpsc, oneshot, RwLock},
+    sync::{self, mpsc, oneshot, RwLock},
     task::{AbortHandle, JoinSet},
     time::{self, Duration, Instant},
 };
@@ -175,8 +175,6 @@ struct Reports {
     last: Option<Arc<Report>>,
     /// Time of last full (non-incremental) report.
     last_full: Instant,
-    /// Current hair pinning tx
-    current_hair_tx: Option<stun::TransactionId>,
 }
 
 impl Default for Reports {
@@ -186,7 +184,6 @@ impl Default for Reports {
             prev: Default::default(),
             last: Default::default(),
             last_full: Instant::now(),
-            current_hair_tx: Default::default(),
         }
     }
 }
@@ -402,7 +399,7 @@ async fn measure_icmp_latency(
     // STUN and then using that IP.
     let node_addr = get_derp_node_addr(resolver, node, ProbeProto::Ipv4)
         .await
-        .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
+        .context("no derp node addr")?;
 
     debug!(
         "ICMP ping start to {} with payload len {} - derp {} {}",
@@ -424,57 +421,66 @@ async fn measure_icmp_latency(
     Ok(d)
 }
 
+/// Returns the IP address to use to communicate to this derp node.
+///
+/// *proto* specifies the protocol we want to use to talk to the node.
 async fn get_derp_node_addr(
     resolver: &TokioAsyncResolver,
     n: &DerpNode,
     proto: ProbeProto,
-) -> Option<SocketAddr> {
+) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
         port = 3478;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
-            return None;
+            bail!("STUN test IP set has mismatching protocol");
         }
         if proto == ProbeProto::Ipv6 && ip.is_ipv4() {
-            return None;
+            bail!("STUN test IP set has mismatching protocol");
         }
-        return Some(SocketAddr::new(ip, port));
+        return Ok(SocketAddr::new(ip, port));
     }
 
     match proto {
         ProbeProto::Ipv4 => {
             if let UseIpv4::Some(ip) = n.ipv4 {
-                return Some(SocketAddr::new(IpAddr::V4(ip), port));
+                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
             }
         }
         ProbeProto::Ipv6 => {
             if let UseIpv6::Some(ip) = n.ipv6 {
-                return Some(SocketAddr::new(IpAddr::V6(ip), port));
+                return Ok(SocketAddr::new(IpAddr::V6(ip), port));
             }
         }
-        _ => {}
-    }
-
-    // TODO: add singleflight+dnscache here.
-    if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
-        for addr in addrs {
-            if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                let addr = to_canonical(addr);
-                return Some(SocketAddr::new(addr, port));
-            }
-            if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                return Some(SocketAddr::new(addr, port));
-            }
-            if proto == ProbeProto::Https {
-                // For now just return the first one
-                return Some(SocketAddr::new(addr, port));
-            }
+        _ => {
+            // TODO: original code returns None here, but that seems wrong?
         }
     }
+    async move {
+        debug!(?proto, %n.host_name, "Performing DNS lookup for derp addr");
 
-    None
+        // TODO: add singleflight+dnscache here.
+        if let Ok(addrs) = dns_lookup(resolver, &n.host_name).await {
+            for addr in addrs {
+                if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
+                    let addr = to_canonical(addr);
+                    return Ok(SocketAddr::new(addr, port));
+                }
+                if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
+                    return Ok(SocketAddr::new(addr, port));
+                }
+                if proto == ProbeProto::Https {
+                    // For now just return the first one
+                    return Ok(SocketAddr::new(addr, port));
+                }
+            }
+        }
+        Err(anyhow!("no suitable addr found for derp config"))
+    }
+    .instrument(debug_span!("dns"))
+    .await
 }
 
 async fn dns_lookup(
@@ -489,9 +495,9 @@ async fn dns_lookup(
 /// Holds the state for a single invocation of `Client::get_report`.
 #[derive(Debug)]
 struct ReportState {
-    hair_tx: stun::TransactionId,
-    got_hair_stun: broadcast::Receiver<SocketAddr>,
-    /// Expires when hairpinning times out. Set when a hairpin was sent.
+    hair_txn_id: stun::TransactionId,
+    got_hair_stun: oneshot::Receiver<(Duration, SocketAddr)>,
+    /// How long to wait for the hairpin message to arrive, if sent.
     hair_timeout: Option<Pin<Box<time::Sleep>>>,
     pc4: Option<Arc<UdpSocket>>,
     pc6: Option<Arc<UdpSocket>>,
@@ -613,11 +619,11 @@ impl ReportState {
                             return Ok(res);
                         }
                         Err(ProbeError::Transient(err, probe)) => {
-                            warn!(?probe, "probe failed: {:?}", err);
+                            debug!(?probe, "probe failed: {:#}", err);
                             continue;
                         }
                         Err(ProbeError::Fatal(err, probe)) => {
-                            warn!(?probe, "probe error fatal: {:?}", err);
+                            debug!(?probe, "probe error fatal: {:#}", err);
                             return Err(err);
                         }
                     }
@@ -714,7 +720,6 @@ impl ReportState {
         if let Some(hair_pin) = self.wait_hair_check().await {
             self.report.write().await.hair_pinning = Some(hair_pin);
         }
-        debug!("hair_check done");
 
         if !skip_external_network && port_mapper.is_some() {
             self.wait_port_map.wait().await;
@@ -768,16 +773,13 @@ impl ReportState {
         self.hair_timeout.is_some()
     }
 
-    /// Reports whether executing the given probe would yield any new information.
-    /// The given node is provided just because the sole caller already has it
-    /// and it saves a lookup.
     async fn start_hair_check(&mut self, dst: SocketAddr) {
         if self.sent_hair_check() || self.incremental {
             return;
         }
         match self
             .pc4_hair
-            .send_to(&stun::request(self.hair_tx), dst)
+            .send_to(&stun::request(self.hair_txn_id), dst)
             .await
         {
             Ok(_) => {
@@ -802,7 +804,8 @@ impl ReportState {
             Some(ref mut hair_timeout) => {
                 tokio::select! {
                     biased;
-                    _ = self.got_hair_stun.recv() => {
+                    _ = &mut self.got_hair_stun => {
+                        debug!("hair_check received");
                         Some(true)
                     }
                     _ = hair_timeout => {
@@ -902,11 +905,10 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
     }
 
-    let addr = get_derp_node_addr(resolver, &node, probe.proto()).await;
-    if addr.is_none() {
-        return Err(ProbeError::Transient(anyhow!("no node addr"), probe));
-    }
-    let addr = addr.unwrap();
+    let addr = get_derp_node_addr(resolver, &node, probe.proto())
+        .await
+        .context("no derp node addr")
+        .map_err(|e| ProbeError::Transient(e, probe.clone()))?;
     let txid = stun::TransactionId::default();
     let req = stun::request(txid);
     let sent = Instant::now(); // after DNS lookup above
@@ -1141,7 +1143,8 @@ impl ActorAddr {
         self.sender.try_send(msg).map_err(|err| {
             match &err {
                 mpsc::error::TrySendError::Full(_) => {
-                    // TODO: metrics
+                    // TODO: metrics, though the only place that uses this already does its
+                    // own metrics.
                     warn!("netcheck actor inbox full");
                 }
                 mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
@@ -1183,7 +1186,6 @@ struct Actor {
     dns_resolver: TokioAsyncResolver,
 
     // Actor state.
-    got_hair_stun: broadcast::Sender<SocketAddr>,
     /// Information about the currently in-flight STUN requests.
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
@@ -1203,7 +1205,6 @@ impl Actor {
     fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
-        let (got_hair_stun, _) = broadcast::channel(1);
         let dns_resolver = TokioAsyncResolver::tokio_from_system_conf()
             .context("failed to create DNS resolver")?;
         Ok(Self {
@@ -1212,7 +1213,6 @@ impl Actor {
             reports: Default::default(),
             skip_external_network: false,
             port_mapper,
-            got_hair_stun,
             dns_resolver,
             in_flight_stun_requests: Default::default(),
             current_check_run: None,
@@ -1389,17 +1389,21 @@ impl Actor {
     ) -> Result<ReportState> {
         let now = Instant::now();
 
-        // Create a UDP4 socket used for sending to our discovered IPv4 address.
+        // Setup hairpin detection infrastructure, it sends a probe our own discovered IPv4
+        // address.
         let pc4_hair = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("udp4: failed to bind")?;
+        let hair_id = stun::TransactionId::default();
+        trace!(txn=%hair_id, "Hairpin transaction ID");
+        let (hair_tx, hair_rx) = oneshot::channel();
+        let inflight = Inflight {
+            tx: hair_id,
+            start: Instant::now(), // ignored by hairpin probe
+            s: hair_tx,
+        };
+        self.handle_in_flight_stun(inflight);
 
-        // random payload
-        let hair_tx = stun::TransactionId::default();
-        // Store the last hair_tx to make sure we can check against hair pins.
-        self.reports.current_hair_tx = Some(hair_tx);
-
-        let got_hair_stun_r = self.got_hair_stun.subscribe();
         let if_state = interfaces::State::new().await;
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
@@ -1434,8 +1438,8 @@ impl Actor {
             report: Default::default(),
             got_ep4: None,
             timers: Default::default(),
-            hair_tx,
-            got_hair_stun: got_hair_stun_r,
+            hair_txn_id: hair_id,
+            got_hair_stun: hair_rx,
             plan,
             last,
         })
@@ -1457,53 +1461,48 @@ impl Actor {
     /// If there are currently no in-flight stun requests registerd this is dropped,
     /// otherwise forwarded to the probe.
     fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
+        trace!(%src, "received STUN packet");
         if self.in_flight_stun_requests.is_empty() {
             return;
         }
 
-        trace!(%src, "received STUN packet");
         match &src {
             SocketAddr::V4(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv4),
             SocketAddr::V6(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv6),
         }
 
-        if self.handle_hair_stun(pkt, src) {
-            return;
-        }
-
         match stun::parse_response(pkt) {
-            Ok((tx, addr_port)) => {
-                if let Some(inf) = self.in_flight_stun_requests.remove(&tx) {
+            Ok((txn, addr_port)) => match self.in_flight_stun_requests.remove(&txn) {
+                Some(inf) => {
+                    debug!(%src, %txn, "received known STUN packet");
                     let elapsed = inf.start.elapsed();
-                    let _ = inf.s.send((elapsed, addr_port));
+                    inf.s.send((elapsed, addr_port)).ok();
                 }
-            }
+                None => {
+                    debug!(%src, %txn, "received unexpected STUN message response");
+                }
+            },
             Err(err) => {
-                if stun::parse_binding_request(pkt).is_ok() {
-                    // This was probably our own netcheck hairpin
-                    // check probe coming in late. Ignore.
-                    return;
-                }
-                info!(
-                    "received unexpected STUN message response from {}: {:?}",
-                    src, err
-                );
-            }
-        }
-    }
-
-    /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent
-    /// to ourselves.
-    fn handle_hair_stun(&self, pkt: &[u8], src: SocketAddr) -> bool {
-        if let Some(ref hair_tx) = self.reports.current_hair_tx {
-            if let Ok(ref tx) = stun::parse_binding_request(pkt) {
-                if tx == hair_tx {
-                    self.got_hair_stun.send(src).ok();
-                    return true;
+                match stun::parse_binding_request(pkt) {
+                    Ok(txn) => {
+                        // Is this our hairpin request?
+                        match self.in_flight_stun_requests.remove(&txn) {
+                            Some(inf) => {
+                                debug!(%src, %txn, "received our hairpin STUN request");
+                                let elapsed = inf.start.elapsed();
+                                inf.s.send((elapsed, src)).ok();
+                            }
+                            None => {
+                                debug!(%src, %txn, "unknown STUN request");
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        debug!(%src, "received invalid STUN response: {err:#}");
+                    }
                 }
             }
         }
-        false
     }
 
     /// Handles [`ActorMessage::InFlightStun`].
@@ -1754,6 +1753,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::BytesMut;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     fn setup_logging() {
@@ -2094,6 +2094,61 @@ mod tests {
             assert_eq!(got, want, "preferred_derp");
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hairpin() -> Result<()> {
+        setup_logging();
+
+        // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
+        // port) via STUN, so the test needs to have a STUN server and perform STUN over
+        // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
+        // public socket address** (IP + port).  If the router supports hairpinning the STUN
+        // request is returned back to us and received on our public address.  This doesn't
+        // need to be a STUN request, but STUN already has a unique transaction ID which we
+        // can easily use to identify the packet.
+
+        // Setup STUN server and create derpmap.
+        let (stun_addr, _stun_stats, _done) = stun::test::serve_v4().await?;
+        let dm = stun::test::derp_map_of([stun_addr].into_iter());
+        dbg!(&dm);
+
+        let mut client = Client::new(None).await?;
+
+        // Set up an external socket to send STUN requests from, this will be discovered as
+        // our public socket address by STUN.  We send back any packets received on this
+        // socket to the netcheck client using Client::receive_stun_packet.  Once we sent
+        // the hairpin STUN request (from a different randomly bound socket) we are sending
+        // it to this socket, which is forwarnding it back to our netcheck client, because
+        // this dumb implementation just forwards anything even if it would be garbage.
+        // Thus hairpinning detection will declare hairpinning to work.
+        let sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+        let sock = Arc::new(sock);
+        info!(addr=?sock.local_addr().unwrap(), "Using local addr");
+        let task = {
+            let sock = sock.clone();
+            let client = client.clone();
+            tokio::spawn(async move {
+                let mut buf = BytesMut::zeroed(64 << 10);
+                loop {
+                    let (count, src) = sock.recv_from(&mut buf).await.unwrap();
+                    info!(
+                        addr=?sock.local_addr().unwrap(),
+                        %count,
+                        "Forwarding payload to netcheck client",
+                    );
+                    let payload = buf.split_to(count).freeze();
+                    client.receive_stun_packet(payload, src);
+                }
+            })
+        };
+
+        let r = client.get_report(dm, Some(sock), None).await?;
+        dbg!(&r);
+        assert_eq!(r.hair_pinning, Some(true));
+
+        task.abort();
         Ok(())
     }
 }
