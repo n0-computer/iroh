@@ -1465,7 +1465,6 @@ impl Actor {
         if self.in_flight_stun_requests.is_empty() {
             return;
         }
-        dbg!(&self.in_flight_stun_requests);
 
         match &src {
             SocketAddr::V4(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv4),
@@ -2102,6 +2101,14 @@ mod tests {
     async fn test_hairpin() -> Result<()> {
         setup_logging();
 
+        // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
+        // port) via STUN, so the test needs to have a STUN server and perform STUN over
+        // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
+        // public socket address** (IP + port).  If the router supports hairpinning the STUN
+        // request is returned back to us and received on our public address.  This doesn't
+        // need to be a STUN request, but STUN already has a unique transaction ID which we
+        // can easily use to identify the packet.
+
         // Setup STUN server and create derpmap.
         let (stun_addr, _stun_stats, _done) = stun::test::serve_v4().await?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
@@ -2109,7 +2116,13 @@ mod tests {
 
         let mut client = Client::new(None).await?;
 
-        // Setup up an external socket to send STUN from, forward packets back to client
+        // Set up an external socket to send STUN requests from, this will be discovered as
+        // our public socket address by STUN.  We send back any packets received on this
+        // socket to the netcheck client using Client::receive_stun_packet.  Once we sent
+        // the hairpin STUN request (from a different randomly bound socket) we are sending
+        // it to this socket, which is forwarnding it back to our netcheck client, because
+        // this dumb implementation just forwards anything even if it would be garbage.
+        // Thus hairpinning detection will declare hairpinning to work.
         let sock = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
@@ -2120,7 +2133,11 @@ mod tests {
                 let mut buf = BytesMut::zeroed(64 << 10);
                 loop {
                     let (count, src) = sock.recv_from(&mut buf).await.unwrap();
-                    info!(addr=?sock.local_addr().unwrap(), %count, "Forwarding payload to netcheck client");
+                    info!(
+                        addr=?sock.local_addr().unwrap(),
+                        %count,
+                        "Forwarding payload to netcheck client",
+                    );
                     let payload = buf.split_to(count).freeze();
                     client.receive_stun_packet(payload, src);
                 }
