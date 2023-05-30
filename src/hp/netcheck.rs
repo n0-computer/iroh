@@ -5,6 +5,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Debug},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    ops::Deref,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -246,8 +247,8 @@ impl Client {
     pub(crate) async fn get_report(
         &mut self,
         dm: DerpMap,
-        stun_conn4: Option<Arc<UdpSocket>>,
-        stun_conn6: Option<Arc<UdpSocket>>,
+        stun_conn4: Option<Udp4Socket>,
+        stun_conn6: Option<Udp6Socket>,
     ) -> Result<Arc<Report>> {
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
@@ -264,6 +265,78 @@ impl Client {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
         }
+    }
+}
+
+/// A UDP socket guaranteed to be bound to IPv4.
+///
+/// This [`Deref`]s to [`UdpSocket`] so it can be used like a normal such socket.  It also
+/// wraps the [`UdpSocket`] in an [`Arc`] so it can be cloned, enabling sending from
+/// different places in the code then we receive from.
+#[derive(Debug, Clone)]
+pub(crate) struct Udp4Socket(Arc<UdpSocket>);
+
+impl TryFrom<UdpSocket> for Udp4Socket {
+    type Error = anyhow::Error;
+
+    fn try_from(sock: UdpSocket) -> std::result::Result<Self, Self::Error> {
+        let addr = sock.local_addr().context("socket not bound")?;
+        ensure!(addr.is_ipv4(), "not an IPv4 socket");
+        Ok(Self(Arc::new(sock)))
+    }
+}
+
+impl TryFrom<Arc<UdpSocket>> for Udp4Socket {
+    type Error = anyhow::Error;
+
+    fn try_from(sock: Arc<UdpSocket>) -> std::result::Result<Self, Self::Error> {
+        let addr = sock.local_addr().context("socket not bound")?;
+        ensure!(addr.is_ipv4(), "not an IPv4 socket");
+        Ok(Self(sock))
+    }
+}
+
+impl Deref for Udp4Socket {
+    type Target = UdpSocket;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// A UDP socket guaranteed to be bound to IPv6.
+///
+/// This [`Deref`]s to [`UdpSocket`] so it can be used like a normal such socket.  It also
+/// wraps the [`UdpSocket`] in an [`Arc`] so it can be cloned, enabling sending from
+/// different places in the code then we receive from.
+#[derive(Debug, Clone)]
+pub(crate) struct Udp6Socket(Arc<UdpSocket>);
+
+impl TryFrom<UdpSocket> for Udp6Socket {
+    type Error = anyhow::Error;
+
+    fn try_from(sock: UdpSocket) -> std::result::Result<Self, Self::Error> {
+        let addr = sock.local_addr().context("socket not bound")?;
+        ensure!(addr.is_ipv6(), "not an IPv6 socket");
+        Ok(Self(Arc::new(sock)))
+    }
+}
+
+impl TryFrom<Arc<UdpSocket>> for Udp6Socket {
+    type Error = anyhow::Error;
+
+    fn try_from(sock: Arc<UdpSocket>) -> std::result::Result<Self, Self::Error> {
+        let addr = sock.local_addr().context("socket not bound")?;
+        ensure!(addr.is_ipv6(), "not an IPv6 socket");
+        Ok(Self(sock))
+    }
+}
+
+impl Deref for Udp6Socket {
+    type Target = UdpSocket;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -499,8 +572,8 @@ struct ReportState {
     got_hair_stun: oneshot::Receiver<(Duration, SocketAddr)>,
     /// How long to wait for the hairpin message to arrive, if sent.
     hair_timeout: Option<Pin<Box<time::Sleep>>>,
-    pc4: Option<Arc<UdpSocket>>,
-    pc6: Option<Arc<UdpSocket>>,
+    pc4: Option<Udp4Socket>,
+    pc6: Option<Udp6Socket>,
     pc4_hair: Arc<UdpSocket>,
     /// Doing a lite, follow-up netcheck
     incremental: bool,
@@ -889,8 +962,8 @@ enum ProbeError {
 async fn run_probe(
     report: Arc<RwLock<Report>>,
     resolver: &TokioAsyncResolver,
-    pc4: Option<Arc<UdpSocket>>,
-    pc6: Option<Arc<UdpSocket>>,
+    pc4: Option<Udp4Socket>,
+    pc6: Option<Udp6Socket>,
     node: DerpNode,
     probe: Probe,
     actor_addr: ActorAddr,
@@ -1096,11 +1169,11 @@ pub(crate) enum ActorMessage {
         /// other packets from in the magicsocket (`Conn`).
         ///
         /// If not provided this will attempt to bind a suitable socket itself.
-        stun_sock_v4: Option<Arc<UdpSocket>>,
+        stun_sock_v4: Option<Udp4Socket>,
         /// Socket to send IPv6 STUN probes from.
         ///
         /// Like `stun_sock_v4` but for IPv6.
-        stun_sock_v6: Option<Arc<UdpSocket>>,
+        stun_sock_v6: Option<Udp6Socket>,
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
@@ -1266,8 +1339,8 @@ impl Actor {
     async fn handle_run_check(
         &mut self,
         derp_map: DerpMap,
-        stun_sock_v4: Option<Arc<UdpSocket>>,
-        stun_sock_v6: Option<Arc<UdpSocket>>,
+        stun_sock_v4: Option<Udp4Socket>,
+        stun_sock_v6: Option<Udp6Socket>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_check_run.is_some() {
@@ -1299,31 +1372,29 @@ impl Actor {
     async fn start_report_run(
         &mut self,
         derp_map: DerpMap,
-        stun_sock_v4: Option<Arc<UdpSocket>>,
-        stun_sock_v6: Option<Arc<UdpSocket>>,
+        stun_sock_v4: Option<Udp4Socket>,
+        stun_sock_v6: Option<Udp6Socket>,
     ) -> Result<()> {
         let cancel_token = CancellationToken::new();
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
-            None => {
-                bind_local_stun_socket(
-                    SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
-                    self.addr(),
-                    cancel_token.clone(),
-                )
-                .await
-            }
+            None => bind_local_stun_socket(
+                SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+                self.addr(),
+                cancel_token.clone(),
+            )
+            .await
+            .map(|s| Udp4Socket::try_from(s).expect("we just bound to IPv4")),
         };
         let stun_sock_v6 = match stun_sock_v6 {
             Some(sock) => Some(sock),
-            None => {
-                bind_local_stun_socket(
-                    SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
-                    self.addr(),
-                    cancel_token.clone(),
-                )
-                .await
-            }
+            None => bind_local_stun_socket(
+                SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+                self.addr(),
+                cancel_token.clone(),
+            )
+            .await
+            .map(|s| Udp6Socket::try_from(s).expect("we just bound to IPv6")),
         };
 
         let report_state = self
@@ -1384,8 +1455,8 @@ impl Actor {
     async fn create_report_state(
         &mut self,
         dm: &DerpMap,
-        pc4: Option<Arc<UdpSocket>>,
-        pc6: Option<Arc<UdpSocket>>,
+        pc4: Option<Udp4Socket>,
+        pc6: Option<Udp6Socket>,
     ) -> Result<ReportState> {
         let now = Instant::now();
 
@@ -2151,7 +2222,9 @@ mod tests {
             })
         };
 
-        let r = client.get_report(dm, Some(sock), None).await?;
+        let r = client
+            .get_report(dm, Some(sock.try_into().unwrap()), None)
+            .await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 
