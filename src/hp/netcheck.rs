@@ -1811,6 +1811,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_stun() -> Result<()> {
+        // TODO: remove this once this test is no longer flaky.
         // Setup logging, use .set_default() to overrule possible earlier global init from
         // other tests.
         let log_layer = tracing_subscriber::fmt::layer()
