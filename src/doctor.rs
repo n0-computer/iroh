@@ -54,9 +54,12 @@ impl std::str::FromStr for PrivateKey {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
+    /// Report on the current network environment, using either an explicitly provided stun host
+    /// or the settings from the config file.
     Report {
-        #[clap(long, default_value = "derp.iroh.computer")]
-        host_name: String,
+        /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
+        #[clap(long)]
+        stun_host: Option<String>,
         #[clap(long, default_value_t = 3478)]
         stun_port: u16,
     },
@@ -187,13 +190,14 @@ async fn send_blocks(
     Ok(())
 }
 
-async fn report(host_name: String, stun_port: u16) -> anyhow::Result<()> {
+async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
     let mut client = hp::netcheck::Client::new(None).await?;
 
-    let derp_port = 0;
-    let derp_ipv4 = UseIpv4::None;
-    let derp_ipv6 = UseIpv6::None;
-    let dm = DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6);
+    let dm = stun_host
+        .map(|host_name|
+        // creating a derp map from host name and stun port
+        DerpMap::default_from_node(host_name, stun_port, 0, UseIpv4::None, UseIpv6::None))
+        .unwrap_or_else(|| config.derp_map().expect("derp map not configured"));
     println!("getting report using derp map {:#?}", dm);
 
     let r = client.get_report(dm, None, None).await?;
@@ -625,9 +629,9 @@ fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
 pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
     match command {
         Commands::Report {
-            host_name,
+            stun_host,
             stun_port,
-        } => report(host_name, stun_port).await,
+        } => report(stun_host, stun_port, config).await,
         Commands::Connect {
             dial,
             private_key,
