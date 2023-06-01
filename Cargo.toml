@@ -103,6 +103,7 @@ tokio = { version = "1", features = ["full", "test-util"] }
 regex = { version = "1.7.1", features = ["std"] }
 nix = "0.26.2"
 http-body = "0.4.5"
+duct = "0.13.6"
 
 [features]
 default = ["cli", "derper", "metrics"]
