@@ -223,6 +223,7 @@ fn cli_provide_addresses() -> Result<()> {
 
     // test output
     let get_output = cmd!(iroh_bin(), "addresses", "--rpc-port", RPC_PORT)
+        // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
         .stdout_capture()
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
@@ -290,6 +291,7 @@ fn make_provider(
         rpc_port.unwrap_or("disabled")
     )
     .stderr_null()
+    // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
     .env("RUST_LOG", "debug")
     .env("IROH_DATA_DIR", home.as_ref().join("iroh_data_dir"));
 
