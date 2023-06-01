@@ -1753,21 +1753,12 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::setup_logging;
     use bytes::BytesMut;
-    use tracing::level_filters::LevelFilter;
-    use tracing_subscriber::{prelude::*, EnvFilter};
-
-    fn setup_logging() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-    }
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
-        setup_logging();
+        let _guard = setup_logging();
 
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
@@ -1814,10 +1805,11 @@ mod tests {
         // TODO: remove this once this test is no longer flaky.
         // Setup logging, use .set_default() to overrule possible earlier global init from
         // other tests.
-        let log_layer = tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stderr)
-            .with_filter(LevelFilter::TRACE);
-        let _guard = tracing_subscriber::registry().with(log_layer).set_default();
+        // let log_layer = tracing_subscriber::fmt::layer()
+        //     .with_writer(std::io::stderr)
+        //     .with_filter(LevelFilter::TRACE);
+        // let _guard = tracing_subscriber::registry().with(log_layer).set_default();
+        let _guard = setup_logging();
 
         let mut client = Client::new(None)
             .await
@@ -1864,7 +1856,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
-        setup_logging();
+        let _guard = setup_logging();
         let local_addr = "127.0.0.1";
         let bind_addr = "0.0.0.0";
 
@@ -1897,7 +1889,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
-        setup_logging();
+        let _guard = setup_logging();
 
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
@@ -1931,6 +1923,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
+        let _guard = setup_logging();
+
         // report returns a *Report from (DERP host, Duration)+ pairs.
         fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
             let mut report = Report::default();
@@ -2106,7 +2100,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hairpin() -> Result<()> {
-        setup_logging();
+        let _guard = setup_logging();
 
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
