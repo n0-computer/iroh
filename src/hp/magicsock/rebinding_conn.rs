@@ -257,7 +257,6 @@ mod tests {
         if !crate::hp::netcheck::os_has_ipv6().await {
             return Ok(());
         }
-        let _guard = setup_logging();
         rebinding_conn_send_recv(Network::Ipv6).await
     }
 
