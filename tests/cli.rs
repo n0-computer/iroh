@@ -1,13 +1,13 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use duct::{cmd, ReaderHandle};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -135,6 +135,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     use iroh::provider::Database;
     use nix::{
         sys::signal::{self, Signal},
@@ -148,35 +150,42 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     std::fs::write(&foo_path, b"foo")?;
     let bar_path = dir.join("bar");
     std::fs::write(&bar_path, b"bar")?;
+
     // spawn iroh in provide mode
-    let iroh_provide = |path| {
-        Command::new(iroh_bin())
-            .env("IROH_DATA_DIR", &iroh_data_dir)
-            // comment out to get debug output from the child process
-            // .env("RUST_LOG", "debug")
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .arg("provide")
-            .arg("--addr")
-            .arg(ADDR)
-            .arg("--rpc-port")
-            .arg("disabled")
-            .arg(path)
-            .spawn()
+    let iroh_provide = |path: &PathBuf| {
+        cmd(
+            iroh_bin(),
+            [
+                "provide",
+                "--addr",
+                ADDR,
+                "--rpc-port",
+                "disabled",
+                path.to_str().unwrap(),
+            ],
+        )
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .stdin_null()
+        .stderr_capture()
+        .reader()
     };
     // start provide until we got the ticket, then stop with control-c
     let provide = |path| {
         let mut child = iroh_provide(path)?;
-        let mut stdout = child.stdout.take().unwrap();
-        drain(child.stderr.take().unwrap());
         // wait for the provider to start
-        let _ticket = match_provide_output(&mut stdout, 1, Input::Path)?;
-        drain(stdout);
+        let _ticket = match_provide_output(&mut child, 1, Input::Path)?;
+        println!("got ticket, stopping provider {}", _ticket);
         // kill the provider via Control-C
-        signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
-        // wait for the provider to exit and make sure that it exited successfully
-        let _status = child.wait()?;
+        for pid in child.pids() {
+            signal::kill(Pid::from_raw(pid as i32), Signal::SIGINT).unwrap();
+        }
+        // wait for the provider to stop
+        loop {
+            if let Some(_output) = child.try_wait()? {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         anyhow::Ok(())
     };
     provide(&foo_path)?;
@@ -204,18 +213,14 @@ fn cli_provide_addresses() -> Result<()> {
     let input = Input::Path;
 
     let mut provider = make_provider(&path, &input, home, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
-    let mut stdout = provider.child.stdout.take().unwrap();
-    let stderr = provider.child.stderr.take().unwrap();
-    drain(stderr);
     // wait for the provider to start
-    let _all_in_one = match_provide_output(&mut stdout, 1, input)?;
-    drain(stdout);
-
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
+    let _all_in_one = match_provide_output(&mut provider, 1, input)?;
 
     // test output
-    let get_output = cmd.output()?;
+    let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
+        // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+        .stdout_capture()
+        .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
@@ -269,36 +274,32 @@ fn make_provider(
     home: impl AsRef<Path>,
     addr: Option<&str>,
     rpc_port: Option<&str>,
-) -> Result<ProvideProcess> {
+) -> Result<ReaderHandle> {
     // spawn a provider & optionally provide from stdin
-    let mut command = Command::new(iroh_bin());
-    let res = command
-        .stderr(Stdio::null())
-        .stdout(Stdio::piped())
-        .env("RUST_LOG", "debug")
-        .env(
-            "IROH_DATA_DIR",
-            home.as_ref().join("iroh_data_dir").as_os_str(),
-        )
-        .stderr(Stdio::piped())
-        .arg("provide")
-        .arg(path)
-        .arg("--addr")
-        .arg(addr.unwrap_or(ADDR))
-        .arg("--rpc-port")
-        .arg(rpc_port.unwrap_or("disabled"));
+    let res = cmd(
+        iroh_bin(),
+        [
+            "provide",
+            path.to_str().unwrap(),
+            "--addr",
+            addr.unwrap_or(ADDR),
+            "--rpc-port",
+            rpc_port.unwrap_or("disabled"),
+        ],
+    )
+    .stderr_null()
+    // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+    .env("RUST_LOG", "debug")
+    .env("IROH_DATA_DIR", home.as_ref().join("iroh_data_dir"));
 
     let provider = match input {
-        Input::Stdin => {
-            let f = File::open(path)?;
-            let stdin = Stdio::from(f);
-            res.stdin(stdin).spawn()?
-        }
-        Input::Path => res.stdin(Stdio::null()).spawn()?,
-    };
+        Input::Stdin => res.stdin_path(path),
+        Input::Path => res.stdin_null(),
+    }
+    .reader()?;
 
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
-    Ok(ProvideProcess { child: provider })
+    Ok(provider)
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -335,25 +336,24 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let home = testdir!();
     let mut provider = make_provider(&path, &input, home, None, None)?;
 
-    let mut stdout = provider.child.stdout.take().unwrap();
-    let stderr = provider.child.stderr.take().unwrap();
-
     // test provide output & get all in one ticket from stderr
-    drain(stderr);
-    let all_in_one = match_provide_output(&mut stdout, num_blobs, input)?;
-    drain(stdout);
+    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("get-ticket").arg(all_in_one);
     let cmd = if let Some(ref out) = out {
-        cmd.arg("--out").arg(out)
+        cmd(
+            iroh_bin(),
+            ["get-ticket", &all_in_one, "--out", out.to_str().unwrap()],
+        )
     } else {
-        &mut cmd
-    };
+        cmd(iroh_bin(), ["get-ticket", &all_in_one])
+    }
+    .stdout_capture()
+    .stderr_capture();
 
     // test get stderr output
-    let get_output = cmd.output()?;
+    let get_output = cmd.run()?;
+    drop(provider);
     assert!(get_output.status.success());
 
     // test output
@@ -368,26 +368,6 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)
-}
-
-fn drain(mut reader: impl Read + Send + 'static) {
-    std::thread::spawn(move || {
-        // change to stderr to see the log output
-        std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
-    });
-}
-
-/// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
-/// process is killed when it goes out of scope.
-struct ProvideProcess {
-    child: Child,
-}
-
-impl Drop for ProvideProcess {
-    fn drop(&mut self) {
-        self.child.kill().ok();
-        self.child.try_wait().ok();
-    }
 }
 
 fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
