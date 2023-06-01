@@ -165,27 +165,27 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
             .arg(path)
             .spawn()
     };
-    // provide for 1 sec, then stop with control-c
-    let provide_1sec = |path| {
+    // start provide until we got the ticket, then stop with control-c
+    let provide = |path| {
         let mut child = iroh_provide(path)?;
+        let mut stdout = child.stdout.take().unwrap();
+        drain(child.stderr.take().unwrap());
         // wait for the provider to start
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        let _ticket = match_provide_output(&mut stdout, 1, Input::Path)?;
+        drain(stdout);
         // kill the provider via Control-C
         signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
         // wait for the provider to exit and make sure that it exited successfully
-        let status = child.wait()?;
-        // comment out to get debug output from the child process
-        std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
-        assert!(status.success());
+        let _status = child.wait()?;
         anyhow::Ok(())
     };
-    provide_1sec(&foo_path)?;
+    provide(&foo_path)?;
     // should have some data now
     let db = Database::load_test(iroh_data_dir.clone())?;
     let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
     assert_eq!(blobs, vec![foo_path.clone()]);
 
-    provide_1sec(&bar_path)?;
+    provide(&bar_path)?;
     // should have more data now
     let db = Database::load_test(&iroh_data_dir)?;
     let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
@@ -379,7 +379,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 fn drain(mut reader: impl Read + Send + 'static) {
     std::thread::spawn(move || {
         // change to stderr to see the log output
-        std::io::copy(&mut reader, &mut std::io::stdout()).unwrap();
+        std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
     });
 }
 
