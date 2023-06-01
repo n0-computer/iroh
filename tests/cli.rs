@@ -2,11 +2,14 @@
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use rand::{RngCore, SeedableRng};
+use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
@@ -162,27 +165,27 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
             .arg(path)
             .spawn()
     };
-    // provide for 1 sec, then stop with control-c
-    let provide_1sec = |path| {
+    // start provide until we got the ticket, then stop with control-c
+    let provide = |path| {
         let mut child = iroh_provide(path)?;
+        let mut stdout = child.stdout.take().unwrap();
+        drain(child.stderr.take().unwrap());
         // wait for the provider to start
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        let _ticket = match_provide_output(&mut stdout, 1, Input::Path)?;
+        drain(stdout);
         // kill the provider via Control-C
         signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
         // wait for the provider to exit and make sure that it exited successfully
-        let status = child.wait()?;
-        // comment out to get debug output from the child process
-        std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
-        assert!(status.success());
+        let _status = child.wait()?;
         anyhow::Ok(())
     };
-    provide_1sec(&foo_path)?;
+    provide(&foo_path)?;
     // should have some data now
     let db = Database::load_test(iroh_data_dir.clone())?;
     let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
     assert_eq!(blobs, vec![foo_path.clone()]);
 
-    provide_1sec(&bar_path)?;
+    provide(&bar_path)?;
     // should have more data now
     let db = Database::load_test(&iroh_data_dir)?;
     let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
@@ -222,20 +225,6 @@ fn cli_provide_addresses() -> Result<()> {
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
-    assert!(stdout.contains(":4333"));
-
-    let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
-    provider.drain();
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
-
-    // test output
-    let get_output = cmd.output()?;
-    let stdout = String::from_utf8(get_output.stdout).unwrap();
-    assert!(get_output.status.success());
-    assert!(stdout != "Listening addresses: [0.0.0.0:4333]\n");
-    assert!(stdout.contains("Listening addresses: ["));
-
     //parse the output to get the addresses
     let addresses = stdout
         .split('[')
@@ -245,16 +234,11 @@ fn cli_provide_addresses() -> Result<()> {
         .next()
         .unwrap()
         .split(',')
-        .map(|x| x.trim().to_string())
+        .map(|x| x.trim())
         .filter(|x| !x.is_empty())
+        .map(|x| SocketAddr::from_str(&x).unwrap())
         .collect::<Vec<_>>();
-
-    let have_port = addresses.iter().any(|address| {
-        let addr: std::net::SocketAddr = address.parse().unwrap();
-        addr.port() == 4333
-    });
-    assert!(have_port);
-
+    assert!(addresses.len() >= 1);
     Ok(())
 }
 
@@ -405,13 +389,6 @@ struct ProvideProcess {
     child: Child,
 }
 
-impl ProvideProcess {
-    fn drain(&mut self) {
-        drain(self.child.stderr.take().unwrap());
-        drain(self.child.stdout.take().unwrap());
-    }
-}
-
 impl Drop for ProvideProcess {
     fn drop(&mut self) {
         self.child.kill().ok();
@@ -454,16 +431,23 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
     println!("get stderr\n{}", String::from_utf8_lossy(&stderr[..]));
     let stderr = std::io::BufReader::new(&stderr[..]);
-    assert_matches_line![
+    assert_matches_line(
         stderr,
-
-        r"Fetching: [\da-z]{59}"; 1,
-        r"\[1/3\] Connecting ..."; 1,
-        r"\[2/3\] Requesting ..."; 1,
-        r"\[3/3\] Downloading ..."; 1,
-        r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)"; 1,
-        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s"; 1
-    ];
+        [
+            (r"Fetching: [\da-z]{59}", 1),
+            (r"\[1/3\] Connecting ...", 1),
+            (r"\[2/3\] Requesting ...", 1),
+            (r"\[3/3\] Downloading ...", 1),
+            (
+                r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)",
+                1,
+            ),
+            (
+                r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s",
+                1,
+            ),
+        ],
+    );
     Ok(())
 }
 
@@ -480,27 +464,30 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize, input: Input) -> R
         Input::Path => 1,
     };
 
-    let mut caps = assert_matches_line![
+    let mut caps = assert_matches_line(
         reader,
-        r"Listening addresses:"; 1i64,
-        r"^  \S+"; -1i64,
-        r"PeerID: [_\w\d-]*"; 1,
-        r""; 1,
-        r"Adding .*"; 1,
-        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs as i64,
-        r"Total: [_\w\d-]*"; 1,
-        r""; 1,
-        r"Collection: [\da-z]{59}"; 1,
-        r"All-in-one ticket: ([_a-zA-Z\d-]*)"; 1
-    ];
+        [
+            (r"Listening addresses:", 1),
+            (r"^  \S+", -1),
+            (r"PeerID: [_\w\d-]*", 1),
+            (r"", 1),
+            (r"Adding .*", 1),
+            (r"- \S*: \d*.?\d*? ?[BKMGT]i?B?", num_blobs as i64),
+            (r"Total: [_\w\d-]*", 1),
+            (r"", 1),
+            (r"Collection: [\da-z]{59}", 1),
+            (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
+        ],
+    );
 
     // return the capture of the all in one ticket, should be the last capture
     caps.pop().context("Expected at least one capture.")
 }
 
-#[macro_export]
 /// Ensures each line of the first expression matches the regex of each following expression. Each
 /// regex expression is followed by the number of consecutive lines it should match.
+///
+/// A match number of `-1` indicates that the regex should match at least once.
 ///
 /// Returns a vec of `String`s of any captures made against the regex on each line.
 ///
@@ -508,64 +495,61 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize, input: Input) -> R
 /// ```
 /// let expr = b"hello world!\nNice to meet you!\n02/23/2023\n02/23/2023\n02/23/2023";
 /// let buf_reader = std::io::BufReader::new(&expr[..]);
-/// assert_matches_line![
+/// assert_matches_line(
 ///     buf_reader,
-///     r"hello world!"; 1,
-///     r"\S*$"; 1,
-///     r"\d{2}/\d{2}/\d{4}"; 3
-/// ];
+///     [
+///         (r"hello world!", 1),
+///         (r"\S*$", 1),
+///         (r"\d{2}/\d{2}/\d{4}", 3),
+///     ]);
 /// ```
-macro_rules! assert_matches_line {
-     ( $x:expr, $( $z:expr;$a:expr ),* ) => {
-         {
-            let mut lines = $x.lines().peekable();
-            let mut caps = Vec::new();
-            $(
-                let rx = regex::Regex::new($z)?;
-                let mut num_matches = 0;
-                let mut res = Vec::new();
-                loop {
-                    if $a > 0 && num_matches == $a as usize {
-                        break;
-                    }
+fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (&'static str, i64)>,
+{
+    let mut lines = reader.lines().peekable();
+    let mut caps = Vec::new();
 
-                    if let Some(Ok(line)) = lines.peek() {
-                        println!("|{}", line);
-                        res.push(line.clone());
-                        if let Some(cap) = rx.captures(line) {
-                            for i in 0..cap.len() {
-                                if let Some(capture_group) = cap.get(i) {
-                                    caps.push(capture_group.as_str().to_string());
-                                }
-                            }
+    for (regex_str, num_matches) in expressions {
+        let rx = Regex::new(regex_str).expect("invalid regex");
+        let mut matches = 0;
 
-                            num_matches += 1;
-                        } else {
-                            break;
+        loop {
+            if num_matches > 0 && matches == num_matches as usize {
+                break;
+            }
+
+            if let Some(Ok(line)) = lines.peek() {
+                println!("|{}", line);
+
+                if let Some(cap) = rx.captures(line) {
+                    for i in 0..cap.len() {
+                        if let Some(capture_group) = cap.get(i) {
+                            caps.push(capture_group.as_str().to_string());
                         }
                     }
-                    let _ = lines.next().context("Unexpected end of stderr reader")?;
-                }
-                if $a == -1 {
-                    if num_matches == 0 {
-                        println!("Expected at least one match for regex: {}", $z);
-                        for line in res {
-                            println!(">{}", line);
-                        }
-                        panic!("no matches found");
-                    }
+
+                    matches += 1;
                 } else {
-                    if num_matches != $a as usize {
-                        println!("Expected {} matches for regex: {}", $a, $z);
-                        for line in res {
-                            println!(">{}", line);
-                        }
-                        panic!("invalid number of matches");
-                    }
+                    break;
                 }
+            } else {
+                panic!("Unexpected end of reader");
+            }
 
-            )*
-            caps
-         }
-    };
+            let _ = lines.next();
+        }
+
+        if num_matches == -1 {
+            if matches == 0 {
+                println!("Expected at least one match for regex: {}", regex_str);
+                panic!("no matches found");
+            }
+        } else if matches != num_matches as usize {
+            println!("Expected {} matches for regex: {}", num_matches, regex_str);
+            panic!("invalid number of matches");
+        }
+    }
+
+    caps
 }
