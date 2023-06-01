@@ -153,14 +153,16 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
 
     // spawn iroh in provide mode
     let iroh_provide = |path: &PathBuf| {
-        cmd!(
+        cmd(
             iroh_bin(),
-            "provide",
-            "--addr",
-            ADDR,
-            "--rpc-port",
-            "disabled",
-            path
+            [
+                "provide",
+                "--addr",
+                ADDR,
+                "--rpc-port",
+                "disabled",
+                path.to_str().unwrap(),
+            ],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stdin_null()
@@ -221,7 +223,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _all_in_one = match_provide_output(&mut provider, 1, input)?;
 
     // test output
-    let get_output = cmd!(iroh_bin(), "addresses", "--rpc-port", RPC_PORT)
+    let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
         // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
         .stdout_capture()
         .run()?;
@@ -280,14 +282,16 @@ fn make_provider(
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
     // spawn a provider & optionally provide from stdin
-    let res = cmd!(
+    let res = cmd(
         iroh_bin(),
-        "provide",
-        path,
-        "--addr",
-        addr.unwrap_or(ADDR),
-        "--rpc-port",
-        rpc_port.unwrap_or("disabled")
+        [
+            "provide",
+            path.to_str().unwrap(),
+            "--addr",
+            addr.unwrap_or(ADDR),
+            "--rpc-port",
+            rpc_port.unwrap_or("disabled"),
+        ],
     )
     .stderr_null()
     // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
@@ -343,9 +347,12 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // create a `get-ticket` cmd & optionally provide out path
     let cmd = if let Some(ref out) = out {
-        cmd!(iroh_bin(), "get-ticket", all_in_one, "--out", out)
+        cmd(
+            iroh_bin(),
+            ["get-ticket", &all_in_one, "--out", out.to_str().unwrap()],
+        )
     } else {
-        cmd!(iroh_bin(), "get-ticket", all_in_one)
+        cmd(iroh_bin(), ["get-ticket", &all_in_one])
     }
     .stdout_capture()
     .stderr_capture();
