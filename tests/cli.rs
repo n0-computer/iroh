@@ -4,7 +4,6 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Child;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
@@ -368,19 +367,6 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)
-}
-
-/// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
-/// process is killed when it goes out of scope.
-struct ProvideProcess {
-    child: Child,
-}
-
-impl Drop for ProvideProcess {
-    fn drop(&mut self) {
-        self.child.kill().ok();
-        self.child.try_wait().ok();
-    }
 }
 
 fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
