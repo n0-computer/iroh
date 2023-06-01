@@ -203,13 +203,7 @@ fn cli_provide_addresses() -> Result<()> {
     make_rand_file(1000, &path)?;
     let input = Input::Path;
 
-    let mut provider = make_provider(
-        &path,
-        &input,
-        home.clone(),
-        Some("127.0.0.1:4333"),
-        Some(RPC_PORT),
-    )?;
+    let mut provider = make_provider(&path, &input, home, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
     let mut stdout = provider.child.stdout.take().unwrap();
     let stderr = provider.child.stderr.take().unwrap();
     drain(stderr);
@@ -236,9 +230,9 @@ fn cli_provide_addresses() -> Result<()> {
         .split(',')
         .map(|x| x.trim())
         .filter(|x| !x.is_empty())
-        .map(|x| SocketAddr::from_str(&x).unwrap())
+        .map(|x| SocketAddr::from_str(x).unwrap())
         .collect::<Vec<_>>();
-    assert!(addresses.len() >= 1);
+    assert!(!addresses.is_empty());
     Ok(())
 }
 
