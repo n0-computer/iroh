@@ -529,6 +529,11 @@ struct ProviderInner {
 /// Events emitted by the [`Provider`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// A new collection has been added via an RPC call
+    CollectionAdded {
+        /// The hash of the added collection
+        hash: Hash,
+    },
     /// A new client connected to the provider.
     ClientConnected {
         /// An unique connection id.
@@ -776,9 +781,10 @@ impl RpcHandler {
         let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
+        let (db, hash) =
+            collection::create_collection(data_sources, Progress::new(progress)).await?;
         self.inner.db.union_with(db);
-
+        self.inner.events.send(Event::CollectionAdded { hash }).ok();
         Ok(())
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
