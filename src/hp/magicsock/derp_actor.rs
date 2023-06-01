@@ -340,6 +340,7 @@ impl DerpActor {
         // (it doesn't block) so it is safe to do under the state lock.
 
         let conn1 = self.conn.clone();
+
         let ipv6_reported = self.conn.ipv6_reported.clone();
         let dc = derp::http::ClientBuilder::new()
             .address_family_selector(move || {
@@ -369,6 +370,7 @@ impl DerpActor {
         };
 
         // Make sure we can establish a connection.
+        debug!(target:"derp", "connect derp connect");
         if let Err(err) = dc.connect().await {
             // TODO: what to do?
             warn!("failed to connect to derp server: {:?}", err);

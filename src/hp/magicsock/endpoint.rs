@@ -237,6 +237,7 @@ impl Endpoint {
         debug!("send disco ping: start");
         let mut sent = false;
         if let Some(pub_key) = public_key {
+            debug!(target:"derp", "send disco ping");
             sent = self
                 .conn_sender
                 .send(ActorMessage::SendDiscoMessage {

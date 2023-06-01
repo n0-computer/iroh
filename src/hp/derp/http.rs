@@ -2,7 +2,7 @@ mod client;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};
-pub use self::server::derp_connection_handler;
+pub use self::server::{derp_connection_handler, Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 

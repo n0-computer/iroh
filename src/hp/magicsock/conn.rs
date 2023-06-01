@@ -1133,6 +1133,7 @@ impl Actor {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = if let Some(public_key) = public_key {
                             let res = self.send_raw(udp_addr, transmits.clone()).await;
+                            debug!(target:"derp", "send_network, derp and raw");
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -1148,6 +1149,7 @@ impl Actor {
                     }
                     Ok((None, Some(derp_addr))) => {
                         if let Some(public_key) = ep.public_key() {
+                            debug!(target:"derp", "send_network, derp");
                             self.send_derp(
                                 derp_addr.port(),
                                 public_key,
@@ -1183,6 +1185,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
+        debug!(target:"derp", "send_derp");
         self.send_derp_actor(DerpActorMessage::Send {
             region_id: port,
             contents,
@@ -1565,6 +1568,7 @@ impl Actor {
 
         let my_derp = self.conn.my_derp();
         self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp));
+        debug!(target:"derp", "connect derp");
         self.send_derp_actor(DerpActorMessage::Connect {
             region_id: derp_num,
             peer: None,
@@ -1678,6 +1682,7 @@ impl Actor {
 
             let msg_sender = self.msg_sender.clone();
             tokio::task::spawn(async move {
+                debug!(target:"derp", "enqueue call me maybe");
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
                         dst: derp_addr,
@@ -1798,6 +1803,7 @@ impl Actor {
         }
 
         let pkt = disco::encode_message(&self.conn.public_key, seal);
+        debug!(target: "derp", "send_disco_message");
         let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
         match sent {
             Ok(0) => {
@@ -1857,6 +1863,7 @@ impl Actor {
                 "missing pub key for derp route",
             )),
             Some(pub_key) => {
+                debug!(target:"derp", "send addr");
                 self.send_derp(addr.port(), pub_key.clone(), vec![pkt]);
                 Ok(1)
             }
@@ -2137,6 +2144,7 @@ impl Actor {
             src,
         });
         let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
+        debug!(target:"derp", "handle_ping");
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
             warn!("failed to send disco message to {}: {:?}", ip_dst, err);
         }

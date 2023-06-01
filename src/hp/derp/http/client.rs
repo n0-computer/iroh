@@ -397,9 +397,8 @@ impl Client {
             let hostname = self
                 .tls_servername(derp_node.as_ref())
                 .ok_or_else(|| ClientError::InvalidUrl)?;
-            debug!("connecting with hostname: {:?}", hostname);
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
-
+            debug!("tls_connector connect success");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tls_stream)
                 .await
@@ -420,7 +419,7 @@ impl Client {
                 .await
                 .map_err(ClientError::Hyper)?
         } else {
-            debug!("Starting handshake");
+            tracing::error!("Starting handshake");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tcp_stream)
                 .await
@@ -516,7 +515,7 @@ impl Client {
         let port = self.url_port().ok_or_else(|| ClientError::InvalidUrl)?;
         let addr = SocketAddr::new(dst_ip, port);
 
-        debug!("connecting to {}", addr);
+        tracing::error!("connecting to {}", addr);
         let tcp_stream = TcpStream::connect(addr).await?;
         Ok(tcp_stream)
     }
@@ -823,6 +822,7 @@ impl PacketForwarder for Client {
                 let srckey = srckey.clone();
                 let dstkey = dstkey.clone();
                 let packet = packet.clone();
+                debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
                     if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
                         return;
