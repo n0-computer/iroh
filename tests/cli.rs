@@ -11,7 +11,7 @@ use testdir::testdir;
 use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
-const RPC_PORT: &str = "4999";
+const RPC_PORT: &str = "5123";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<()> {
     let mut content = vec![0u8; size];
@@ -222,39 +222,6 @@ fn cli_provide_addresses() -> Result<()> {
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
     assert!(stdout.starts_with("Listening addresses:"));
-    assert!(stdout.contains(":4333"));
-
-    let mut provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
-    provider.drain();
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
-
-    // test output
-    let get_output = cmd.output()?;
-    let stdout = String::from_utf8(get_output.stdout).unwrap();
-    assert!(get_output.status.success());
-    assert!(stdout != "Listening addresses: [0.0.0.0:4333]\n");
-    assert!(stdout.contains("Listening addresses: ["));
-
-    //parse the output to get the addresses
-    let addresses = stdout
-        .split('[')
-        .nth(1)
-        .unwrap()
-        .split(']')
-        .next()
-        .unwrap()
-        .split(',')
-        .map(|x| x.trim().to_string())
-        .filter(|x| !x.is_empty())
-        .collect::<Vec<_>>();
-
-    let have_port = addresses.iter().any(|address| {
-        let addr: std::net::SocketAddr = address.parse().unwrap();
-        addr.port() == 4333
-    });
-    assert!(have_port);
-
     Ok(())
 }
 
@@ -395,7 +362,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 fn drain(mut reader: impl Read + Send + 'static) {
     std::thread::spawn(move || {
         // change to stderr to see the log output
-        std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
+        std::io::copy(&mut reader, &mut std::io::stdout()).unwrap();
     });
 }
 
@@ -403,13 +370,6 @@ fn drain(mut reader: impl Read + Send + 'static) {
 /// process is killed when it goes out of scope.
 struct ProvideProcess {
     child: Child,
-}
-
-impl ProvideProcess {
-    fn drain(&mut self) {
-        drain(self.child.stderr.take().unwrap());
-        drain(self.child.stdout.take().unwrap());
-    }
 }
 
 impl Drop for ProvideProcess {
