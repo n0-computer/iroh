@@ -210,7 +210,7 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install nightly
+    - name: Install Rust 1.67
       # See https://github.com/cross-rs/cross/issues/1222
       uses: dtolnay/rust-toolchain@1.67
 

@@ -1721,7 +1721,7 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &ActorAddr
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
-async fn os_has_ipv6() -> bool {
+pub(crate) async fn os_has_ipv6() -> bool {
     // TODO: use socket2 to specify binding to ipv6
     let udp = UdpSocket::bind("[::1]:0").await;
     udp.is_ok()
