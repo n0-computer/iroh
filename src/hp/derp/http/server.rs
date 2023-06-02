@@ -15,7 +15,7 @@ use hyper::upgrade::Upgraded;
 use hyper::{Body, HeaderMap, Method, Request, Response, StatusCode};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -126,23 +126,24 @@ where
 #[derive(Debug)]
 /// A Derp Server that binds on a TCP socket & can serve content over
 /// HTTP or HTTPS.
-pub struct Server(Inner);
+pub struct Server(ServerState);
 
 impl Server {
     // Handle requests to the Derp Server. If there is a `TlsConfig`, this method will serve
     // requests over HTTPS, otherwise it will be served over HTTP.
     //
     // The `serve` method returns the local `SocketAddr` on which the server is listening.
-    pub async fn serve(self) -> Result<SocketAddr> {
-        match self.0.tls_config {
-            Some(_) => self.0.https_serve().await,
-            None => self.0.http_serve().await,
-        }
+    pub async fn serve(self) -> Result<Self> {
+        Ok(Self(self.0.serve().await?))
     }
 
-    //     pub async fn shutdown(self) {
-    //         self.0.shutdown().await;
-    //     }
+    pub async fn shutdown(self) {
+        self.0.shutdown().await;
+    }
+
+    fn addr(&self) -> SocketAddr {
+        self.0.addr()
+    }
 }
 
 /// Configuration to use for the TLS connection
@@ -291,44 +292,91 @@ impl ServerBuilder {
             not_found_fn,
             self.headers,
         );
-        Ok(Server(Inner {
+
+        Ok(Server(ServerState::Ready(Ready {
             addr: self.addr,
             tls_config: self.tls_config,
             server: derp_server,
             service,
-            tasks: JoinSet::new(),
-            server_task: JoinSet::new(),
-        }))
+        })))
     }
 }
 
 #[derive(Debug)]
-pub struct Inner {
+enum ServerState {
+    Ready(Ready),
+    Running(Running),
+}
+
+#[derive(Debug)]
+pub struct Ready {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     service: DerpService,
-    tasks: JoinSet<()>,
-    server_task: JoinSet<()>,
 }
 
-impl Inner {
+#[derive(Debug)]
+pub struct Running {
+    addr: SocketAddr,
+    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    http_server_task: JoinHandle<()>,
+}
+
+impl ServerState {
+    async fn serve(self) -> Result<Self> {
+        match self {
+            ServerState::Ready(state) => match &state.tls_config {
+                Some(_) => state.https_serve().await,
+                None => state.http_serve().await,
+            },
+            ServerState::Running(_) => {
+                bail!("server is already running")
+            }
+        }
+    }
+
+    async fn shutdown(self) {
+        match self {
+            ServerState::Ready(_) => {}
+            ServerState::Running(Running {
+                server,
+                http_server_task,
+                ..
+            }) => {
+                if let Some(server) = server {
+                    server.close().await;
+                }
+                http_server_task.abort();
+            }
+        }
+    }
+
+    fn addr(&self) -> SocketAddr {
+        match self {
+            ServerState::Ready(Ready { addr, .. }) => *addr,
+            ServerState::Running(Running { addr, .. }) => *addr,
+        }
+    }
+}
+
+impl Ready {
     /// Binds a TCP listener on `addr` and handles content using HTTP.
     /// Returns the local `SocketAddr` on which the server is listening.
-    async fn http_serve(mut self) -> Result<SocketAddr> {
+    async fn http_serve(self) -> Result<ServerState> {
         let http_listener = TcpListener::bind(&self.addr)
             .await
             .context("failed to bind https")?;
         let addr = http_listener.local_addr()?;
         info!("[HTTP] derp: serving on {addr}");
-        tokio::task::spawn(async move {
+        let task = tokio::task::spawn(async move {
             debug!("about to loop");
             loop {
                 match http_listener.accept().await {
                     Ok((stream, peer_addr)) => {
                         debug!("[HTTP] derp: Connection opened from {}", peer_addr);
                         let service = self.service.clone();
-                        self.tasks.spawn(async move {
+                        tokio::task::spawn(async move {
                             if let Err(err) = service
                                 .serve_connection(MaybeTlsStreamServer::Plain(stream))
                                 .await
@@ -344,12 +392,16 @@ impl Inner {
                 error!("DONE");
             }
         });
-        Ok(addr)
+        Ok(ServerState::Running(Running {
+            addr,
+            server: self.server,
+            http_server_task: task,
+        }))
     }
 
     // Binds a TCP listener on `addr` and handles content using HTTPS.
     // Returns the local `SocketAddr` on which the server is listening.
-    async fn https_serve(mut self) -> Result<SocketAddr> {
+    async fn https_serve(self) -> Result<ServerState> {
         ensure!(self.tls_config.is_some());
         let TlsConfig {
             config, acceptor, ..
@@ -359,7 +411,7 @@ impl Inner {
             .context("failed to bind https")?;
         let addr = https_listener.local_addr()?;
         info!("[HTTPS] derp: serving on {addr}");
-        self.server_task.spawn(async move {
+        let task = tokio::task::spawn(async move {
             loop {
                 match https_listener.accept().await {
                     Ok((stream, peer_addr)) => {
@@ -367,7 +419,7 @@ impl Inner {
                         let tls_acceptor = acceptor.clone();
                         let tls_config = config.clone();
                         let service = self.service.clone();
-                        self.tasks.spawn(async move {
+                        tokio::task::spawn(async move {
                             if let Err(err) = service
                                 .tls_serve_connection(stream, tls_acceptor, tls_config)
                                 .await
@@ -382,16 +434,11 @@ impl Inner {
                 }
             }
         });
-        Ok(addr)
-    }
-
-    async fn shutdown(mut self) {
-        match self.server {
-            Some(s) => s.close().await,
-            None => {}
-        }
-        self.server_task.shutdown().await;
-        self.tasks.shutdown().await;
+        Ok(ServerState::Running(Running {
+            addr,
+            server: self.server,
+            http_server_task: task,
+        }))
     }
 }
 
@@ -590,16 +637,13 @@ mod tests {
 
     use anyhow::Result;
     use std::net::SocketAddr;
-    use tokio::net::TcpListener;
 
     use hyper::header::UPGRADE;
-    use hyper::server::conn::Http;
     use hyper::upgrade::Upgraded;
     use hyper::{Body, Request, StatusCode};
-    use tokio::sync::oneshot;
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::hp::derp::server::Server as DerpServer;
-    use crate::hp::key::node::{PublicKey, SecretKey};
+    use crate::hp::key::node::SecretKey;
 
     /// Handle client-side I/O after HTTP upgraded.
     async fn derp_client(mut upgraded: Upgraded) -> Result<()> {
@@ -649,10 +693,10 @@ mod tests {
         match hyper::upgrade::on(res).await {
             Ok(upgraded) => {
                 if let Err(e) = derp_client(upgraded).await {
-                    eprintln!("client foobar io error: {}", e)
+                    bail!("client foobar io error: {}", e)
                 };
             }
-            Err(e) => eprintln!("upgrade error: {}", e),
+            Err(e) => bail!("upgrade error: {}", e),
         }
         task.abort();
         Ok(())
@@ -660,25 +704,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_handler() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         // inspired by https://github.com/hyperium/hyper/blob/v0.14.25/examples/upgrades.rs
 
         let mut addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
 
         // create derp_server
         let server_key = SecretKey::generate();
-        let derp_server = ServerBuilder::new(addr)
+        let mut derp_server = ServerBuilder::new(addr)
+            .derp_endpoint("/")
             .secret_key(Some(server_key))
             .build()?;
 
         // run server
-        addr = derp_server.serve().await?;
+        derp_server = derp_server.serve().await?;
+        addr = derp_server.addr();
         println!("server running on {addr}");
 
         // Client requests a HTTP connection upgrade.
         let request = client_upgrade_request(addr);
         request.await?;
 
-        // derp_server.shutdown().await;
+        derp_server.shutdown().await;
         Ok(())
     }
 }

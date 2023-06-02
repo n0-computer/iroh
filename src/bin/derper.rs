@@ -400,15 +400,15 @@ struct Derper {
 }
 
 impl Derper {
-    async fn run(self, addr: SocketAddr, http_port: u16) -> Result<()> {
-        self.derp_server.serve().await?;
+    async fn run(mut self, addr: SocketAddr, http_port: u16) -> Result<()> {
+        self.derp_server = self.derp_server.serve().await?;
 
         let http_addr = SocketAddr::new(addr.ip(), http_port);
         let http_listener = TcpListener::bind(&http_addr)
             .await
             .context("failed to bind http")?;
         let http_addr = http_listener.local_addr()?;
-        info!("[HTTP] derper: serving on {}", http_addr);
+        info!("[HTTP]: serving on {}", http_addr);
 
         loop {
             match http_listener.accept().await {
