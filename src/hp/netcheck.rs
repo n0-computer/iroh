@@ -1810,7 +1810,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_google_stun() -> Result<()> {
+    async fn test_iroh_computer_stun() -> Result<()> {
         // TODO: remove this once this test is no longer flaky.
         // Setup logging, use .set_default() to overrule possible earlier global init from
         // other tests.
@@ -1823,13 +1823,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![
-            ("stun.l.google.com", 19302, 0),
-            ("stun1.l.google.com", 19302, 0),
-            ("stun2.l.google.com", 19302, 0),
-            ("stun3.l.google.com", 19302, 0),
-            ("stun4.l.google.com", 19302, 0),
-        ];
+        let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
