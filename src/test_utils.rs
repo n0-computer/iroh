@@ -3,6 +3,7 @@
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 /// Configures logging for the current test.
 ///
@@ -13,10 +14,24 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// much consider if your test is too large (or write a version that allows filtering...).
 #[must_use = "The tracing guard must only be dropped at the end of the test"]
 pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
-    let log_layer = tracing_subscriber::fmt::layer()
-        .with_writer(|| TestWriter)
-        .with_filter(LevelFilter::TRACE);
-    tracing_subscriber::registry().with(log_layer).set_default()
+    let var = std::env::var_os("RUST_LOG");
+    let trace_log_layer = match var {
+        Some(_) => None,
+        None => Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(|| TestWriter)
+                .with_filter(LevelFilter::TRACE),
+        ),
+    };
+    let env_log_layer = var.map(|_| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(|| TestWriter)
+            .with_filter(EnvFilter::from_default_env())
+    });
+    tracing_subscriber::registry()
+        .with(trace_log_layer)
+        .with(env_log_layer)
+        .set_default()
 }
 
 /// A tracing writer that interacts well with test output capture.
