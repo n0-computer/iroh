@@ -1822,17 +1822,39 @@ mod tests {
         let mut client = Client::new(None)
             .await
             .context("failed to create netcheck client")?;
-        let stun_port = 19302;
-        let host_name = "stun.l.google.com".into();
-        let derp_port = 0;
-        let mut dm = DerpMap::default_from_node(
-            host_name,
-            stun_port,
-            derp_port,
-            UseIpv4::None,
-            UseIpv6::None,
+
+        let stun_servers = vec![
+            ("stun.l.google.com", 19302, 0),
+            ("stun1.l.google.com", 19302, 0),
+            ("stun2.l.google.com", 19302, 0),
+            ("stun3.l.google.com", 19302, 0),
+            ("stun4.l.google.com", 19302, 0),
+        ];
+
+        let mut dm = DerpMap::default();
+        dm.regions.insert(
+            1,
+            DerpRegion {
+                region_id: 1,
+                nodes: stun_servers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
+                        name: format!("default-{}", i),
+                        region_id: 1,
+                        host_name: host_name.into(),
+                        stun_only: true,
+                        stun_port,
+                        ipv4: UseIpv4::None,
+                        ipv6: UseIpv6::None,
+                        derp_port,
+                        stun_test_ip: None,
+                    })
+                    .collect(),
+                avoid: false,
+                region_code: "default".into(),
+            },
         );
-        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
         dbg!(&dm);
 
         let r = client
