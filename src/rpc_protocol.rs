@@ -71,21 +71,39 @@ impl ServerStreamingMsg<ProviderService> for ValidateRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListRequest;
+pub struct ListBlobsRequest;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListResponse {
+pub struct ListBlobsResponse {
     pub path: PathBuf,
     pub hash: Hash,
     pub size: u64,
 }
 
-impl Msg<ProviderService> for ListRequest {
+impl Msg<ProviderService> for ListBlobsRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for ListRequest {
-    type Response = ListResponse;
+impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
+    type Response = ListBlobsResponse;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListCollectionsRequest;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListCollectionsResponse {
+    pub hash: Hash,
+    pub total_blobs_count: usize,
+    pub total_blobs_size: u64,
+}
+
+impl Msg<ProviderService> for ListCollectionsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ListCollectionsRequest {
+    type Response = ListCollectionsResponse;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -160,7 +178,8 @@ pub struct ProviderService;
 pub enum ProviderRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
-    List(ListRequest),
+    ListBlobs(ListBlobsRequest),
+    ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
     Id(IdRequest),
     Addrs(AddrsRequest),
@@ -173,7 +192,8 @@ pub enum ProviderRequest {
 pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
-    List(ListResponse),
+    ListBlobs(ListBlobsResponse),
+    ListCollections(ListCollectionsResponse),
     Provide(ProvideProgress),
     Id(IdResponse),
     Addrs(AddrsResponse),
