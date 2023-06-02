@@ -82,7 +82,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_timer_success() {
         let val = Arc::new(AtomicBool::new(false));
 
@@ -99,7 +99,7 @@ mod tests {
         assert!(val.load(Ordering::Relaxed));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_timer_abort() {
         let val = Arc::new(AtomicBool::new(false));
 
@@ -115,7 +115,7 @@ mod tests {
         assert!(!val.load(Ordering::Relaxed));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_timer_abort_late() {
         let val = Arc::new(AtomicBool::new(false));
 
@@ -133,7 +133,7 @@ mod tests {
         assert!(val.load(Ordering::Relaxed));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_timer_reset() {
         let val = Arc::new(AtomicBool::new(false));
 
