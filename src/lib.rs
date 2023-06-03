@@ -24,6 +24,9 @@ mod util;
 #[allow(missing_docs)]
 pub mod hp;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::{pathbuf_from_name, Hash};
 
