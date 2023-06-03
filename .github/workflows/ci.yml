@@ -210,12 +210,12 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Rust 1.67
-      # See https://github.com/cross-rs/cross/issues/1222
-      uses: dtolnay/rust-toolchain@1.67
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Install cross
-      run: cargo install cross
+      # See https://github.com/cross-rs/cross/issues/1222
+      run: cargo install cross --git https://github.com/cross-rs/cross
 
     - name: check
       run: cross check --all --target ${{ matrix.target }}
