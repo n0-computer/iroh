@@ -23,7 +23,7 @@ config = { version = "0.13.1", default-features = false, features = ["toml", "pr
 console = { version = "0.15.5", optional = true }
 crypto_box = { version = "0.9.0-rc.0", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.2"
-data-encoding = { version = "2.3.3", optional = true }
+data-encoding = { version = "2.3.3" }
 default-net = "0.14.1"
 der = { version = "0.6", features = ["alloc", "derive"] }
 derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
@@ -106,7 +106,7 @@ duct = "0.13.6"
 
 [features]
 default = ["cli", "derper", "metrics"]
-cli = ["clap", "console", "indicatif", "data-encoding", "multibase"]
+cli = ["clap", "console", "indicatif", "multibase"]
 derper = ["tokio-rustls", "tokio-rustls-acme", "toml", "rustls-pemfile", "regex"]
 metrics = ["prometheus-client"]
 test = []
