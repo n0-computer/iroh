@@ -72,18 +72,14 @@ impl Pinger {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::test_utils::setup_logging;
 
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use super::*;
 
     #[tokio::test]
     #[ignore] // Doesn't work in CI
     async fn test_ping_google() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = setup_logging();
 
         // Public DNS addrs from google based on
         // https://developers.google.com/speed/public-dns/docs/using

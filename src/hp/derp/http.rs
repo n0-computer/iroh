@@ -21,13 +21,12 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
     use tokio_util::sync::CancellationToken;
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
-    use crate::hp::{
-        derp::Server as DerpServer,
-        key::node::{PublicKey, SecretKey},
+    use crate::hp::derp::{
+        DerpNode, DerpRegion, ReceivedMessage, Server as DerpServer, UseIpv4, UseIpv6,
     };
+    use crate::hp::key::node::{PublicKey, SecretKey};
+    use crate::test_utils::setup_logging;
 
     async fn run_server(key: SecretKey) -> (SocketAddr, CancellationToken, JoinHandle<Result<()>>) {
         let addr = "127.0.0.1:0";
@@ -77,11 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = setup_logging();
 
         let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();

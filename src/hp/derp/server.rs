@@ -573,14 +573,16 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    use crate::hp::{
-        derp::{
-            client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
-            ReceivedMessage, MAX_FRAME_SIZE,
+    use crate::{
+        hp::{
+            derp::{
+                client::ClientBuilder, client_conn::ClientConnBuilder, types::ClientInfo,
+                ReceivedMessage, MAX_FRAME_SIZE,
+            },
+            key::node::PUBLIC_KEY_LENGTH,
         },
-        key::node::PUBLIC_KEY_LENGTH,
+        test_utils::setup_logging,
     };
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
@@ -955,11 +957,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_replace_client() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = setup_logging();
 
         // create the server!
         let server_key = SecretKey::generate();
