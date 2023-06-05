@@ -1593,7 +1593,6 @@ dependencies = [
  "anyhow",
  "backoff",
  "bao-tree",
- "base64 0.21.1",
  "blake3",
  "build-data",
  "bytes",
