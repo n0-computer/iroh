@@ -20,6 +20,9 @@ use iroh::pathbuf_from_name;
 use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
+use iroh::rpc_protocol::{
+    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
+};
 use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -128,12 +131,9 @@ enum Commands {
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
     },
-    /// List hashes on the running provider.
-    List {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
+    /// List availble content on the provider.
+    #[clap(subcommand)]
+    List(ListCommands),
     /// Validate hashes on the running provider.
     Validate {
         /// RPC port of the provider
@@ -198,6 +198,22 @@ enum Commands {
     /// List listening addresses of the provider.
     Addresses {
         /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ListCommands {
+    /// List the available blobs on the running provider.
+    Blobs {
+        /// RPC port of the provider
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// List the available collections on the running provider.
+    Collections {
+        /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
@@ -642,9 +658,9 @@ async fn main_impl() -> Result<()> {
             drop(fut);
             Ok(())
         }
-        Commands::List { rpc_port } => {
+        Commands::List(ListCommands::Blobs { rpc_port }) => {
             let client = make_rpc_client(rpc_port).await?;
-            let mut response = client.server_streaming(ListRequest).await?;
+            let mut response = client.server_streaming(ListBlobsRequest).await?;
             while let Some(item) = response.next().await {
                 let item = item?;
                 println!(
@@ -652,6 +668,25 @@ async fn main_impl() -> Result<()> {
                     item.path.display(),
                     Blake3Cid(item.hash),
                     HumanBytes(item.size),
+                );
+            }
+            Ok(())
+        }
+        Commands::List(ListCommands::Collections { rpc_port }) => {
+            let client = make_rpc_client(rpc_port).await?;
+            let mut response = client.server_streaming(ListCollectionsRequest).await?;
+            while let Some(collection) = response.next().await {
+                let collection = collection?;
+                println!(
+                    "{}: {} {} ({})",
+                    Blake3Cid(collection.hash),
+                    collection.total_blobs_count,
+                    if collection.total_blobs_count > 1 {
+                        "blobs"
+                    } else {
+                        "blob"
+                    },
+                    HumanBytes(collection.total_blobs_size),
                 );
             }
             Ok(())
