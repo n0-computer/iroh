@@ -663,10 +663,10 @@ impl ReportState {
                         Some(Ok(probe_report)) => {
                             debug!("finished probe: {:?}", probe_report);
                             match probe_report.probe {
-                                Probe::Https { reg, .. } => {
+                                Probe::Https { region, .. } => {
                                     if let Some(delay) = probe_report.delay {
                                         let mut report = self.report.write().await;
-                                        let l = report.region_latency.entry(reg.region_id).or_insert(delay);
+                                        let l = report.region_latency.entry(region.region_id).or_insert(delay);
                                         if *l >= delay {
                                             *l = delay;
                                         }
@@ -929,7 +929,7 @@ async fn run_probe(
             if let Some(ref pc4) = pc4 {
                 let n = pc4.send_to(&req, addr).await;
                 inc!(NetcheckMetrics::StunPacketsSentIpv4);
-                debug!(%addr, send_res=?n, "sending probe IPV4");
+                debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
@@ -946,7 +946,7 @@ async fn run_probe(
             if let Some(ref pc6) = pc6 {
                 let n = pc6.send_to(&req, addr).await;
                 inc!(NetcheckMetrics::StunPacketsSentIpv6);
-                debug!(%addr, snd_res=?n, "sending probe IPV6");
+                debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
@@ -959,19 +959,19 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Https { reg, .. } => {
-            debug!("sending probe HTTPS (icmp: {})", pinger.is_some());
+        Probe::Https { region, .. } => {
+            debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
 
             let res = if let Some(ref pinger) = pinger {
                 tokio::join!(
                     time::timeout(
                         ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(resolver, &reg, pinger).map(Some)
+                        measure_icmp_latency(resolver, &region, pinger).map(Some)
                     ),
-                    measure_https_latency(&reg)
+                    measure_https_latency(&region)
                 )
             } else {
-                (Ok(None), measure_https_latency(&reg).await)
+                (Ok(None), measure_https_latency(&region).await)
             };
             if let Ok(Some(icmp_res)) = res.0 {
                 match icmp_res {

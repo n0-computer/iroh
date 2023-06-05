@@ -53,7 +53,7 @@ pub enum Probe {
     Https {
         delay: Duration,
         node: String,
-        reg: DerpRegion,
+        region: DerpRegion,
     },
 }
 
@@ -184,7 +184,7 @@ impl ProbePlan {
                 if dohttps {
                     https.push(Probe::Https {
                         delay,
-                        reg: reg.clone(),
+                        region: reg.clone(),
                         node: n.name.clone(),
                     });
                 }
@@ -231,7 +231,7 @@ impl ProbePlan {
                 if region_has_derp_node(reg) || (!have_v6 && !have_v4) {
                     https.push(Probe::Https {
                         delay,
-                        reg: reg.clone(),
+                        region: reg.clone(),
                         node: n.name.clone(),
                     });
                 }
