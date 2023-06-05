@@ -844,24 +844,135 @@ impl GetInteractive {
 }
 
 /// Get into a file or directory
-async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
+async fn get_to_file_single(
+    get: GetInteractive,
+    out_dir: PathBuf,
+    temp_dir: PathBuf,
+) -> Result<()> {
     let hash = get.hash();
-    let single = get.single();
     progress!("Fetching: {}", Blake3Cid::new(hash));
     progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
-    let temp_dir = out_dir.join(".iroh-tmp");
-    let (query, collection) = if single {
-        let name = Blake3Cid::new(hash).to_string();
-        let query = get_missing_range(&get.hash(), name.as_str(), &temp_dir, &out_dir)?;
-        (query, vec![Blob { hash, name }])
-    } else {
-        let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
-        (
-            query,
-            collection.map(|x| x.into_inner()).unwrap_or_default(),
-        )
+    let name = Blake3Cid::new(hash).to_string();
+    // range I am missing for the 1 file I am downloading
+    let range = get_missing_range(&get.hash(), name.as_str(), &temp_dir, &out_dir)?;
+    if range.is_all() {
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .context("unable to create directory {temp_dir}")?;
+        tokio::fs::create_dir_all(&out_dir)
+            .await
+            .context("Unable to create directory {out_dir}")?;
+    }
+    let query = RangeSpecSeq::new([range]);
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+
+    let init_download_progress = |count: u64, missing_bytes: u64| {
+        progress!("{} Downloading ...", style("[3/3]").bold().dim());
+        progress!(
+            "  {} file(s) with total transfer size {}",
+            count,
+            HumanBytes(missing_bytes)
+        );
+        pb.set_length(missing_bytes);
+        pb.reset();
+        pb.set_draw_target(ProgressDrawTarget::stderr());
     };
+
+    // collection info, in case we won't get a callback with is_root
+    let collection_info = Some((1, 0));
+
+    let request = GetRequest::new(get.hash(), query).into();
+    let response = match get {
+        GetInteractive::Ticket {
+            ticket,
+            keylog,
+            derp_map,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+    };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    if let Some((count, missing_bytes)) = collection_info {
+        init_download_progress(count, missing_bytes);
+    }
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
+        anyhow::bail!("Unexpected StartChild or Closing");
+    };
+    let header = curr.next();
+    let final_path = out_dir.join(&name);
+    let tempname = blake3::Hash::from(hash).to_hex();
+    let data_path = temp_dir.join(format!("{}.data.part", tempname));
+    let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+    let data_file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&data_path)
+        .await?;
+    let mut data_file = SeekOptimized::new(data_file).into();
+    tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+    let (curr, size) = header.next().await?;
+    pb.set_length(size);
+    let mut outboard_file = if size > 0 {
+        let outboard_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&outboard_path)
+            .await?;
+        let outboard_file = SeekOptimized::new(outboard_file).into();
+        Some(outboard_file)
+    } else {
+        None
+    };
+    let curr = curr
+        .write_all_with_outboard(&mut outboard_file, &mut data_file)
+        .await?;
+    // Flush the data file first, it is the only thing that matters at this point
+    data_file.into_inner().into_inner().shutdown().await?;
+    // Rename temp file, to target name
+    // once this is done, the file is considered complete
+    tokio::fs::rename(data_path, final_path).await?;
+    if let Some(outboard_file) = outboard_file.take() {
+        // not sure if we have to do this
+        outboard_file.into_inner().shutdown().await?;
+        // delete the outboard file
+        tokio::fs::remove_file(outboard_path).await?;
+    }
+    let EndBlobNext::Closing(finishing) = curr.next() else {
+        anyhow::bail!("Unexpected StartChild or MoreChildren");
+    };
+    let stats = finishing.next().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    pb.finish_and_clear();
+    progress!(
+        "Transferred {} in {}, {}/s",
+        HumanBytes(stats.bytes_read),
+        HumanDuration(stats.elapsed),
+        HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
+    );
+
+    Ok(())
+}
+
+/// Get into a file or directory
+async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
+    let hash = get.hash();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
+    let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
 
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
@@ -1026,6 +1137,17 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Get into a file or directory
+async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
+    let single = get.single();
+    let temp_dir = out_dir.join(".iroh-tmp");
+    if single {
+        get_to_file_single(get, out_dir, temp_dir).await
+    } else {
+        get_to_dir_multi(get, out_dir, temp_dir).await
+    }
 }
 
 async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
