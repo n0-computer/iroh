@@ -1,5 +1,6 @@
 use super::BlobOrCollection;
 use crate::{
+    blobs::Collection,
     rpc_protocol::ValidateProgress,
     util::{validate_bao, BaoValidationError},
     Hash,
@@ -432,6 +433,25 @@ impl Database {
             .filter_map(|(k, v)| match v {
                 BlobOrCollection::Blob { path, size, .. } => Some((*k, path.clone(), *size)),
                 BlobOrCollection::Collection { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        // todo: make this a proper lazy iterator at some point
+        // e.g. by using an immutable map or a real database that supports snapshots.
+        items.into_iter()
+    }
+
+    /// Iterate over all collections in the database.
+    pub fn collections(&self) -> impl Iterator<Item = (Hash, Collection)> + 'static {
+        let items = self
+            .0
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|(hash, v)| match v {
+                BlobOrCollection::Blob { .. } => None,
+                BlobOrCollection::Collection { data, .. } => {
+                    Collection::from_bytes(&data[..]).ok().map(|c| (*hash, c))
+                }
             })
             .collect::<Vec<_>>();
         // todo: make this a proper lazy iterator at some point
