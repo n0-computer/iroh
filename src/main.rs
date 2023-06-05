@@ -23,6 +23,7 @@ use iroh::rpc_protocol::*;
 use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
+use range_collections::RangeSet2;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -1027,41 +1028,23 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// get to stdout, no resume possible
-async fn get_to_stdout(get: GetInteractive) -> Result<()> {
-    let hash = get.hash();
-    progress!("Fetching: {}", Blake3Cid::new(hash));
-    progress!("{} Connecting ...", style("[1/3]").bold().dim());
-    let query = RangeSpecSeq::all();
-
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-
-    let request = GetRequest::new(get.hash(), query).into();
-    let response = match get {
-        GetInteractive::Ticket {
-            ticket,
-            keylog,
-            derp_map,
-        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
-        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
+    progress!("get_to_stdout_single");
+    let curr = curr.next();
+    let mut handle = ConcatenateSliceWriter::new(tokio::io::stdout()).into();
+    progress!("writing to stdout");
+    let curr = curr.write_all(&mut handle).await?;
+    progress!("done writing to stdout");
+    let EndBlobNext::Closing(curr) = curr.next() else {
+        anyhow::bail!("expected end of stream")
     };
-    let connected = response.next().await?;
-    progress!("{} Requesting ...", style("[2/3]").bold().dim());
-    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
-        anyhow::bail!("expected a collection");
-    };
+    Ok(curr.next().await?)
+}
+
+async fn get_to_stdout_multi(
+    curr: get::get_response_machine::AtStartRoot,
+    pb: ProgressBar,
+) -> Result<get::Stats> {
     let (mut next, collection) = {
         let curr = curr.next();
         let (curr, collection_data) = curr.concatenate_into_vec().await?;
@@ -1119,7 +1102,57 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         pb.finish();
         next = curr.next();
     };
-    let stats = finishing.next().await?;
+    Ok(finishing.next().await?)
+}
+
+/// get to stdout, no resume possible
+async fn get_to_stdout(get: GetInteractive) -> Result<()> {
+    let hash = get.hash();
+    let single = get.single();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    let query = if single {
+        // just get the entire first item
+        RangeSpecSeq::new([RangeSet2::all()])
+    } else {
+        // get everything (collection and children)
+        RangeSpecSeq::all()
+    };
+
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+
+    let request = GetRequest::new(get.hash(), query).into();
+    progress!("request: {:?}", request);
+    let response = match get {
+        GetInteractive::Ticket {
+            ticket,
+            keylog,
+            derp_map,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+    };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
+        anyhow::bail!("expected root to be present");
+    };
+    let stats = if single {
+        get_to_stdout_single(curr).await?
+    } else {
+        get_to_stdout_multi(curr, pb.clone()).await?
+    };
     pb.finish_and_clear();
     progress!(
         "Transferred {} in {}, {}/s",
