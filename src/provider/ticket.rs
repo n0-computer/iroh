@@ -10,7 +10,6 @@ use std::str::FromStr;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::util;
 use crate::{Hash, PeerId};
 
 /// A token containing everything to get a file from the provider.
@@ -71,7 +70,9 @@ impl Ticket {
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = self.to_bytes();
-        write!(f, "{}", util::encode(encoded))
+        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
+        text.make_ascii_lowercase();
+        write!(f, "{}", text)
     }
 }
 
@@ -80,7 +81,7 @@ impl FromStr for Ticket {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = util::decode(s)?;
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
         let slf = Self::from_bytes(&bytes)?;
         Ok(slf)
     }
@@ -93,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ticket_base64_roundtrip() {
+    fn test_ticket_base32_roundtrip() {
         let hash = blake3::hash(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
@@ -103,11 +104,11 @@ mod tests {
             peer,
             addrs: vec![addr],
         };
-        let base64 = ticket.to_string();
-        println!("Ticket: {base64}");
-        println!("{} bytes", base64.len());
+        let base32 = ticket.to_string();
+        println!("Ticket: {base32}");
+        println!("{} bytes", base32.len());
 
-        let ticket2: Ticket = base64.parse().unwrap();
+        let ticket2: Ticket = base32.parse().unwrap();
         assert_eq!(ticket2, ticket);
     }
 }
