@@ -11,7 +11,7 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::blobs::{Blob, Collection};
+use iroh::blobs::Collection;
 use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
@@ -843,7 +843,36 @@ impl GetInteractive {
     }
 }
 
-/// Get into a file or directory
+fn make_download_pb() -> ProgressBar {
+    let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+    pb
+}
+
+fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) {
+    progress!("{} Downloading ...", style("[3/3]").bold().dim());
+    progress!(
+        "  {} file(s) with total transfer size {}",
+        count,
+        HumanBytes(missing_bytes)
+    );
+    pb.set_length(missing_bytes);
+    pb.reset();
+    pb.set_draw_target(ProgressDrawTarget::stderr());
+}
+
+/// Get a single file
 async fn get_to_file_single(
     get: GetInteractive,
     out_dir: PathBuf,
@@ -865,31 +894,7 @@ async fn get_to_file_single(
             .context("Unable to create directory {out_dir}")?;
     }
     let query = RangeSpecSeq::new([range]);
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-
-    let init_download_progress = |count: u64, missing_bytes: u64| {
-        progress!("{} Downloading ...", style("[3/3]").bold().dim());
-        progress!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        );
-        pb.set_length(missing_bytes);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
-    };
+    let pb = make_download_pb();
 
     // collection info, in case we won't get a callback with is_root
     let collection_info = Some((1, 0));
@@ -906,7 +911,7 @@ async fn get_to_file_single(
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
     if let Some((count, missing_bytes)) = collection_info {
-        init_download_progress(count, missing_bytes);
+        init_download_progress(&pb, count, missing_bytes);
     }
     let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("Unexpected StartChild or Closing");
@@ -974,31 +979,7 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
     let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
     let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
 
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-
-    let init_download_progress = |count: u64, missing_bytes: u64| {
-        progress!("{} Downloading ...", style("[3/3]").bold().dim());
-        progress!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        );
-        pb.set_length(missing_bytes);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
-    };
+    let pb = make_download_pb();
 
     // collection info, in case we won't get a callback with is_root
     let collection_info = if collection.is_empty() {
@@ -1019,7 +1000,7 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
     if let Some((count, missing_bytes)) = collection_info {
-        init_download_progress(count, missing_bytes);
+        init_download_progress(&pb, count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
         ConnectedNext::StartRoot(curr) => {
@@ -1032,7 +1013,11 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
             let curr = curr.next();
             let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
-            init_download_progress(collection.total_entries(), collection.total_blobs_size());
+            init_download_progress(
+                &pb,
+                collection.total_entries(),
+                collection.total_blobs_size(),
+            );
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
             (curr.next(), collection.into_inner())
         }
@@ -1151,12 +1136,9 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
 }
 
 async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
-    progress!("get_to_stdout_single");
     let curr = curr.next();
     let mut handle = ConcatenateSliceWriter::new(tokio::io::stdout()).into();
-    progress!("writing to stdout");
     let curr = curr.write_all(&mut handle).await?;
-    progress!("done writing to stdout");
     let EndBlobNext::Closing(curr) = curr.next() else {
         anyhow::bail!("expected end of stream")
     };
@@ -1241,22 +1223,8 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         RangeSpecSeq::all()
     };
 
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
-
+    let pb = make_download_pb();
     let request = GetRequest::new(get.hash(), query).into();
-    progress!("request: {:?}", request);
     let response = match get {
         GetInteractive::Ticket {
             ticket,
