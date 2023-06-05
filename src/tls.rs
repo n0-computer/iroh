@@ -123,7 +123,7 @@ impl Debug for PeerId {
     }
 }
 
-/// Serialises the [`PeerId`] to base64.
+/// Serialises the [`PeerId`] to base32.
 ///
 /// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
@@ -137,7 +137,7 @@ impl Display for PeerId {
 /// Error when deserialising a [`PeerId`].
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
-    /// Error when decoding the base64.
+    /// Error when decoding the base32.
     #[error("decoding: {0}")]
     Base32(#[from] data_encoding::DecodeError),
     /// Error when decoding the public key.
@@ -148,7 +148,7 @@ pub enum PeerIdError {
     DecodingSize,
 }
 
-/// Deserialises the [`PeerId`] from it's base64 encoding.
+/// Deserialises the [`PeerId`] from it's base32 encoding.
 ///
 /// [`Display`] is capable of serialising this format.
 impl FromStr for PeerId {

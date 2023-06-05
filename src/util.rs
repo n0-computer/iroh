@@ -68,7 +68,10 @@ impl Ord for Hash {
 
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0.as_bytes()))
+        let text = data_encoding::BASE32_NOPAD
+            .encode(self.0.as_bytes())
+            .to_ascii_lowercase();
+        write!(f, "{}", text)
     }
 }
 
@@ -77,7 +80,12 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut arr = [0u8; 32];
-        let val = hex::decode(s)?;
+        let val = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?; // todo: use a custom error type
+        ensure!(
+            val.len() == 32,
+            "invalid byte length, expected 32, got {}",
+            val.len()
+        );
         ensure!(
             val.len() == 32,
             "invalid byte length, expected 32, got {}",

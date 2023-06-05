@@ -17,7 +17,7 @@ use crate::{Hash, PeerId};
 /// A token containing everything to get a file from the provider.
 ///
 /// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to base64.
+/// and [`FromStr`] implementations serialize to base32.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
@@ -66,7 +66,7 @@ impl Ticket {
     }
 }
 
-/// Serializes to base64.
+/// Serializes to base32.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = self.to_bytes();
@@ -76,7 +76,7 @@ impl Display for Ticket {
     }
 }
 
-/// Deserializes from base64.
+/// Deserializes from base32.
 impl FromStr for Ticket {
     type Err = anyhow::Error;
 
