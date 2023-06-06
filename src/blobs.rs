@@ -8,9 +8,9 @@ use crate::util::Hash;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
     /// Links to the blobs in this collection
-    blobs: Vec<Blob>,
+    pub(crate) blobs: Vec<Blob>,
     /// The total size of the raw_data referred to by all links
-    total_blobs_size: u64,
+    pub(crate) total_blobs_size: u64,
 }
 
 impl Collection {

@@ -43,10 +43,10 @@ use crate::protocol::{
     read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
-    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ProvideProgress, ProvideRequest,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
+    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::read_as_bytes;
@@ -618,12 +618,31 @@ struct RpcHandler {
 }
 
 impl RpcHandler {
-    fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
+    fn list_blobs(
+        self,
+        _msg: ListBlobsRequest,
+    ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
         let items = self
             .inner
             .db
             .blobs()
-            .map(|(hash, path, size)| ListResponse { hash, path, size });
+            .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
+        futures::stream::iter(items)
+    }
+
+    fn list_collections(
+        self,
+        _msg: ListCollectionsRequest,
+    ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
+        let items = self
+            .inner
+            .db
+            .collections()
+            .map(|(hash, collection)| ListCollectionsResponse {
+                hash,
+                total_blobs_count: collection.blobs.len(),
+                total_blobs_size: collection.total_blobs_size,
+            });
         futures::stream::iter(items)
     }
 
@@ -758,7 +777,14 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     tokio::spawn(async move {
         use ProviderRequest::*;
         match msg {
-            List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
+            ListBlobs(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_blobs)
+                    .await
+            }
+            ListCollections(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_collections)
+                    .await
+            }
             Provide(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await

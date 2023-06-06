@@ -16,8 +16,6 @@ pub use ed25519_dalek::{Signature, SigningKey as SecretKey, VerifyingKey as Publ
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
-use crate::util;
-
 pub(crate) const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
 
 /// A keypair.
@@ -119,25 +117,29 @@ impl From<PeerId> for PublicKey {
 
 impl Debug for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PeerId({})", util::encode(self.0.as_bytes()))
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "PeerId({})", text)
     }
 }
 
-/// Serialises the [`PeerId`] to base64.
+/// Serialises the [`PeerId`] to base32.
 ///
 /// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", util::encode(self.0.as_bytes()))
+        let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
+        text.make_ascii_lowercase();
+        write!(f, "{}", text)
     }
 }
 
 /// Error when deserialising a [`PeerId`].
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
-    /// Error when decoding the base64.
+    /// Error when decoding the base32.
     #[error("decoding: {0}")]
-    Base64(#[from] base64::DecodeError),
+    Base32(#[from] data_encoding::DecodeError),
     /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
@@ -146,14 +148,15 @@ pub enum PeerIdError {
     DecodingSize,
 }
 
-/// Deserialises the [`PeerId`] from it's base64 encoding.
+/// Deserialises the [`PeerId`] from it's base32 encoding.
 ///
 /// [`Display`] is capable of serialising this format.
 impl FromStr for PeerId {
     type Err = PeerIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes: [u8; 32] = util::decode(s)?
+        let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
+            .decode(s.to_ascii_uppercase().as_bytes())?
             .try_into()
             .map_err(|_| PeerIdError::DecodingSize)?;
         let key = PublicKey::from_bytes(&bytes)?;

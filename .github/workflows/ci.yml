@@ -261,7 +261,7 @@ jobs:
 
     - name: Check MSRV all features
       run: |
-        cargo +$MSRV check --workspace --all-targets --no-default-features
+        cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
     name: cargo deny

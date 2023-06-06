@@ -8,6 +8,8 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
+use iroh::main_util::Blake3Cid;
+use iroh::provider::Ticket;
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -16,11 +18,12 @@ use walkdir::WalkDir;
 const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
 
-fn make_rand_file(size: usize, path: &Path) -> Result<()> {
+fn make_rand_file(size: usize, path: &Path) -> Result<iroh::Hash> {
     let mut content = vec![0u8; size];
     rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
+    let hash = blake3::hash(&content);
     std::fs::write(path, content)?;
-    Ok(())
+    Ok(hash.into())
 }
 
 /// Given a directory, make a partial download of it.
@@ -68,6 +71,18 @@ fn cli_provide_one_file() -> Result<()> {
     make_rand_file(1000, &path)?;
     // provide a path to a file, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&path, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_one_file_single() -> Result<()> {
+    let dir = testdir!();
+    let path = dir.join("foo");
+    let hash = make_rand_file(1000, &path)?;
+    // test single file download to stdout
+    test_provide_get_loop_single(&path, Input::Path, Output::Stdout, hash)?;
+    // test single file download to a path
+    test_provide_get_loop_single(&path, Input::Path, Output::Path, hash)?;
+    Ok(())
 }
 
 #[test]
@@ -368,6 +383,99 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)
+}
+
+/// Test the provide and get loop for success, stderr output, and file contents.
+///
+/// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
+///
+/// Runs the provider as a child process that stays alive until the getter has completed. Then
+/// checks the output of the "provide" and "get" processes against expected regex output. Finally,
+/// test the content fetched from the "get" process is the same as the "provided" content.
+fn test_provide_get_loop_single(
+    path: &Path,
+    input: Input,
+    output: Output,
+    hash: iroh::Hash,
+) -> Result<()> {
+    let out = match output {
+        Output::Stdout => None,
+        Output::Path => {
+            let dir = testdir!();
+            Some(dir.join("out"))
+        }
+        Output::Custom(out) => Some(out),
+    };
+
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures");
+
+    let path = src.join(path);
+    let num_blobs = if path.is_dir() {
+        WalkDir::new(&path)
+            .into_iter()
+            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
+            .count()
+    } else {
+        1
+    };
+
+    let home = testdir!();
+    let mut provider = make_provider(&path, &input, home, None, None)?;
+
+    // test provide output & get all in one ticket from stderr
+    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
+    let ticket = Ticket::from_str(&all_in_one).unwrap();
+    let addrs = ticket
+        .addrs()
+        .into_iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>();
+    let peer = ticket.peer().to_string();
+
+    // create a `get-ticket` cmd & optionally provide out path
+    let mut args = vec!["get", "--peer", &peer];
+    for addr in &addrs {
+        args.push("--addrs");
+        args.push(addr);
+    }
+    if let Some(ref out) = out {
+        args.push("--out");
+        args.push(out.to_str().unwrap());
+    }
+    args.push("--single");
+    let hash_str = Blake3Cid::new(hash).to_string();
+    args.push(&hash_str);
+    let cmd = cmd(iroh_bin(), args)
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked();
+
+    // test get stderr output
+    let get_output = cmd.run()?;
+    // println!("{}", std::str::from_utf8(&get_output.stdout).unwrap());
+    // println!("{}", std::str::from_utf8(&get_output.stderr).unwrap());
+    drop(provider);
+    assert!(get_output.status.success());
+
+    // test output
+    let expect_content = std::fs::read(path)?;
+    match out {
+        None => {
+            assert!(!get_output.stdout.is_empty());
+            assert_eq!(expect_content, get_output.stdout);
+        }
+        Some(out) => {
+            let path = out.join(hash_str);
+            let content = std::fs::read(path)?;
+            assert_eq!(expect_content, content);
+        }
+    };
+
+    // assert!(!get_output.stderr.is_empty());
+    // match_get_stderr(get_output.stderr)
+    Ok(())
 }
 
 fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
