@@ -8,7 +8,7 @@ on:
 
 env:
   RUST_BACKTRACE: 1
-  # RUSTFLAGS: -Dwarnings
+  RUSTFLAGS: -Dwarnings
   MSRV: "1.65"
 
 jobs:
