@@ -314,7 +314,9 @@ jobs:
         cd chuck/netsim
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
-        sudo python3 main.py --integration sims/standard/iroh.json
+        sudo python3 main.py --integration sims/iroh/iroh.json
+        sudo python3 main.py --integration sims/integration 
+        # --skip derper__1_to_1_NAT_provide,derper__1_to_1_NAT_both,derper__1_to_1
 
     - name: Setup Environment (PR)  
       if: ${{ github.event_name == 'pull_request' }}  
