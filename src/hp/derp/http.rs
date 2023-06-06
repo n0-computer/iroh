@@ -2,27 +2,12 @@ mod client;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};
-pub use self::server::{derp_connection_handler, Server, ServerBuilder, TlsAcceptor, TlsConfig};
+pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
 #[cfg(test)]
-pub(crate) async fn run_server_tls(
-    addr: std::net::SocketAddr,
-    key: crate::hp::key::node::SecretKey,
-) -> (
-    std::net::SocketAddr,
-    tokio_util::sync::CancellationToken,
-    tokio::task::JoinHandle<anyhow::Result<()>>,
-) {
-    println!("starting derp tls server on {}", addr);
-    // create derp_server
-    let derp_server: super::Server<Client> = super::Server::new(key, None);
-
-    // create handler that sends new connections to the client
-    let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-    // TLS prep
+pub(crate) fn make_tls_config() -> TlsConfig {
     let subject_alt_names = vec!["localhost".to_string()];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
@@ -35,45 +20,12 @@ pub(crate) async fn run_server_tls(
         .unwrap();
 
     let config = std::sync::Arc::new(config);
-    let tls_acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+    let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let done = tokio_util::sync::CancellationToken::new();
-    let server_shutdown = done.clone();
-    let server_task = tokio::task::spawn(async move {
-        let mut tasks = tokio::task::JoinSet::new();
-        loop {
-            tokio::select! {
-                biased;
-                _ = server_shutdown.cancelled() => {
-                    derp_server.close().await;
-                    break;
-                }
-                conn = listener.accept() => {
-                    let (stream, _) = conn?;
-                    let derp_client_handler = derp_client_handler.clone();
-                    let tls_acceptor = tls_acceptor.clone();
-                    tasks.spawn(async move {
-                        let tls_stream = tls_acceptor.accept(stream).await.unwrap();
-                        if let Err(err) = hyper::server::conn::Http::new()
-                            .serve_connection(super::server::MaybeTlsStream::Tls(tls_stream), derp_client_handler)
-                            .with_upgrades()
-                            .await
-                        {
-                            eprintln!("Failed to serve connection: {:?}", err);
-                        }
-                    });
-                }
-            }
-        }
-        tasks.abort_all();
-
-        println!("shutdown complete");
-        Ok::<_, anyhow::Error>(())
-    });
-    (addr, done, server_task)
+    TlsConfig {
+        config,
+        acceptor: TlsAcceptor::Manual(acceptor),
+    }
 }
 
 #[cfg(test)]
@@ -82,60 +34,13 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use hyper::server::conn::Http;
     use reqwest::Url;
-    use std::net::SocketAddr;
-    use tokio::net::TcpListener;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
-    use tokio_util::sync::CancellationToken;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::hp::derp::{
-        DerpNode, DerpRegion, MaybeTlsStreamServer, ReceivedMessage, UseIpv4, UseIpv6,
-    };
-    use crate::hp::{
-        derp::Server as DerpServer,
-        key::node::{PublicKey, SecretKey},
-    };
-
-    async fn run_server(key: SecretKey) -> (SocketAddr, CancellationToken, JoinHandle<Result<()>>) {
-        let addr = "127.0.0.1:0";
-        let derp_server: DerpServer<super::Client> = DerpServer::new(key, None);
-        let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-        let listener = TcpListener::bind(&addr).await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let done = CancellationToken::new();
-        let server_shutdown = done.clone();
-        let server_task = tokio::task::spawn(async move {
-            let mut tasks = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = server_shutdown.cancelled() => {
-                        derp_server.close().await;
-                        tasks.abort_all();
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    conn = listener.accept() => {
-                        let (stream, _) = conn?;
-                        let derp_client_handler = derp_client_handler.clone();
-                        tasks.spawn(async move {
-                            if let Err(err) = Http::new()
-                                .serve_connection(MaybeTlsStreamServer::Plain(stream), derp_client_handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                eprintln!("Failed to serve connection: {:?}", err);
-                            }
-                        });
-                    }
-                }
-            }
-        });
-        (addr, done, server_task)
-    }
+    use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
+    use crate::hp::key::node::{PublicKey, SecretKey};
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
@@ -150,7 +55,12 @@ mod tests {
         let b_key = SecretKey::generate();
 
         // start server
-        let (addr, shutdown_server, server_task) = run_server(server_key).await;
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .spawn()
+            .await?;
+
+        let addr = server.addr();
 
         // get dial info & create region
         let port = addr.port();
@@ -207,8 +117,7 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        shutdown_server.cancel();
-        server_task.await??;
+        server.shutdown().await;
         client_a.close().await;
         client_a_task.abort();
         client_b.close().await;
@@ -278,9 +187,17 @@ mod tests {
         let a_key = SecretKey::generate();
         let b_key = SecretKey::generate();
 
+        // create tls_config
+        let tls_config = make_tls_config();
+
         // start server
-        let (addr, shutdown_server, server_task) =
-            run_server_tls("127.0.0.1:0".parse().unwrap(), server_key).await;
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .tls_config(Some(tls_config))
+            .spawn()
+            .await?;
+
+        let addr = server.addr();
 
         // get dial info & create region
         let port = addr.port();
@@ -336,8 +253,7 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        shutdown_server.cancel();
-        server_task.await??;
+        server.shutdown().await;
         client_a.close().await;
         client_a_task.abort();
         client_b.close().await;

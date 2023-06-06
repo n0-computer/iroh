@@ -2626,10 +2626,15 @@ mod tests {
         // TODO: pass a mesh_key?
 
         let server_key = key::node::SecretKey::generate();
-        let (http_addr, shutdown_server, server_task) =
-            crate::hp::derp::http::run_server_tls("127.0.0.1:0".parse().unwrap(), server_key).await;
+        let tls_config = crate::hp::derp::http::make_tls_config();
+        let server = crate::hp::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .tls_config(Some(tls_config))
+            .spawn()
+            .await?;
 
-        println!("DERP listening on {:?}", http_addr);
+        let https_addr = server.addr();
+        println!("DERP listening on {:?}", https_addr);
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
         let m = DerpMap {
@@ -2647,7 +2652,7 @@ mod tests {
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
 
-                        derp_port: http_addr.port(),
+                        derp_port: https_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
@@ -2661,8 +2666,7 @@ mod tests {
             Box::pin(async move {
                 println!("CLEANUP");
                 stun_cleanup.send(()).unwrap();
-                shutdown_server.cancel();
-                server_task.await.unwrap().unwrap();
+                server.shutdown().await;
             }) as BoxFuture<'static, ()>
         };
 

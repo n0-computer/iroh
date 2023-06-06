@@ -19,17 +19,12 @@ use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
 use iroh::hp::{
     derp::{
         self,
-        http::{
-            Server as DerpHttpServer, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig,
-        },
+        http::{ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},
     },
     key, stun,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::{TcpListener, UdpSocket},
-    task::JoinSet,
-};
+use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, debug_span, error, info, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -279,8 +274,6 @@ async fn main() -> Result<()> {
 
     let mut cli = Cli::parse();
 
-    let mut tasks = JoinSet::new();
-
     if cli.dev {
         cli.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEV_PORT);
         info!(%cli.addr, "Running in dev mode.");
@@ -309,9 +302,13 @@ async fn main() -> Result<()> {
         false => (None, None),
     };
 
-    if cli.run_stun {
-        tasks.spawn(async move { serve_stun(listen_host, cli.stun_port).await });
-    }
+    let stun_task = if cli.run_stun {
+        Some(tokio::task::spawn(async move {
+            serve_stun(listen_host, cli.stun_port).await
+        }))
+    } else {
+        None
+    };
 
     let headers: Vec<(&str, &str)> = if serve_tls {
         TLS_HEADERS.into()
@@ -362,14 +359,17 @@ async fn main() -> Result<()> {
             "/robots.txt",
             Box::new(|res: ResponseBuilder| robots_handler(res)),
         )
-        .build()?;
+        .spawn()
+        .await?;
 
-    let server = Derper { derp_server };
-
-    server.run(cli.addr, cli.http_port).await?;
+    let http_task = serve_http(cli.addr, cli.http_port).await?;
 
     // Shutdown all tasks
-    tasks.abort_all();
+    if let Some(task) = stun_task {
+        task.abort();
+    }
+    http_task.abort();
+    derp_server.shutdown().await;
 
     Ok(())
 }
@@ -394,22 +394,15 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
 ];
 
-struct Derper {
-    /// If this is a derper server, the derp handler.
-    derp_server: DerpHttpServer,
-}
+async fn serve_http(addr: SocketAddr, http_port: u16) -> Result<tokio::task::JoinHandle<()>> {
+    let http_addr = SocketAddr::new(addr.ip(), http_port);
+    let http_listener = TcpListener::bind(&http_addr)
+        .await
+        .context("failed to bind http")?;
+    let http_addr = http_listener.local_addr()?;
+    info!("[HTTP]: serving on {}", http_addr);
 
-impl Derper {
-    async fn run(mut self, addr: SocketAddr, http_port: u16) -> Result<()> {
-        self.derp_server = self.derp_server.serve().await?;
-
-        let http_addr = SocketAddr::new(addr.ip(), http_port);
-        let http_listener = TcpListener::bind(&http_addr)
-            .await
-            .context("failed to bind http")?;
-        let http_addr = http_listener.local_addr()?;
-        info!("[HTTP]: serving on {}", http_addr);
-
+    let task = tokio::spawn(async move {
         loop {
             match http_listener.accept().await {
                 Ok((stream, peer_addr)) => {
@@ -431,7 +424,8 @@ impl Derper {
                 }
             }
         }
-    }
+    });
+    Ok(task)
 }
 
 #[derive(Clone)]
