@@ -830,7 +830,7 @@ pub fn get_missing_range(
     name: &str,
     temp_dir: &Path,
     target_dir: &Path,
-) -> io::Result<RangeSpecSeq> {
+) -> io::Result<RangeSet2<ChunkNum>> {
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
@@ -840,8 +840,7 @@ pub fn get_missing_range(
         ));
     }
     let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
-    let spec = RangeSpecSeq::new(vec![range]);
-    Ok(spec)
+    Ok(range)
 }
 
 /// Get missing range for a single file
