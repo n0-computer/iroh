@@ -364,6 +364,7 @@ async fn main() -> Result<()> {
 
     let http_task = serve_http(cli.addr, cli.http_port).await?;
 
+    tokio::signal::ctrl_c().await?;
     // Shutdown all tasks
     if let Some(task) = stun_task {
         task.abort();
