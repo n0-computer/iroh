@@ -9,7 +9,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -24,13 +23,13 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream,
+        TcpListener, TcpStream, UdpSocket,
     },
     task::JoinSet,
 };
 use tokio_rustls_acme::AcmeConfig;
 use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, debug_span, error, info, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -275,7 +274,7 @@ async fn main() -> Result<()> {
 
     if cli.dev {
         cli.addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEV_PORT);
-        info!("Running in dev mode.");
+        info!(%cli.addr, "Running in dev mode.");
     }
 
     let listen_host = cli.addr.ip();
@@ -679,10 +678,13 @@ fn is_challenge_char(c: char) -> bool {
 }
 
 async fn serve_stun(host: IpAddr, port: u16) {
-    match tokio::net::UdpSocket::bind((host, port)).await {
-        Ok(pc) => {
-            info!("running STUN server on {:?}", pc.local_addr());
-            server_stun_listener(pc).await;
+    match UdpSocket::bind((host, port)).await {
+        Ok(sock) => {
+            let addr = sock.local_addr().expect("socket just bound");
+            info!(%addr, "running STUN server");
+            server_stun_listener(sock)
+                .instrument(debug_span!("stun_server", %addr))
+                .await;
         }
         Err(err) => {
             error!("failed to open STUN listener: {:#?}", err);
@@ -690,33 +692,32 @@ async fn serve_stun(host: IpAddr, port: u16) {
     }
 }
 
-async fn server_stun_listener(pc: tokio::net::UdpSocket) {
+async fn server_stun_listener(sock: UdpSocket) {
     let mut buffer = vec![0u8; 64 << 10];
     loop {
-        match pc.recv_from(&mut buffer).await {
-            Ok((n, ua)) => {
+        match sock.recv_from(&mut buffer).await {
+            Ok((n, src_addr)) => {
                 let pkt = &buffer[..n];
                 if !stun::is(pkt) {
-                    debug!("STUN: ignoring non stun packet from {}", ua);
+                    debug!(%src_addr, "STUN: ignoring non stun packet");
                     continue;
                 }
                 match stun::parse_binding_request(pkt) {
                     Ok(txid) => {
-                        debug!("STUN: received binding request from {}", ua);
-                        let res = stun::response(txid, ua);
-                        if let Err(err) = pc.send_to(&res, ua).await {
-                            warn!("STUN: failed to write response to {}: {:?}", ua, err);
+                        debug!(%src_addr, %txid, "STUN: received binding request");
+                        let res = stun::response(txid, src_addr);
+                        if let Err(err) = sock.send_to(&res, src_addr).await {
+                            warn!(%src_addr, "STUN: failed to write response: {:?}", err);
                         }
                     }
                     Err(err) => {
-                        warn!("STUN: invalid binding request from {}: {:?}", ua, err);
+                        warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         continue;
                     }
                 }
             }
             Err(err) => {
                 warn!("STUN: failed to recv: {:?}", err);
-                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
         }
