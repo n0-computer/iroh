@@ -156,8 +156,7 @@ mod tests {
         let expect_hash = blake3::hash(&expect_data);
         let expect_name = filename.to_string();
 
-        let (db, hash) =
-            provider::create_collection(vec![provider::DataSource::File(path)]).await?;
+        let (db, hash) = provider::create_collection(vec![provider::DataSource::new(path)]).await?;
         let provider = provider::Provider::builder(db)
             .bind_addr(addr)
             .spawn()
@@ -244,7 +243,7 @@ mod tests {
             let hash = Hash::from(hash);
 
             tokio::fs::write(&path, data).await?;
-            files.push(provider::DataSource::File(path.clone()));
+            files.push(provider::DataSource::new(path.clone()));
 
             // keep track of expected values
             expects.push((name, path, hash));
@@ -626,7 +625,7 @@ mod tests {
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
             async move {
                 let readme = readme_path();
-                let sources = vec![DataSource::File(readme)];
+                let sources = vec![DataSource::new(readme)];
                 let (new_db, hash) = create_collection(sources).await?;
                 let new_db = new_db.to_inner();
                 database.union_with(new_db);
@@ -648,7 +647,7 @@ mod tests {
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
             async move {
                 let readme = readme_path();
-                let sources = vec![DataSource::File(readme)];
+                let sources = vec![DataSource::new(readme)];
                 let (new_db, c_hash) = create_collection(sources).await?;
                 let mut new_db = new_db.to_inner();
                 new_db.remove(&c_hash);

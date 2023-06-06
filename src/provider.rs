@@ -752,7 +752,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
                 }
                 let path = entry.into_path();
                 let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+                anyhow::Ok(Some(DataSource { name, path }))
             })
             .filter_map(Result::transpose);
         let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
@@ -761,7 +761,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
             .collect::<anyhow::Result<Vec<_>>>()?
     } else {
         // A single file, use the file name as the name of the blob.
-        vec![DataSource::NamedFile {
+        vec![DataSource {
             name: canonicalize_path(root.file_name().context("path must be a file")?)?,
             path: root,
         }]
@@ -1160,49 +1160,37 @@ pub(crate) struct BlobData {
 
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum DataSource {
-    /// A blob of data originating from the filesystem. The name of the blob is derived from
-    /// the filename.
-    File(PathBuf),
-    /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
-    /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile {
-        /// Custom name
-        name: String,
-        /// Path to the file
-        path: PathBuf,
-    },
+pub struct DataSource {
+    /// Custom name
+    name: String,
+    /// Path to the file
+    path: PathBuf,
 }
 
 impl DataSource {
     /// Creates a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
-        DataSource::File(path)
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        DataSource { path, name }
     }
     /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource::NamedFile { path, name }
+        DataSource { path, name }
     }
 
     /// Returns blob name for this data source.
     ///
     /// If no name was provided when created it is derived from the path name.
     pub(crate) fn name(&self) -> Cow<'_, str> {
-        match self {
-            DataSource::File(path) => path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_default(),
-            DataSource::NamedFile { name, .. } => Cow::Borrowed(name),
-        }
+        Cow::Borrowed(&self.name)
     }
 
     /// Returns the path of this data source.
     pub(crate) fn path(&self) -> &Path {
-        match self {
-            DataSource::File(path) => path,
-            DataSource::NamedFile { path, .. } => path,
-        }
+        &self.path
     }
 }
 
