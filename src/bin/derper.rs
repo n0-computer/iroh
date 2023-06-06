@@ -27,8 +27,7 @@ use tokio::{
     },
     task::JoinSet,
 };
-use tokio_rustls_acme::AcmeConfig;
-use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor};
+use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor, AcmeConfig};
 use tracing::{debug, debug_span, error, info, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -63,7 +62,7 @@ struct Cli {
     #[clap(long)]
     cert_dir: Option<PathBuf>,
     /// Certificate hostname.
-    #[clap(long, default_value = "derp.iroh.computer")]
+    #[clap(long, default_value = "derp.iroh.computer.")]
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
     #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -179,11 +178,11 @@ fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
 }
 
 fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
-    let keyfile = std::fs::File::open(filename.as_ref()).expect("cannot open private key file");
+    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open private key file")?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).expect("cannot parse private key .pem file") {
+        match rustls_pemfile::read_one(&mut reader).context("cannot parse private key .pem file")? {
             Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
             Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
@@ -357,7 +356,7 @@ const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
 <h1>DERP</h1>
 <p>
-  This is a
+  This is an
   <a href="https://iroh.computer/">Iroh</a> DERP
   server.
 </p>
