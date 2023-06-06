@@ -250,7 +250,7 @@ jobs:
           components: clippy
 
     - name: clippy check
-      run: cargo clippy --message-format=json --all-features --all-targets
+      run: cargo clippy --all-features --all-targets
 
   msrv:
     name: Minimal Supported Rust Version
