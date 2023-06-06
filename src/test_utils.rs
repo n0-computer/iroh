@@ -1,6 +1,7 @@
 //! Internal utilities to support testing.
 
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -19,12 +20,14 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
         Some(_) => None,
         None => Some(
             tracing_subscriber::fmt::layer()
+                .with_span_events(FmtSpan::CLOSE)
                 .with_writer(|| TestWriter)
                 .with_filter(LevelFilter::TRACE),
         ),
     };
     let env_log_layer = var.map(|_| {
         tracing_subscriber::fmt::layer()
+            .with_span_events(FmtSpan::CLOSE)
             .with_writer(|| TestWriter)
             .with_filter(EnvFilter::from_default_env())
     });
