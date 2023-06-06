@@ -52,11 +52,8 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
       
-    - name: check
-      run: cargo check --all --bins --tests
-      
     - name: tests
-      run: cargo test --all
+      run: cargo test --workspace --all-features --lib --bins --tests
       
   build_and_test_windows:
     name: Build and test (Windows)
@@ -87,15 +84,8 @@ jobs:
     
     - uses: msys2/setup-msys2@v2
 
-    - name: check
-      run: cargo check --all --bins --tests --target ${{ matrix.target }} 
-      
-    - name: check bench
-      if: matrix.rust == 'nightly'
-      run: cargo check --target ${{ matrix.target }} --benches
-
     - name: tests
-      run: cargo test --all  --target ${{ matrix.target }}
+      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
     name: Build release binaries
@@ -247,6 +237,8 @@ jobs:
       with:
           components: clippy
 
+    # TODO: We have a bunch of platform-dependent code so should
+    #    probably run this job on the full platofrm matrix
     - name: clippy check
       run: cargo clippy --message-format=json --all-features --all-targets
 
