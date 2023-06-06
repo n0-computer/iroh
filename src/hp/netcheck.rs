@@ -1802,13 +1802,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
-        // TODO: remove this once this test is no longer flaky.
-        // Setup logging, use .set_default() to overrule possible earlier global init from
-        // other tests.
-        // let log_layer = tracing_subscriber::fmt::layer()
-        //     .with_writer(std::io::stderr)
-        //     .with_filter(LevelFilter::TRACE);
-        // let _guard = tracing_subscriber::registry().with(log_layer).set_default();
         let _guard = setup_logging();
 
         let mut client = Client::new(None)
