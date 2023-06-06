@@ -429,7 +429,7 @@ fn test_provide_get_loop_single(
     let ticket = Ticket::from_str(&all_in_one).unwrap();
     let addrs = ticket
         .addrs()
-        .into_iter()
+        .iter()
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let peer = ticket.peer().to_string();
