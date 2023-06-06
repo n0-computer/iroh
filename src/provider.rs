@@ -43,10 +43,10 @@ use crate::protocol::{
     read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListRequest, ListResponse, ProvideProgress,
-    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest,
-    ValidateProgress, ValidateRequest, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ProvideProgress, ProvideRequest,
+    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
+    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::read_as_bytes;
@@ -618,12 +618,31 @@ struct RpcHandler {
 }
 
 impl RpcHandler {
-    fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
+    fn list_blobs(
+        self,
+        _msg: ListBlobsRequest,
+    ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
         let items = self
             .inner
             .db
             .blobs()
-            .map(|(hash, path, size)| ListResponse { hash, path, size });
+            .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
+        futures::stream::iter(items)
+    }
+
+    fn list_collections(
+        self,
+        _msg: ListCollectionsRequest,
+    ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
+        let items = self
+            .inner
+            .db
+            .collections()
+            .map(|(hash, collection)| ListCollectionsResponse {
+                hash,
+                total_blobs_count: collection.blobs.len(),
+                total_blobs_size: collection.total_blobs_size,
+            });
         futures::stream::iter(items)
     }
 
@@ -733,7 +752,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
                 }
                 let path = entry.into_path();
                 let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+                anyhow::Ok(Some(DataSource { name, path }))
             })
             .filter_map(Result::transpose);
         let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
@@ -742,7 +761,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
             .collect::<anyhow::Result<Vec<_>>>()?
     } else {
         // A single file, use the file name as the name of the blob.
-        vec![DataSource::NamedFile {
+        vec![DataSource {
             name: canonicalize_path(root.file_name().context("path must be a file")?)?,
             path: root,
         }]
@@ -758,7 +777,14 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     tokio::spawn(async move {
         use ProviderRequest::*;
         match msg {
-            List(msg) => chan.server_streaming(msg, handler, RpcHandler::list).await,
+            ListBlobs(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_blobs)
+                    .await
+            }
+            ListCollections(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_collections)
+                    .await
+            }
             Provide(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
@@ -1134,49 +1160,37 @@ pub(crate) struct BlobData {
 
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum DataSource {
-    /// A blob of data originating from the filesystem. The name of the blob is derived from
-    /// the filename.
-    File(PathBuf),
-    /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
-    /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile {
-        /// Custom name
-        name: String,
-        /// Path to the file
-        path: PathBuf,
-    },
+pub struct DataSource {
+    /// Custom name
+    name: String,
+    /// Path to the file
+    path: PathBuf,
 }
 
 impl DataSource {
     /// Creates a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
-        DataSource::File(path)
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        DataSource { path, name }
     }
     /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource::NamedFile { path, name }
+        DataSource { path, name }
     }
 
     /// Returns blob name for this data source.
     ///
     /// If no name was provided when created it is derived from the path name.
     pub(crate) fn name(&self) -> Cow<'_, str> {
-        match self {
-            DataSource::File(path) => path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_default(),
-            DataSource::NamedFile { name, .. } => Cow::Borrowed(name),
-        }
+        Cow::Borrowed(&self.name)
     }
 
     /// Returns the path of this data source.
     pub(crate) fn path(&self) -> &Path {
-        match self {
-            DataSource::File(path) => path,
-            DataSource::NamedFile { path, .. } => path,
-        }
+        &self.path
     }
 }
 

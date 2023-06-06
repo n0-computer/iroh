@@ -663,10 +663,10 @@ impl ReportState {
                         Some(Ok(probe_report)) => {
                             debug!("finished probe: {:?}", probe_report);
                             match probe_report.probe {
-                                Probe::Https { reg, .. } => {
+                                Probe::Https { region, .. } => {
                                     if let Some(delay) = probe_report.delay {
                                         let mut report = self.report.write().await;
-                                        let l = report.region_latency.entry(reg.region_id).or_insert(delay);
+                                        let l = report.region_latency.entry(region.region_id).or_insert(delay);
                                         if *l >= delay {
                                             *l = delay;
                                         }
@@ -929,7 +929,7 @@ async fn run_probe(
             if let Some(ref pc4) = pc4 {
                 let n = pc4.send_to(&req, addr).await;
                 inc!(NetcheckMetrics::StunPacketsSentIpv4);
-                debug!(%addr, send_res=?n, "sending probe IPV4");
+                debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
@@ -946,7 +946,7 @@ async fn run_probe(
             if let Some(ref pc6) = pc6 {
                 let n = pc6.send_to(&req, addr).await;
                 inc!(NetcheckMetrics::StunPacketsSentIpv6);
-                debug!(%addr, snd_res=?n, "sending probe IPV6");
+                debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
@@ -959,19 +959,19 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Https { reg, .. } => {
-            debug!("sending probe HTTPS (icmp: {})", pinger.is_some());
+        Probe::Https { region, .. } => {
+            debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
 
             let res = if let Some(ref pinger) = pinger {
                 tokio::join!(
                     time::timeout(
                         ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(resolver, &reg, pinger).map(Some)
+                        measure_icmp_latency(resolver, &region, pinger).map(Some)
                     ),
-                    measure_https_latency(&reg)
+                    measure_https_latency(&region)
                 )
             } else {
-                (Ok(None), measure_https_latency(&reg).await)
+                (Ok(None), measure_https_latency(&region).await)
             };
             if let Ok(Some(icmp_res)) = res.0 {
                 match icmp_res {
@@ -1801,23 +1801,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_google_stun() -> Result<()> {
+    async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = setup_logging();
 
         let mut client = Client::new(None)
             .await
             .context("failed to create netcheck client")?;
-        let stun_port = 19302;
-        let host_name = "stun.l.google.com".into();
-        let derp_port = 0;
-        let mut dm = DerpMap::default_from_node(
-            host_name,
-            stun_port,
-            derp_port,
-            UseIpv4::None,
-            UseIpv6::None,
+
+        let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
+
+        let mut dm = DerpMap::default();
+        dm.regions.insert(
+            1,
+            DerpRegion {
+                region_id: 1,
+                nodes: stun_servers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
+                        name: format!("default-{}", i),
+                        region_id: 1,
+                        host_name: host_name.into(),
+                        stun_only: true,
+                        stun_port,
+                        ipv4: UseIpv4::None,
+                        ipv6: UseIpv6::None,
+                        derp_port,
+                        stun_test_ip: None,
+                    })
+                    .collect(),
+                avoid: false,
+                region_code: "default".into(),
+            },
         );
-        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
         dbg!(&dm);
 
         let r = client

@@ -16,6 +16,7 @@ jobs:
     name: Build and test (Nix)
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
@@ -62,6 +63,7 @@ jobs:
     name: Build and test (Windows)
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         name: [windows-latest]
         rust: [nightly, stable]
@@ -248,7 +250,7 @@ jobs:
           components: clippy
 
     - name: clippy check
-      run: cargo clippy --message-format=json --all-features --all-targets
+      run: cargo clippy --all-features --all-targets
 
   msrv:
     name: Minimal Supported Rust Version
@@ -261,7 +263,7 @@ jobs:
 
     - name: Check MSRV all features
       run: |
-        cargo +$MSRV check --workspace --all-targets --no-default-features
+        cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
     name: cargo deny
