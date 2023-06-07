@@ -220,6 +220,7 @@ impl Client {
     /// There is an implicit queue here which may drop packets if the actor does not keep up
     /// consuming them.
     pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
+        trace!(%src, "client forwarding stun packet");
         if let Err(mpsc::error::TrySendError::Full(_)) =
             self.addr.try_send(ActorMessage::StunPacket {
                 payload,
@@ -1711,6 +1712,7 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &ActorAddr
         .recv_from(buf)
         .await
         .context("Error reading from stun socket")?;
+    trace!(%from_addr, %count, "UDP packet received");
     let payload = &buf[..count];
     from_addr.set_ip(to_canonical(from_addr.ip()));
     let msg = ActorMessage::StunPacket {
