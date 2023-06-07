@@ -2479,7 +2479,6 @@ mod tests {
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
-    use tracing_futures::WithSubscriber;
 
     use super::*;
     use crate::{
@@ -2488,7 +2487,7 @@ mod tests {
             hostinfo::Hostinfo,
             stun,
         },
-        test_utils::setup_logging,
+        test_utils::{setup_logging, with_logging},
         tls,
     };
 
@@ -2853,9 +2852,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        async move {
-            let _guard = setup_logging();
-
+        with_logging(async move {
             let devices = Devices {
                 stun_ip: "127.0.0.1".parse()?,
             };
@@ -3022,7 +3019,7 @@ mod tests {
             cleanup();
             cleanup_mesh();
             Ok(())
-        }.with_subscriber(crate::test_utils::testing_subscriber()).await
+        }).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
