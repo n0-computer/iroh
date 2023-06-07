@@ -40,7 +40,7 @@ jobs:
       
     - name: tests
       run: |
-        for num in {1..100}
+        for num in {1..30}
         do
-          cargo test hp::netcheck::tests::test_iroh_computer_stun
+          cargo test
         done
