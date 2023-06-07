@@ -15,6 +15,10 @@ use tracing_subscriber::EnvFilter;
 /// much consider if your test is too large (or write a version that allows filtering...).
 #[must_use = "The tracing guard must only be dropped at the end of the test"]
 pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
+    testing_subscriber().set_default()
+}
+
+pub(crate) fn testing_subscriber() -> impl tracing::Subscriber {
     let var = std::env::var_os("RUST_LOG");
     let trace_log_layer = match var {
         Some(_) => None,
@@ -34,7 +38,6 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
     tracing_subscriber::registry()
         .with(trace_log_layer)
         .with(env_log_layer)
-        .set_default()
 }
 
 /// A tracing writer that interacts well with test output capture.
