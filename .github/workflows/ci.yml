@@ -39,4 +39,8 @@ jobs:
         toolchain: ${{ matrix.rust }}
       
     - name: tests
-      run: cargo test hp::netcheck::tests::test_iroh_computer_stun
+      run: |
+        for num in {1..100}
+        do
+          cargo test hp::netcheck::tests::test_iroh_computer_stun
+        done
