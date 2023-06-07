@@ -52,8 +52,7 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
 /// logging as [`setup_logging`] does but in a way which will work for both single and
 /// multi-threaded tokio runtimes.
 pub(crate) async fn with_logging<F: Future>(f: F) -> F::Output {
-    let subscriber = testing_subscriber();
-    f.with_subscriber(subscriber).await
+    f.with_subscriber(testing_subscriber()).await
 }
 
 /// Returns the a [`tracing::Subscriber`] configured for our tests.
