@@ -481,11 +481,12 @@ const PROGRESS_STYLE: &str =
 #[cfg(feature = "metrics")]
 fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
+    rt: &tokio::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     init_metrics();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
-        return Some(tokio::spawn(async move {
+        return Some(rt.spawn(async move {
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
@@ -510,11 +511,11 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
+    let rt = tokio::runtime::Handle::current();
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
         .init();
-
     let cli = Cli::parse();
 
     let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
@@ -530,7 +531,7 @@ async fn main_impl() -> Result<()> {
     )?;
 
     #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr);
+    let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
 
     let r = match cli.command {
         Commands::Get {
@@ -605,6 +606,7 @@ async fn main_impl() -> Result<()> {
                 cli.keylog,
                 rpc_port.into(),
                 config.derp_map(),
+                rt,
             )
             .await?;
             let controller = provider.controller();
@@ -775,6 +777,7 @@ async fn provide(
     keylog: bool,
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
+    rt: tokio::runtime::Handle,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
@@ -782,7 +785,7 @@ async fn provide(
     if let Some(dm) = dm {
         builder = builder.derp_map(dm);
     }
-    let builder = builder.bind_addr(addr);
+    let builder = builder.bind_addr(addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
