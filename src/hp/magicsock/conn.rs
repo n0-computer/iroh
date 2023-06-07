@@ -2488,7 +2488,7 @@ mod tests {
             hostinfo::Hostinfo,
             stun,
         },
-        test_utils::{setup_logging, with_logging},
+        test_utils::setup_logging,
         tls,
     };
 
