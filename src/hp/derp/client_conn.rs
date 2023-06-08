@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::trace;
+use tracing::{trace, Instrument};
 
 use crate::hp::{
     disco::looks_like_disco_wrapper,
@@ -156,26 +156,29 @@ impl ClientConnManager {
         let io_done = done.clone();
         let io_client_id = client_id.clone();
         let io_server_channel = server_channel.clone();
-        let io_handle = tokio::task::spawn(async move {
-            let key = io_client_id.0;
-            let conn_num = io_client_id.1;
-            let res = conn_io.run(io_done).await;
-            let _ = io_server_channel
-                .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
-                .await;
-            match res {
-                Err(e) => {
-                    tracing::warn!(
-                        "connection manager for {key:?} {conn_num}: writer closed in error {e}"
-                    );
-                    Err(e)
-                }
-                Ok(_) => {
-                    tracing::warn!("connection manager for {key:?} {conn_num}: writer closed");
-                    Ok(())
+        let io_handle = tokio::task::spawn(
+            async move {
+                let key = io_client_id.0;
+                let conn_num = io_client_id.1;
+                let res = conn_io.run(io_done).await;
+                let _ = io_server_channel
+                    .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
+                    .await;
+                match res {
+                    Err(e) => {
+                        tracing::warn!(
+                            "connection manager for {key:?} {conn_num}: writer closed in error {e}"
+                        );
+                        Err(e)
+                    }
+                    Ok(_) => {
+                        tracing::warn!("connection manager for {key:?} {conn_num}: writer closed");
+                        Ok(())
+                    }
                 }
             }
-        });
+            .instrument(tracing::debug_span!("conn_io")),
+        );
 
         ClientConnManager {
             conn_num,

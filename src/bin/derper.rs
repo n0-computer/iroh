@@ -322,7 +322,8 @@ async fn main() -> Result<()> {
     };
 
     let tls_config = if serve_tls {
-        let contact = cli.tls_contact;
+        // checked earlier
+        let contact = cli.tls_contact.unwrap();
         let is_production = cli.prod_tls;
         let (config, acceptor) = cli
             .cert_mode

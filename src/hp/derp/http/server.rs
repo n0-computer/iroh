@@ -23,7 +23,7 @@ use tokio::{
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, debug_span, error, info, warn, Instrument};
 
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::{
@@ -72,7 +72,7 @@ pub struct Server {
     addr: SocketAddr,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
-    cancel: CancellationToken,
+    cancel_server_loop: CancellationToken,
 }
 
 impl Server {
@@ -81,8 +81,10 @@ impl Server {
         if let Some(server) = self.server {
             server.close().await;
         }
-        self.cancel.cancel();
-        self.http_server_task.abort();
+        self.cancel_server_loop.cancel();
+        if let Err(e) = self.http_server_task.await {
+            warn!("Error shutting down server: {e:?}");
+        }
     }
 
     /// Get the local address of this server.
@@ -92,7 +94,7 @@ impl Server {
 }
 
 /// Configuration to use for the TLS connection
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TlsConfig {
     /// The server config
     pub config: Arc<rustls::ServerConfig>,
@@ -273,110 +275,54 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    async fn serve(self) -> Result<Server> {
-        match &self.tls_config {
-            Some(_) => self.https_serve().await,
-            None => self.http_serve().await,
-        }
-    }
-
-    /// Binds a TCP listener on `addr` and handles content using HTTP.
-    /// Returns the local `SocketAddr` on which the server is listening.
-    async fn http_serve(self) -> Result<Server> {
-        let http_listener = TcpListener::bind(&self.addr)
-            .await
-            .context("failed to bind https")?;
-        let addr = http_listener.local_addr()?;
-        let cancel = CancellationToken::new();
-        info!("[HTTP] derp: serving on {addr}");
-        let c = cancel.clone();
-        let task = tokio::task::spawn(async move {
-            debug!("about to loop");
-            loop {
-                match http_listener.accept().await {
-                    Ok((stream, peer_addr)) => {
-                        debug!("[HTTP] derp: Connection opened from {}", peer_addr);
-                        let service = self.service.clone();
-                        let cancel = c.clone();
-                        tokio::task::spawn(async move {
-                            tokio::select! {
-                                biased;
-                                _ = cancel.cancelled() => {
-                                    warn!("[HTTP] derp: shutting down connection...");
-                                }
-                                res = service
-                                .serve_connection(MaybeTlsStreamServer::Plain(stream))
-                            => {
-                                if let Err(err) = res {error!("[HTTP] derp: failed to serve connection: {:?}", err);
-                                }
-                            }
-                            }
-                        });
-                    }
-                    Err(err) => {
-                        error!("[HTTP] derp: failed to accept connection: {:#?}", err);
-                    }
-                }
-                error!("DONE");
-            }
-        });
-        Ok(Server {
-            addr,
-            server: self.server,
-            http_server_task: task,
-            cancel,
-        })
-    }
-
     // Binds a TCP listener on `addr` and handles content using HTTPS.
     // Returns the local `SocketAddr` on which the server is listening.
-    async fn https_serve(self) -> Result<Server> {
-        ensure!(self.tls_config.is_some());
-        let TlsConfig {
-            config, acceptor, ..
-        } = self.tls_config.unwrap();
-        let https_listener = TcpListener::bind(&self.addr)
+    async fn serve(self) -> Result<Server> {
+        let listener = TcpListener::bind(&self.addr)
             .await
             .context("failed to bind https")?;
-        let cancel = CancellationToken::new();
-        let addr = https_listener.local_addr()?;
-        info!("[HTTPS] derp: serving on {addr}");
-        let c = cancel.clone();
+        // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
+        let cancel_server_loop = CancellationToken::new();
+        let addr = listener.local_addr()?;
+        let http_str = self.tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
+        info!("[{http_str}] derp: serving on {addr}");
+        let cancel = cancel_server_loop.clone();
         let task = tokio::task::spawn(async move {
+            // create a join set to track all our connection tasks
+            let mut set = tokio::task::JoinSet::new();
             loop {
-                match https_listener.accept().await {
-                    Ok((stream, peer_addr)) => {
-                        debug!("[HTTPS] derp: Connection opened from {}", peer_addr);
-                        let tls_acceptor = acceptor.clone();
-                        let tls_config = config.clone();
-                        let service = self.service.clone();
-                        let cancel = c.clone();
-                        tokio::task::spawn(async move {
-                            tokio::select! {
-                                    biased;
-                                    _ = cancel.cancelled() => {
-                                        warn!("[HTTPS] derp: shutting down connection...");
-                                    }
-                                    res = service.tls_serve_connection(stream, tls_acceptor, tls_config)
-                                => {
-                                    if let Err(err) = res {
-                                    error!("[HTTPS] derp: failed to serve connection: {:?}", err);
-                                    }
-                                }
-                            }
-                        });
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        break;
                     }
-                    Err(err) => {
-                        error!("[HTTPS] derp: failed to accept connection: {:#?}", err);
+                    res = listener.accept() => match res {
+                        Ok((stream, peer_addr)) => {
+                            debug!("[{http_str}] derp: Connection opened from {}", peer_addr);
+                            let tls_config = self.tls_config.clone();
+                            let service = self.service.clone();
+                            // spawn a task to handle the connection
+                            set.spawn(async move {
+                                if let Err(e) = service
+                                    .handle_connection(stream, tls_config)
+                                    .await
+                                {
+                                    error!("[{http_str}] derp: failed to handle connection: {:?}", e);
+                                }
+                            }.instrument(debug_span!("handle_connection")));
+                        }
+                        Err(err) => {
+                            error!("[{http_str}] derp: failed to accept connection: {:#?}", err);
+                        }
                     }
                 }
             }
-        });
+            set.shutdown().await;
+        }.instrument(debug_span!("serve")));
         Ok(Server {
             addr,
             server: self.server,
             http_server_task: task,
-            cancel,
+            cancel_server_loop,
         })
     }
 }
@@ -556,20 +502,33 @@ impl DerpService {
         }))
     }
 
-    /// Serve the tls connection
-    async fn tls_serve_connection(
+    /// Handle the incoming connection.
+    ///
+    /// If a `tls_config` is given, will serve the connection using HTTPS.
+    async fn handle_connection(
         self,
         stream: TcpStream,
-        acceptor: TlsAcceptor,
-        rustls_config: Arc<rustls::ServerConfig>,
+        tls_config: Option<TlsConfig>,
     ) -> Result<()> {
+        match tls_config {
+            Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
+            None => {
+                self.serve_connection(MaybeTlsStreamServer::Plain(stream))
+                    .await
+            }
+        }
+    }
+
+    /// Serve the tls connection
+    async fn tls_serve_connection(self, stream: TcpStream, tls_config: TlsConfig) -> Result<()> {
+        let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
             TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
                 None => {
                     info!("received TLS-ALPN-01 validation request");
                 }
                 Some(start_handshake) => {
-                    let tls_stream = start_handshake.into_stream(rustls_config).await?;
+                    let tls_stream = start_handshake.into_stream(config).await?;
                     self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
                         .await?;
                 }

@@ -370,7 +370,6 @@ impl DerpActor {
         };
 
         // Make sure we can establish a connection.
-        debug!(target:"derp", "connect derp connect");
         if let Err(err) = dc.connect().await {
             // TODO: what to do?
             warn!("failed to connect to derp server: {:?}", err);
