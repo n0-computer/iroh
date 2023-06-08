@@ -139,30 +139,30 @@ pub mod tpc {
     }
 
     impl Handle {
-        pub async fn spawn<F, Fut, T>(&self, f: F)
+        pub async fn spawn<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future<Output = T> + 'static,
+            Fut: Future + 'static,
         {
             let f = || f().map(|_| ()).boxed_local();
             self.sender.send_async(Task(Box::new(f))).await.unwrap();
         }
 
-        pub fn spawn_sync<F, Fut, T>(&self, f: F)
+        pub fn spawn_sync<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future<Output = T> + 'static,
-            T: 'static,
+            Fut: Future + 'static,
+            Fut::Output: 'static,
         {
             let f = || f().map(|_| ()).boxed_local();
             self.sender.send(Task(Box::new(f))).unwrap();
         }
 
-        pub async fn run<F, Fut, T>(&self, f: F) -> T
+        pub async fn run<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future<Output = T> + 'static,
-            T: Send + 'static,
+            Fut: Future + 'static,
+            Fut::Output: Send + 'static,
         {
             let (tx, rx) = futures::channel::oneshot::channel();
             let f = || {
@@ -175,11 +175,11 @@ pub mod tpc {
             rx.await.unwrap()
         }
 
-        pub fn run_sync<F, Fut, T>(&self, f: F) -> T
+        pub fn run_sync<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future<Output = T> + 'static,
-            T: Send + 'static,
+            Fut: Future + 'static,
+            Fut::Output: Send + 'static,
         {
             let (tx, rx) = std::sync::mpsc::channel();
             let f = move || {

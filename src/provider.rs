@@ -864,7 +864,7 @@ async fn handle_connection<C: CustomGetHandler>(
             let custom_get_handler = custom_get_handler.clone();
             rt.spawn_tpc(|| {
                 async move {
-                    let _x = NonSend::default();
+                    let _x = NonSend::new();
                     if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }

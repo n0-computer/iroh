@@ -322,9 +322,17 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
 }
 
 /// A non-sendable marker type
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NonSend {
     _marker: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl NonSend {
+    pub const fn new() -> Self {
+        Self {
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 #[cfg(test)]
