@@ -1682,8 +1682,7 @@ async fn bind_local_stun_socket(
         tokio::spawn(
             async move {
                 debug!("udp stun socket listener started");
-                // TODO: Can we do better for buffers here?  Probably doesn't matter
-                // much.
+                // TODO: Can we do better for buffers here?  Probably doesn't matter much.
                 let mut buf = vec![0u8; 64 << 10];
                 loop {
                     tokio::select! {
@@ -1800,65 +1799,74 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = setup_logging();
 
-        let mut client = Client::new(None)
-            .await
-            .context("failed to create netcheck client")?;
+        let mut reports = Vec::new();
+        for _ in 0..20 {
+            let mut client = Client::new(None)
+                .await
+                .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
+            let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
 
-        let mut dm = DerpMap::default();
-        dm.regions.insert(
-            1,
-            DerpRegion {
-                region_id: 1,
-                nodes: stun_servers
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
-                        name: format!("default-{}", i),
-                        region_id: 1,
-                        host_name: host_name.into(),
-                        stun_only: true,
-                        stun_port,
-                        ipv4: UseIpv4::None,
-                        ipv6: UseIpv6::None,
-                        derp_port,
-                        stun_test_ip: None,
-                    })
-                    .collect(),
-                avoid: false,
-                region_code: "default".into(),
-            },
-        );
-        dbg!(&dm);
+            let mut dm = DerpMap::default();
+            dm.regions.insert(
+                1,
+                DerpRegion {
+                    region_id: 1,
+                    nodes: stun_servers
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
+                            name: format!("default-{}", i),
+                            region_id: 1,
+                            host_name: host_name.into(),
+                            stun_only: true,
+                            stun_port,
+                            ipv4: UseIpv4::None,
+                            ipv6: UseIpv6::None,
+                            derp_port,
+                            stun_test_ip: None,
+                        })
+                        .collect(),
+                    avoid: false,
+                    region_code: "default".into(),
+                },
+            );
+            dbg!(&dm);
 
-        let r = client
-            .get_report(dm, None, None)
-            .await
-            .context("failed to get netcheck report")?;
-        dbg!(&r);
-        assert!(r.udp, "want UDP");
-        assert_eq!(
-            r.region_latency.len(),
-            1,
-            "expected 1 key in DERPLatency; got {}",
-            r.region_latency.len()
-        );
-        assert!(
-            r.region_latency.get(&1).is_some(),
-            "expected key 1 in DERPLatency; got {:?}",
-            r.region_latency
-        );
-        assert!(r.global_v4.is_some(), "expected globalV4 set");
-        assert_eq!(
-            r.preferred_derp, 1,
-            "preferred_derp = {}; want 1",
-            r.preferred_derp
-        );
+            let r = client
+                .get_report(dm, None, None)
+                .await
+                .context("failed to get netcheck report")?;
+            reports.push(r);
+        }
+
+        dbg!(&reports);
+
+        for r in reports {
+            dbg!(&r);
+            assert!(r.udp, "want UDP");
+            assert_eq!(
+                r.region_latency.len(),
+                1,
+                "expected 1 key in DERPLatency; got {}",
+                r.region_latency.len()
+            );
+            assert!(
+                r.region_latency.get(&1).is_some(),
+                "expected key 1 in DERPLatency; got {:?}",
+                r.region_latency
+            );
+            assert!(r.global_v4.is_some(), "expected globalV4 set");
+            assert_eq!(
+                r.preferred_derp, 1,
+                "preferred_derp = {}; want 1",
+                r.preferred_derp
+            );
+        }
 
         Ok(())
     }
