@@ -1426,7 +1426,7 @@ impl Actor {
 
         let last = self.reports.last.clone();
         let plan = ProbePlan::new(dm, &if_state, last.as_deref());
-
+        dbg!(&plan);
         Ok(ReportState {
             incremental: last.is_some(),
             pc4,
@@ -1799,7 +1799,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = setup_logging();
 
