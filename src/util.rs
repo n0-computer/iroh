@@ -321,6 +321,12 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
     path
 }
 
+/// A non-sendable marker type
+#[derive(Debug, Default)]
+pub struct NonSend {
+    _marker: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

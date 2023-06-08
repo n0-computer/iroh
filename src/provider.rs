@@ -92,7 +92,7 @@ where
     keylog: bool,
     custom_get_handler: C,
     derp_map: Option<DerpMap>,
-    rt: Option<tokio::runtime::Handle>,
+    rt: Option<crate::runtime::Handle>,
 }
 
 /// A custom get request handler that allows the user to make up a get request
@@ -268,7 +268,7 @@ where
     /// Sets the tokio runtime to use.
     ///
     /// If not set, the current runtime will be picked up.
-    pub fn runtime(mut self, rt: tokio::runtime::Handle) -> Self {
+    pub fn runtime(mut self, rt: crate::runtime::Handle) -> Self {
         self.rt = Some(rt);
         self
     }
@@ -280,7 +280,7 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Provider> {
         trace!("spawning provider");
-        let rt = self.rt.unwrap_or_else(tokio::runtime::Handle::current);
+        let rt = self.rt.unwrap();
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -382,7 +382,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
-        rt: tokio::runtime::Handle,
+        rt: crate::runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -463,7 +463,7 @@ struct ProviderInner {
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
-    rt: tokio::runtime::Handle,
+    rt: crate::runtime::Handle,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -638,7 +638,7 @@ struct RpcHandler {
 }
 
 impl RpcHandler {
-    fn rt(&self) -> tokio::runtime::Handle {
+    fn rt(&self) -> crate::runtime::Handle {
         self.inner.rt.clone()
     }
 
@@ -796,7 +796,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
     handler: &RpcHandler,
-    rt: &tokio::runtime::Handle,
+    rt: &crate::runtime::Handle,
 ) {
     let handler = handler.clone();
     rt.spawn(async move {
@@ -832,7 +832,7 @@ async fn handle_connection<C: CustomGetHandler>(
     db: Database,
     events: broadcast::Sender<Event>,
     custom_get_handler: C,
-    rt: tokio::runtime::Handle,
+    rt: crate::runtime::Handle,
 ) {
     // let _x = NonSend::default();
     let remote_addr = connecting.remote_address();
@@ -1274,6 +1274,15 @@ mod tests {
 
     use super::*;
 
+    /// Pick up the tokio runtime from the thread local and add a
+    /// thread per core runtime.
+    fn test_runtime() -> crate::runtime::Runtime {
+        crate::runtime::Runtime::new(
+            tokio::runtime::Handle::current(),
+            crate::runtime::tpc::Runtime::new("test", 1),
+        )
+    }
+
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
         proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
     }
@@ -1398,10 +1407,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
+        let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(rt.handle().clone())
             .spawn()
             .await
             .unwrap();

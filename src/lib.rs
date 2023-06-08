@@ -15,6 +15,7 @@ pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
+pub mod runtime;
 pub mod tokio_util;
 
 #[allow(missing_docs)]
@@ -66,6 +67,15 @@ mod tests {
     };
 
     use super::*;
+
+    /// Pick up the tokio runtime from the thread local and add a
+    /// thread per core runtime.
+    fn test_runtime() -> crate::runtime::Runtime {
+        crate::runtime::Runtime::new(
+            tokio::runtime::Handle::current(),
+            crate::runtime::tpc::Runtime::new("test", 1),
+        )
+    }
 
     #[tokio::test]
     async fn basics() -> Result<()> {
@@ -157,7 +167,10 @@ mod tests {
         let expect_name = filename.to_string();
 
         let (db, hash) = provider::create_collection(vec![provider::DataSource::new(path)]).await?;
+
+        let rt = test_runtime();
         let provider = provider::Provider::builder(db)
+            .runtime(rt.handle().clone())
             .bind_addr(addr)
             .spawn()
             .await?;
@@ -254,7 +267,9 @@ mod tests {
         let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
+        let rt = test_runtime();
         let provider = provider::Provider::builder(db)
+            .runtime(rt.handle().clone())
             .bind_addr(addr)
             .spawn()
             .await?;
@@ -353,6 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_close() {
+        let rt = test_runtime();
         // Prepare a Provider transferring a file.
         setup_logging();
         let dir = testdir!();
@@ -361,6 +377,7 @@ mod tests {
         let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
+            .runtime(rt.handle().clone())
             .spawn()
             .await
             .unwrap();
@@ -416,6 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blob_reader_partial() -> Result<()> {
+        let rt = test_runtime();
         // Prepare a Provider transferring a file.
         let dir = testdir!();
         let src0 = dir.join("src0");
@@ -431,6 +449,7 @@ mod tests {
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
+            .runtime(rt.handle().clone())
             .spawn()
             .await?;
         let provider_addr = provider.local_endpoint_addresses().await?;
@@ -465,11 +484,13 @@ mod tests {
     #[tokio::test]
     async fn test_ipv6() {
         setup_logging();
+        let rt = test_runtime();
 
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
+            .runtime(rt.handle().clone())
             .spawn()
             .await
         {
@@ -503,10 +524,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_ticket() {
+        let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(rt.handle().clone())
             .spawn()
             .await
             .unwrap();
@@ -575,10 +598,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_fsm() {
+        let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
+            .runtime(rt.handle().clone())
             .spawn()
             .await
         {
@@ -663,9 +688,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_request_blob() {
+        let rt = test_runtime();
         let db = Database::default();
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
+            .runtime(rt.handle().clone())
             .custom_get_handler(BlobCustomHandler)
             .spawn()
             .await
@@ -699,9 +726,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_request_collection() {
+        let rt = test_runtime();
         let db = Database::default();
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
+            .runtime(rt.handle().clone())
             .custom_get_handler(CollectionCustomHandler)
             .spawn()
             .await
