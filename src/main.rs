@@ -500,6 +500,8 @@ fn init_metrics_collection(
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("main-runtime")
+        .worker_threads(2)
         .enable_all()
         .build()?;
     rt.block_on(main_impl())?;

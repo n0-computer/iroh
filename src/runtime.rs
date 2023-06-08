@@ -12,22 +12,24 @@ use std::sync::Arc;
 /// The runtime has a shutdown method that will wait for some time all tasks to finish.
 pub mod tpc {
     use futures::{future::LocalBoxFuture, Future, FutureExt};
-    use std::{fmt, time::Duration};
+    use std::{
+        fmt,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     /// A wrapper to manage multiple tokio runtimes in a thread per core fashion.
     pub struct Runtime {
         name: String,
         /// The handle to spawn tasks on the runtime
         handle: Handle,
-        /// The sender to shutdown the runtimes
-        shutdown_sender: tokio::sync::broadcast::Sender<()>,
         /// The handles to the threads
         handles: Vec<std::thread::JoinHandle<()>>,
     }
 
     impl fmt::Debug for Runtime {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ThreadPerCoreRuntime")
+            f.debug_struct("Runtime")
                 .field("name", &self.name)
                 .field("threads", &self.handles.len())
                 .finish_non_exhaustive()
@@ -37,12 +39,12 @@ pub mod tpc {
     /// The handle to spawn tasks on the runtime
     #[derive(Clone)]
     pub struct Handle {
-        sender: flume::Sender<Task>,
+        sender: Arc<Mutex<Option<flume::Sender<Task>>>>,
     }
 
     impl fmt::Debug for Handle {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ThreadPerCoreRuntimeHandle").finish()
+            f.debug_struct("Handle").finish()
         }
     }
 
@@ -52,10 +54,8 @@ pub mod tpc {
         pub fn new(name: &str, n: usize) -> Self {
             let name = name.to_string();
             let (task_sender, task_receiver) = flume::bounded::<Task>(1);
-            let (shutdown_sender, _) = tokio::sync::broadcast::channel::<()>(1);
             let handles = (0..n)
                 .map(|i| {
-                    let mut shutdown_receiver = shutdown_sender.subscribe();
                     let task_receiver = task_receiver.clone();
                     // name for the non blocking thread that we spawn
                     let main_name = format!("{}-{}", name, i);
@@ -72,15 +72,8 @@ pub mod tpc {
                                 .build()
                                 .expect("failed to build tokio runtime");
                             rt.block_on(local.run_until(async move {
-                                loop {
-                                    tokio::select! {
-                                        Ok(Task(f)) = task_receiver.recv_async() => {
-                                            tokio::task::spawn_local(f());
-                                        }
-                                        Ok(()) = shutdown_receiver.recv() => {
-                                            break;
-                                        }
-                                    }
+                                while let Ok(Task(f)) = task_receiver.recv_async().await {
+                                    tokio::task::spawn_local(f());
                                 }
                             }));
                             tracing::trace!("runtime {} dropped", main_name);
@@ -90,10 +83,9 @@ pub mod tpc {
                 .collect::<Vec<_>>();
             Runtime {
                 handle: Handle {
-                    sender: task_sender,
+                    sender: Arc::new(Mutex::new(Some(task_sender))),
                 },
                 name,
-                shutdown_sender,
                 handles,
             }
         }
@@ -106,8 +98,8 @@ pub mod tpc {
         /// the threads and return.
         pub fn shutdown_timeout(mut self, duration: Duration) {
             tracing::trace!("shutting down runtime with timeout");
-            // send the shutdown signal
-            self.shutdown_sender.send(()).ok();
+            // send the shutdown signal by dropping the sender
+            self.handle.sender.lock().unwrap().take();
             // wait for all threads to finish
             let start = std::time::Instant::now();
             while start.elapsed() < duration {
@@ -129,8 +121,8 @@ pub mod tpc {
     /// for it to do so.
     impl Drop for Runtime {
         fn drop(&mut self) {
-            tracing::trace!("dropping runtime");
-            self.shutdown_sender.send(()).ok();
+            tracing::trace!("dropping sender");
+            self.handle.sender.lock().unwrap().take();
             tracing::trace!("waiting for runtimes to terminate");
             for handle in self.handles.drain(..) {
                 handle.join().ok();
@@ -139,13 +131,22 @@ pub mod tpc {
     }
 
     impl Handle {
+        fn sender(&self) -> flume::Sender<Task> {
+            let inner = self.sender.lock().unwrap();
+            let sender = inner.as_ref().unwrap().clone();
+            sender
+        }
+
         pub async fn spawn<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
             Fut: Future + 'static,
         {
             let f = || f().map(|_| ()).boxed_local();
-            self.sender.send_async(Task(Box::new(f))).await.unwrap();
+            self.sender()
+                .into_send_async(Task(Box::new(f)))
+                .await
+                .unwrap();
         }
 
         pub fn spawn_sync<F, Fut>(&self, f: F)
@@ -155,7 +156,7 @@ pub mod tpc {
             Fut::Output: 'static,
         {
             let f = || f().map(|_| ()).boxed_local();
-            self.sender.send(Task(Box::new(f))).unwrap();
+            self.sender().send(Task(Box::new(f))).unwrap();
         }
 
         pub async fn run<F, Fut>(&self, f: F) -> Fut::Output
@@ -171,7 +172,10 @@ pub mod tpc {
                 })
                 .boxed_local()
             };
-            self.sender.send_async(Task(Box::new(f))).await.unwrap();
+            self.sender()
+                .into_send_async(Task(Box::new(f)))
+                .await
+                .unwrap();
             rx.await.unwrap()
         }
 
@@ -190,7 +194,7 @@ pub mod tpc {
                 .boxed_local()
             };
             // wait for completion (blocking)
-            self.sender.send(Task(Box::new(f))).unwrap();
+            self.sender().send(Task(Box::new(f))).unwrap();
             rx.recv().unwrap()
         }
     }
