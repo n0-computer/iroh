@@ -692,32 +692,45 @@ async fn serve_stun(host: IpAddr, port: u16) {
 }
 
 async fn server_stun_listener(sock: UdpSocket) {
+    let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
     loop {
         match sock.recv_from(&mut buffer).await {
             Ok((n, src_addr)) => {
-                let pkt = &buffer[..n];
-                if !stun::is(pkt) {
-                    debug!(%src_addr, "STUN: ignoring non stun packet");
-                    continue;
-                }
-                match stun::parse_binding_request(pkt) {
-                    Ok(txid) => {
-                        debug!(%src_addr, %txid, "STUN: received binding request");
-                        let res = stun::response(txid, src_addr);
-                        if let Err(err) = sock.send_to(&res, src_addr).await {
-                            warn!(%src_addr, "STUN: failed to write response: {:?}", err);
+                let pkt = buffer[..n].to_vec();
+                let sock = sock.clone();
+                tokio::task::spawn(async move {
+                    if !stun::is(&pkt) {
+                        debug!(%src_addr, "STUN: ignoring non stun packet");
+                        return;
+                    }
+                    match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
+                        .await
+                        .unwrap()
+                    {
+                        Ok(txid) => {
+                            debug!(%src_addr, %txid, "STUN: received binding request");
+                            let res =
+                                tokio::task::spawn_blocking(move || stun::response(txid, src_addr))
+                                    .await
+                                    .unwrap();
+                            match sock.send_to(&res, src_addr).await {
+                                Ok(len) => {
+                                    debug!(%src_addr, %txid, "STUN: sent {} bytes ({} expected)", len, res.len());
+                                }
+                                Err(err) => {
+                                    warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         }
                     }
-                    Err(err) => {
-                        warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-                        continue;
-                    }
-                }
+                });
             }
             Err(err) => {
                 warn!("STUN: failed to recv: {:?}", err);
-                continue;
             }
         }
     }
