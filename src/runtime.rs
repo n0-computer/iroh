@@ -4,6 +4,12 @@ use std::sync::Arc;
 /// A thread per core runtime.
 ///
 /// This is just a convenient wrapper around multiple tokio current thread runtimes.
+/// It has a similar API to the tokio runtime:
+///
+/// The runtime itself is not cloneable, and will shutdown when dropped.
+/// You can obtain a handle to spawn tasks on the runtime, which is cheaply cloneable.
+///
+/// The runtime has a shutdown method that will wait for some time all tasks to finish.
 pub mod tpc {
     use futures::{future::LocalBoxFuture, Future, FutureExt};
     use std::{fmt, time::Duration};
@@ -300,7 +306,7 @@ impl Runtime {
     pub fn new(rt: tokio::runtime::Handle, tpc: tpc::Runtime) -> Self {
         let handle = Handle {
             inner: Arc::new(HandleInner {
-                rt: rt.clone(),
+                rt,
                 tpc: tpc.handle().clone(),
             }),
         };

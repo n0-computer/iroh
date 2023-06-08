@@ -50,7 +50,7 @@ use crate::rpc_protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::read_as_bytes;
-use crate::util::{canonicalize_path, Hash, Progress};
+use crate::util::{canonicalize_path, Hash, NonSend, Progress};
 use crate::IROH_BLOCK_SIZE;
 
 mod collection;
@@ -268,8 +268,8 @@ where
     /// Sets the tokio runtime to use.
     ///
     /// If not set, the current runtime will be picked up.
-    pub fn runtime(mut self, rt: crate::runtime::Handle) -> Self {
-        self.rt = Some(rt);
+    pub fn runtime(mut self, rt: &crate::runtime::Handle) -> Self {
+        self.rt = Some(rt.clone());
         self
     }
 
@@ -324,7 +324,10 @@ where
 
         trace!("created quinn endpoint");
 
-        let (events_sender, _events_receiver) = broadcast::channel(8);
+        // the size of this channel must be large because the producer can be on
+        // a different thread than the consumer, and can produce a lot of events
+        // in a short time
+        let (events_sender, _events_receiver) = broadcast::channel(256);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
@@ -859,14 +862,16 @@ async fn handle_connection<C: CustomGetHandler>(
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
-            rt.spawn(
+            rt.spawn_tpc(|| {
                 async move {
+                    let _x = NonSend::default();
                     if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }
                 }
-                .instrument(span),
-            );
+                .instrument(span)
+            })
+            .await;
         }
     }
     .instrument(span)
@@ -1412,7 +1417,7 @@ mod tests {
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(rt.handle().clone())
+            .runtime(rt.handle())
             .spawn()
             .await
             .unwrap();

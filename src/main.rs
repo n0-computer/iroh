@@ -787,7 +787,7 @@ async fn provide(
     if let Some(dm) = dm {
         builder = builder.derp_map(dm);
     }
-    let builder = builder.bind_addr(addr).runtime(rt.clone());
+    let builder = builder.bind_addr(addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
