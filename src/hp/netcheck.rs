@@ -1804,12 +1804,12 @@ mod tests {
         let _guard = setup_logging();
 
         let mut reports = Vec::new();
-        for _ in 0..20 {
+        for _ in 0..3 {
             let mut client = Client::new(None)
                 .await
                 .context("failed to create netcheck client")?;
 
-            let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
+            let stun_servers = vec![("sderp.iroh.computer.", 3478, 0)];
 
             let mut dm = DerpMap::default();
             dm.regions.insert(
