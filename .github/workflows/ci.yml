@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         name: [ubuntu-latest]
-        rust: [nightly]
+        rust: [stable]
         include:
           - name: ubuntu-latest
             os: ubuntu-latest
