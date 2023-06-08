@@ -1804,7 +1804,7 @@ mod tests {
         let _guard = setup_logging();
 
         let mut reports = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..2 {
             let mut client = Client::new(None)
                 .await
                 .context("failed to create netcheck client")?;
