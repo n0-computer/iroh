@@ -4,7 +4,7 @@
 
 use std::{
     borrow::Cow,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
@@ -42,7 +42,7 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Server HTTPS listen address.
-    #[clap(long, short, default_value = "0.0.0.0:443")]
+    #[clap(long, short, default_value = "[::]:443")]
     addr: SocketAddr,
     /// The port on which to serve HTTP. The listener is bound to the same IP (if any) as specified in the -a flag.
     #[clap(long, default_value_t = 80)]
@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
     let mut tasks = JoinSet::new();
 
     if cli.dev {
-        cli.addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEV_PORT);
+        cli.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEV_PORT);
         info!(%cli.addr, "Running in dev mode.");
     }
 
