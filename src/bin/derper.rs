@@ -66,9 +66,10 @@ struct Cli {
     /// Default is true. This flag is ignored if we are not using `cert_mode: CertMode::LetsEncrypt`.
     #[clap(long, default_value_t = true)]
     prod_tls: bool,
-    /// The contact email for the tls certificate
-    #[clap(long, default_value = "d@n0.computer")]
-    tls_contact: String,
+    /// The contact email for the tls certificate. Required when running the Derper with TLS
+    /// enabled.
+    #[clap(long)]
+    tls_contact: Option<String>,
     /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.
     #[clap(long)]
     cert_dir: Option<PathBuf>,
@@ -282,6 +283,10 @@ async fn main() -> Result<()> {
     let listen_host = cli.addr.ip();
     let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
 
+    if serve_tls && cli.tls_contact.is_none() {
+        bail!("Must supply an email address for the `tls_contact` flag when running the derper with TLS enabled.");
+    }
+
     let (secret_key, mesh_key) = match cli.run_derp {
         true => {
             let cfg = Config::load(&cli).await?;
@@ -362,7 +367,8 @@ async fn main() -> Result<()> {
         .spawn()
         .await?;
 
-    let http_task = serve_http(cli.addr, cli.http_port).await?;
+    let http_addr = SocketAddr::new(cli.addr.ip(), cli.http_port);
+    let http_task = serve_http(http_addr).await?;
 
     tokio::signal::ctrl_c().await?;
     // Shutdown all tasks
@@ -395,9 +401,8 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
 ];
 
-async fn serve_http(addr: SocketAddr, http_port: u16) -> Result<tokio::task::JoinHandle<()>> {
-    let http_addr = SocketAddr::new(addr.ip(), http_port);
-    let http_listener = TcpListener::bind(&http_addr)
+async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
+    let http_listener = TcpListener::bind(&addr)
         .await
         .context("failed to bind http")?;
     let http_addr = http_listener.local_addr()?;

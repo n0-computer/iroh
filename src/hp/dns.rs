@@ -1,6 +1,6 @@
+use once_cell::sync::Lazy;
 use trust_dns_resolver::TokioAsyncResolver;
 
-use once_cell::sync::Lazy;
 pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> = Lazy::new(|| {
     TokioAsyncResolver::tokio_from_system_conf().expect("unable to create DNS resolver")
 });

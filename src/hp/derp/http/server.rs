@@ -107,6 +107,7 @@ pub struct TlsConfig {
 /// If no `SecretKey` is provided, it is assumed that you will provide a `derp_override` function
 /// that handles requests to the derp endpoint. Not providing a `derp_override` in this case will
 /// result in an error on `spawn`.
+#[derive(derive_more::Debug)]
 pub struct ServerBuilder {
     /// The SecretKey for this Server.
     ///
@@ -129,12 +130,14 @@ pub struct ServerBuilder {
     /// Defaults to `GET` request at "/derp".
     derp_endpoint: &'static str,
     /// Use a custom derp response handler. Typically used when you want to disable any derp connections.
+    #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
     derp_override: Option<HyperFn>,
     /// Headers to use for HTTP or HTTPS messages.
     headers: Headers,
     /// 404 not found response
     ///
     /// When `None`, a default is provided.
+    #[debug("{}", not_found_fn.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
     not_found_fn: Option<HyperFn>,
 }
 
@@ -258,26 +261,6 @@ impl ServerBuilder {
         };
 
         server_state.serve().await
-    }
-}
-
-impl std::fmt::Debug for ServerBuilder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let hyper_fn =
-            "Some(Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static)";
-        let derp_override = if let Some(_) = self.derp_override {
-            hyper_fn
-        } else {
-            "None"
-        };
-
-        let not_found_fn = if let Some(_) = self.not_found_fn {
-            hyper_fn
-        } else {
-            "None"
-        };
-
-        write!(f, "ServerBuilder {{ secret_key: {:?}, addr: {:?}, mesh_key: {:?}, tls_config: {:?}, handlers: {:?}, derp_endpoint: {:?}, derp_override: {derp_override}, headers: {:?}, not_found_fn: {not_found_fn}  }}", self.secret_key, self.addr, self.mesh_key, self.tls_config, self.handlers, self.derp_endpoint, self.headers)
     }
 }
 
@@ -503,43 +486,37 @@ impl hyper::service::Service<Request<Body>> for DerpService {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// The hyper Service that
 struct DerpService(Arc<Inner>);
 
 type HyperFn = Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>;
 type Headers = Vec<(&'static str, &'static str)>;
 
+#[derive(derive_more::Debug)]
 struct Inner {
     pub derp_handler: DerpHandler,
     pub derp_endpoint: &'static str,
+    #[debug("Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperFn,
     pub handlers: Handlers,
     pub headers: Headers,
 }
 
 /// Action to take when a connection is made at the derp endpoint.`
+#[derive(derive_more::Debug)]
 enum DerpHandler {
     /// Pass the connection to a ClientConnHandler to get added to the derp server. The default.
     ConnHandler(ClientConnHandler<crate::hp::derp::http::Client>),
     /// Return some static response. Used when the http(s) should be running, but the derp portion
     /// of the server is disabled.
-    Override(HyperFn),
-}
-
-impl std::fmt::Debug for DerpHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DerpHandler::ConnHandler(_) => write!(
-                f,
-                "DerpHandler::ConnHandler(ClientConnHandler<HttpDerpClient>)"
-            ),
-            DerpHandler::Override(_) => write!(
-                f,
-                "DerpHandler::Override(Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>>)"
-            ),
-        }
-    }
+    Override(
+        #[debug(
+            "{}",
+            "Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>"
+        )]
+        HyperFn,
+    ),
 }
 
 impl Inner {
@@ -552,23 +529,14 @@ impl Inner {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 /// TLS Certificate Authority acceptor.
 pub enum TlsAcceptor {
     /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
-    LetsEncrypt(AcmeAcceptor),
+    LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),
     /// Manually added tls acceptor. Generally used for tests or for when we've passed in
     /// a certificate via a file.
-    Manual(tokio_rustls::TlsAcceptor),
-}
-
-impl std::fmt::Debug for TlsAcceptor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TlsAcceptor::LetsEncrypt(_) => write!(f, "TlsAcceptor::LetsEncrypt"),
-            TlsAcceptor::Manual(_) => write!(f, "TlsAcceptor::Manual"),
-        }
-    }
+    Manual(#[debug("tokio_rustls::TlsAcceptor")] tokio_rustls::TlsAcceptor),
 }
 
 impl DerpService {
@@ -629,13 +597,13 @@ impl DerpService {
 }
 
 #[derive(Default)]
-struct Handlers(pub HashMap<(Method, &'static str), HyperFn>);
+struct Handlers(HashMap<(Method, &'static str), HyperFn>);
 
 impl std::fmt::Debug for Handlers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = self.0.keys().fold(String::new(), |curr, next| {
             let (method, uri) = next;
-            format!("{curr}\n({method},{uri}): Fn -> HyperResult<Response<Body>>")
+            format!("{curr}\n({method},{uri}): Box<Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>")
         });
         write!(f, "HashMap<{s}>")
     }
@@ -651,11 +619,5 @@ impl std::ops::Deref for Handlers {
 impl std::ops::DerefMut for Handlers {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-impl std::fmt::Debug for DerpService {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DerpServer {{ handlers: {:?}, derp_endpoint: {:?}, derp_handler: {:?}, not_found_fn: Fn -> HyperResult<Response<Body>> }}", self.0.handlers, self.0.derp_endpoint, self.0.derp_handler)
     }
 }
