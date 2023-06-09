@@ -1807,7 +1807,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("sderp.iroh.computer.", 3478, 0)];
+        let stun_servers = vec![("derp.iroh.computer.", 3478, 0)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
