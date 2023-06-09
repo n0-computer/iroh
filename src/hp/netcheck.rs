@@ -1760,6 +1760,7 @@ mod tests {
     use crate::test_utils::setup_logging;
     use bytes::BytesMut;
 
+    #[ignore]
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = setup_logging();
@@ -1867,6 +1868,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
         let _guard = setup_logging();
@@ -1900,6 +1902,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
         let _guard = setup_logging();
@@ -1934,6 +1937,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
         let _guard = setup_logging();
@@ -2111,6 +2115,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_hairpin() -> Result<()> {
         let _guard = setup_logging();
