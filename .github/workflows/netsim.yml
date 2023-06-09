@@ -66,6 +66,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/optimized-release/iroh chuck/netsim/bins/iroh
+        cp target/optimized-release/derper chuck/netsim/bins/derper
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
     
     - name: Detect comment commands
@@ -92,6 +93,7 @@ jobs:
         if [ -z "${c}" ];
         then
           sudo python3 main.py sims/iroh
+          sudo python3 main.py sims/integration
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json
@@ -157,6 +159,7 @@ jobs:
         cd chuck/netsim
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
     - name: Dump report
       run: |
@@ -170,7 +173,7 @@ jobs:
 
         cd chuck/netsim
 
-        tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt logs/ report/
+        tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
         aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
 
         instance=$(echo "${{ env.HEAD_REF }}" | tr -c '[:alnum:]' '_')
@@ -183,5 +186,8 @@ jobs:
       run: |
         cd chuck/netsim
         d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
+        d=$(cat report_metro_integration.txt)
         metro_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
