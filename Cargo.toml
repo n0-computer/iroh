@@ -58,7 +58,6 @@ regex = { version = "1.7.1", optional = true }
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
-tokio-rustls-acme = { version = "0.1", optional = true }
 rustls-pemfile = { version = "1.0.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
@@ -74,6 +73,7 @@ thiserror = "1"
 time = "0.3.20"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.24", optional = true }
+tokio-rustls-acme = { version = "0.1", optional = true }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 toml = { version = "0.7.3", optional = true }
@@ -95,18 +95,18 @@ rtnetlink = "0.12.0"
 wmi = "0.12.2"
 
 [dev-dependencies]
+duct = "0.13.6"
+http-body = "0.4.5"
+nix = "0.26.2"
 proptest = "1.0.0"
 rand = "0.8"
+regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.7.2"
 tokio = { version = "1", features = ["full", "test-util"] }
-regex = { version = "1.7.1", features = ["std"] }
-nix = "0.26.2"
-http-body = "0.4.5"
-duct = "0.13.6"
 
 [features]
-default = ["cli", "derper", "metrics"]
 cli = ["clap", "console", "indicatif", "multibase"]
+default = ["cli", "derper", "metrics"]
 derper = ["tokio-rustls", "tokio-rustls-acme", "toml", "rustls-pemfile", "regex"]
 metrics = ["prometheus-client"]
 test = []

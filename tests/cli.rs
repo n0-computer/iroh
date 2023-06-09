@@ -30,7 +30,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<iroh::Hash> {
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
-    use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
+    use iroh::provider::{create_collection, create_data_sources, DbEntry};
 
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
@@ -45,7 +45,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
         outboard_path.set_extension("outboard.part");
         let mut data_path = temp_dir.join(text.as_str());
         match boc {
-            BlobOrCollection::Blob { outboard, path, .. } => {
+            DbEntry::External { outboard, path, .. } => {
                 data_path.set_extension("data.part");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::rename(path, &data_path)?;
@@ -54,7 +54,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
                 file.set_len(len / 2)?;
                 drop(file);
             }
-            BlobOrCollection::Collection { outboard, data } => {
+            DbEntry::Internal { outboard, data } => {
                 data_path.set_extension("data");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::write(data_path, data)?;
@@ -206,13 +206,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db = Database::load_test(iroh_data_dir.clone())?;
-    let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    let blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
     assert_eq!(blobs, vec![foo_path.clone()]);
 
     provide(&bar_path)?;
     // should have more data now
     let db = Database::load_test(&iroh_data_dir)?;
-    let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    let mut blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
     blobs.sort();
     assert_eq!(blobs, vec![bar_path, foo_path]);
 

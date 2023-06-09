@@ -1,6 +1,5 @@
-use super::BlobOrCollection;
+use super::DbEntry;
 use crate::{
-    blobs::Collection,
     rpc_protocol::ValidateProgress,
     util::{validate_bao, BaoValidationError},
     Hash,
@@ -21,6 +20,8 @@ use tokio::sync::mpsc;
 const FNAME_OUTBOARDS: &str = "outboards";
 
 /// File name of directory inside `IROH_DATA_DIR` where collections are stored.
+///
+/// This is now used not just for collections but also for internally generated blobs.
 const FNAME_COLLECTIONS: &str = "collections";
 
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
@@ -28,10 +29,10 @@ pub const FNAME_PATHS: &str = "paths.bin";
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
-pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
+pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
 
-impl From<HashMap<Hash, BlobOrCollection>> for Database {
-    fn from(map: HashMap<Hash, BlobOrCollection>) -> Self {
+impl From<HashMap<Hash, DbEntry>> for Database {
+    fn from(map: HashMap<Hash, DbEntry>) -> Self {
         Self(Arc::new(RwLock::new(map)))
     }
 }
@@ -273,7 +274,7 @@ impl Database {
             if let (Some(path), Some(outboard)) = (path, outboards.get(&hash)) {
                 db.insert(
                     hash,
-                    BlobOrCollection::Blob {
+                    DbEntry::External {
                         outboard: outboard.clone(),
                         path,
                         size,
@@ -285,7 +286,7 @@ impl Database {
             if let Some(outboard) = outboards.get(&hash) {
                 db.insert(
                     hash,
-                    BlobOrCollection::Collection {
+                    DbEntry::Internal {
                         outboard: outboard.clone(),
                         data,
                     },
@@ -308,7 +309,7 @@ impl Database {
             .clone()
             .into_iter()
             .collect::<Vec<_>>();
-        data.sort_by_key(|(k, e)| (e.is_blob(), e.blob_path().map(ToOwned::to_owned), *k));
+        data.sort_by_key(|(k, e)| (e.is_external(), e.blob_path().map(ToOwned::to_owned), *k));
         tx.send(ValidateProgress::Starting {
             total: data.len() as u64,
         })
@@ -317,7 +318,7 @@ impl Database {
             .enumerate()
             .map(|(id, (hash, boc))| {
                 let id = id as u64;
-                let path = if let BlobOrCollection::Blob { path, .. } = &boc {
+                let path = if let DbEntry::External { path, .. } = &boc {
                     Some(path.clone())
                 } else {
                     None
@@ -342,7 +343,7 @@ impl Database {
                                 .ok();
                         };
                         let res = match boc {
-                            BlobOrCollection::Blob { outboard, path, .. } => {
+                            DbEntry::External { outboard, path, .. } => {
                                 match std::fs::File::open(&path) {
                                     Ok(data) => {
                                         tracing::info!("validating {}", path.display());
@@ -353,7 +354,7 @@ impl Database {
                                     Err(cause) => Err(BaoValidationError::from(cause)),
                                 }
                             }
-                            BlobOrCollection::Collection { outboard, data } => {
+                            DbEntry::Internal { outboard, data } => {
                                 let data = std::io::Cursor::new(data);
                                 validate_bao(hash, data, outboard, progress)
                             }
@@ -384,24 +385,24 @@ impl Database {
         let outboards = this
             .iter()
             .map(|(k, v)| match v {
-                BlobOrCollection::Blob { outboard, .. } => (*k, outboard.clone()),
-                BlobOrCollection::Collection { outboard, .. } => (*k, outboard.clone()),
+                DbEntry::External { outboard, .. } => (*k, outboard.clone()),
+                DbEntry::Internal { outboard, .. } => (*k, outboard.clone()),
             })
             .collect::<Vec<_>>();
 
         let collections = this
             .iter()
             .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob { .. } => None,
-                BlobOrCollection::Collection { data, .. } => Some((*k, data.clone())),
+                DbEntry::External { .. } => None,
+                DbEntry::Internal { data, .. } => Some((*k, data.clone())),
             })
             .collect::<Vec<_>>();
 
         let paths = this
             .iter()
             .map(|(k, v)| match v {
-                BlobOrCollection::Blob { path, size, .. } => (*k, *size, Some(path.clone())),
-                BlobOrCollection::Collection { data, .. } => (*k, data.len() as u64, None),
+                DbEntry::External { path, size, .. } => (*k, *size, Some(path.clone())),
+                DbEntry::Internal { data, .. } => (*k, data.len() as u64, None),
             })
             .collect::<Vec<_>>();
 
@@ -412,27 +413,27 @@ impl Database {
         }
     }
 
-    pub(crate) fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
+    pub(crate) fn get(&self, key: &Hash) -> Option<DbEntry> {
         self.0.read().unwrap().get(key).cloned()
     }
 
-    pub(crate) fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
+    pub(crate) fn union_with(&self, db: HashMap<Hash, DbEntry>) {
         let mut inner = self.0.write().unwrap();
         for (k, v) in db {
             inner.entry(k).or_insert(v);
         }
     }
 
-    /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
+    /// Iterate over all blobs that are stored externally.
+    pub fn external(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
         let items = self
             .0
             .read()
             .unwrap()
             .iter()
             .filter_map(|(k, v)| match v {
-                BlobOrCollection::Blob { path, size, .. } => Some((*k, path.clone(), *size)),
-                BlobOrCollection::Collection { .. } => None,
+                DbEntry::External { path, size, .. } => Some((*k, path.clone(), *size)),
+                DbEntry::Internal { .. } => None,
             })
             .collect::<Vec<_>>();
         // todo: make this a proper lazy iterator at some point
@@ -441,17 +442,15 @@ impl Database {
     }
 
     /// Iterate over all collections in the database.
-    pub fn collections(&self) -> impl Iterator<Item = (Hash, Collection)> + 'static {
+    pub fn internal(&self) -> impl Iterator<Item = (Hash, Bytes)> + 'static {
         let items = self
             .0
             .read()
             .unwrap()
             .iter()
             .filter_map(|(hash, v)| match v {
-                BlobOrCollection::Blob { .. } => None,
-                BlobOrCollection::Collection { data, .. } => {
-                    Collection::from_bytes(&data[..]).ok().map(|c| (*hash, c))
-                }
+                DbEntry::External { .. } => None,
+                DbEntry::Internal { data, .. } => Some((*hash, data.clone())),
             })
             .collect::<Vec<_>>();
         // todo: make this a proper lazy iterator at some point
@@ -460,7 +459,7 @@ impl Database {
     }
 
     /// Unwrap into the inner HashMap
-    pub fn to_inner(&self) -> HashMap<Hash, BlobOrCollection> {
+    pub fn to_inner(&self) -> HashMap<Hash, DbEntry> {
         self.0.read().unwrap().clone()
     }
 }
