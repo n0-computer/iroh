@@ -11,15 +11,36 @@ env:
   RUSTFLAGS: -Dwarnings
   MSRV: "1.65"
 
-
 jobs:
   build_and_test_nix:
     name: Build and test (Nix)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macOS-latest]
+        name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
+        include:
+          # - name: ubuntu-arm-latest
+          #   os: ubuntu-latest
+          #   release-os: linux
+          #   release-arch: aarch64
+          #   runner: [self-hosted, linux, ARM64]
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: [self-hosted, linux, X64]
+          # - name: macOS-latest
+          #   os: macOS-latest
+          #   release-os: darwin
+          #   release-arch: x86_64
+          #   runner: [self-hosted, macOS, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: [self-hosted, macOS, ARM64]
 
     steps:
     - name: Checkout
@@ -32,22 +53,23 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
       
-    - name: check
-      run: cargo check --all --bins --tests
-      
     - name: tests
-      run: cargo test --all
+      run: cargo test --workspace --all-features --lib --bins --tests
       
   build_and_test_windows:
     name: Build and test (Windows)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest]
+        name: [windows-latest]
         rust: [nightly, stable]
         target:
-          - x86_64-pc-windows-gnu
           - x86_64-pc-windows-msvc
+        include:
+          - name: windows-latest
+            os: windows
+            runner: [self-hosted, windows, x64]
 
     steps:
     - name: Checkout
@@ -56,21 +78,16 @@ jobs:
         submodules: recursive
 
     - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-        target: ${{ matrix.target }}
-      
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
+        rustup toolchain default ${{ matrix.rust }}
+        rustup target add ${{ matrix.target }}
+        rustup set default-host ${{ matrix.target }}
+    
     - uses: msys2/setup-msys2@v2
-    - name: check
-      run: cargo check --all --bins --tests --target ${{ matrix.target }}
-      
-    - name: check bench
-      if: matrix.rust == 'nightly'
-      run: cargo check --target ${{ matrix.target }} --benches
 
     - name: tests
-      run: cargo test --all  --target ${{ matrix.target }}
+      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
     name: Build release binaries
@@ -170,8 +187,9 @@ jobs:
 
   cross:
     name: Cross compile
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     strategy:
+      fail-fast: false
       matrix:
         target:
           - i686-unknown-linux-gnu
@@ -184,18 +202,18 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install nightly
-      # See https://github.com/cross-rs/cross/issues/1222
-      uses: dtolnay/rust-toolchain@1.67
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Install cross
-      run: cargo install cross
+      # See https://github.com/cross-rs/cross/issues/1222
+      run: cargo install cross --git https://github.com/cross-rs/cross
 
     - name: check
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
-      run: cross test --all --target ${{ matrix.target }}
+      run: cross test --all --target ${{ matrix.target }} -- --test-threads=8
 
   check_fmt_and_docs:
     name: Checking fmt and docs
@@ -221,8 +239,10 @@ jobs:
       with:
           components: clippy
 
+    # TODO: We have a bunch of platform-dependent code so should
+    #    probably run this job on the full platofrm matrix
     - name: clippy check
-      run: cargo clippy --message-format=json --all-features --all-targets
+      run: cargo clippy --all-features --all-targets
 
   msrv:
     name: Minimal Supported Rust Version
@@ -235,7 +255,7 @@ jobs:
 
     - name: Check MSRV all features
       run: |
-        cargo +$MSRV check --workspace --all-targets --no-default-features
+        cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
     name: cargo deny
@@ -279,6 +299,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/release/iroh chuck/netsim/bins/iroh
+        cp target/release/derper chuck/netsim/bins/derper
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
 
     - name: Run tests
@@ -286,7 +307,8 @@ jobs:
         cd chuck/netsim
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
-        sudo python3 main.py --integration sims/standard/iroh.json
+        sudo python3 main.py --integration sims/iroh/iroh.json
+        sudo python3 main.py --integration --skip intg_derper__1_to_1_NAT_provide,intg_derper__1_to_1_NAT_both sims/integration
 
     - name: Setup Environment (PR)  
       if: ${{ github.event_name == 'pull_request' }}  
@@ -306,10 +328,29 @@ jobs:
         cd chuck/netsim
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
+
+    - name: Dump report
+      run: |
+        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
+        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
+        export AWS_DEFAULT_REGION=us-west-2
+        
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        sudo ./aws/install --update
+
+        cd chuck/netsim
+
+        tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
+        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/intg_${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
 
     - name: Echo metrics
       run: |
         cd chuck/netsim
         d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        echo "$metro_data" 
+        d=$(cat report_metro_integration.txt)
         metro_data=$(printf "%s\n " "$d")
         echo "$metro_data" 

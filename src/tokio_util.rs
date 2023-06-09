@@ -7,7 +7,7 @@ use std::{
 
 use bao_tree::io::fsm::AsyncSliceWriter;
 use bytes::Bytes;
-use futures::{future::BoxFuture, ready, FutureExt};
+use futures::{future::BoxFuture, ready, Future, FutureExt};
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt},
@@ -165,6 +165,63 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for TrackingWriter<W> {
         let res = Pin::new(&mut this.inner).poll_write(cx, buf);
         if let Poll::Ready(Ok(size)) = res {
             this.written = this.written.saturating_add(size as u64);
+        }
+        res
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// A writer that tries to send the total number of bytes written after each write
+///
+/// It sends the total number instead of just an increment so the update is self-contained
+#[derive(Debug)]
+pub struct ProgressWriter<W> {
+    inner: TrackingWriter<W>,
+    sender: mpsc::Sender<u64>,
+}
+
+impl<W> ProgressWriter<W> {
+    /// Create a new `ProgressWriter` from an inner writer
+    pub fn new(inner: W) -> (Self, mpsc::Receiver<u64>) {
+        let (sender, receiver) = mpsc::channel(1);
+        (
+            Self {
+                inner: TrackingWriter::new(inner),
+                sender,
+            },
+            receiver,
+        )
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.inner.into_parts().0
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = &mut *self;
+        let res = Pin::new(&mut this.inner).poll_write(cx, buf);
+        if let Poll::Ready(Ok(_)) = res {
+            this.sender.try_send(this.inner.bytes_written()).ok();
         }
         res
     }
@@ -343,5 +400,29 @@ pub(crate) async fn read_as_bytes(reader: &mut Either<Cursor<Bytes>, File>) -> i
             file.read_to_end(&mut buf).await?;
             Ok(buf.into())
         }
+    }
+}
+
+/// A join handle that owns the task it is running, and aborts it when dropped.
+#[derive(Debug)]
+pub(crate) struct AbortingJoinHandle<T>(tokio::task::JoinHandle<T>);
+
+impl<T> From<tokio::task::JoinHandle<T>> for AbortingJoinHandle<T> {
+    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self(handle)
+    }
+}
+
+impl<T> Future for AbortingJoinHandle<T> {
+    type Output = std::result::Result<T, tokio::task::JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx)
+    }
+}
+
+impl<T> Drop for AbortingJoinHandle<T> {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 
-use crate::metrics::iroh;
+use crate::metrics::{iroh, magicsock, netcheck};
 
 pub(crate) static CORE: Lazy<Core> = Lazy::new(Core::default);
 
@@ -11,6 +11,8 @@ pub(crate) struct Core {
     enabled: AtomicBool,
     registry: Registry,
     iroh_metrics: iroh::Metrics,
+    magicsock_metrics: magicsock::Metrics,
+    netcheck_metrics: netcheck::Metrics,
 }
 
 impl Default for Core {
@@ -19,6 +21,8 @@ impl Default for Core {
         Core {
             enabled: AtomicBool::new(false),
             iroh_metrics: iroh::Metrics::new(&mut reg),
+            magicsock_metrics: magicsock::Metrics::new(&mut reg),
+            netcheck_metrics: netcheck::Metrics::new(&mut reg),
             registry: reg,
         }
     }
@@ -31,6 +35,14 @@ impl Core {
 
     pub(crate) fn iroh_metrics(&self) -> &iroh::Metrics {
         &self.iroh_metrics
+    }
+
+    pub(crate) fn magicsock_metrics(&self) -> &magicsock::Metrics {
+        &self.magicsock_metrics
+    }
+
+    pub(crate) fn netcheck_metrics(&self) -> &netcheck::Metrics {
+        &self.netcheck_metrics
     }
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, std::io::Error> {
@@ -48,13 +60,13 @@ impl Core {
     }
 }
 
-/// Defines the metric trait which provides a common interface for all value based metrics
+/// Interface for all single value based metrics.
 pub trait MetricType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
 }
 
-/// Defines the histogram trait which provides a common interface for all  based metrics
+/// Interface for all distribution based metrics.
 pub trait HistogramType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
@@ -75,22 +87,31 @@ pub trait MetricsRecorder {
         M: HistogramType + std::fmt::Display;
 }
 
-/// Interface to record metrics
+/// Interface to record metrics.
+///
 /// Helps expose the record interface when using metrics as a library
 pub trait MRecorder {
-    /// Records a value for the metric
+    /// Records a value for the metric.
+    ///
+    /// Recording is for single-value metrics, each recorded metric represents a metric
+    /// value.
     fn record(&self, value: u64);
 }
 
-/// Interface to observe metrics
-/// Helps expose the observe interface when using metrics as a library
+/// Interface to observe metrics.
+///
+/// Helps expose the observe interface when using metrics as a library.
 pub trait MObserver {
-    /// Observes a value for the metric
+    /// Observes a value for the metric.
+    ///
+    /// Observing is for distribution metrics, when multiple observations are combined in a
+    /// single metric value.
     fn observe(&self, value: f64);
 }
 
-// Internal wrapper to record metrics only if the core is enabled
-#[allow(unreachable_patterns)]
+/// Internal wrapper to record metrics only if the core is enabled.
+///
+/// Recording is for single-value metrics, each recorded metric represents a metric value.
 pub(crate) fn record<M>(c: Collector, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
@@ -98,13 +119,17 @@ where
     if CORE.is_enabled() {
         match c {
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
-            _ => unimplemented!("not enabled/implemented"),
+            Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
+            Collector::Netcheck => CORE.netcheck_metrics().record(m, v),
         };
     }
 }
 
-// Internal wrapper to observe metrics only if the core is enabled
-#[allow(unreachable_patterns, dead_code)]
+/// Internal wrapper to observe metrics only if the core is enabled.
+///
+/// Observing is for distribution metrics, when multiple observations are combined in a
+/// single metric value.
+#[allow(dead_code)]
 pub(crate) fn observe<M>(c: Collector, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
@@ -112,7 +137,8 @@ where
     if CORE.is_enabled() {
         match c {
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
-            _ => unimplemented!("not enabled/implemented"),
+            Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
+            Collector::Netcheck => CORE.netcheck_metrics().observe(m, v),
         };
     }
 }
@@ -123,4 +149,8 @@ where
 pub enum Collector {
     /// Iroh collector aggregates all metrics from the iroh binary
     Iroh,
+    /// Magicsock related metrics.
+    Magicsock,
+    /// Netcheck related metrics.
+    Netcheck,
 }

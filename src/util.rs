@@ -1,7 +1,6 @@
 //! Utility functions and types.
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::{error::EncodeError, sync::encode_ranges_validated};
-use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use derive_more::Display;
 use postcard::experimental::max_size::MaxSize;
@@ -10,7 +9,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display},
     io::{self, Read, Seek, Write},
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     result,
     str::FromStr,
 };
@@ -18,16 +17,6 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::IROH_BLOCK_SIZE;
-
-/// Encode the given buffer into Base64 URL SAFE without padding.
-pub fn encode(buf: impl AsRef<[u8]>) -> String {
-    general_purpose::URL_SAFE_NO_PAD.encode(buf.as_ref())
-}
-
-/// Decode the given buffer from Base64 URL SAFE without padding.
-pub fn decode(buf: impl AsRef<str>) -> Result<Vec<u8>, base64::DecodeError> {
-    general_purpose::URL_SAFE_NO_PAD.decode(buf.as_ref())
-}
 
 /// Hash type used throught.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
@@ -79,7 +68,10 @@ impl Ord for Hash {
 
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", encode(self.0.as_bytes()))
+        let text = data_encoding::BASE32_NOPAD
+            .encode(self.0.as_bytes())
+            .to_ascii_lowercase();
+        write!(f, "{}", text)
     }
 }
 
@@ -88,7 +80,12 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut arr = [0u8; 32];
-        let val = decode(s)?;
+        let val = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?; // todo: use a custom error type
+        ensure!(
+            val.len() == 32,
+            "invalid byte length, expected 32, got {}",
+            val.len()
+        );
         ensure!(
             val.len() == 32,
             "invalid byte length, expected 32, got {}",
@@ -313,6 +310,15 @@ impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
         }
         Ok(())
     }
+}
+
+/// Create a pathbuf from a name.
+pub fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
+    }
+    path
 }
 
 #[cfg(test)]

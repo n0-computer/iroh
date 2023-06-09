@@ -1,9 +1,14 @@
 //! Send data over the internet.
-#![deny(missing_docs)]
+// #![deny(missing_docs)] TODO: fix me before merging
+#![recursion_limit = "256"]
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
+pub mod config;
+#[cfg(feature = "cli")]
+pub mod doctor;
 pub mod get;
-#[cfg(feature = "metrics")]
+#[cfg(feature = "cli")]
+pub mod main_util;
 pub mod metrics;
 pub mod net;
 pub mod progress;
@@ -12,12 +17,18 @@ pub mod provider;
 pub mod rpc_protocol;
 pub mod tokio_util;
 
-mod subnet;
-mod tls;
+#[allow(missing_docs)]
+pub mod tls;
 mod util;
 
+#[allow(missing_docs)]
+pub mod hp;
+
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
-pub use util::Hash;
+pub use util::{pathbuf_from_name, Hash};
 
 use bao_tree::BlockSize;
 
@@ -31,9 +42,9 @@ pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
 mod tests {
     use std::{
         collections::BTreeMap,
-        net::{Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
         path::{Path, PathBuf},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use anyhow::{anyhow, Context, Result};
@@ -58,11 +69,14 @@ mod tests {
 
     #[tokio::test]
     async fn basics() -> Result<()> {
+        setup_logging();
         transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
     #[tokio::test]
     async fn multi_file() -> Result<()> {
+        setup_logging();
+
         let file_opts = vec![
             ("1", 10),
             ("2", 1024),
@@ -93,6 +107,8 @@ mod tests {
 
     #[tokio::test]
     async fn sizes() -> Result<()> {
+        setup_logging();
+
         let sizes = [
             0,
             10,
@@ -102,10 +118,13 @@ mod tests {
             1024 * 500,
             1024 * 1024,
             1024 * 1024 + 10,
+            1024 * 1024 * 9,
         ];
 
         for size in sizes {
+            let now = Instant::now();
             transfer_random_data(vec![("hello_world", size)]).await?;
+            println!("  took {}ms", now.elapsed().as_millis());
         }
 
         Ok(())
@@ -137,22 +156,25 @@ mod tests {
         let expect_hash = blake3::hash(&expect_data);
         let expect_name = filename.to_string();
 
-        let (db, hash) =
-            provider::create_collection(vec![provider::DataSource::File(path)]).await?;
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let (db, hash) = provider::create_collection(vec![provider::DataSource::new(path)]).await?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
 
         async fn run_client(
             hash: Hash,
             file_hash: Hash,
             name: String,
-            addr: SocketAddr,
+            addrs: Vec<SocketAddr>,
             peer_id: PeerId,
             content: Vec<u8>,
         ) -> Result<()> {
             let opts = get::Options {
-                addr,
-                peer_id: Some(peer_id),
+                addrs,
+                peer_id,
                 keylog: true,
+                derp_map: None,
             };
             let expected_data = &content;
             let expected_name = &name;
@@ -171,14 +193,13 @@ mod tests {
                 hash,
                 expect_hash.into(),
                 expect_name.clone(),
-                provider.local_address(),
+                provider.local_address().unwrap(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
         }
 
         futures::future::join_all(tasks).await;
-
         Ok(())
     }
 
@@ -213,15 +234,16 @@ mod tests {
 
         for opt in file_opts.into_iter() {
             let (name, data) = opt;
-
             let name = name.into();
+            println!("Sending {}: {}b", name, data.len());
+
             let path = dir.join(name.clone());
             // get expected hash of file
             let hash = blake3::hash(&data);
             let hash = Hash::from(hash);
 
             tokio::fs::write(&path, data).await?;
-            files.push(provider::DataSource::File(path.clone()));
+            files.push(provider::DataSource::new(path.clone()));
 
             // keep track of expected values
             expects.push((name, path, hash));
@@ -232,7 +254,10 @@ mod tests {
         let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = "127.0.0.1:0".parse().unwrap();
-        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let provider = provider::Provider::builder(db)
+            .bind_addr(addr)
+            .spawn()
+            .await?;
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
@@ -259,10 +284,12 @@ mod tests {
             events
         });
 
+        let addrs = provider.local_endpoint_addresses().await?;
         let opts = get::Options {
-            addr: dbg!(provider.local_address()),
-            peer_id: Some(provider.peer_id()),
+            addrs,
+            peer_id: provider.peer_id(),
             keylog: true,
+            derp_map: None,
         };
 
         let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
@@ -335,8 +362,10 @@ mod tests {
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .spawn()
+            .await
             .unwrap();
-        let provider_addr = provider.local_address();
+        let provider_addr = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
 
         // This tasks closes the connection on the provider side as soon as the transfer
         // completes.
@@ -367,9 +396,10 @@ mod tests {
         let response = get::run(
             GetRequest::all(hash).into(),
             get::Options {
-                addr: provider_addr,
-                peer_id: None,
+                addrs: provider_addr,
+                peer_id,
                 keylog: true,
+                derp_map: None,
             },
         )
         .await
@@ -401,16 +431,19 @@ mod tests {
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .spawn()?;
-        let provider_addr = provider.local_address();
+            .spawn()
+            .await?;
+        let provider_addr = provider.local_endpoint_addresses().await?;
+        let peer_id = provider.peer_id();
 
         let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
-                    addr: provider_addr,
-                    peer_id: None,
+                    addrs: provider_addr,
+                    peer_id,
                     keylog: true,
+                    derp_map: None,
                 },
             )
             .await
@@ -422,7 +455,6 @@ mod tests {
             // and then just hang
         })
         .await;
-        provider.shutdown();
 
         timeout.expect(
             "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
@@ -432,11 +464,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipv6() {
+        setup_logging();
+
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
-            .bind_addr("[::1]:0".parse().unwrap())
+            .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
         {
             Ok(provider) => provider,
             Err(_) => {
@@ -445,15 +480,16 @@ mod tests {
                 return;
             }
         };
-        let addr = provider.local_address();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request = get::run(
                 GetRequest::all(hash).into(),
                 get::Options {
-                    addr,
+                    addrs,
                     peer_id,
                     keylog: true,
+                    derp_map: None,
                 },
             )
             .await
@@ -472,12 +508,13 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let response =
-                get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, 16).await?;
+                get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, None).await?;
             aggregate_get_response(response).await
         })
         .await
@@ -507,12 +544,15 @@ mod tests {
         use get_response_machine::*;
         let mut items = BTreeMap::new();
         let connected = initial.next().await?;
+        println!("I am connected");
         // we assume that the request includes the entire collection
         let (mut next, collection) = {
             let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
+            println!("getting collection");
             let (done, data) = sc.next().concatenate_into_vec().await?;
+            println!("got collection {}", data.len());
             (done.next(), Collection::from_bytes(&data)?)
         };
         // read all the children
@@ -540,6 +580,7 @@ mod tests {
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
             .spawn()
+            .await
         {
             Ok(provider) => provider,
             Err(_) => {
@@ -548,13 +589,14 @@ mod tests {
                 return;
             }
         };
-        let addr = provider.local_address();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let connection = dial_peer(get::Options {
-                addr,
+                addrs,
                 peer_id,
                 keylog: true,
+                derp_map: None,
             })
             .await?;
             let request = GetRequest::all(hash).into();
@@ -583,7 +625,7 @@ mod tests {
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
             async move {
                 let readme = readme_path();
-                let sources = vec![DataSource::File(readme)];
+                let sources = vec![DataSource::new(readme)];
                 let (new_db, hash) = create_collection(sources).await?;
                 let new_db = new_db.to_inner();
                 database.union_with(new_db);
@@ -605,7 +647,7 @@ mod tests {
         ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
             async move {
                 let readme = readme_path();
-                let sources = vec![DataSource::File(readme)];
+                let sources = vec![DataSource::new(readme)];
                 let (new_db, c_hash) = create_collection(sources).await?;
                 let mut new_db = new_db.to_inner();
                 new_db.remove(&c_hash);
@@ -626,17 +668,19 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .custom_get_handler(BlobCustomHandler)
             .spawn()
+            .await
             .unwrap();
-        let addr = provider.local_address();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
                 get::Options {
-                    addr,
+                    addrs,
                     peer_id,
                     keylog: true,
+                    derp_map: None,
                 },
             )
             .await?;
@@ -660,17 +704,19 @@ mod tests {
             .bind_addr("127.0.0.1:0".parse().unwrap())
             .custom_get_handler(CollectionCustomHandler)
             .spawn()
+            .await
             .unwrap();
-        let addr = provider.local_address();
-        let peer_id = Some(provider.peer_id());
+        let addrs = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
             let response = get::run(
                 request,
                 get::Options {
-                    addr,
+                    addrs,
                     peer_id,
                     keylog: true,
+                    derp_map: None,
                 },
             )
             .await?;

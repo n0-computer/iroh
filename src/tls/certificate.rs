@@ -128,9 +128,15 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
         if oid == &p2p_ext_oid {
             let signed_key =
                 SignedKey::from_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
-            let public_key = PublicKey::from_bytes(signed_key.public_key.as_bytes())
+            let public_key_raw: [u8; 32] = signed_key
+                .public_key
+                .as_bytes()
+                .try_into()
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
-            let signature = Signature::from_bytes(signed_key.signature.as_bytes())
+            let public_key =
+                PublicKey::from_bytes(&public_key_raw).map_err(|_| webpki::Error::UnknownIssuer)?;
+
+            let signature = Signature::from_slice(signed_key.signature.as_bytes())
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
             let ext = P2pExtension {
                 public_key,
@@ -252,6 +258,7 @@ impl P2pCertificate<'_> {
             RSA_PKCS1_SHA1 => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
             ECDSA_SHA1_Legacy => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
             Unknown(_) => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
+            _ => return Err(webpki::Error::UnsupportedSignatureAlgorithm),
         };
         let spki = &self.certificate.tbs_certificate.subject_pki;
         let key = signature::UnparsedPublicKey::new(

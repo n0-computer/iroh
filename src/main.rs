@@ -11,28 +11,29 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::blobs::{Blob, Collection};
+use iroh::blobs::Collection;
+use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
-use iroh::get::{get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name};
+use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
+use iroh::hp::derp::DerpMap;
+use iroh::pathbuf_from_name;
 use iroh::protocol::{GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
     ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
 };
+use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
+use range_collections::RangeSet2;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
-mod main_util;
-use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
 
+use iroh::main_util::{create_quinn_client, iroh_config_path, iroh_data_root, Blake3Cid};
 use iroh::provider::FNAME_PATHS;
 use iroh::{get, provider, Hash, Keypair, PeerId};
-use main_util::Blake3Cid;
-
-use crate::main_util::iroh_data_root;
 
 #[cfg(feature = "metrics")]
 use iroh::metrics::init_metrics;
@@ -41,7 +42,6 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
-const MAX_CONCURRENT_DIALS: u8 = 16;
 
 /// Send data.
 ///
@@ -67,6 +67,8 @@ struct Cli {
     #[cfg(feature = "metrics")]
     #[clap(long)]
     metrics_addr: Option<SocketAddr>,
+    #[clap(long)]
+    cfg: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +110,13 @@ impl FromStr for ProviderRpcPort {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
+    /// Diagnostic commands for the derp relay protocol.
+    Doctor {
+        /// Commands for doctor - defined in the mod
+        #[clap(subcommand)]
+        command: iroh::doctor::Commands,
+    },
+
     /// Serve data from the given path.
     ///
     /// If PATH is a folder all files in that folder will be served.  If no PATH is
@@ -165,9 +174,9 @@ enum Commands {
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// Address of the provider
-        #[clap(long, short, default_value_t = SocketAddr::from(get::DEFAULT_PROVIDER_ADDR))]
-        addr: SocketAddr,
+        /// Addresses of the provider.
+        #[clap(long, short)]
+        addrs: Vec<SocketAddr>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
@@ -227,8 +236,7 @@ async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint =
-        iroh::get::make_client_endpoint(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
+    let endpoint = create_quinn_client(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
@@ -509,6 +517,18 @@ async fn main_impl() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
+    let sources = [Some(config_path.as_path()), cli.cfg.as_deref()];
+    let config = Config::load(
+        // potential config files
+        &sources,
+        // env var prefix for this config
+        ENV_PREFIX,
+        // map of present command line arguments
+        // args.make_overrides_map(),
+        HashMap::<String, String>::new(),
+    )?;
+
     #[cfg(feature = "metrics")]
     let metrics_fut = init_metrics_collection(cli.metrics_addr);
 
@@ -516,14 +536,15 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            addr,
+            addrs,
             out,
             single,
         } => {
             let opts = get::Options {
-                addr,
-                peer_id: Some(peer),
+                addrs,
+                peer_id: peer,
                 keylog: cli.keylog,
+                derp_map: config.derp_map(),
             };
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
@@ -543,6 +564,7 @@ async fn main_impl() -> Result<()> {
             let get = GetInteractive::Ticket {
                 ticket,
                 keylog: cli.keylog,
+                derp_map: config.derp_map(),
             };
             tokio::select! {
                 biased;
@@ -576,7 +598,15 @@ async fn main_impl() -> Result<()> {
             };
             let key = Some(iroh_data_root.join("keypair"));
 
-            let provider = provide(db.clone(), addr, key, cli.keylog, rpc_port.into()).await?;
+            let provider = provide(
+                db.clone(),
+                addr,
+                key,
+                cli.keylog,
+                rpc_port.into(),
+                config.derp_map(),
+            )
+            .await?;
             let controller = provider.controller();
 
             // task that will add data to the provider, either from a file or from stdin
@@ -602,7 +632,7 @@ async fn main_impl() -> Result<()> {
                     let stream = controller.server_streaming(ProvideRequest { path }).await?;
                     let (hash, entries) = aggregate_add_response(stream).await?;
                     print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash)?;
+                    let ticket = provider.ticket(hash).await?;
                     println!("All-in-one ticket: {ticket}");
                     anyhow::Ok(tmp_path)
                 })
@@ -706,7 +736,7 @@ async fn main_impl() -> Result<()> {
             let client = make_rpc_client(rpc_port).await?;
             let response = client.rpc(IdRequest).await?;
 
-            println!("Listening address: {}", response.listen_addr);
+            println!("Listening address: {:#?}", response.listen_addrs);
             println!("PeerID: {}", response.peer_id);
             Ok(())
         }
@@ -727,6 +757,7 @@ async fn main_impl() -> Result<()> {
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
+        Commands::Doctor { command } => iroh::doctor::run(command, &config).await,
     };
 
     #[cfg(feature = "metrics")]
@@ -743,23 +774,32 @@ async fn provide(
     key: Option<PathBuf>,
     keylog: bool,
     rpc_port: Option<u16>,
+    dm: Option<DerpMap>,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
-    let builder = provider::Provider::builder(db)
-        .keylog(keylog)
-        .bind_addr(addr);
+    let mut builder = provider::Provider::builder(db).keylog(keylog);
+    if let Some(dm) = dm {
+        builder = builder.derp_map(dm);
+    }
+    let builder = builder.bind_addr(addr);
+
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
         builder
             .rpc_endpoint(rpc_endpoint)
             .keypair(keypair)
-            .spawn()?
+            .spawn()
+            .await?
     } else {
-        builder.keypair(keypair).spawn()?
+        builder.keypair(keypair).spawn().await?
     };
 
-    println!("Listening address: {}", provider.local_address());
+    let eps = provider.local_endpoints().await?;
+    println!("Listening addresses:");
+    for ep in eps {
+        println!("  {}", ep.addr);
+    }
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)
@@ -813,6 +853,7 @@ enum GetInteractive {
     Ticket {
         ticket: Ticket,
         keylog: bool,
+        derp_map: Option<DerpMap>,
     },
     Hash {
         hash: Hash,
@@ -837,26 +878,7 @@ impl GetInteractive {
     }
 }
 
-/// Get into a file or directory
-async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
-    let hash = get.hash();
-    let single = get.single();
-    progress!("Fetching: {}", Blake3Cid::new(hash));
-    progress!("{} Connecting ...", style("[1/3]").bold().dim());
-
-    let temp_dir = out_dir.join(".iroh-tmp");
-    let (query, collection) = if single {
-        let name = Blake3Cid::new(hash).to_string();
-        let query = get_missing_range(&get.hash(), name.as_str(), &temp_dir, &out_dir)?;
-        (query, vec![Blob { hash, name }])
-    } else {
-        let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
-        (
-            query,
-            collection.map(|x| x.into_inner()).unwrap_or_default(),
-        )
-    };
-
+fn make_download_pb() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
     pb.set_style(
@@ -870,18 +892,129 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             )
             .progress_chars("#>-"),
     );
+    pb
+}
 
-    let init_download_progress = |count: u64, missing_bytes: u64| {
-        progress!("{} Downloading ...", style("[3/3]").bold().dim());
-        progress!(
-            "  {} file(s) with total transfer size {}",
-            count,
-            HumanBytes(missing_bytes)
-        );
-        pb.set_length(missing_bytes);
-        pb.reset();
-        pb.set_draw_target(ProgressDrawTarget::stderr());
+fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) {
+    progress!("{} Downloading ...", style("[3/3]").bold().dim());
+    progress!(
+        "  {} file(s) with total transfer size {}",
+        count,
+        HumanBytes(missing_bytes)
+    );
+    pb.set_length(missing_bytes);
+    pb.reset();
+    pb.set_draw_target(ProgressDrawTarget::stderr());
+}
+
+/// Get a single file
+async fn get_to_file_single(
+    get: GetInteractive,
+    out_dir: PathBuf,
+    temp_dir: PathBuf,
+) -> Result<()> {
+    let hash = get.hash();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+
+    let name = Blake3Cid::new(hash).to_string();
+    // range I am missing for the 1 file I am downloading
+    let range = get_missing_range(&get.hash(), name.as_str(), &temp_dir, &out_dir)?;
+    if range.is_all() {
+        tokio::fs::create_dir_all(&temp_dir)
+            .await
+            .context("unable to create directory {temp_dir}")?;
+        tokio::fs::create_dir_all(&out_dir)
+            .await
+            .context("Unable to create directory {out_dir}")?;
+    }
+    let query = RangeSpecSeq::new([range]);
+    let pb = make_download_pb();
+
+    // collection info, in case we won't get a callback with is_root
+    let collection_info = Some((1, 0));
+
+    let request = GetRequest::new(get.hash(), query).into();
+    let response = match get {
+        GetInteractive::Ticket {
+            ticket,
+            keylog,
+            derp_map,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    if let Some((count, missing_bytes)) = collection_info {
+        init_download_progress(&pb, count, missing_bytes);
+    }
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
+        anyhow::bail!("Unexpected StartChild or Closing");
+    };
+    let header = curr.next();
+    let final_path = out_dir.join(&name);
+    let tempname = blake3::Hash::from(hash).to_hex();
+    let data_path = temp_dir.join(format!("{}.data.part", tempname));
+    let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+    let data_file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(&data_path)
+        .await?;
+    let mut data_file = SeekOptimized::new(data_file).into();
+    tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+    let (curr, size) = header.next().await?;
+    pb.set_length(size);
+    let mut outboard_file = if size > 0 {
+        let outboard_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&outboard_path)
+            .await?;
+        let outboard_file = SeekOptimized::new(outboard_file).into();
+        Some(outboard_file)
+    } else {
+        None
+    };
+    let curr = curr
+        .write_all_with_outboard(&mut outboard_file, &mut data_file)
+        .await?;
+    // Flush the data file first, it is the only thing that matters at this point
+    data_file.into_inner().into_inner().shutdown().await?;
+    // Rename temp file, to target name
+    // once this is done, the file is considered complete
+    tokio::fs::rename(data_path, final_path).await?;
+    if let Some(outboard_file) = outboard_file.take() {
+        // not sure if we have to do this
+        outboard_file.into_inner().shutdown().await?;
+        // delete the outboard file
+        tokio::fs::remove_file(outboard_path).await?;
+    }
+    let EndBlobNext::Closing(finishing) = curr.next() else {
+        anyhow::bail!("Unexpected StartChild or MoreChildren");
+    };
+    let stats = finishing.next().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    pb.finish_and_clear();
+    progress!(
+        "Transferred {} in {}, {}/s",
+        HumanBytes(stats.bytes_read),
+        HumanDuration(stats.elapsed),
+        HumanBytes((stats.bytes_read as f64 / stats.elapsed.as_secs_f64()) as u64)
+    );
+
+    Ok(())
+}
+
+/// Get into a file or directory
+async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
+    let hash = get.hash();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    let (query, collection) = get_missing_ranges(get.hash(), &out_dir, &temp_dir)?;
+    let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
+
+    let pb = make_download_pb();
 
     // collection info, in case we won't get a callback with is_root
     let collection_info = if collection.is_empty() {
@@ -892,15 +1025,17 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
 
     let request = GetRequest::new(get.hash(), query).into();
     let response = match get {
-        GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
-        }
+        GetInteractive::Ticket {
+            ticket,
+            keylog,
+            derp_map,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
         GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
     if let Some((count, missing_bytes)) = collection_info {
-        init_download_progress(count, missing_bytes);
+        init_download_progress(&pb, count, missing_bytes);
     }
     let (mut next, collection) = match connected.next().await? {
         ConnectedNext::StartRoot(curr) => {
@@ -913,7 +1048,11 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
             let curr = curr.next();
             let (curr, collection_data) = curr.concatenate_into_vec().await?;
             let collection = Collection::from_bytes(&collection_data)?;
-            init_download_progress(collection.total_entries(), collection.total_blobs_size());
+            init_download_progress(
+                &pb,
+                collection.total_entries(),
+                collection.total_blobs_size(),
+            );
             tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
             (curr.next(), collection.into_inner())
         }
@@ -1020,39 +1159,31 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// get to stdout, no resume possible
-async fn get_to_stdout(get: GetInteractive) -> Result<()> {
-    let hash = get.hash();
-    progress!("Fetching: {}", Blake3Cid::new(hash));
-    progress!("{} Connecting ...", style("[1/3]").bold().dim());
-    let query = RangeSpecSeq::all();
+/// Get into a file or directory
+async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
+    let single = get.single();
+    let temp_dir = out_dir.join(".iroh-tmp");
+    if single {
+        get_to_file_single(get, out_dir, temp_dir).await
+    } else {
+        get_to_dir_multi(get, out_dir, temp_dir).await
+    }
+}
 
-    let pb = ProgressBar::hidden();
-    pb.enable_steady_tick(std::time::Duration::from_millis(50));
-    pb.set_style(
-        ProgressStyle::with_template(PROGRESS_STYLE)
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
-    );
+async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
+    let curr = curr.next();
+    let mut handle = ConcatenateSliceWriter::new(tokio::io::stdout()).into();
+    let curr = curr.write_all(&mut handle).await?;
+    let EndBlobNext::Closing(curr) = curr.next() else {
+        anyhow::bail!("expected end of stream")
+    };
+    Ok(curr.next().await?)
+}
 
-    let request = GetRequest::new(get.hash(), query).into();
-    let response = match get {
-        GetInteractive::Ticket { ticket, keylog } => {
-            get::run_ticket(&ticket, request, keylog, MAX_CONCURRENT_DIALS).await?
-        }
-        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
-    };
-    let connected = response.next().await?;
-    progress!("{} Requesting ...", style("[2/3]").bold().dim());
-    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
-        anyhow::bail!("expected a collection");
-    };
+async fn get_to_stdout_multi(
+    curr: get::get_response_machine::AtStartRoot,
+    pb: ProgressBar,
+) -> Result<get::Stats> {
     let (mut next, collection) = {
         let curr = curr.next();
         let (curr, collection_data) = curr.concatenate_into_vec().await?;
@@ -1110,7 +1241,43 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
         pb.finish();
         next = curr.next();
     };
-    let stats = finishing.next().await?;
+    Ok(finishing.next().await?)
+}
+
+/// get to stdout, no resume possible
+async fn get_to_stdout(get: GetInteractive) -> Result<()> {
+    let hash = get.hash();
+    let single = get.single();
+    progress!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
+    let query = if single {
+        // just get the entire first item
+        RangeSpecSeq::new([RangeSet2::all()])
+    } else {
+        // get everything (collection and children)
+        RangeSpecSeq::all()
+    };
+
+    let pb = make_download_pb();
+    let request = GetRequest::new(get.hash(), query).into();
+    let response = match get {
+        GetInteractive::Ticket {
+            ticket,
+            keylog,
+            derp_map,
+        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
+        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+    };
+    let connected = response.next().await?;
+    progress!("{} Requesting ...", style("[2/3]").bold().dim());
+    let ConnectedNext::StartRoot(curr) = connected.next().await? else {
+        anyhow::bail!("expected root to be present");
+    };
+    let stats = if single {
+        get_to_stdout_single(curr).await?
+    } else {
+        get_to_stdout_multi(curr, pb.clone()).await?
+    };
     pb.finish_and_clear();
     progress!(
         "Transferred {} in {}, {}/s",

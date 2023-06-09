@@ -20,7 +20,7 @@ use crate::rpc_protocol::ProvideProgress;
 use crate::util::{Progress, ProgressReader, ProgressReaderUpdate};
 use crate::{Hash, IROH_BLOCK_SIZE};
 
-use super::{BlobOrCollection, DataSource};
+use super::{DataSource, DbEntry};
 
 /// Creates a collection blob and returns all blobs in a hashmap.
 ///
@@ -29,7 +29,7 @@ use super::{BlobOrCollection, DataSource};
 pub(super) async fn create_collection(
     data_sources: Vec<DataSource>,
     progress: Progress<ProvideProgress>,
-) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
+) -> Result<(HashMap<Hash, DbEntry>, Hash)> {
     let mut outboards = compute_all_outboards(data_sources, progress.clone()).await?;
 
     // TODO: Don't sort on async runtime?
@@ -50,7 +50,7 @@ pub(super) async fn create_collection(
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         map.insert(
             hash,
-            BlobOrCollection::Blob {
+            DbEntry::External {
                 outboard,
                 path,
                 size,
@@ -69,7 +69,7 @@ pub(super) async fn create_collection(
     let hash = Hash::from(hash);
     map.insert(
         hash,
-        BlobOrCollection::Collection {
+        DbEntry::Internal {
             outboard: Bytes::from(outboard),
             data: Bytes::from(data.to_vec()),
         },

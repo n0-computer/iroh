@@ -1,12 +1,19 @@
 //! Utility functions and types.
 use std::{
     env, fmt,
+    net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
-use iroh::Hash;
+
+use crate::{
+    hp::derp::{DerpMap, UseIpv4, UseIpv6},
+    tls, Hash, Keypair, PeerId,
+};
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";
@@ -34,7 +41,7 @@ pub fn iroh_config_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh config directory.
 #[allow(dead_code)]
-pub fn iroh_config_path(file_name: &Path) -> Result<PathBuf> {
+pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
     Ok(path)
 }
@@ -179,4 +186,32 @@ impl FromStr for Blake3Cid {
             Self::from_bytes(bytes.as_ref())
         }
     }
+}
+
+pub fn create_quinn_client(
+    bind_addr: SocketAddr,
+    peer_id: Option<PeerId>,
+    alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
+) -> Result<quinn::Endpoint> {
+    let keypair = Keypair::generate();
+
+    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    client_config.transport_config(Arc::new(transport_config));
+
+    endpoint.set_default_client_config(client_config);
+    Ok(endpoint)
+}
+
+pub fn configure_local_derp_map() -> DerpMap {
+    let stun_port = 3478;
+    let host_name = "derp.invalid".into();
+    let derp_port = 3340;
+    let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
+    let derp_ipv6 = UseIpv6::None;
+    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
 }

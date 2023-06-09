@@ -32,12 +32,13 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, trace, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
-use crate::net::find_local_addresses;
+use crate::hp::cfg::Endpoint;
+use crate::hp::derp::DerpMap;
 use crate::protocol::{
     read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
@@ -68,6 +69,9 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Default bind address for the provider.
 pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
 
+/// How long we wait at most for some endpoints to be discovered.
+const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
+
 /// Builder for the [`Provider`].
 ///
 /// You must supply a database which can be created using [`create_collection`], everything else is
@@ -87,6 +91,7 @@ where
     db: Database,
     keylog: bool,
     custom_get_handler: C,
+    derp_map: Option<DerpMap>,
 }
 
 /// A custom get request handler that allows the user to make up a get request
@@ -112,10 +117,16 @@ impl CustomGetHandler for () {
 }
 
 /// A [`Database`] entry.
+///
+/// This is either stored externally in the file system, or internally in the database.
+/// Collections are always stored internally for now.
+///
+/// Internally stored entries are stored in the iroh home directory when the database is
+/// persisted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobOrCollection {
+pub enum DbEntry {
     /// A blob.
-    Blob {
+    External {
         /// The bao outboard data.
         outboard: Bytes,
         /// Path to the original data, which must not change while in use.
@@ -129,40 +140,38 @@ pub enum BlobOrCollection {
         size: u64,
     },
     /// A collection.
-    Collection {
-        /// The bao outboard data of the serialised [`Collection`].
+    Internal {
+        /// The bao outboard data.
         outboard: Bytes,
-        /// The serialised [`Collection`].
+        /// The inline data.
         data: Bytes,
     },
 }
 
-impl BlobOrCollection {
-    pub(crate) fn is_blob(&self) -> bool {
-        matches!(self, BlobOrCollection::Blob { .. })
+impl DbEntry {
+    pub(crate) fn is_external(&self) -> bool {
+        matches!(self, DbEntry::External { .. })
     }
 
     pub(crate) fn blob_path(&self) -> Option<&Path> {
         match self {
-            BlobOrCollection::Blob { path, .. } => Some(path),
-            BlobOrCollection::Collection { .. } => None,
+            DbEntry::External { path, .. } => Some(path),
+            DbEntry::Internal { .. } => None,
         }
     }
 
     pub(crate) fn outboard(&self) -> &Bytes {
         match self {
-            BlobOrCollection::Blob { outboard, .. } => outboard,
-            BlobOrCollection::Collection { outboard, .. } => outboard,
+            DbEntry::External { outboard, .. } => outboard,
+            DbEntry::Internal { outboard, .. } => outboard,
         }
     }
 
     /// A reader for the data
     async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
         Ok(match self {
-            BlobOrCollection::Blob { path, .. } => {
-                Either::Right(tokio::fs::File::open(path).await?)
-            }
-            BlobOrCollection::Collection { data, .. } => Either::Left(Cursor::new(data.clone())),
+            DbEntry::External { path, .. } => Either::Right(tokio::fs::File::open(path).await?),
+            DbEntry::Internal { data, .. } => Either::Left(Cursor::new(data.clone())),
         })
     }
 
@@ -172,8 +181,8 @@ impl BlobOrCollection {
     /// For blobs it is the blob size.
     pub fn size(&self) -> u64 {
         match self {
-            BlobOrCollection::Blob { size, .. } => *size,
-            BlobOrCollection::Collection { data, .. } => data.len() as u64,
+            DbEntry::External { size, .. } => *size,
+            DbEntry::Internal { data, .. } => data.len() as u64,
         }
     }
 }
@@ -186,6 +195,7 @@ impl Builder {
             keypair: Keypair::generate(),
             db,
             keylog: false,
+            derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
         }
@@ -207,7 +217,14 @@ where
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
             rpc_endpoint: value,
+            derp_map: self.derp_map,
         }
+    }
+
+    /// Sets the `[DerpMap]`
+    pub fn derp_map(mut self, dm: DerpMap) -> Self {
+        self.derp_map = Some(dm);
+        self
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
@@ -220,6 +237,7 @@ where
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
+            derp_map: self.derp_map,
         }
     }
 
@@ -252,7 +270,8 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
-    pub fn spawn(self) -> Result<Provider> {
+    pub async fn spawn(self) -> Result<Provider> {
+        trace!("spawning provider");
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -268,16 +287,44 @@ where
             .transport_config(Arc::new(transport_config))
             .concurrent_connections(MAX_CONNECTIONS);
 
-        let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
-        let listen_addr = endpoint.local_addr().unwrap();
+        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
+        let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+            port: self.bind_addr.port(),
+            private_key: self.keypair.secret().clone().into(),
+            on_endpoints: Some(Box::new(move |eps| {
+                if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
+                    endpoints_update_s.send(()).ok();
+                }
+            })),
+            ..Default::default()
+        })
+        .await?;
+        trace!("created magicsock");
+
+        let derp_map = self.derp_map.unwrap_or_default();
+        conn.set_derp_map(Some(derp_map))
+            .await
+            .context("setting derp map")?;
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            conn.clone(),
+            Arc::new(quinn::TokioRuntime),
+        )?;
+
+        trace!("created quinn endpoint");
+
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
-        tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+
+        debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(ProviderInner {
             db: self.db,
-            listen_addr,
+            conn,
             keypair: self.keypair,
             events,
             controller,
@@ -303,6 +350,14 @@ where
             inner,
             task: task.map_err(Arc::new).boxed().shared(),
         };
+
+        // Wait for a single endpoint update, to make sure
+        // we found some endpoints
+        tokio::time::timeout(ENDPOINT_WAIT, async move {
+            endpoints_update_r.recv_async().await
+        })
+        .await
+        .context("waiting for endpoint")??;
 
         Ok(provider)
     }
@@ -388,7 +443,7 @@ pub struct Provider {
 #[derive(Debug)]
 struct ProviderInner {
     db: Database,
-    listen_addr: SocketAddr,
+    conn: crate::hp::magicsock::Conn,
     keypair: Keypair,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
@@ -472,17 +527,20 @@ impl Provider {
     /// The address on which the provider socket is bound.
     ///
     /// Note that this could be an unspecified address, if you need an address on which you
-    /// can contact the provider consider using [`Provider::listen_addresses`].  However the
+    /// can contact the provider consider using [`Provider::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> SocketAddr {
-        self.inner.listen_addr
+    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        self.inner.local_address()
     }
 
-    /// Returns all addresses on which the provider is reachable.
-    ///
-    /// This will never be empty.
-    pub fn listen_addresses(&self) -> Result<Vec<SocketAddr>> {
-        find_local_addresses(self.inner.listen_addr)
+    /// Lists the local endpoint of this node.
+    pub async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
+        self.inner.local_endpoints().await
+    }
+
+    /// Convenience method to get just the addr part of [`Provider::local_endpoints`].
+    pub async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
+        self.inner.local_endpoint_addresses().await
     }
 
     /// Returns the [`PeerId`] of the provider.
@@ -506,9 +564,9 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
-        let addrs = self.listen_addresses()?;
+        let addrs = self.local_endpoint_addresses().await?;
         Ticket::new(hash, self.peer_id(), addrs)
     }
 
@@ -526,6 +584,26 @@ impl Provider {
     /// Returns a token that can be used to cancel the provider.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
+    }
+}
+
+impl ProviderInner {
+    async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
+        self.conn.local_endpoints().await
+    }
+
+    async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
+        let endpoints = self.local_endpoints().await?;
+        Ok(endpoints.into_iter().map(|x| x.addr).collect())
+    }
+
+    fn local_address(&self) -> Result<Vec<SocketAddr>> {
+        let (v4, v6) = self.conn.local_addr()?;
+        let mut addrs = vec![v4];
+        if let Some(v6) = v6 {
+            addrs.push(v6);
+        }
+        Ok(addrs)
     }
 }
 
@@ -551,7 +629,7 @@ impl RpcHandler {
         let items = self
             .inner
             .db
-            .blobs()
+            .external()
             .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
         futures::stream::iter(items)
     }
@@ -560,15 +638,17 @@ impl RpcHandler {
         self,
         _msg: ListCollectionsRequest,
     ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        let items = self
-            .inner
-            .db
-            .collections()
-            .map(|(hash, collection)| ListCollectionsResponse {
-                hash,
-                total_blobs_count: collection.blobs.len(),
-                total_blobs_size: collection.total_blobs_size,
-            });
+        // collections are always stored internally, so we take everything that is stored internally
+        // and try to parse it as a collection
+        let items = self.inner.db.internal().filter_map(|(hash, collection)| {
+            Collection::from_bytes(&collection)
+                .ok()
+                .map(|collection| ListCollectionsResponse {
+                    hash,
+                    total_blobs_count: collection.blobs.len(),
+                    total_blobs_size: collection.total_blobs_size,
+                })
+        });
         futures::stream::iter(items)
     }
 
@@ -624,13 +704,21 @@ impl RpcHandler {
     async fn id(self, _: IdRequest) -> IdResponse {
         IdResponse {
             peer_id: Box::new(self.inner.keypair.public().into()),
-            listen_addr: Box::new(self.inner.listen_addr),
+            listen_addrs: self
+                .inner
+                .local_endpoint_addresses()
+                .await
+                .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
     async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
         AddrsResponse {
-            addrs: find_local_addresses(self.inner.listen_addr).unwrap_or_default(),
+            addrs: self
+                .inner
+                .local_endpoint_addresses()
+                .await
+                .unwrap_or_default(),
         }
     }
     async fn shutdown(self, request: ShutdownRequest) {
@@ -670,7 +758,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
                 }
                 let path = entry.into_path();
                 let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource::NamedFile { name, path }))
+                anyhow::Ok(Some(DataSource { name, path }))
             })
             .filter_map(Result::transpose);
         let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
@@ -679,7 +767,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
             .collect::<anyhow::Result<Vec<_>>>()?
     } else {
         // A single file, use the file name as the name of the blob.
-        vec![DataSource::NamedFile {
+        vec![DataSource {
             name: canonicalize_path(root.file_name().context("path must be a file")?)?,
             path: root,
         }]
@@ -1035,7 +1123,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     writer: &mut W,
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
-        Some(BlobOrCollection::Blob {
+        Some(DbEntry::External {
             outboard,
             path,
             size,
@@ -1078,49 +1166,37 @@ pub(crate) struct BlobData {
 
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum DataSource {
-    /// A blob of data originating from the filesystem. The name of the blob is derived from
-    /// the filename.
-    File(PathBuf),
-    /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
-    /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile {
-        /// Custom name
-        name: String,
-        /// Path to the file
-        path: PathBuf,
-    },
+pub struct DataSource {
+    /// Custom name
+    name: String,
+    /// Path to the file
+    path: PathBuf,
 }
 
 impl DataSource {
     /// Creates a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
-        DataSource::File(path)
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        DataSource { path, name }
     }
     /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource::NamedFile { path, name }
+        DataSource { path, name }
     }
 
     /// Returns blob name for this data source.
     ///
     /// If no name was provided when created it is derived from the path name.
     pub(crate) fn name(&self) -> Cow<'_, str> {
-        match self {
-            DataSource::File(path) => path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_default(),
-            DataSource::NamedFile { name, .. } => Cow::Borrowed(name),
-        }
+        Cow::Borrowed(&self.name)
     }
 
     /// Returns the path of this data source.
     pub(crate) fn path(&self) -> &Path {
-        match self {
-            DataSource::File(path) => path,
-            DataSource::NamedFile { path, .. } => path,
-        }
+        &self.path
     }
 }
 
@@ -1204,7 +1280,7 @@ mod tests {
                 });
                 map.insert(
                     hash,
-                    BlobOrCollection::Blob {
+                    DbEntry::External {
                         outboard,
                         size,
                         path,
@@ -1218,7 +1294,7 @@ mod tests {
                 let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
-                map.insert(hash, BlobOrCollection::Collection { outboard, data });
+                map.insert(hash, DbEntry::Internal { outboard, data });
             }
             let db = Database::default();
             db.union_with(map);
@@ -1287,7 +1363,7 @@ mod tests {
 
         let collection = {
             let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection { data, .. } = c {
+            if let DbEntry::Internal { data, .. } = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
@@ -1306,9 +1382,10 @@ mod tests {
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .spawn()
+            .await
             .unwrap();
         let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).unwrap();
+        let ticket = provider.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

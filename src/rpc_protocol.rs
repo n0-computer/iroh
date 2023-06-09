@@ -147,7 +147,7 @@ pub struct WatchResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
     pub peer_id: Box<PeerId>,
-    pub listen_addr: Box<SocketAddr>,
+    pub listen_addrs: Vec<SocketAddr>,
     pub version: String,
 }
 

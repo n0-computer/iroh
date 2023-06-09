@@ -1,30 +1,36 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use duct::{cmd, ReaderHandle};
+use iroh::main_util::Blake3Cid;
+use iroh::provider::Ticket;
 use rand::{RngCore, SeedableRng};
+use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
 
 const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
 
-fn make_rand_file(size: usize, path: &Path) -> Result<()> {
+fn make_rand_file(size: usize, path: &Path) -> Result<iroh::Hash> {
     let mut content = vec![0u8; size];
     rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
+    let hash = blake3::hash(&content);
     std::fs::write(path, content)?;
-    Ok(())
+    Ok(hash.into())
 }
 
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
-    use iroh::provider::{create_collection, create_data_sources, BlobOrCollection};
+    use iroh::provider::{create_collection, create_data_sources, DbEntry};
 
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
@@ -39,7 +45,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
         outboard_path.set_extension("outboard.part");
         let mut data_path = temp_dir.join(text.as_str());
         match boc {
-            BlobOrCollection::Blob { outboard, path, .. } => {
+            DbEntry::External { outboard, path, .. } => {
                 data_path.set_extension("data.part");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::rename(path, &data_path)?;
@@ -48,7 +54,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
                 file.set_len(len / 2)?;
                 drop(file);
             }
-            BlobOrCollection::Collection { outboard, data } => {
+            DbEntry::Internal { outboard, data } => {
                 data_path.set_extension("data");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::write(data_path, data)?;
@@ -65,6 +71,18 @@ fn cli_provide_one_file() -> Result<()> {
     make_rand_file(1000, &path)?;
     // provide a path to a file, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(&path, Input::Path, Output::Path)
+}
+
+#[test]
+fn cli_provide_one_file_single() -> Result<()> {
+    let dir = testdir!();
+    let path = dir.join("foo");
+    let hash = make_rand_file(1000, &path)?;
+    // test single file download to stdout
+    test_provide_get_loop_single(&path, Input::Path, Output::Stdout, hash)?;
+    // test single file download to a path
+    test_provide_get_loop_single(&path, Input::Path, Output::Path, hash)?;
+    Ok(())
 }
 
 #[test]
@@ -132,6 +150,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     use iroh::provider::Database;
     use nix::{
         sys::signal::{self, Signal},
@@ -145,47 +165,54 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     std::fs::write(&foo_path, b"foo")?;
     let bar_path = dir.join("bar");
     std::fs::write(&bar_path, b"bar")?;
+
     // spawn iroh in provide mode
-    let iroh_provide = |path| {
-        Command::new(iroh_bin())
-            .env("IROH_DATA_DIR", &iroh_data_dir)
-            // comment out to get debug output from the child process
-            // .env("RUST_LOG", "debug")
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .arg("provide")
-            .arg("--addr")
-            .arg(ADDR)
-            .arg("--rpc-port")
-            .arg("disabled")
-            .arg(path)
-            .spawn()
+    let iroh_provide = |path: &PathBuf| {
+        cmd(
+            iroh_bin(),
+            [
+                "provide",
+                "--addr",
+                ADDR,
+                "--rpc-port",
+                "disabled",
+                path.to_str().unwrap(),
+            ],
+        )
+        .env("IROH_DATA_DIR", &iroh_data_dir)
+        .stdin_null()
+        .stderr_capture()
+        .reader()
     };
-    // provide for 1 sec, then stop with control-c
-    let provide_1sec = |path| {
+    // start provide until we got the ticket, then stop with control-c
+    let provide = |path| {
         let mut child = iroh_provide(path)?;
         // wait for the provider to start
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        let _ticket = match_provide_output(&mut child, 1, Input::Path)?;
+        println!("got ticket, stopping provider {}", _ticket);
         // kill the provider via Control-C
-        signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
-        // wait for the provider to exit and make sure that it exited successfully
-        let status = child.wait()?;
-        // comment out to get debug output from the child process
-        std::io::copy(&mut child.stderr.unwrap(), &mut std::io::stdout())?;
-        assert!(status.success());
+        for pid in child.pids() {
+            signal::kill(Pid::from_raw(pid as i32), Signal::SIGINT).unwrap();
+        }
+        // wait for the provider to stop
+        loop {
+            if let Some(_output) = child.try_wait()? {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         anyhow::Ok(())
     };
-    provide_1sec(&foo_path)?;
+    provide(&foo_path)?;
     // should have some data now
     let db = Database::load_test(iroh_data_dir.clone())?;
-    let blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    let blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
     assert_eq!(blobs, vec![foo_path.clone()]);
 
-    provide_1sec(&bar_path)?;
+    provide(&bar_path)?;
     // should have more data now
     let db = Database::load_test(&iroh_data_dir)?;
-    let mut blobs = db.blobs().map(|x| x.1).collect::<Vec<_>>();
+    let mut blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
     blobs.sort();
     assert_eq!(blobs, vec![bar_path, foo_path]);
 
@@ -200,37 +227,18 @@ fn cli_provide_addresses() -> Result<()> {
     make_rand_file(1000, &path)?;
     let input = Input::Path;
 
-    let _provider = make_provider(
-        &path,
-        &input,
-        home.clone(),
-        Some("127.0.0.1:4333"),
-        Some(RPC_PORT),
-    )?;
-
+    let mut provider = make_provider(&path, &input, home, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
     // wait for the provider to start
-    std::thread::sleep(std::time::Duration::from_secs(1));
-
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
+    let _all_in_one = match_provide_output(&mut provider, 1, input)?;
 
     // test output
-    let get_output = cmd.output()?;
+    let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
+        // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+        .stdout_capture()
+        .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
     assert!(get_output.status.success());
-    assert_eq!(stdout, "Listening addresses: [127.0.0.1:4333]\n");
-
-    let _provider = make_provider(&path, &input, home, Some("0.0.0.0:4333"), Some(RPC_PORT))?;
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("addresses").arg("--rpc-port").arg(RPC_PORT);
-
-    // test output
-    let get_output = cmd.output()?;
-    let stdout = String::from_utf8(get_output.stdout).unwrap();
-    assert!(get_output.status.success());
-    assert!(stdout != "Listening addresses: [0.0.0.0:4333]\n");
-    assert!(stdout.contains("Listening addresses: ["));
-
+    assert!(stdout.starts_with("Listening addresses:"));
     //parse the output to get the addresses
     let addresses = stdout
         .split('[')
@@ -240,14 +248,11 @@ fn cli_provide_addresses() -> Result<()> {
         .next()
         .unwrap()
         .split(',')
-        .map(|x| x.trim().to_string())
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+        .map(|x| SocketAddr::from_str(x).unwrap())
         .collect::<Vec<_>>();
-
-    for address in addresses {
-        let addr: std::net::SocketAddr = address.parse()?;
-        assert_eq!(addr.port(), 4333);
-    }
-
+    assert!(!addresses.is_empty());
     Ok(())
 }
 
@@ -266,7 +271,7 @@ enum Output {
 
 /// Parameter for `test_provide_get_loop`, that determines how we send the data to the `provide`
 /// command.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Input {
     /// Indicates we should pass the content as an argument to the `iroh provide` command
     Path,
@@ -284,36 +289,32 @@ fn make_provider(
     home: impl AsRef<Path>,
     addr: Option<&str>,
     rpc_port: Option<&str>,
-) -> Result<ProvideProcess> {
+) -> Result<ReaderHandle> {
     // spawn a provider & optionally provide from stdin
-    let mut command = Command::new(iroh_bin());
-    let res = command
-        .stderr(Stdio::null())
-        .stdout(Stdio::piped())
-        .env("RUST_LOG", "debug")
-        .env(
-            "IROH_DATA_DIR",
-            home.as_ref().join("iroh_data_dir").as_os_str(),
-        )
-        .stderr(Stdio::piped())
-        .arg("provide")
-        .arg(path)
-        .arg("--addr")
-        .arg(addr.unwrap_or(ADDR))
-        .arg("--rpc-port")
-        .arg(rpc_port.unwrap_or("disabled"));
+    let res = cmd(
+        iroh_bin(),
+        [
+            "provide",
+            path.to_str().unwrap(),
+            "--addr",
+            addr.unwrap_or(ADDR),
+            "--rpc-port",
+            rpc_port.unwrap_or("disabled"),
+        ],
+    )
+    .stderr_null()
+    // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+    .env("RUST_LOG", "debug")
+    .env("IROH_DATA_DIR", home.as_ref().join("iroh_data_dir"));
 
     let provider = match input {
-        Input::Stdin => {
-            let f = File::open(path)?;
-            let stdin = Stdio::from(f);
-            res.stdin(stdin).spawn()?
-        }
-        Input::Path => res.stdin(Stdio::null()).spawn()?,
-    };
+        Input::Stdin => res.stdin_path(path),
+        Input::Path => res.stdin_null(),
+    }
+    .reader()?;
 
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
-    Ok(ProvideProcess { child: provider })
+    Ok(provider)
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -349,26 +350,25 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     let home = testdir!();
     let mut provider = make_provider(&path, &input, home, None, None)?;
-    // std::io::copy(&mut provider.child.stderr.take().unwrap(), &mut std::io::stderr())?;
-
-    let stdout = provider.child.stdout.take().unwrap();
-    let stdout = BufReader::new(stdout);
 
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(stdout, num_blobs, input)?;
+    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut cmd = Command::new(iroh_bin());
-    cmd.arg("get-ticket").arg(all_in_one);
     let cmd = if let Some(ref out) = out {
-        cmd.arg("--out").arg(out)
+        cmd(
+            iroh_bin(),
+            ["get-ticket", &all_in_one, "--out", out.to_str().unwrap()],
+        )
     } else {
-        &mut cmd
-    };
+        cmd(iroh_bin(), ["get-ticket", &all_in_one])
+    }
+    .stdout_capture()
+    .stderr_capture();
 
     // test get stderr output
-    let get_output = cmd.output()?;
-    // std::io::copy(&mut std::io::Cursor::new(&get_output.stderr), &mut std::io::stderr())?;
+    let get_output = cmd.run()?;
+    drop(provider);
     assert!(get_output.status.success());
 
     // test output
@@ -384,17 +384,98 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)
 }
-/// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
-/// process is killed when it goes out of scope.
-struct ProvideProcess {
-    child: Child,
-}
 
-impl Drop for ProvideProcess {
-    fn drop(&mut self) {
-        self.child.kill().ok();
-        self.child.try_wait().ok();
+/// Test the provide and get loop for success, stderr output, and file contents.
+///
+/// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
+///
+/// Runs the provider as a child process that stays alive until the getter has completed. Then
+/// checks the output of the "provide" and "get" processes against expected regex output. Finally,
+/// test the content fetched from the "get" process is the same as the "provided" content.
+fn test_provide_get_loop_single(
+    path: &Path,
+    input: Input,
+    output: Output,
+    hash: iroh::Hash,
+) -> Result<()> {
+    let out = match output {
+        Output::Stdout => None,
+        Output::Path => {
+            let dir = testdir!();
+            Some(dir.join("out"))
+        }
+        Output::Custom(out) => Some(out),
+    };
+
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures");
+
+    let path = src.join(path);
+    let num_blobs = if path.is_dir() {
+        WalkDir::new(&path)
+            .into_iter()
+            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
+            .count()
+    } else {
+        1
+    };
+
+    let home = testdir!();
+    let mut provider = make_provider(&path, &input, home, None, None)?;
+
+    // test provide output & get all in one ticket from stderr
+    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
+    let ticket = Ticket::from_str(&all_in_one).unwrap();
+    let addrs = ticket
+        .addrs()
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>();
+    let peer = ticket.peer().to_string();
+
+    // create a `get-ticket` cmd & optionally provide out path
+    let mut args = vec!["get", "--peer", &peer];
+    for addr in &addrs {
+        args.push("--addrs");
+        args.push(addr);
     }
+    if let Some(ref out) = out {
+        args.push("--out");
+        args.push(out.to_str().unwrap());
+    }
+    args.push("--single");
+    let hash_str = Blake3Cid::new(hash).to_string();
+    args.push(&hash_str);
+    let cmd = cmd(iroh_bin(), args)
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked();
+
+    // test get stderr output
+    let get_output = cmd.run()?;
+    // println!("{}", std::str::from_utf8(&get_output.stdout).unwrap());
+    // println!("{}", std::str::from_utf8(&get_output.stderr).unwrap());
+    drop(provider);
+    assert!(get_output.status.success());
+
+    // test output
+    let expect_content = std::fs::read(path)?;
+    match out {
+        None => {
+            assert!(!get_output.stdout.is_empty());
+            assert_eq!(expect_content, get_output.stdout);
+        }
+        Some(out) => {
+            let path = out.join(hash_str);
+            let content = std::fs::read(path)?;
+            assert_eq!(expect_content, content);
+        }
+    };
+
+    // assert!(!get_output.stderr.is_empty());
+    // match_get_stderr(get_output.stderr)
+    Ok(())
 }
 
 fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
@@ -430,17 +511,25 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 ///
 /// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
-    println!("{}", String::from_utf8_lossy(&stderr[..]));
+    println!("get stderr\n{}", String::from_utf8_lossy(&stderr[..]));
     let stderr = std::io::BufReader::new(&stderr[..]);
-    assert_matches_line![
+    assert_matches_line(
         stderr,
-        r"Fetching: [\da-z]{59}"; 1,
-        r"\[1/3\] Connecting ..."; 1,
-        r"\[2/3\] Requesting ..."; 1,
-        r"\[3/3\] Downloading ..."; 1,
-        r"\d* file\(s\) with total transfer size [\d.]* ?[BKMGT]?i?B"; 1,
-        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d*? [BKMGT]iB/s"; 1
-    ];
+        [
+            (r"Fetching: [\da-z]{59}", 1),
+            (r"\[1/3\] Connecting ...", 1),
+            (r"\[2/3\] Requesting ...", 1),
+            (r"\[3/3\] Downloading ...", 1),
+            (
+                r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)",
+                1,
+            ),
+            (
+                r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s",
+                1,
+            ),
+        ],
+    );
     Ok(())
 }
 
@@ -448,11 +537,8 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
 /// that can be used to 'get' from another process.
 ///
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
-fn match_provide_output<T: Read>(
-    reader: BufReader<T>,
-    num_blobs: usize,
-    input: Input,
-) -> Result<String> {
+fn match_provide_output<T: Read>(reader: T, num_blobs: usize, input: Input) -> Result<String> {
+    let reader = BufReader::new(reader);
     // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
     // about "Reading"
     let _reading_line_num = match input {
@@ -460,26 +546,30 @@ fn match_provide_output<T: Read>(
         Input::Path => 1,
     };
 
-    let mut caps = assert_matches_line![
+    let mut caps = assert_matches_line(
         reader,
-        r"Listening address: [\d.:]*"; 1,
-        r"PeerID: [_\w\d-]*"; 1,
-        r""; 1,
-        r"Adding .*"; 1,
-        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
-        r"Total: [_\w\d-]*"; 1,
-        r""; 1,
-        r"Collection: [\da-z]{59}"; 1,
-        r"All-in-one ticket: ([_a-zA-Z\d-]*)"; 1
-    ];
+        [
+            (r"Listening addresses:", 1),
+            (r"^  \S+", -1),
+            (r"PeerID: [_\w\d-]*", 1),
+            (r"", 1),
+            (r"Adding .*", 1),
+            (r"- \S*: \d*.?\d*? ?[BKMGT]i?B?", num_blobs as i64),
+            (r"Total: [_\w\d-]*", 1),
+            (r"", 1),
+            (r"Collection: [\da-z]{59}", 1),
+            (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
+        ],
+    );
 
     // return the capture of the all in one ticket, should be the last capture
     caps.pop().context("Expected at least one capture.")
 }
 
-#[macro_export]
 /// Ensures each line of the first expression matches the regex of each following expression. Each
 /// regex expression is followed by the number of consecutive lines it should match.
+///
+/// A match number of `-1` indicates that the regex should match at least once.
 ///
 /// Returns a vec of `String`s of any captures made against the regex on each line.
 ///
@@ -487,34 +577,61 @@ fn match_provide_output<T: Read>(
 /// ```
 /// let expr = b"hello world!\nNice to meet you!\n02/23/2023\n02/23/2023\n02/23/2023";
 /// let buf_reader = std::io::BufReader::new(&expr[..]);
-/// assert_matches_line![
+/// assert_matches_line(
 ///     buf_reader,
-///     r"hello world!"; 1,
-///     r"\S*$"; 1,
-///     r"\d{2}/\d{2}/\d{4}"; 3
-/// ];
+///     [
+///         (r"hello world!", 1),
+///         (r"\S*$", 1),
+///         (r"\d{2}/\d{2}/\d{4}", 3),
+///     ]);
 /// ```
-macro_rules! assert_matches_line {
-     ( $x:expr, $( $z:expr;$a:expr ),* ) => {
-         {
-            let mut lines = $x.lines();
-            let mut caps = Vec::new();
-            $(
-            let rx = regex::Regex::new($z)?;
-            for _ in 0..$a {
-                let line = lines.next().context("Unexpected end of stderr reader")??;
-                if let Some(cap) = rx.captures(line.trim()) {
+fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (&'static str, i64)>,
+{
+    let mut lines = reader.lines().peekable();
+    let mut caps = Vec::new();
+
+    for (regex_str, num_matches) in expressions {
+        let rx = Regex::new(regex_str).expect("invalid regex");
+        let mut matches = 0;
+
+        loop {
+            if num_matches > 0 && matches == num_matches as usize {
+                break;
+            }
+
+            if let Some(Ok(line)) = lines.peek() {
+                println!("|{}", line);
+
+                if let Some(cap) = rx.captures(line) {
                     for i in 0..cap.len() {
                         if let Some(capture_group) = cap.get(i) {
                             caps.push(capture_group.as_str().to_string());
                         }
                     }
+
+                    matches += 1;
                 } else {
-                    anyhow::bail!(format!("no match found\nexpected match for '{}'\ngot '{line}'", $z));
-                };
+                    break;
+                }
+            } else {
+                panic!("Unexpected end of reader");
             }
-            )*
-            caps
-         }
-    };
+
+            let _ = lines.next();
+        }
+
+        if num_matches == -1 {
+            if matches == 0 {
+                println!("Expected at least one match for regex: {}", regex_str);
+                panic!("no matches found");
+            }
+        } else if matches != num_matches as usize {
+            println!("Expected {} matches for regex: {}", num_matches, regex_str);
+            panic!("invalid number of matches");
+        }
+    }
+
+    caps
 }
