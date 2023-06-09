@@ -336,10 +336,29 @@ jobs:
         cd chuck/netsim
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
+
+    - name: Dump report
+      run: |
+        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
+        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
+        export AWS_DEFAULT_REGION=us-west-2
+        
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        sudo ./aws/install --update
+
+        cd chuck/netsim
+
+        tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
+        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/intg_${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
 
     - name: Echo metrics
       run: |
         cd chuck/netsim
         d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        echo "$metro_data" 
+        d=$(cat report_metro_integration.txt)
         metro_data=$(printf "%s\n " "$d")
         echo "$metro_data" 
