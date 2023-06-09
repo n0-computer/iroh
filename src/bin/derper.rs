@@ -4,7 +4,7 @@
 
 use std::{
     borrow::Cow,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
@@ -28,7 +28,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor, AcmeConfig};
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -42,7 +42,7 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Server HTTPS listen address.
-    #[clap(long, short, default_value = "0.0.0.0:443")]
+    #[clap(long, short, default_value = "[::]:443")]
     addr: SocketAddr,
     /// The port on which to serve HTTP. The listener is bound to the same IP (if any) as specified in the -a flag.
     #[clap(long, default_value_t = 80)]
@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
     let mut tasks = JoinSet::new();
 
     if cli.dev {
-        cli.addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEV_PORT);
+        cli.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEV_PORT);
         info!(%cli.addr, "Running in dev mode.");
     }
 
@@ -692,32 +692,48 @@ async fn serve_stun(host: IpAddr, port: u16) {
 }
 
 async fn server_stun_listener(sock: UdpSocket) {
+    let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
     loop {
         match sock.recv_from(&mut buffer).await {
             Ok((n, src_addr)) => {
-                let pkt = &buffer[..n];
-                if !stun::is(pkt) {
-                    debug!(%src_addr, "STUN: ignoring non stun packet");
-                    continue;
-                }
-                match stun::parse_binding_request(pkt) {
-                    Ok(txid) => {
-                        debug!(%src_addr, %txid, "STUN: received binding request");
-                        let res = stun::response(txid, src_addr);
-                        if let Err(err) = sock.send_to(&res, src_addr).await {
-                            warn!(%src_addr, "STUN: failed to write response: {:?}", err);
+                let pkt = buffer[..n].to_vec();
+                let sock = sock.clone();
+                tokio::task::spawn(async move {
+                    if !stun::is(&pkt) {
+                        debug!(%src_addr, "STUN: ignoring non stun packet");
+                        return;
+                    }
+                    match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
+                        .await
+                        .unwrap()
+                    {
+                        Ok(txid) => {
+                            debug!(%src_addr, %txid, "STUN: received binding request");
+                            let res =
+                                tokio::task::spawn_blocking(move || stun::response(txid, src_addr))
+                                    .await
+                                    .unwrap();
+                            match sock.send_to(&res, src_addr).await {
+                                Ok(len) => {
+                                    if len != res.len() {
+                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but exepcted {}", len, res.len());
+                                    }
+                                    trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
+                                }
+                                Err(err) => {
+                                    warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         }
                     }
-                    Err(err) => {
-                        warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-                        continue;
-                    }
-                }
+                });
             }
             Err(err) => {
                 warn!("STUN: failed to recv: {:?}", err);
-                continue;
             }
         }
     }

@@ -1682,8 +1682,7 @@ async fn bind_local_stun_socket(
         tokio::spawn(
             async move {
                 debug!("udp stun socket listener started");
-                // TODO: Can we do better for buffers here?  Probably doesn't matter
-                // much.
+                // TODO: Can we do better for buffers here?  Probably doesn't matter much.
                 let mut buf = vec![0u8; 64 << 10];
                 loop {
                     tokio::select! {
@@ -1840,6 +1839,7 @@ mod tests {
             .get_report(dm, None, None)
             .await
             .context("failed to get netcheck report")?;
+
         dbg!(&r);
         if r.udp {
             assert_eq!(
