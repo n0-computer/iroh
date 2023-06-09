@@ -1307,7 +1307,7 @@ impl Actor {
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
             None => {
-                let port: u16 = rand::random();
+                let port: u16 = 12345;
                 bind_local_stun_socket(
                     SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)),
                     self.addr(),
@@ -1319,7 +1319,7 @@ impl Actor {
         let stun_sock_v6 = match stun_sock_v6 {
             Some(sock) => Some(sock),
             None => {
-                let port: u16 = rand::random();
+                let port: u16 = 12346;
                 bind_local_stun_socket(
                     SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)),
                     self.addr(),
