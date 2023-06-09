@@ -1687,7 +1687,7 @@ async fn bind_local_stun_socket(
                 // TODO: Can we do better for buffers here?  Probably doesn't matter
                 // much.
                 let mut buf = vec![0u8; 64 << 10];
-                if let Err(_) = ready_tx.send(()) {
+                if ready_tx.send(()).is_err() {
                     error!("ready receiver dropped");
                 }
                 loop {
@@ -1707,7 +1707,7 @@ async fn bind_local_stun_socket(
             .instrument(span),
         );
     }
-    if let Err(_) = ready_rx.await {
+    if ready_rx.await.is_err() {
         error!("udp stun socket listener dropped");
     }
     Some(sock)
