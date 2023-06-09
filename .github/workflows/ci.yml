@@ -30,7 +30,7 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runner: [self-hosted, linux, X64]
+            runner: ubuntu-latest #[self-hosted, linux, X64]
           # - name: macOS-latest
           #   os: macOS-latest
           #   release-os: darwin
