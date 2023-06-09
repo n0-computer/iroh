@@ -1307,9 +1307,8 @@ impl Actor {
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
             None => {
-                let port: u16 = 12345;
                 bind_local_stun_socket(
-                    SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)),
+                    SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
                     self.addr(),
                     cancel_token.clone(),
                 )
@@ -1319,9 +1318,8 @@ impl Actor {
         let stun_sock_v6 = match stun_sock_v6 {
             Some(sock) => Some(sock),
             None => {
-                let port: u16 = 12346;
                 bind_local_stun_socket(
-                    SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)),
+                    SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
                     self.addr(),
                     cancel_token.clone(),
                 )
@@ -1760,7 +1758,6 @@ mod tests {
     use crate::test_utils::setup_logging;
     use bytes::BytesMut;
 
-    #[ignore]
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = setup_logging();
@@ -1868,7 +1865,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
         let _guard = setup_logging();
@@ -1902,7 +1898,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
         let _guard = setup_logging();
@@ -1937,7 +1932,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
         let _guard = setup_logging();
@@ -2115,7 +2109,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_hairpin() -> Result<()> {
         let _guard = setup_logging();

@@ -54,7 +54,7 @@ jobs:
         toolchain: ${{ matrix.rust }}
       
     - name: tests
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: cargo test --jobs=1 --workspace --all-features --lib --bins --tests
       
   build_and_test_windows:
     name: Build and test (Windows)
