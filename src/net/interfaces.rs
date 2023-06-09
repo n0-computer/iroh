@@ -156,11 +156,9 @@ impl State {
             let if_up = ni.is_up();
             let name = ni.iface.name.clone();
             let pfxs: Vec<_> = ni.addrs().collect();
-            dbg!(&ni, if_up);
             if if_up {
                 for pfx in &pfxs {
-                    dbg!(pfx);
-                    if dbg!(pfx.addr().is_loopback()) {
+                    if pfx.addr().is_loopback() {
                         continue;
                     }
                     have_v6 |= is_usable_v6(&pfx.addr());
