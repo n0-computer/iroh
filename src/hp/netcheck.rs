@@ -1678,7 +1678,6 @@ async fn bind_local_stun_socket(
             .map(|a| a.to_string())
             .unwrap_or(String::from("-")),
     );
-    let (ready_tx, ready_rx) = oneshot::channel();
     {
         let sock = sock.clone();
         tokio::spawn(
@@ -1687,9 +1686,6 @@ async fn bind_local_stun_socket(
                 // TODO: Can we do better for buffers here?  Probably doesn't matter
                 // much.
                 let mut buf = vec![0u8; 64 << 10];
-                if ready_tx.send(()).is_err() {
-                    error!("ready receiver dropped");
-                }
                 loop {
                     tokio::select! {
                         biased;
@@ -1706,9 +1702,6 @@ async fn bind_local_stun_socket(
             }
             .instrument(span),
         );
-    }
-    if ready_rx.await.is_err() {
-        error!("udp stun socket listener dropped");
     }
     Some(sock)
 }
