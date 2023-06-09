@@ -28,7 +28,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor, AcmeConfig};
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -716,7 +716,10 @@ async fn server_stun_listener(sock: UdpSocket) {
                                     .unwrap();
                             match sock.send_to(&res, src_addr).await {
                                 Ok(len) => {
-                                    debug!(%src_addr, %txid, "STUN: sent {} bytes ({} expected)", len, res.len());
+                                    if len != res.len() {
+                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but exepcted {}", len, res.len());
+                                    }
+                                    trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
                                 }
                                 Err(err) => {
                                     warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
