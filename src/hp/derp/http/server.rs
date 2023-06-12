@@ -292,6 +292,7 @@ impl ServerState {
             let mut set = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
+                    biased;
                     _ = cancel.cancelled() => {
                         break;
                     }
