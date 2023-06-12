@@ -28,6 +28,7 @@ use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrumen
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::{
+    hp::portmapper::ProbeResult,
     metrics::inc,
     metrics::netcheck::NetcheckMetrics,
     net::{interfaces, ip::to_canonical},
@@ -540,7 +541,7 @@ impl ReportState {
                 let port_mapper = port_mapper.clone();
                 port_mapping.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
-                        Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
+                        Ok(res) => Some(res),
                         Err(err) => {
                             warn!("skipping port mapping: {:?}", err);
                             None
@@ -644,13 +645,15 @@ impl ReportState {
                 },
                 pm = &mut port_mapping => {
                     let mut report = self.report.write().await;
+                    debug!("port mapping probe result: {pm:?}");
                     match pm {
-                        Some((upnp, pmp, pcp)) => {
+                        Some(ProbeResult{upnp, pmp, pcp}) => {
                             report.upnp = Some(upnp);
                             report.pmp = Some(pmp);
                             report.pcp = Some(pcp);
                         }
                         None => {
+                            // TODO: check this
                             report.upnp = None;
                             report.pmp = None;
                             report.pcp = None;
