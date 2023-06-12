@@ -55,6 +55,9 @@ jobs:
       
     - name: tests
       run: cargo test --workspace --all-features --lib --bins --tests
+
+    - name: doctests
+      run: cargo test --workspace --all-features --doc
       
   build_and_test_windows:
     name: Build and test (Windows)
