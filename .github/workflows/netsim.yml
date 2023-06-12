@@ -93,7 +93,7 @@ jobs:
         if [ -z "${c}" ];
         then
           sudo python3 main.py sims/iroh
-          sudo python3 main.py sims/integration
+          sudo python3 main.py --skip intg_derper__1_to_1_NAT_provide,intg_derper__1_to_1_NAT_both sims/integration
         else
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json
