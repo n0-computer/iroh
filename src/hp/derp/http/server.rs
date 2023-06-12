@@ -562,7 +562,7 @@ impl std::fmt::Debug for Handlers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = self.0.keys().fold(String::new(), |curr, next| {
             let (method, uri) = next;
-            format!("{curr}\n({method},{uri}): Box<Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>")
+            format!("{curr}\n({method},{uri}): Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>")
         });
         write!(f, "HashMap<{s}>")
     }

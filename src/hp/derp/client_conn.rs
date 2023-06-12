@@ -681,7 +681,6 @@ mod tests {
     use super::*;
 
     use anyhow::bail;
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     struct MockPacketForwarder {}
     impl PacketForwarder for MockPacketForwarder {
@@ -692,11 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = crate::test_utils::setup_logging();
 
         let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);

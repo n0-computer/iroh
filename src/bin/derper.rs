@@ -26,7 +26,7 @@ use iroh::hp::{
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
