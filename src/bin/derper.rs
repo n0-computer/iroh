@@ -344,27 +344,11 @@ async fn main() -> Result<()> {
         .mesh_key(mesh_key)
         .headers(headers)
         .tls_config(tls_config)
-        .derp_override(Box::new(|res: ResponseBuilder| derp_disabled_handler(res)))
-        .request_handler(
-            Method::GET,
-            "/",
-            Box::new(|res: ResponseBuilder| root_handler(res)),
-        )
-        .request_handler(
-            Method::GET,
-            "/index.html",
-            Box::new(|res: ResponseBuilder| root_handler(res)),
-        )
-        .request_handler(
-            Method::GET,
-            "/derp/probe",
-            Box::new(|res: ResponseBuilder| probe_handler(res)),
-        )
-        .request_handler(
-            Method::GET,
-            "/robots.txt",
-            Box::new(|res: ResponseBuilder| robots_handler(res)),
-        )
+        .derp_override(Box::new(derp_disabled_handler))
+        .request_handler(Method::GET, "/", Box::new(root_handler))
+        .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+        .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
+        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler))
         .spawn()
         .await?;
 

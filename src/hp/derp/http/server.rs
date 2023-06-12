@@ -403,7 +403,7 @@ impl hyper::service::Service<Request<Body>> for DerpService {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         // if the request hits the derp endpoint
-        if req.method() == &hyper::Method::GET && req.uri().path() == self.0.derp_endpoint {
+        if req.method() == hyper::Method::GET && req.uri().path() == self.0.derp_endpoint {
             match &self.0.derp_handler {
                 DerpHandler::Override(f) => {
                     // see if we have some override response

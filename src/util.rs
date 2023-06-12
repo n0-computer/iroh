@@ -71,7 +71,7 @@ impl Display for Hash {
         let text = data_encoding::BASE32_NOPAD
             .encode(self.0.as_bytes())
             .to_ascii_lowercase();
-        write!(f, "{}", text)
+        write!(f, "{text}")
     }
 }
 

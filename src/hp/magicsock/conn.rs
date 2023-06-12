@@ -1506,12 +1506,10 @@ impl Actor {
             link_type: None,
         };
         for (rid, d) in &r.region_v4_latency {
-            ni.derp_latency
-                .insert(format!("{}-v4", rid), d.as_secs_f64());
+            ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
         }
         for (rid, d) in &r.region_v6_latency {
-            ni.derp_latency
-                .insert(format!("{}-v6", rid), d.as_secs_f64());
+            ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
         }
 
         if ni.preferred_derp == 0 {
@@ -2113,8 +2111,7 @@ impl Actor {
 
         if num_nodes == 0 {
             warn!(
-                "[unexpected] got disco ping from {:?}/{:?} for node not in peers",
-                src, derp_node_src
+                "[unexpected] got disco ping from {src:?}/{derp_node_src:?} for node not in peers",
             );
             return;
         }
@@ -2123,11 +2120,11 @@ impl Actor {
             let ping_node_src_str = if num_nodes > 1 {
                 "[one-of-multi]".to_string()
             } else {
-                format!("{:?}", dst_key)
+                format!("{dst_key:?}")
             };
             info!(
-                "disco: {:?}<-{:?} ({:?}, {:?})  got ping tx={:?}",
-                self.conn.public_key, di.node_key, ping_node_src_str, src, dm.tx_id
+                "disco: {:?}<-{:?} ({ping_node_src_str:?}, {src:?})  got ping tx={:?}",
+                self.conn.public_key, di.node_key, dm.tx_id
             );
         }
 
@@ -2138,7 +2135,7 @@ impl Actor {
         });
         let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
-            warn!("failed to send disco message to {}: {:?}", ip_dst, err);
+            warn!("failed to send disco message to {ip_dst}: {err:?}");
         }
     }
 

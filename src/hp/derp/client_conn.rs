@@ -154,14 +154,13 @@ impl ClientConnManager {
 
         // start io loop
         let io_done = done.clone();
-        let io_client_id = client_id.clone();
-        let io_server_channel = server_channel.clone();
+        let io_client_id = client_id;
         let io_handle = tokio::task::spawn(
             async move {
                 let key = io_client_id.0;
                 let conn_num = io_client_id.1;
                 let res = conn_io.run(io_done).await;
-                let _ = io_server_channel
+                let _ = server_channel
                     .send(ServerMessage::RemoveClient((key.clone(), conn_num)))
                     .await;
                 match res {

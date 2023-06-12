@@ -328,11 +328,11 @@ impl DerpActor {
         }
 
         let why = if let Some(peer) = peer {
-            format!("{:?}", peer)
+            format!("{peer:?}")
         } else {
             "home-keep-alive".to_string()
         };
-        info!("adding connection to derp-{} for {}", region_id, why);
+        info!("adding connection to derp-{region_id} for {why}");
 
         let my_derp = self.conn.my_derp();
 

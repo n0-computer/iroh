@@ -1590,13 +1590,13 @@ impl Actor {
             log += " portmap=?";
         }
         if let Some(ipp) = r.global_v4 {
-            log += &format!(" v4a={}", ipp);
+            log += &format!(" v4a={ipp}");
         }
         if let Some(ipp) = r.global_v6 {
-            log += &format!(" v6a={}", ipp);
+            log += &format!(" v6a={ipp}");
         }
         if let Some(c) = r.captive_portal {
-            log += &format!(" captiveportal={}", c);
+            log += &format!(" captiveportal={c}");
         }
         log += &format!(" derp={}", r.preferred_derp);
         if r.preferred_derp != 0 {

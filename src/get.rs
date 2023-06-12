@@ -944,8 +944,8 @@ impl FilePaths {
     fn new(hash: &Hash, name: &str, temp_dir: &Path, target_dir: &Path) -> Self {
         let target = target_dir.join(pathbuf_from_name(name));
         let hash = blake3::Hash::from(*hash).to_hex();
-        let temp = temp_dir.join(format!("{}.data.part", hash));
-        let outboard = temp_dir.join(format!("{}.outboard.part", hash));
+        let temp = temp_dir.join(format!("{hash}.data.part"));
+        let outboard = temp_dir.join(format!("{hash}.outboard.part"));
         Self {
             target,
             temp,
@@ -965,7 +965,7 @@ impl FilePaths {
 /// get data path for a hash
 pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
     let hash = blake3::Hash::from(hash).to_hex();
-    data_path.join(format!("{}.data", hash))
+    data_path.join(format!("{hash}.data"))
 }
 
 /// Load a collection from a data path
