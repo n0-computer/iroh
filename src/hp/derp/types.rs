@@ -4,9 +4,8 @@ use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::client_conn::ClientConnBuilder;
+use super::client_conn::ClientConnManager;
 use super::PROTOCOL_VERSION;
 use crate::hp::key::node::PublicKey;
 
@@ -106,57 +105,22 @@ pub trait PacketForwarder: Send + Sync + 'static {
     fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: Bytes);
 }
 
-pub(crate) enum ServerMessage<R, W, P>
+#[derive(derive_more::Debug)]
+pub(crate) enum ServerMessage<P>
 where
-    R: AsyncRead + Unpin + Send + Sync + 'static,
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
     P: PacketForwarder,
 {
     AddWatcher(PublicKey),
     ClosePeer(PublicKey),
     SendPacket((PublicKey, Packet)),
     SendDiscoPacket((PublicKey, Packet)),
-    CreateClient(ClientConnBuilder<R, W, P>),
+    CreateClient(ClientConnManager),
     RemoveClient((PublicKey, usize)),
-    AddPacketForwarder((PublicKey, P)),
+    AddPacketForwarder {
+        key: PublicKey,
+        #[debug("PacketForwarder")]
+        forwarder: P,
+    },
     RemovePacketForwarder(PublicKey),
     Shutdown,
-}
-
-impl<R, W, P> std::fmt::Debug for ServerMessage<R, W, P>
-where
-    R: AsyncRead + Unpin + Send + Sync + 'static,
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
-    P: PacketForwarder,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ServerMessage::AddWatcher(key) => write!(f, "ServerMessage::AddWatcher({key:?})"),
-            ServerMessage::ClosePeer(key) => write!(f, "ServerMessage::ClosePeer({key:?})"),
-            ServerMessage::SendPacket((key, packet)) => {
-                write!(f, "ServerMessage::SendPacket(({key:?}, {packet:?}))")
-            }
-            ServerMessage::SendDiscoPacket((key, packet)) => {
-                write!(f, "ServerMessage::SendDiscoPacket(({key:?}, {packet:?}))")
-            }
-            ServerMessage::CreateClient(client_builder) => {
-                write!(
-                    f,
-                    "ServerMessage::CreateClient({:?}, {})",
-                    client_builder.key, client_builder.conn_num
-                )
-            }
-            ServerMessage::RemoveClient(key) => write!(f, "ServerMessage::RemoveClient({key:?})"),
-            ServerMessage::AddPacketForwarder((key, ..)) => write!(
-                f,
-                "ServerMessage::AddPacketForwarder(({key:?}, PacketForwarder)))"
-            ),
-            ServerMessage::RemovePacketForwarder(key) => {
-                write!(f, "ServerMessage::RemovePacketForwarder({key:?})")
-            }
-            ServerMessage::Shutdown => {
-                write!(f, "ServerMessage::Shutdown")
-            }
-        }
-    }
 }

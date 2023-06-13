@@ -15,19 +15,17 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
-use hyper::{
-    server::conn::Http, service::Service, Body, HeaderMap, Method, Request, Response, StatusCode,
-};
-use iroh::hp::{derp, key, stun};
-use serde::{Deserialize, Serialize};
-use tokio::{
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream, UdpSocket,
+use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
+use iroh::hp::{
+    derp::{
+        self,
+        http::{ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},
     },
-    task::JoinSet,
+    key, stun,
 };
-use tokio_rustls_acme::{caches::DirCache, AcmeAcceptor, AcmeConfig};
+use serde::{Deserialize, Serialize};
+use tokio::net::{TcpListener, UdpSocket};
+use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -58,11 +56,26 @@ struct Cli {
     /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
     #[clap(long, value_enum, default_value_t = CertMode::LetsEncrypt)]
     cert_mode: CertMode,
+    /// Whether to use the LetsEncrypt production or staging server.
+    ///
+    /// While in developement, LetsEncrypt prefers you to use the staging server. However, the staging server seems to
+    /// only use `ECDSA` keys. In their current set up, you can only get intermediate certificates
+    /// for `ECDSA` keys if you are on their "allowlist". The production server uses `RSA` keys,
+    /// which allow for issuing intermediate certificates in all normal circumstances.
+    /// So, to have valid certificates, we must use the LetsEncrypt production server.
+    /// Read more here: <https://letsencrypt.org/certificates/#intermediate-certificates>
+    /// Default is true. This flag is ignored if we are not using `cert_mode: CertMode::LetsEncrypt`.
+    #[clap(long, default_value_t = true)]
+    prod_tls: bool,
+    /// The contact email for the tls certificate. Required when running the Derper with TLS
+    /// enabled.
+    #[clap(long)]
+    tls_contact: Option<String>,
     /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.
     #[clap(long)]
     cert_dir: Option<PathBuf>,
     /// Certificate hostname.
-    #[clap(long, default_value = "derp.iroh.computer.")]
+    #[clap(long, default_value = "derp.iroh.network.")]
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
     #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -152,12 +165,6 @@ impl CertMode {
             }
         }
     }
-}
-
-#[derive(Clone)]
-enum TlsAcceptor {
-    LetsEncrypt(AcmeAcceptor),
-    Manual(tokio_rustls::TlsAcceptor),
 }
 
 fn escape_hostname(hostname: &str) -> Cow<'_, str> {
@@ -269,8 +276,6 @@ async fn main() -> Result<()> {
 
     let mut cli = Cli::parse();
 
-    let mut tasks = JoinSet::new();
-
     if cli.dev {
         cli.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEV_PORT);
         info!(%cli.addr, "Running in dev mode.");
@@ -279,47 +284,48 @@ async fn main() -> Result<()> {
     let listen_host = cli.addr.ip();
     let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
 
-    let derp_server = if cli.run_derp {
-        let cfg = Config::load(&cli).await?;
+    if serve_tls && cli.tls_contact.is_none() {
+        bail!("Must supply an email address for the `tls_contact` flag when running the derper with TLS enabled.");
+    }
 
-        let mesh_key = if let Some(file) = cli.mesh_psk_file {
-            let raw = tokio::fs::read_to_string(file)
-                .await
-                .context("reading mesh-pks file")?;
-            let mut mesh_key = [0u8; 32];
-            hex::decode_to_slice(raw.trim(), &mut mesh_key).context("invalid mesh-pks content")?;
-            info!("DERP mesh key configured");
-            Some(mesh_key)
-        } else {
-            None
-        };
-        let derp_server: derp::Server<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient> =
-            derp::Server::new(cfg.private_key, mesh_key);
-        info!("DERP server configured");
-        Some(derp_server)
+    let (secret_key, mesh_key) = match cli.run_derp {
+        true => {
+            let cfg = Config::load(&cli).await?;
+            let mesh_key = if let Some(file) = cli.mesh_psk_file {
+                let raw = tokio::fs::read_to_string(file)
+                    .await
+                    .context("reading mesh-pks file")?;
+                let mut mesh_key = [0u8; 32];
+                hex::decode_to_slice(raw.trim(), &mut mesh_key)
+                    .context("invalid mesh-pks content")?;
+                info!("DERP mesh key configured");
+                Some(mesh_key)
+            } else {
+                None
+            };
+            (Some(cfg.private_key), mesh_key)
+        }
+        false => (None, None),
+    };
+
+    let stun_task = if cli.run_stun {
+        Some(tokio::task::spawn(async move {
+            serve_stun(listen_host, cli.stun_port).await
+        }))
     } else {
         None
     };
 
-    if cli.run_stun {
-        tasks.spawn(async move { serve_stun(listen_host, cli.stun_port).await });
-    }
+    let headers: Vec<(&str, &str)> = if serve_tls {
+        TLS_HEADERS.into()
+    } else {
+        Vec::new()
+    };
 
-    let client_conn_handler = derp_server.map(|s| {
-        let headers = if serve_tls {
-            HeaderMap::from_iter(
-                TLS_HEADERS
-                    .iter()
-                    .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
-            )
-        } else {
-            Default::default()
-        };
-        s.client_conn_handler(headers)
-    });
     let tls_config = if serve_tls {
-        let contact = "d@iroh.computer".to_string(); // TODO: configurable.
-        let is_production = false; // TODO: configurable
+        // checked earlier
+        let contact = cli.tls_contact.expect("checked earlier");
+        let is_production = cli.prod_tls;
         let (config, acceptor) = cli
             .cert_mode
             .gen_server_config(
@@ -329,20 +335,34 @@ async fn main() -> Result<()> {
                 cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
             )
             .await?;
-        Some((config, acceptor))
+        Some(TlsConfig { config, acceptor })
     } else {
         None
     };
 
-    let server = Derper {
-        client_conn_handler,
-        tls_config,
-    };
+    let derp_server = DerpServerBuilder::new(cli.addr)
+        .secret_key(secret_key)
+        .mesh_key(mesh_key)
+        .headers(headers)
+        .tls_config(tls_config)
+        .derp_override(Box::new(derp_disabled_handler))
+        .request_handler(Method::GET, "/", Box::new(root_handler))
+        .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+        .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
+        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler))
+        .spawn()
+        .await?;
 
-    server.run(cli.addr, cli.http_port).await?;
+    let http_addr = SocketAddr::new(cli.addr.ip(), cli.http_port);
+    let http_task = serve_http(http_addr).await?;
 
+    tokio::signal::ctrl_c().await?;
     // Shutdown all tasks
-    tasks.abort_all();
+    if let Some(task) = stun_task {
+        task.abort();
+    }
+    http_task.abort();
+    derp_server.shutdown().await;
 
     Ok(())
 }
@@ -367,94 +387,26 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
 ];
 
-#[derive(Clone)]
-struct Derper {
-    /// If this is a derper server, the derp handler.
-    client_conn_handler:
-        Option<derp::ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, derp::HttpClient>>,
-    /// TLS config if used.
-    tls_config: Option<(Arc<rustls::ServerConfig>, TlsAcceptor)>,
-}
+async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
+    let http_listener = TcpListener::bind(&addr)
+        .await
+        .context("failed to bind http")?;
+    let http_addr = http_listener.local_addr()?;
+    info!("[HTTP]: serving on {}", http_addr);
 
-impl Derper {
-    async fn run(self, addr: SocketAddr, http_port: u16) -> Result<()> {
-        if let Some((tls_config, tls_acceptor)) = self.tls_config.clone() {
-            let https_listener = TcpListener::bind(&addr)
-                .await
-                .context("failed to bind https")?;
-            let handler = HttpsService(self.clone());
-            tokio::task::spawn(async move {
-                loop {
-                    match https_listener.accept().await {
-                        Ok((stream, peer_addr)) => {
-                            debug!("Connection opened from {}", peer_addr);
-                            let tls_acceptor = tls_acceptor.clone();
-                            let tls_config = tls_config.clone();
-                            let handler = handler.clone();
-
-                            tokio::task::spawn(async move {
-                                if let Err(err) =
-                                    handler.tls_serve(stream, tls_acceptor, tls_config).await
-                                {
-                                    error!("Failed to serve connection: {:?}", err);
-                                }
-                            });
-                        }
-                        Err(err) => {
-                            error!("failed to accept connection: {:#?}", err);
-                        }
-                    }
-                }
-            });
-        } else {
-            // Derp server
-            let listener = TcpListener::bind(&addr)
-                .await
-                .context("failed to bind derp")?;
-            let addr = listener.local_addr()?;
-            info!("[DERP] derper: serving on {}", addr);
-
-            let handler = DerpService(self.clone());
-
-            tokio::task::spawn(async move {
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, peer_addr)) => {
-                            debug!("[DERP] Connection opened from {}", peer_addr);
-                            let handler = handler.clone();
-                            tokio::task::spawn(async move {
-                                if let Err(err) = Http::new()
-                                    .serve_connection(stream, handler)
-                                    .with_upgrades()
-                                    .await
-                                {
-                                    error!("[DERP] Failed to serve connection: {:?}", err);
-                                }
-                            });
-                        }
-                        Err(err) => {
-                            error!("[DERP] failed to accept connection: {:#?}", err);
-                        }
-                    }
-                }
-            });
-        }
-
-        let http_addr = SocketAddr::new(addr.ip(), http_port);
-        let http_listener = TcpListener::bind(&http_addr)
-            .await
-            .context("failed to bind http")?;
-        let http_addr = http_listener.local_addr()?;
-        info!("[HTTP] derper: serving on {}", http_addr);
-
+    let task = tokio::spawn(async move {
         loop {
             match http_listener.accept().await {
                 Ok((stream, peer_addr)) => {
                     debug!("[HTTP] Connection opened from {}", peer_addr);
-                    let handler = HttpService(self.clone());
+                    let handler = HttpService;
 
                     tokio::task::spawn(async move {
-                        if let Err(err) = Http::new().serve_connection(stream, handler).await {
+                        if let Err(err) = Http::new()
+                            .serve_connection(derp::MaybeTlsStreamServer::Plain(stream), handler)
+                            .with_upgrades()
+                            .await
+                        {
                             error!("[HTTP] Failed to serve connection: {:?}", err);
                         }
                     });
@@ -464,88 +416,12 @@ impl Derper {
                 }
             }
         }
-    }
-
-    fn default_response(&self) -> ResponseBuilder {
-        let mut response = Response::builder();
-        if self.tls_config.is_some() {
-            // Set HTTP headers to appease automated security scanners.
-            //
-            // Security automation gets cranky when HTTPS sites don't
-            // set HSTS, and when they don't specify a content security policy for XSS mitigation.
-            //
-            // DERP's HTTP interface is only ever used for debug access (for which trivial safe policies work just
-            // fine), and by DERP clients which don't obey any of these browser-centric headers anyway.
-            for (key, value) in &TLS_HEADERS {
-                response = response.header(*key, *value);
-            }
-        }
-        response
-    }
+    });
+    Ok(task)
 }
 
 #[derive(Clone)]
-struct HttpService(Derper);
-
-#[derive(Clone)]
-struct DerpService(Derper);
-
-#[derive(Clone)]
-struct HttpsService(Derper);
-
-impl HttpsService {
-    async fn tls_serve(
-        self,
-        stream: TcpStream,
-        acceptor: TlsAcceptor,
-        rustls_config: Arc<rustls::ServerConfig>,
-    ) -> Result<()> {
-        match acceptor {
-            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
-                None => {
-                    info!("received TLS-ALPN-01 validation request");
-                }
-                Some(start_handshake) => {
-                    let tls_stream = start_handshake.into_stream(rustls_config).await?;
-                    Http::new().serve_connection(tls_stream, self).await?;
-                }
-            },
-            TlsAcceptor::Manual(a) => {
-                let tls_stream = a.accept(stream).await?;
-                Http::new().serve_connection(tls_stream, self).await?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl hyper::service::Service<Request<Body>> for DerpService {
-    type Response = Response<Body>;
-    type Error = HyperError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        handle_request(&mut self.0, req)
-    }
-}
-
-impl hyper::service::Service<Request<Body>> for HttpsService {
-    type Response = Response<Body>;
-    type Error = HyperError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        handle_request(&mut self.0, req)
-    }
-}
+struct HttpService;
 
 impl hyper::service::Service<Request<Body>> for HttpService {
     type Response = Response<Body>;
@@ -560,59 +436,28 @@ impl hyper::service::Service<Request<Body>> for HttpService {
         match (req.method(), req.uri().path()) {
             // Captive Portal checker
             (&Method::GET, "/generate_204") => {
-                Box::pin(serve_no_content_handler(req, self.0.default_response()))
+                Box::pin(serve_no_content_handler(req, Response::builder()))
             }
             _ => {
                 // Return 404 not found response.
-                let response = self.0.default_response();
-                Box::pin(async move {
-                    Ok(response
-                        .status(StatusCode::NOT_FOUND)
-                        .body(NOTFOUND.into())
-                        .unwrap())
-                })
-            }
-        }
-    }
-}
-
-fn handle_request(
-    derper: &mut Derper,
-    req: Request<Body>,
-) -> Pin<Box<dyn Future<Output = Result<Response<Body>, HyperError>> + Send>> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, "/" | "/index.html") => Box::pin(root_handler(derper.default_response())),
-        (&Method::GET | &Method::HEAD, "/derp/probe") => {
-            Box::pin(probe_handler(derper.default_response()))
-        }
-        (&Method::GET, "/derp") => match derper.client_conn_handler.clone() {
-            Some(mut handler) => {
-                Box::pin(async move { handler.call(req).await.map_err(Into::into) })
-            }
-            None => Box::pin(derp_disabled_handler(derper.default_response())),
-        },
-        // Robots
-        (&Method::GET, "/robots.txt") => Box::pin(robots_handler(derper.default_response())),
-        _ => {
-            // Return 404 not found response.
-            let response = derper.default_response();
-            Box::pin(async move {
-                Ok(response
+                let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(NOTFOUND.into())
-                    .unwrap())
-            })
+                    .unwrap();
+                Box::pin(async move { Ok(r) })
+            }
         }
     }
 }
 
-async fn derp_disabled_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn derp_disabled_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
         .unwrap())
 }
-async fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+
+fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -623,7 +468,7 @@ async fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> 
 }
 
 /// HTTP latency queries
-async fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     let response = response
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
@@ -633,7 +478,7 @@ async fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>>
     Ok(response)
 }
 
-async fn robots_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn robots_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     Ok(response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())

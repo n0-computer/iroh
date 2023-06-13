@@ -1,50 +1,334 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use anyhow::Result;
-use futures::future::FutureExt;
-use futures::Future;
-use hyper::header::{HeaderValue, UPGRADE};
-use hyper::upgrade::Upgraded;
-use hyper::{Body, Request, Response, StatusCode};
-
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tracing::debug;
+use anyhow::{bail, ensure, Context as _, Result};
+use bytes::Bytes;
+use derive_more::Debug;
+use futures::future::{Future, FutureExt};
+use http::response::Builder as ResponseBuilder;
+use hyper::{
+    header::{HeaderValue, UPGRADE},
+    server::conn::Http,
+    upgrade::Upgraded,
+    Body, HeaderMap, Method, Request, Response, StatusCode,
+};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
+use tokio_rustls_acme::AcmeAcceptor;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, debug_span, error, info, warn, Instrument};
 
 use super::HTTP_UPGRADE_PROTOCOL;
-use crate::hp::derp::{server::ClientConnHandler, types::PacketForwarder};
+use crate::hp::{
+    derp::{
+        http::client::Client as HttpClient, server::ClientConnHandler, server::MaybeTlsStream,
+        types::MeshKey, types::PacketForwarder, MaybeTlsStreamServer,
+    },
+    key::node::SecretKey,
+};
+
+type HyperError = Box<dyn std::error::Error + Send + Sync>;
+type HyperResult<T> = std::result::Result<T, HyperError>;
+
+fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
+    match upgraded.downcast::<MaybeTlsStream>() {
+        Ok(parts) => Ok((parts.io, parts.read_buf)),
+        Err(_) => {
+            bail!("could not downcast the upgraded connection to MaybeTlsStream")
+        }
+    }
+}
 
 /// The server HTTP handler to do HTTP upgrades
-pub async fn derp_connection_handler<P>(
-    conn_handler: &ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>,
+async fn derp_connection_handler<P>(
+    conn_handler: &ClientConnHandler<P>,
     upgraded: Upgraded,
 ) -> Result<()>
 where
     P: PacketForwarder,
 {
     debug!("derp_connection upgraded");
-    // get the underlying TcpStream
-    let parts = match upgraded.downcast::<tokio::net::TcpStream>() {
-        Ok(p) => p,
-        Err(_) => {
-            anyhow::bail!("could not downcast the upgraded connection to a tokio::net::TcpStream")
-        }
-    };
-    anyhow::ensure!(
-        parts.read_buf.is_empty(),
+    let (io, read_buf) = downcast_upgrade(upgraded)?;
+    ensure!(
+        read_buf.is_empty(),
         "can not deal with buffered data yet: {:?}",
-        parts.read_buf
+        read_buf
     );
 
-    // split into the reader and writer parts
-    let (reader, writer) = parts.io.into_split();
-
-    // send to the derp server
-    conn_handler.accept(reader, writer).await
+    conn_handler.accept(io).await
 }
 
-impl<P> hyper::service::Service<Request<Body>>
-    for ClientConnHandler<OwnedReadHalf, OwnedWriteHalf, P>
+/// A Derp Server handler. Created using `Server::Builder::spawn`, it starts a derp server
+/// listening over HTTP or HTTPS.
+#[derive(Debug)]
+pub struct Server {
+    addr: SocketAddr,
+    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    http_server_task: JoinHandle<()>,
+    cancel_server_loop: CancellationToken,
+}
+
+impl Server {
+    /// Close the underlying derp server and the HTTP(S) server task
+    pub async fn shutdown(self) {
+        if let Some(server) = self.server {
+            server.close().await;
+        }
+        self.cancel_server_loop.cancel();
+        if let Err(e) = self.http_server_task.await {
+            warn!("Error shutting down server: {e:?}");
+        }
+    }
+
+    /// Get the local address of this server.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
+/// Configuration to use for the TLS connection
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    /// The server config
+    pub config: Arc<rustls::ServerConfig>,
+    /// The kind
+    pub acceptor: TlsAcceptor,
+}
+
+/// Build a Derp Server that communicates over HTTP or HTTPS, on a given address.
+///
+/// Defaults to handling "derp" requests on the "/derp" endpoint.
+///
+/// If no `SecretKey` is provided, it is assumed that you will provide a `derp_override` function
+/// that handles requests to the derp endpoint. Not providing a `derp_override` in this case will
+/// result in an error on `spawn`.
+#[derive(derive_more::Debug)]
+pub struct ServerBuilder {
+    /// The SecretKey for this Server.
+    ///
+    /// When `None`, you must also provide a `derp_override` function that
+    /// will be run when someone hits the derp endpoint.
+    secret_key: Option<SecretKey>,
+    /// The ip + port combination for this server.
+    addr: SocketAddr,
+    /// Optional MeshKey for this server. When it exists it will ensure that This
+    /// server will only mesh with other servers with the same key.
+    mesh_key: Option<MeshKey>,
+    /// Optional tls configuration/TlsAcceptor combination.
+    ///
+    /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
+    tls_config: Option<TlsConfig>,
+    /// A map of request handlers to routes. Used when certain routes in your server should be made
+    /// available at the same port as the derp server, and so must be handled along side requests
+    /// to the derp endpoint.
+    handlers: Handlers,
+    /// Defaults to `GET` request at "/derp".
+    derp_endpoint: &'static str,
+    /// Use a custom derp response handler. Typically used when you want to disable any derp connections.
+    #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
+    derp_override: Option<HyperFn>,
+    /// Headers to use for HTTP or HTTPS messages.
+    headers: Headers,
+    /// 404 not found response
+    ///
+    /// When `None`, a default is provided.
+    #[debug("{}", not_found_fn.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
+    not_found_fn: Option<HyperFn>,
+}
+
+impl ServerBuilder {
+    pub fn new(addr: SocketAddr) -> Self {
+        Self {
+            secret_key: None,
+            addr,
+            mesh_key: None,
+            tls_config: None,
+            handlers: Default::default(),
+            derp_endpoint: "/derp",
+            derp_override: None,
+            headers: Vec::new(),
+            not_found_fn: None,
+        }
+    }
+
+    /// The SecretKey identity for this derp server. When set to `None`, the builder assumes
+    /// you do not want to run a derp service.
+    pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
+        self.secret_key = secret_key;
+        self
+    }
+
+    /// The MeshKey for the mesh network this server belongs to.
+    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
+        self.mesh_key = mesh_key;
+        self
+    }
+
+    /// Serve derp content using TLS.
+    pub fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
+        self.tls_config = config;
+        self
+    }
+
+    /// Add a custom handler for a specific Method & URI.
+    pub fn request_handler(
+        mut self,
+        method: Method,
+        uri_path: &'static str,
+        handler: HyperFn,
+    ) -> Self {
+        self.handlers.insert((method, uri_path), handler);
+        self
+    }
+
+    /// Pass in a custom "404" handler.
+    pub fn not_found_handler(mut self, handler: HyperFn) -> Self {
+        self.not_found_fn = Some(handler);
+        self
+    }
+
+    /// Handle the derp endpoint in a custom way. This is required if no `SecretKey` was provided
+    /// to the builder.
+    pub fn derp_override(mut self, handler: HyperFn) -> Self {
+        self.derp_override = Some(handler);
+        self
+    }
+
+    /// Change the derp endpoint from "/derp" to `endpoint`.
+    pub fn derp_endpoint(mut self, endpoint: &'static str) -> Self {
+        self.derp_endpoint = endpoint;
+        self
+    }
+
+    /// Add http headers.
+    pub fn headers(mut self, headers: Headers) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Build and spawn an HTTP(S) derp Server
+    pub async fn spawn(self) -> Result<Server> {
+        ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
+        let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
+            let server = crate::hp::derp::server::Server::new(secret_key, self.mesh_key);
+            println!("headers: {:?}", self.headers);
+            let header_map: HeaderMap = HeaderMap::from_iter(
+                self.headers
+                    .iter()
+                    .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
+            );
+
+            (
+                DerpHandler::ConnHandler(server.client_conn_handler(header_map)),
+                Some(server),
+            )
+        } else {
+            (DerpHandler::Override(self.derp_override.unwrap()), None)
+        };
+        let h = self.headers.clone();
+        let not_found_fn = match self.not_found_fn {
+            Some(f) => f,
+            None => Box::new(move |mut res: ResponseBuilder| {
+                for (k, v) in h.iter() {
+                    res = res.header(*k, *v);
+                }
+                let r = res
+                    .status(StatusCode::NOT_FOUND)
+                    .body(b"Not Found"[..].into())
+                    .unwrap();
+                HyperResult::Ok(r)
+            }),
+        };
+
+        let service = DerpService::new(
+            self.handlers,
+            derp_handler,
+            self.derp_endpoint,
+            not_found_fn,
+            self.headers,
+        );
+
+        let server_state = ServerState {
+            addr: self.addr,
+            tls_config: self.tls_config,
+            server: derp_server,
+            service,
+        };
+
+        server_state.serve().await
+    }
+}
+
+#[derive(Debug)]
+pub struct ServerState {
+    addr: SocketAddr,
+    tls_config: Option<TlsConfig>,
+    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    service: DerpService,
+}
+
+impl ServerState {
+    // Binds a TCP listener on `addr` and handles content using HTTPS.
+    // Returns the local `SocketAddr` on which the server is listening.
+    async fn serve(self) -> Result<Server> {
+        let listener = TcpListener::bind(&self.addr)
+            .await
+            .context("failed to bind https")?;
+        // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
+        let cancel_server_loop = CancellationToken::new();
+        let addr = listener.local_addr()?;
+        let http_str = self.tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
+        info!("[{http_str}] derp: serving on {addr}");
+        let cancel = cancel_server_loop.clone();
+        let task = tokio::task::spawn(async move {
+            // create a join set to track all our connection tasks
+            let mut set = tokio::task::JoinSet::new();
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        break;
+                    }
+                    res = listener.accept() => match res {
+                        Ok((stream, peer_addr)) => {
+                            debug!("[{http_str}] derp: Connection opened from {}", peer_addr);
+                            let tls_config = self.tls_config.clone();
+                            let service = self.service.clone();
+                            // spawn a task to handle the connection
+                            set.spawn(async move {
+                                if let Err(e) = service
+                                    .handle_connection(stream, tls_config)
+                                    .await
+                                {
+                                    error!("[{http_str}] derp: failed to handle connection: {:?}", e);
+                                }
+                            }.instrument(debug_span!("handle_connection")));
+                        }
+                        Err(err) => {
+                            error!("[{http_str}] derp: failed to accept connection: {:#?}", err);
+                        }
+                    }
+                }
+            }
+            set.shutdown().await;
+        }.instrument(debug_span!("serve")));
+        Ok(Server {
+            addr,
+            server: self.server,
+            http_server_task: task,
+            cancel_server_loop,
+        })
+    }
+}
+
+impl<P> hyper::service::Service<Request<Body>> for ClientConnHandler<P>
 where
     P: PacketForwarder,
 {
@@ -109,145 +393,191 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl hyper::service::Service<Request<Body>> for DerpService {
+    type Response = Response<Body>;
+    type Error = HyperError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    use anyhow::Result;
-    use std::net::SocketAddr;
-    use tokio::net::TcpListener;
-
-    use hyper::header::UPGRADE;
-    use hyper::server::conn::Http;
-    use hyper::upgrade::Upgraded;
-    use hyper::{Body, Request, StatusCode};
-    use tokio::sync::oneshot;
-
-    use crate::hp::derp::server::Server as DerpServer;
-    use crate::hp::key::node::{PublicKey, SecretKey};
-
-    /// Handle client-side I/O after HTTP upgraded.
-    async fn derp_client(mut upgraded: Upgraded) -> Result<()> {
-        println!("in derp_client handshake");
-        let secret_key = SecretKey::generate();
-        let got_server_key = crate::hp::derp::client::recv_server_key(&mut upgraded).await?;
-        let client_info = crate::hp::derp::types::ClientInfo {
-            version: crate::hp::derp::PROTOCOL_VERSION,
-            mesh_key: None,
-            can_ack_pings: true,
-            is_prober: true,
-        };
-        crate::hp::derp::send_client_key(&mut upgraded, &secret_key, &got_server_key, &client_info)
-            .await?;
-        let mut buf = bytes::BytesMut::new();
-        let (frame_type, _) =
-            crate::hp::derp::read_frame(&mut upgraded, crate::hp::derp::MAX_FRAME_SIZE, &mut buf)
-                .await?;
-        assert_eq!(crate::hp::derp::FrameType::ServerInfo, frame_type);
-        let msg = secret_key.open_from(&got_server_key, &buf)?;
-        let _info: crate::hp::derp::types::ServerInfo = postcard::from_bytes(&msg)?;
-        Ok(())
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    /// Our client HTTP handler to initiate HTTP upgrades.
-    async fn client_upgrade_request(addr: SocketAddr) -> Result<()> {
-        let tcp_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-
-        let (mut request_sender, connection) =
-            hyper::client::conn::handshake(tcp_stream).await.unwrap();
-
-        let task = tokio::spawn(async move {
-            let _ = connection.without_shutdown().await;
-        });
-
-        let req = Request::builder()
-            .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
-            .body(Body::empty())
-            .unwrap();
-
-        let res = request_sender.send_request(req).await.unwrap();
-
-        if res.status() != StatusCode::SWITCHING_PROTOCOLS {
-            panic!("Our server didn't upgrade: {}", res.status());
-        }
-
-        match hyper::upgrade::on(res).await {
-            Ok(upgraded) => {
-                if let Err(e) = derp_client(upgraded).await {
-                    eprintln!("client foobar io error: {}", e)
-                };
-            }
-            Err(e) => eprintln!("upgrade error: {}", e),
-        }
-        task.abort();
-        Ok(())
-    }
-
-    struct MockPacketForwarder {}
-
-    impl PacketForwarder for MockPacketForwarder {
-        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
-            println!("forwarded packet from {srckey:?} to {dstkey:?}: msg: {packet:?}");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_connection_handler() -> Result<()> {
-        // inspired by https://github.com/hyperium/hyper/blob/v0.14.25/examples/upgrades.rs
-
-        let addr = "127.0.0.1:0";
-
-        // create derp_server
-        let server_key = SecretKey::generate();
-        let derp_server: DerpServer<OwnedReadHalf, OwnedWriteHalf, MockPacketForwarder> =
-            DerpServer::new(server_key, None);
-
-        // create handler that sends new connections to the client
-        let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-        let listener = TcpListener::bind(&addr).await?;
-        // We need the assigned address for the client to send it messages.
-        let addr = listener.local_addr()?;
-
-        // For this example, a oneshot is used to signal that after 1 request,
-        // the server should be shutdown.
-        let (tx, mut rx) = oneshot::channel::<()>();
-
-        // Spawn server on the default executor,
-        // which is usually a thread-pool from tokio default runtime.
-        let server_task = tokio::task::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut rx => {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    conn = listener.accept() => {
-                        let (stream, _) = conn?;
-                        let derp_client_handler = derp_client_handler.clone();
-                        tokio::task::spawn(async move {
-                            if let Err(err) = Http::new()
-                                .serve_connection(stream, derp_client_handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                eprintln!("Failed to serve connection: {:?}", err);
-                            }
-                        });
-                    }
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        // if the request hits the derp endpoint
+        if req.method() == hyper::Method::GET && req.uri().path() == self.0.derp_endpoint {
+            match &self.0.derp_handler {
+                DerpHandler::Override(f) => {
+                    // see if we have some override response
+                    let res = f(self.0.default_response());
+                    return Box::pin(async move { res });
+                }
+                DerpHandler::ConnHandler(handler) => {
+                    let mut h = handler.clone();
+                    // otherwise handle the derp connection as normal
+                    return Box::pin(async move { h.call(req).await.map_err(Into::into) });
                 }
             }
-        });
+        }
+        // check all other possible endpoints
+        if let Some(res) = self
+            .0
+            .handlers
+            .get(&(req.method().clone(), req.uri().path()))
+        {
+            let f = res(self.0.default_response());
+            return Box::pin(async move { f });
+        }
+        // otherwise return 404
+        let res = (self.0.not_found_fn)(self.0.default_response());
+        Box::pin(async move { res })
+    }
+}
 
-        // Client requests a HTTP connection upgrade.
-        let request = client_upgrade_request(addr);
-        request.await?;
+#[derive(Clone, Debug)]
+/// The hyper Service that
+struct DerpService(Arc<Inner>);
 
-        // Complete the oneshot so that the server stops
-        // listening and the process can close down.
-        assert!(tx.send(()).is_ok());
-        server_task.await??;
+type HyperFn = Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>;
+type Headers = Vec<(&'static str, &'static str)>;
+
+#[derive(derive_more::Debug)]
+struct Inner {
+    pub derp_handler: DerpHandler,
+    pub derp_endpoint: &'static str,
+    #[debug("Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>")]
+    pub not_found_fn: HyperFn,
+    pub handlers: Handlers,
+    pub headers: Headers,
+}
+
+/// Action to take when a connection is made at the derp endpoint.`
+#[derive(derive_more::Debug)]
+enum DerpHandler {
+    /// Pass the connection to a ClientConnHandler to get added to the derp server. The default.
+    ConnHandler(ClientConnHandler<crate::hp::derp::http::Client>),
+    /// Return some static response. Used when the http(s) should be running, but the derp portion
+    /// of the server is disabled.
+    Override(
+        #[debug(
+            "{}",
+            "Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>"
+        )]
+        HyperFn,
+    ),
+}
+
+impl Inner {
+    fn default_response(&self) -> ResponseBuilder {
+        let mut response = Response::builder();
+        for (key, value) in self.headers.iter() {
+            response = response.header(*key, *value);
+        }
+        response
+    }
+}
+
+#[derive(Clone, derive_more::Debug)]
+/// TLS Certificate Authority acceptor.
+pub enum TlsAcceptor {
+    /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
+    LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),
+    /// Manually added tls acceptor. Generally used for tests or for when we've passed in
+    /// a certificate via a file.
+    Manual(#[debug("tokio_rustls::TlsAcceptor")] tokio_rustls::TlsAcceptor),
+}
+
+impl DerpService {
+    fn new(
+        handlers: Handlers,
+        derp_handler: DerpHandler,
+        derp_endpoint: &'static str,
+        not_found_fn: HyperFn,
+        headers: Headers,
+    ) -> Self {
+        Self(Arc::new(Inner {
+            derp_handler,
+            handlers,
+            derp_endpoint,
+            not_found_fn,
+            headers,
+        }))
+    }
+
+    /// Handle the incoming connection.
+    ///
+    /// If a `tls_config` is given, will serve the connection using HTTPS.
+    async fn handle_connection(
+        self,
+        stream: TcpStream,
+        tls_config: Option<TlsConfig>,
+    ) -> Result<()> {
+        match tls_config {
+            Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
+            None => {
+                self.serve_connection(MaybeTlsStreamServer::Plain(stream))
+                    .await
+            }
+        }
+    }
+
+    /// Serve the tls connection
+    async fn tls_serve_connection(self, stream: TcpStream, tls_config: TlsConfig) -> Result<()> {
+        let TlsConfig { acceptor, config } = tls_config;
+        match acceptor {
+            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
+                None => {
+                    info!("received TLS-ALPN-01 validation request");
+                }
+                Some(start_handshake) => {
+                    let tls_stream = start_handshake.into_stream(config).await?;
+                    self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                        .await?;
+                }
+            },
+            TlsAcceptor::Manual(a) => {
+                let tls_stream = a.accept(stream).await?;
+                self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
+                    .await?;
+            }
+        }
         Ok(())
+    }
+
+    /// Wrapper for the actual http connection (with upgrades)
+    async fn serve_connection<I>(self, io: I) -> Result<()>
+    where
+        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        Http::new()
+            .serve_connection(io, self)
+            .with_upgrades()
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Handlers(HashMap<(Method, &'static str), HyperFn>);
+
+impl std::fmt::Debug for Handlers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.0.keys().fold(String::new(), |curr, next| {
+            let (method, uri) = next;
+            format!("{curr}\n({method},{uri}): Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>")
+        });
+        write!(f, "HashMap<{s}>")
+    }
+}
+
+impl std::ops::Deref for Handlers {
+    type Target = HashMap<(Method, &'static str), HyperFn>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Handlers {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

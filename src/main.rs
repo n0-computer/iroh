@@ -411,20 +411,20 @@ where
     while let Some(item) = stream.next().await {
         match item? {
             ProvideProgress::Found { name, id, size } => {
-                tracing::info!("Found({},{},{})", id, name, size);
+                tracing::info!("Found({id},{name},{size})");
                 if let Some(mp) = mp.as_mut() {
                     mp.found(name.clone(), id, size);
                 }
                 collections.insert(id, (name, size, None));
             }
             ProvideProgress::Progress { id, offset } => {
-                tracing::info!("Progress({}, {})", id, offset);
+                tracing::info!("Progress({id}, {offset})");
                 if let Some(mp) = mp.as_mut() {
                     mp.progress(id, offset);
                 }
             }
             ProvideProgress::Done { hash, id } => {
-                tracing::info!("Done({},{:?})", id, hash);
+                tracing::info!("Done({id},{hash:?})");
                 if let Some(mp) = mp.as_mut() {
                     mp.done(id, hash);
                 }
@@ -433,12 +433,12 @@ where
                         *h = Some(hash);
                     }
                     None => {
-                        anyhow::bail!("Got Done for unknown collection id {}", id);
+                        anyhow::bail!("Got Done for unknown collection id {id}");
                     }
                 }
             }
             ProvideProgress::AllDone { hash } => {
-                tracing::info!("AllDone({:?})", hash);
+                tracing::info!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }
@@ -449,7 +449,7 @@ where
                 if let Some(mp) = mp.take() {
                     mp.error();
                 }
-                anyhow::bail!("Error while adding data: {}", e);
+                anyhow::bail!("Error while adding data: {e}");
             }
         }
     }
@@ -457,7 +457,7 @@ where
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            let _hash = hash.context(format!("Missing hash for {name}"))?;
             Ok(ProvideResponseEntry { name, size })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -490,7 +490,7 @@ fn init_metrics_collection(
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
-                    eprintln!("Failed to start metrics server: {}", e);
+                    eprintln!("Failed to start metrics server: {e}");
                 });
         }));
     }
@@ -961,8 +961,8 @@ async fn get_to_file_single(
     let header = curr.next();
     let final_path = out_dir.join(&name);
     let tempname = blake3::Hash::from(hash).to_hex();
-    let data_path = temp_dir.join(format!("{}.data.part", tempname));
-    let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+    let data_path = temp_dir.join(format!("{tempname}.data.part"));
+    let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
     let data_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -1094,15 +1094,15 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
         let curr = {
             let final_path = out_dir.join(&name);
             let tempname = blake3::Hash::from(hash).to_hex();
-            let data_path = temp_dir.join(format!("{}.data.part", tempname));
-            let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+            let data_path = temp_dir.join(format!("{tempname}.data.part"));
+            let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
             let data_file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(&data_path)
                 .await?;
             let data_file = SeekOptimized::new(data_file);
-            tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+            tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
             let (curr, size) = header.next().await?;
             pb.set_length(size);
             let mut outboard_file = if size > 0 {

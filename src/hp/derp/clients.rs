@@ -5,12 +5,11 @@ use crate::hp::key::node::PublicKey;
 use std::collections::{HashMap, HashSet};
 
 use futures::future::join_all;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use super::{
-    client_conn::{ClientConnBuilder, ClientConnManager},
-    types::{Packet, PacketForwarder, PeerConnState},
+    client_conn::ClientConnManager,
+    types::{Packet, PeerConnState},
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -169,14 +168,8 @@ impl Clients {
         }
     }
 
-    pub fn register<R, W, P>(&mut self, client: ClientConnBuilder<R, W, P>)
-    where
-        R: AsyncRead + Unpin + Send + Sync + 'static,
-        W: AsyncWrite + Unpin + Send + Sync + 'static,
-        P: PacketForwarder,
-    {
+    pub fn register(&mut self, client: ClientConnManager) {
         // this builds the client handler & starts the read & write loops to that client connection
-        let client = client.build();
         let key = client.key.clone();
         tracing::trace!("registering client: {:?}", key);
         // TODO: in future, do not remove clients that share a publicKey, instead,
@@ -262,7 +255,9 @@ impl Clients {
 mod tests {
     use super::*;
 
-    use crate::hp::derp::{read_frame, FrameType, MAX_PACKET_SIZE};
+    use crate::hp::derp::{
+        client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
+    };
 
     use anyhow::Result;
     use bytes::{Bytes, BytesMut};
@@ -279,27 +274,20 @@ mod tests {
     fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
-    ) -> (
-        ClientConnBuilder<DuplexStream, DuplexStream, MockPacketForwarder>,
-        DuplexStream,
-        DuplexStream,
-    ) {
-        let (test_reader, writer) = tokio::io::duplex(1024);
-        let (reader, test_writer) = tokio::io::duplex(1024);
+    ) -> (ClientConnBuilder<MockPacketForwarder>, DuplexStream) {
+        let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
-                reader,
-                writer,
+                io: crate::hp::derp::server::MaybeTlsStream::Test(io),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
             },
-            test_reader,
-            test_writer,
+            test_io,
         )
     }
 
@@ -308,10 +296,10 @@ mod tests {
         let a_key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
         let b_key = PublicKey::from([10u8; PUBLIC_KEY_LENGTH]);
 
-        let (builder_a, mut a_reader, _a_writer) = test_client_builder(a_key.clone(), 0);
+        let (builder_a, mut a_rw) = test_client_builder(a_key.clone(), 0);
 
         let mut clients = Clients::new();
-        clients.register(builder_a);
+        clients.register(builder_a.build());
 
         // send packet
         let data = b"hello world!";
@@ -321,7 +309,7 @@ mod tests {
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let mut buf = BytesMut::new();
-        let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
+        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
@@ -329,7 +317,7 @@ mod tests {
 
         // send disco packet
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
-        let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
+        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
         let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
@@ -337,7 +325,7 @@ mod tests {
 
         // send peer_gone
         clients.send_peer_gone(&a_key.clone(), b_key.clone());
-        let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
+        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::PeerGone);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
@@ -355,12 +343,12 @@ mod tests {
         ];
 
         clients.send_mesh_updates(&a_key.clone(), updates);
-        let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
+        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::PeerPresent);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);
 
-        let (frame_type, _) = read_frame(&mut a_reader, MAX_PACKET_SIZE, &mut buf).await?;
+        let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::PeerGone);
         let got_key = PublicKey::try_from(&buf[..PUBLIC_KEY_LENGTH])?;
         assert_eq!(got_key, b_key);

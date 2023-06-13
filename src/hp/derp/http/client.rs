@@ -1,24 +1,29 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::bail;
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use hyper::upgrade::Upgraded;
 use hyper::{header::UPGRADE, Body, Request};
 use rand::Rng;
+use reqwest::Url;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
+use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
     UseIpv6,
 };
+use crate::hp::dns::DNS_RESOLVER;
 use crate::hp::key;
 
 use crate::hp::derp::{client::Client as DerpClient, DerpRegion, ReceivedMessage};
@@ -55,14 +60,18 @@ pub enum ClientError {
     Hyper(#[from] hyper::Error),
     #[error("unexpected status code: expected {0}, got {1}")]
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
-    #[error("failed to upgrade connection")]
-    Upgrade,
+    #[error("failed to upgrade connection: {0}")]
+    Upgrade(String),
     #[error("failed to build derp client: {0}")]
     Build(String),
     #[error("ping timeout")]
     PingTimeout,
     #[error("cannot acknowledge pings")]
     CannotAckPings,
+    #[error("invalid url")]
+    InvalidUrl,
+    #[error("dns: {0:?}")]
+    Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
 
 /// An HTTP DERP client.
@@ -93,7 +102,7 @@ struct InnerClient {
         Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
     is_preferred: Mutex<bool>,
-    derp_client: Mutex<Option<DerpClient<tokio::net::tcp::OwnedReadHalf>>>,
+    derp_client: Mutex<Option<DerpClient>>,
     is_closed: AtomicBool,
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
@@ -102,6 +111,7 @@ struct InnerClient {
     mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<key::node::PublicKey>,
+    url: Option<Url>,
 }
 
 /// Build a Client.
@@ -120,6 +130,8 @@ pub struct ClientBuilder {
     is_prober: bool,
     /// Expected PublicKey of the server
     server_public_key: Option<key::node::PublicKey>,
+    /// Server url
+    url: Option<Url>,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -137,12 +149,18 @@ impl ClientBuilder {
         Self::default()
     }
 
-    // S returns if we should prefer ipv6
-    // it replaces the derphttp.AddressFamilySelector we pass
-    // It provides the hint as to whether in an IPv4-vs-IPv6 race that
-    // IPv4 should be held back a bit to give IPv6 a better-than-50/50
-    // chance of winning. We only return true when we believe IPv6 will
-    // work anyway, so we don't artificially delay the connection speed.
+    /// Sets the server url
+    pub fn server_url(mut self, url: impl Into<Url>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// S returns if we should prefer ipv6
+    /// it replaces the derphttp.AddressFamilySelector we pass
+    /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
+    /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
+    /// chance of winning. We only return true when we believe IPv6 will
+    /// work anyway, so we don't artificially delay the connection speed.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
         S: Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static,
@@ -189,6 +207,7 @@ impl ClientBuilder {
                 mesh_key: self.mesh_key,
                 is_prober: self.is_prober,
                 server_public_key: self.server_public_key,
+                url: self.url,
             }),
         }
     }
@@ -247,9 +266,7 @@ impl Client {
     ///
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::hp::derp::client::Client`].
-    pub async fn connect(
-        &self,
-    ) -> Result<(DerpClient<tokio::net::tcp::OwnedReadHalf>, usize), ClientError> {
+    pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
         let key = self.inner.secret_key.public_key();
         debug!("client {key:?} - connect");
         if self.inner.is_closed.load(Ordering::Relaxed) {
@@ -293,30 +310,61 @@ impl Client {
         Err(ClientError::DerpRegionNotAvail)
     }
 
-    async fn connect_0(&self) -> Result<DerpClient<tokio::net::tcp::OwnedReadHalf>, ClientError> {
+    fn url(&self) -> Option<&Url> {
+        self.inner.url.as_ref()
+    }
+
+    fn tls_servername(&self, node: Option<&DerpNode>) -> Option<rustls::ServerName> {
+        if let Some(url) = self.url() {
+            return url
+                .host_str()
+                .and_then(|s| rustls::ServerName::try_from(s).ok());
+        }
+        if let Some(node) = node {
+            return rustls::ServerName::try_from(node.host_name.as_str()).ok();
+        }
+
+        None
+    }
+
+    fn url_port(&self) -> Option<u16> {
+        if let Some(port) = self.inner.url.as_ref().and_then(|url| url.port()) {
+            return Some(port);
+        }
+        if let Some(ref url) = self.inner.url {
+            match url.scheme() {
+                "http" => return Some(80),
+                "https" => return Some(443),
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn use_https(&self) -> bool {
+        // only disable https if we are explicitly dialing a http url
+        if let Some(true) = self.inner.url.as_ref().map(|url| url.scheme() == "http") {
+            return false;
+        }
+        true
+    }
+
+    async fn connect_0(&self) -> Result<DerpClient, ClientError> {
         debug!("connect_0");
         let region = self.current_region().await?;
         debug!("connect_0 region: {:?}", region);
-        let (tcp_stream, _node) = self.dial_region(region).await?;
+
+        let (tcp_stream, derp_node) = if self.url().is_some() {
+            (self.dial_url().await?, None)
+        } else {
+            let (tcp_stream, derp_node) = self.dial_region(region).await?;
+            (tcp_stream, Some(derp_node))
+        };
 
         let local_addr = tcp_stream
             .local_addr()
             .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
-
-        let (mut request_sender, connection) = hyper::client::conn::handshake(tcp_stream)
-            .await
-            .map_err(ClientError::Hyper)?;
-
-        tokio::spawn(async move {
-            // polling `connection` drives the HTTP exchange
-            // this will poll until we upgrade the connection, but not shutdown the underlying
-            // stream
-            debug!("connect: waiting for connection");
-            if let Err(err) = connection.await {
-                warn!("client connection error: {:?}", err);
-            }
-            debug!("connect: connection done");
-        });
 
         let req = Request::builder()
             .uri("/derp")
@@ -324,45 +372,106 @@ impl Client {
             .body(Body::empty())
             .unwrap();
 
-        debug!("connect: sending upgrade request");
-        let res = request_sender
-            .send_request(req)
-            .await
-            .map_err(ClientError::Hyper)?;
+        let res = if self.use_https() {
+            debug!("Starting TLS handshake");
+            // TODO: review TLS config
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    ta.subject,
+                    ta.spki,
+                    ta.name_constraints,
+                )
+            }));
+            #[allow(unused_mut)]
+            let mut config = rustls::client::ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            #[cfg(test)]
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertVerifier));
+
+            let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
+            let hostname = self
+                .tls_servername(derp_node.as_ref())
+                .ok_or_else(|| ClientError::InvalidUrl)?;
+            let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
+            debug!("tls_connector connect success");
+            let (mut request_sender, connection) = hyper::client::conn::Builder::new()
+                .handshake(tls_stream)
+                .await
+                .map_err(ClientError::Hyper)?;
+            tokio::spawn(async move {
+                // polling `connection` drives the HTTP exchange
+                // this will poll until we upgrade the connection, but not shutdown the underlying
+                // stream
+                debug!("waiting for connection");
+                if let Err(err) = connection.await {
+                    warn!("client connection error: {:?}", err);
+                }
+                debug!("connection done");
+            });
+            debug!("sending upgrade request");
+            request_sender
+                .send_request(req)
+                .await
+                .map_err(ClientError::Hyper)?
+        } else {
+            tracing::error!("Starting handshake");
+            let (mut request_sender, connection) = hyper::client::conn::Builder::new()
+                .handshake(tcp_stream)
+                .await
+                .map_err(ClientError::Hyper)?;
+            tokio::spawn(async move {
+                // polling `connection` drives the HTTP exchange
+                // this will poll until we upgrade the connection, but not shutdown the underlying
+                // stream
+                debug!("waiting for connection");
+                if let Err(err) = connection.await {
+                    warn!("client connection error: {:?}", err);
+                }
+                debug!("connection done");
+            });
+            debug!("sending upgrade request");
+            request_sender
+                .send_request(req)
+                .await
+                .map_err(ClientError::Hyper)?
+        };
 
         if res.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            warn!("connect: invalid status received: {:?}", res.status());
+            warn!("invalid status received: {:?}", res.status());
             return Err(ClientError::UnexpectedStatusCode(
                 hyper::StatusCode::SWITCHING_PROTOCOLS,
                 res.status(),
             ));
         }
 
-        debug!("connect: starting upgrade");
+        debug!("starting upgrade");
         let upgraded = match hyper::upgrade::on(res).await {
             Ok(upgraded) => upgraded,
             Err(err) => {
-                warn!("connect: upgrade failed: {:?}", err);
+                warn!("upgrade failed: {:?}", err);
                 return Err(ClientError::Hyper(err));
             }
         };
 
-        debug!("connect: connection upgraded");
-        let parts = upgraded
-            .downcast::<TcpStream>()
-            .map_err(|_| ClientError::Upgrade)?;
+        debug!("connection upgraded");
+        let (io, read_buf) =
+            downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let (reader, writer) = parts.io.into_split();
-        debug!("connect: buf: {:?}", parts.read_buf);
+        // TODO: unify client loop
+        let (reader, writer) = tokio::io::split(io);
 
-        debug!("connect: building..");
         let derp_client =
             DerpClientBuilder::new(self.inner.secret_key.clone(), local_addr, reader, writer)
                 .mesh_key(self.inner.mesh_key)
                 .can_ack_pings(self.inner.can_ack_pings)
                 .prober(self.inner.is_prober)
                 .server_public_key(self.inner.server_public_key.clone())
-                .build(Some(parts.read_buf))
+                .build(Some(read_buf))
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -371,7 +480,7 @@ impl Client {
             derp_client.close().await;
             return Err(ClientError::Send);
         }
-        debug!("connect: built");
+        debug!("built");
         Ok(derp_client)
     }
 
@@ -382,9 +491,37 @@ impl Client {
         format!("region {} ({})", reg.region_id, reg.region_code)
     }
 
+    async fn dial_url(&self) -> Result<TcpStream, ClientError> {
+        let host = if let Some(host_str) = self.url().and_then(|url| url.host_str()) {
+            host_str
+        } else {
+            return Err(ClientError::InvalidUrl);
+        };
+        debug!("dial url: {}", host);
+        let dst_ip: IpAddr = if let Ok(ip) = host.parse() {
+            // Already a valid IP address
+            ip
+        } else {
+            // Need to do a DNS lookup
+            let addr = DNS_RESOLVER
+                .lookup_ip(host)
+                .await
+                .map_err(|e| ClientError::Dns(Some(e)))?
+                .iter()
+                .next();
+            addr.ok_or_else(|| ClientError::Dns(None))?
+        };
+
+        let port = self.url_port().ok_or_else(|| ClientError::InvalidUrl)?;
+        let addr = SocketAddr::new(dst_ip, port);
+
+        tracing::error!("connecting to {}", addr);
+        let tcp_stream = TcpStream::connect(addr).await?;
+        Ok(tcp_stream)
+    }
+
     /// Creates the uri string from a [`DerpNode`]
     ///
-
     /// Return a TCP stream to the provided region, trying each node in order
     /// (using [`Client::dial_node`]) until one connects
     async fn dial_region(&self, reg: DerpRegion) -> Result<(TcpStream, DerpNode), ClientError> {
@@ -448,7 +585,7 @@ impl Client {
                         first_err = Some(err);
                     }
                     if dials.is_empty() {
-                        return Err(ClientError::DialIO(first_err.unwrap()));
+                        return Err(first_err.unwrap());
                     }
                 }
             }
@@ -472,15 +609,29 @@ impl Client {
         &self,
         node: &DerpNode,
         dst_primary: UseIp,
-    ) -> Result<TcpStream, std::io::Error> {
+    ) -> Result<TcpStream, ClientError> {
         if matches!(dst_primary, UseIp::Ipv4(_)) && self.prefer_ipv6().await {
             tokio::time::sleep(Duration::from_millis(200)).await;
             // Start v4 dial
         }
-        let host = match dst_primary {
-            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.to_string(),
-            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.to_string(),
-            _ => node.host_name.clone(),
+        let host: IpAddr = match dst_primary {
+            UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
+            UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
+            _ => {
+                if let Ok(ip) = node.host_name.parse() {
+                    // Already a valid IP address
+                    ip
+                } else {
+                    // Need to do a DNS lookup
+                    let addr = DNS_RESOLVER
+                        .lookup_ip(&node.host_name)
+                        .await
+                        .map_err(|e| ClientError::Dns(Some(e)))?
+                        .iter()
+                        .next();
+                    addr.ok_or_else(|| ClientError::Dns(None))?
+                }
+            }
         };
         let port = if node.derp_port != 0 {
             node.derp_port
@@ -494,7 +645,9 @@ impl Client {
                 DIAL_NODE_TIMEOUT,
                 async move { TcpStream::connect(dst).await },
             )
-            .await??;
+            .await
+            .map_err(|_| ClientError::ConnectTimeout)?
+            .map_err(ClientError::DialIO)?;
         // TODO: ipv6 vs ipv4 specific connection
 
         Ok(tcp_stream)
@@ -669,6 +822,7 @@ impl PacketForwarder for Client {
                 let srckey = srckey.clone();
                 let dstkey = dstkey.clone();
                 let packet = packet.clone();
+                debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
                     if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
                         return;
@@ -685,4 +839,42 @@ impl PacketForwarder for Client {
 enum UseIp {
     Ipv4(UseIpv4),
     Ipv6(UseIpv6),
+}
+
+fn downcast_upgrade(
+    upgraded: Upgraded,
+) -> anyhow::Result<(Box<dyn Io + Send + Sync + 'static>, Bytes)> {
+    match upgraded.downcast::<tokio::net::TcpStream>() {
+        Ok(parts) => Ok((Box::new(parts.io), parts.read_buf)),
+        Err(upgraded) => {
+            if let Ok(parts) =
+                upgraded.downcast::<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>()
+            {
+                return Ok((Box::new(parts.io), parts.read_buf));
+            }
+
+            bail!(
+                "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
+            )
+        }
+    }
+}
+
+/// Used to allow self signed certificates in tests
+#[cfg(test)]
+struct NoCertVerifier;
+
+#[cfg(test)]
+impl rustls::client::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
 }

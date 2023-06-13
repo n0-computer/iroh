@@ -328,11 +328,11 @@ impl DerpActor {
         }
 
         let why = if let Some(peer) = peer {
-            format!("{:?}", peer)
+            format!("{peer:?}")
         } else {
             "home-keep-alive".to_string()
         };
-        info!("adding connection to derp-{} for {}", region_id, why);
+        info!("adding connection to derp-{region_id} for {why}");
 
         let my_derp = self.conn.my_derp();
 
@@ -340,6 +340,7 @@ impl DerpActor {
         // (it doesn't block) so it is safe to do under the state lock.
 
         let conn1 = self.conn.clone();
+
         let ipv6_reported = self.conn.ipv6_reported.clone();
         let dc = derp::http::ClientBuilder::new()
             .address_family_selector(move || {
