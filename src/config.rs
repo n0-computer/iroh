@@ -104,7 +104,7 @@ fn default_derp_region() -> DerpRegion {
         host_name: "derp.iroh.network".into(),
         stun_only: false,
         stun_port: 3478,
-        ipv4: UseIpv4::Some("174.129.122.106".parse().unwrap()),
+        ipv4: UseIpv4::Some("35.175.99.113".parse().unwrap()),
         ipv6: UseIpv6::None,
         derp_port: 443,
         stun_test_ip: None,
