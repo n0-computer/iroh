@@ -321,6 +321,21 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
     path
 }
 
+/// A non-sendable marker type
+#[derive(Debug)]
+pub struct NonSend {
+    _marker: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl NonSend {
+    #[allow(dead_code)]
+    pub const fn new() -> Self {
+        Self {
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
