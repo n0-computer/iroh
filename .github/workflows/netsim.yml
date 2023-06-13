@@ -182,7 +182,7 @@ jobs:
         prom_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
         
-        link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"}\n'
+        link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"} 1.0\n'
         curl -X POST -H  "Content-Type: text/plain" --data "$link_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
     - name: Post metrics
