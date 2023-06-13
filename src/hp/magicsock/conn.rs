@@ -255,7 +255,7 @@ impl Conn {
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
-        let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
+        let mut port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
 
         let Options {
             port,

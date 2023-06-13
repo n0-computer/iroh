@@ -21,6 +21,7 @@ const UPNP_SEARCH_TIMEOUT_MILLIS: std::time::Duration = std::time::Duration::fro
 // protocol clients, which makes sense. Check this.
 #[derive(Default, Debug, Clone)]
 pub struct Client {
+    local_port: u16,
     upnp_gateway: Option<aigd::Gateway>,
 }
 
@@ -48,14 +49,26 @@ impl Client {
     }
 
     /// Updates the local port number to which we want to port map UDP traffic.
-    // TODO(@divagant-martian) if there is no upnp gateway this fails. Maybe add result return
-    // type?
-    pub async fn set_local_port(&self, local_port: u16) {
+    pub async fn set_local_port(&mut self, local_port: u16) {
+        self.local_port = local_port;
+        // TODO(@divagant-martian): tailscale invalidates mappings
+    }
+
+    /// Quickly returns with our current cached portmapping, if any.
+    /// If there's not one, it starts up a background goroutine to create one.
+    /// If the background goroutine ends up creating one, the `on_change` hook registered with the
+    /// `Client::new` constructor (if any) will fire.
+    // TODO(@divagant-martian):
+    // - fix docs, no goroutines here.
+    // - re-evaluate callback behaviour.
+    // - ipv4 vs ipv6 behaviour?
+    pub async fn get_cached_mapping_or_start_creating_one(&self) -> Option<SocketAddr> {
         if let Some(gateway) = &self.upnp_gateway {
             // TODO(@divagant-martian): lease duration 0 means infinite. Check recommendations/ best practices.
             // move this outside
             const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
-            let local_addr = std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, local_port);
+            let local_addr =
+                std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, self.local_port);
             match gateway
                 .add_any_port(
                     igd::PortMappingProtocol::UDP,
@@ -66,7 +79,15 @@ impl Client {
                 .await
             {
                 Ok(external_port) => {
-                    trace!("local port {local_port} mapped to external port {external_port} using UPnP")
+                    trace!(
+                        "local port {} mapped to external port {external_port} using UPnP",
+                        self.local_port
+                    );
+                    // TODO(@divagant-martian): we probably want the external ip here?
+                    return Some(
+                        std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, external_port)
+                            .into(),
+                    );
                 }
                 Err(port_mapping_error) => {
                     // TODO(@divagant-martian): will this be excesively verbose if it happens often?
@@ -108,15 +129,6 @@ impl Client {
                 }
             }
         }
-    }
-
-    /// Quickly returns with our current cached portmapping, if any.
-    /// If there's not one, it starts up a background goroutine to create one.
-    /// If the background goroutine ends up creating one, the `on_change` hook registered with the
-    /// `Client::new` constructor (if any) will fire.
-    // TODO(@divagant-martian): fix docs, no goroutines here. Re-evaluate callback behaviour.
-    pub async fn get_cached_mapping_or_start_creating_one(&self) -> Option<SocketAddr> {
-        // TODO:
         None
     }
 
