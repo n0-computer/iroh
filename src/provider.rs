@@ -118,10 +118,16 @@ impl CustomGetHandler for () {
 }
 
 /// A [`Database`] entry.
+///
+/// This is either stored externally in the file system, or internally in the database.
+/// Collections are always stored internally for now.
+///
+/// Internally stored entries are stored in the iroh home directory when the database is
+/// persisted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobOrCollection {
+pub enum DbEntry {
     /// A blob.
-    Blob {
+    External {
         /// The bao outboard data.
         outboard: Bytes,
         /// Path to the original data, which must not change while in use.
@@ -135,40 +141,38 @@ pub enum BlobOrCollection {
         size: u64,
     },
     /// A collection.
-    Collection {
-        /// The bao outboard data of the serialised [`Collection`].
+    Internal {
+        /// The bao outboard data.
         outboard: Bytes,
-        /// The serialised [`Collection`].
+        /// The inline data.
         data: Bytes,
     },
 }
 
-impl BlobOrCollection {
-    pub(crate) fn is_blob(&self) -> bool {
-        matches!(self, BlobOrCollection::Blob { .. })
+impl DbEntry {
+    pub(crate) fn is_external(&self) -> bool {
+        matches!(self, DbEntry::External { .. })
     }
 
     pub(crate) fn blob_path(&self) -> Option<&Path> {
         match self {
-            BlobOrCollection::Blob { path, .. } => Some(path),
-            BlobOrCollection::Collection { .. } => None,
+            DbEntry::External { path, .. } => Some(path),
+            DbEntry::Internal { .. } => None,
         }
     }
 
     pub(crate) fn outboard(&self) -> &Bytes {
         match self {
-            BlobOrCollection::Blob { outboard, .. } => outboard,
-            BlobOrCollection::Collection { outboard, .. } => outboard,
+            DbEntry::External { outboard, .. } => outboard,
+            DbEntry::Internal { outboard, .. } => outboard,
         }
     }
 
     /// A reader for the data
     async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
         Ok(match self {
-            BlobOrCollection::Blob { path, .. } => {
-                Either::Right(tokio::fs::File::open(path).await?)
-            }
-            BlobOrCollection::Collection { data, .. } => Either::Left(Cursor::new(data.clone())),
+            DbEntry::External { path, .. } => Either::Right(tokio::fs::File::open(path).await?),
+            DbEntry::Internal { data, .. } => Either::Left(Cursor::new(data.clone())),
         })
     }
 
@@ -178,8 +182,8 @@ impl BlobOrCollection {
     /// For blobs it is the blob size.
     pub fn size(&self) -> u64 {
         match self {
-            BlobOrCollection::Blob { size, .. } => *size,
-            BlobOrCollection::Collection { data, .. } => data.len() as u64,
+            DbEntry::External { size, .. } => *size,
+            DbEntry::Internal { data, .. } => data.len() as u64,
         }
     }
 }
@@ -652,7 +656,7 @@ impl RpcHandler {
         let items = self
             .inner
             .db
-            .blobs()
+            .external()
             .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
         futures::stream::iter(items)
     }
@@ -661,15 +665,17 @@ impl RpcHandler {
         self,
         _msg: ListCollectionsRequest,
     ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        let items = self
-            .inner
-            .db
-            .collections()
-            .map(|(hash, collection)| ListCollectionsResponse {
-                hash,
-                total_blobs_count: collection.blobs.len(),
-                total_blobs_size: collection.total_blobs_size,
-            });
+        // collections are always stored internally, so we take everything that is stored internally
+        // and try to parse it as a collection
+        let items = self.inner.db.internal().filter_map(|(hash, collection)| {
+            Collection::from_bytes(&collection)
+                .ok()
+                .map(|collection| ListCollectionsResponse {
+                    hash,
+                    total_blobs_count: collection.blobs.len(),
+                    total_blobs_size: collection.total_blobs_size,
+                })
+        });
         futures::stream::iter(items)
     }
 
@@ -1149,7 +1155,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     writer: &mut W,
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
-        Some(BlobOrCollection::Blob {
+        Some(DbEntry::External {
             outboard,
             path,
             size,
@@ -1312,7 +1318,7 @@ mod tests {
                 });
                 map.insert(
                     hash,
-                    BlobOrCollection::Blob {
+                    DbEntry::External {
                         outboard,
                         size,
                         path,
@@ -1326,7 +1332,7 @@ mod tests {
                 let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
-                map.insert(hash, BlobOrCollection::Collection { outboard, data });
+                map.insert(hash, DbEntry::Internal { outboard, data });
             }
             let db = Database::default();
             db.union_with(map);
@@ -1395,7 +1401,7 @@ mod tests {
 
         let collection = {
             let c = db.get(&hash).unwrap();
-            if let BlobOrCollection::Collection { data, .. } = c {
+            if let DbEntry::Internal { data, .. } = c {
                 Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
