@@ -31,6 +31,7 @@ dirs-next = "2.0.0"
 ed25519-dalek = { version = "=2.0.0-rc.2", features = ["serde", "rand_core"] }
 flume = "0.10.14"
 futures = "0.3.25"
+futures-rustls = "0.24.0"
 governor = "0.5.1"
 hex = "0.4.3"
 hostname = "0.3.1"
@@ -83,6 +84,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trust-dns-resolver = "0.22.0"
 walkdir = "2"
 webpki = { version = "0.22", features = ["std"] }
+webpki-roots = "0.23.0"
 wg = "0.3.1"
 x509-parser = "0.14"
 zeroize = "1.5"
