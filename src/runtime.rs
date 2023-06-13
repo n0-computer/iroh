@@ -121,6 +121,7 @@ pub mod tpc {
                 if self.handles.iter().all(|h| h.is_finished()) {
                     break;
                 }
+                std::hint::spin_loop();
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             self.handles.clear();
