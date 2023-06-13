@@ -345,8 +345,13 @@ jobs:
 
         cd chuck/netsim
 
+        aws_fname=intg_${{ env.LAST_COMMIT_SHA }}.tar.gz
         tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
-        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/intg_${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
+        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
+
+        link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"} 1.0'
+        link_data=$(printf "%s\n " "$link_data")
+        curl -X POST -H  "Content-Type: text/plain" --data "$link_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
     - name: Echo metrics
       run: |
