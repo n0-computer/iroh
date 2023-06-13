@@ -215,7 +215,7 @@ pub mod get_response_machine {
     use std::result;
 
     use crate::{
-        protocol::{read_lp, GetRequest},
+        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
         tokio_util::ConcatenateSliceWriter,
     };
 
@@ -229,14 +229,13 @@ pub mod get_response_machine {
         Leaf, Parent,
     };
     use derive_more::From;
-    use ouroboros::self_referencing;
 
-    #[self_referencing]
-    struct RangesIterInner {
-        owner: RangeSpecSeq,
-        #[borrows(owner)]
-        #[covariant]
-        iter: crate::protocol::NonEmptyRequestRangeSpecIter<'this>,
+    self_cell::self_cell! {
+        struct RangesIterInner {
+            owner: RangeSpecSeq,
+            #[covariant]
+            dependent: NonEmptyRequestRangeSpecIter,
+        }
     }
 
     /// Owned iterator for the ranges in a request
@@ -261,7 +260,7 @@ pub mod get_response_machine {
         type Item = (u64, RangeSet2<ChunkNum>);
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.0.with_iter_mut(|iter| {
+            self.0.with_dependent_mut(|_owner, iter| {
                 iter.next()
                     .map(|(offset, ranges)| (offset, ranges.to_chunk_ranges()))
             })
