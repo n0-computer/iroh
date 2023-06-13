@@ -42,6 +42,7 @@ use super::{
 };
 
 mod probe;
+mod reportstate;
 
 /// Fake DNS TLD used in tests for an invalid hostname.
 const DOT_INVALID: &str = ".invalid";
@@ -516,7 +517,7 @@ struct ReportState {
 
 #[derive(Debug)]
 pub(crate) struct Inflight {
-    tx: stun::TransactionId,
+    txn: stun::TransactionId,
     start: Instant,
     s: sync::oneshot::Sender<(Duration, SocketAddr)>,
 }
@@ -913,13 +914,20 @@ async fn run_probe(
     let req = stun::request(txid);
     let sent = Instant::now(); // after DNS lookup above
 
-    let (s, r) = sync::oneshot::channel();
+    let (stun_tx, stun_rx) = oneshot::channel();
+    let (msg_response_tx, msg_response_rx) = oneshot::channel();
     actor_addr
-        .send(ActorMessage::InFlightStun(Inflight {
-            tx: txid,
-            start: sent,
-            s,
-        }))
+        .send(ActorMessage::InFlightStun(
+            Inflight {
+                txn: txid,
+                start: sent,
+                s: stun_tx,
+            },
+            msg_response_tx,
+        ))
+        .await
+        .map_err(|e| ProbeError::Transient(e.into(), probe.clone()))?;
+    msg_response_rx
         .await
         .map_err(|e| ProbeError::Transient(e.into(), probe.clone()))?;
     let mut result = ProbeReport::new(probe.clone());
@@ -934,7 +942,7 @@ async fn run_probe(
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
 
-                    let (delay, addr) = r
+                    let (delay, addr) = stun_rx
                         .await
                         .map_err(|e| ProbeError::Transient(e.into(), probe))?;
                     result.delay = Some(delay);
@@ -951,7 +959,7 @@ async fn run_probe(
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
 
-                    let (delay, addr) = r
+                    let (delay, addr) = stun_rx
                         .await
                         .map_err(|e| ProbeError::Transient(e.into(), probe))?;
                     result.delay = Some(delay);
@@ -1119,7 +1127,10 @@ pub(crate) enum ActorMessage {
         from_addr: SocketAddr,
     },
     /// A probe wants to register an in-flight STUN request.
-    InFlightStun(Inflight),
+    ///
+    /// The sender is signalled once the STUN packet is registered with the actor and will
+    /// correctly accept the STUN response.
+    InFlightStun(Inflight, oneshot::Sender<()>),
 }
 
 /// Sender to the [`Actor`].
@@ -1255,8 +1266,8 @@ impl Actor {
                 ActorMessage::StunPacket { payload, from_addr } => {
                     self.handle_stun_packet(&payload, from_addr);
                 }
-                ActorMessage::InFlightStun(inflight) => {
-                    self.handle_in_flight_stun(inflight);
+                ActorMessage::InFlightStun(inflight, response_tx) => {
+                    self.handle_in_flight_stun(inflight, response_tx);
                 }
             }
         }
@@ -1398,11 +1409,13 @@ impl Actor {
         trace!(txn=%hair_id, "Hairpin transaction ID");
         let (hair_tx, hair_rx) = oneshot::channel();
         let inflight = Inflight {
-            tx: hair_id,
+            txn: hair_id,
             start: Instant::now(), // ignored by hairpin probe
             s: hair_tx,
         };
-        self.handle_in_flight_stun(inflight);
+        let (msg_response_tx, msg_response_rx) = oneshot::channel();
+        self.handle_in_flight_stun(inflight, msg_response_tx);
+        msg_response_rx.await?;
 
         let if_state = interfaces::State::new().await;
         let mut do_full = self.reports.next_full
@@ -1509,8 +1522,11 @@ impl Actor {
     ///
     /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
     /// [`Actor::handle_stun_packet`] can forward packets correctly.
-    fn handle_in_flight_stun(&mut self, inflight: Inflight) {
-        self.in_flight_stun_requests.insert(inflight.tx, inflight);
+    ///
+    /// *response_tx* is to signal the actor message has been handled.
+    fn handle_in_flight_stun(&mut self, inflight: Inflight, response_tx: oneshot::Sender<()>) {
+        self.in_flight_stun_requests.insert(inflight.txn, inflight);
+        response_tx.send(()).ok();
     }
 
     fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
