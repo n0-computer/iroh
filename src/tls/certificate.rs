@@ -189,7 +189,8 @@ fn make_libp2p_extension(
         signature: OctetStringRef::new(&signature).unwrap(),
     };
 
-    let extension_content = key.to_vec().expect("vec");
+    let mut extension_content = Vec::new();
+    key.encode_to_vec(&mut extension_content).expect("vec");
 
     // This extension MAY be marked critical.
     let mut ext = rcgen::CustomExtension::from_oid_content(&P2P_EXT_OID, extension_content);

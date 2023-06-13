@@ -45,8 +45,8 @@ impl Core {
         &self.netcheck_metrics
     }
 
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, std::io::Error> {
-        let mut buf = vec![];
+    pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
+        let mut buf = String::new();
         encode(&mut buf, self.registry())?;
         Ok(buf)
     }
