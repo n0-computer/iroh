@@ -11,7 +11,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_lookup() {
-        let res = DNS_RESOLVER.lookup_ip("derp.iroh.computer").await.unwrap();
+        let res = DNS_RESOLVER.lookup_ip("derp.iroh.network").await.unwrap();
         let res: Vec<_> = res.iter().collect();
         assert!(!res.is_empty());
         dbg!(res);

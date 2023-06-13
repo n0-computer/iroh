@@ -75,7 +75,7 @@ struct Cli {
     #[clap(long)]
     cert_dir: Option<PathBuf>,
     /// Certificate hostname.
-    #[clap(long, default_value = "derp.iroh.computer.")]
+    #[clap(long, default_value = "derp.iroh.network.")]
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
     #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
