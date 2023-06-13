@@ -50,7 +50,7 @@ use crate::rpc_protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::read_as_bytes;
-use crate::util::{canonicalize_path, Hash, NonSend, Progress};
+use crate::util::{canonicalize_path, Hash, Progress};
 use crate::IROH_BLOCK_SIZE;
 
 mod collection;
@@ -864,12 +864,12 @@ async fn handle_connection<C: CustomGetHandler>(
             let custom_get_handler = custom_get_handler.clone();
             rt.spawn_tpc(|| {
                 async move {
-                    let _x = NonSend::new();
                     if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }
                 }
                 .instrument(span)
+                .boxed_local()
             })
             .await;
         }

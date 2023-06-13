@@ -328,6 +328,7 @@ pub struct NonSend {
 }
 
 impl NonSend {
+    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             _marker: std::marker::PhantomData,

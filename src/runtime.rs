@@ -6,7 +6,7 @@
 //! the runtime will not spawn new threads.
 //!
 //! It is best to run the entire program with panic = 'abort'.
-use futures::Future;
+use futures::{future::LocalBoxFuture, Future};
 use std::sync::Arc;
 
 /// A thread per core runtime.
@@ -19,7 +19,9 @@ use std::sync::Arc;
 ///
 /// The runtime has a shutdown method that will wait for some time all tasks to finish.
 pub mod tpc {
-    use futures::{future::LocalBoxFuture, Future, FutureExt};
+    use futures::future::LocalBoxFuture;
+    #[cfg(test)]
+    use futures::{Future, FutureExt};
     use std::{
         fmt,
         sync::{Arc, Mutex},
@@ -153,12 +155,10 @@ pub mod tpc {
         /// Spawn a future on the runtime.
         ///
         /// Will not wait for the future to finish, but may yield while all runtimes are busy.
-        pub async fn spawn<F, Fut>(&self, f: F)
+        pub async fn spawn<F>(&self, f: F)
         where
-            F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future + 'static,
+            F: FnOnce() -> LocalBoxFuture<'static, ()> + Send + 'static,
         {
-            let f = || f().map(|_| ()).boxed_local();
             self.sender()
                 .into_send_async(Task(Box::new(f)))
                 .await
@@ -168,19 +168,24 @@ pub mod tpc {
         /// Spawn a future on the runtime.
         ///
         /// Will not wait for the future to finish, but may block while all runtimes are busy.
-        pub fn spawn_blocking<F, Fut>(&self, f: F)
+        ///
+        /// This would be needed to use this as a self contained runtime, but since we currently
+        /// do not use it that way it is marked as cfg(test).
+        #[cfg(test)]
+        pub fn spawn_blocking<F>(&self, f: F)
         where
-            F: FnOnce() -> Fut + Send + 'static,
-            Fut: Future + 'static,
-            Fut::Output: 'static,
+            F: FnOnce() -> LocalBoxFuture<'static, ()> + Send + 'static,
         {
-            let f = || f().map(|_| ()).boxed_local();
             self.sender()
                 .send(Task(Box::new(f)))
                 .expect("runtime dropped");
         }
 
         /// Run a future on the runtime, and wait for it to finish.
+        ///
+        /// This would be needed to use this as a self contained runtime, but since we currently
+        /// do not use it that way it is marked as cfg(test).
+        #[cfg(test)]
         pub async fn run<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
@@ -202,6 +207,10 @@ pub mod tpc {
         }
 
         /// Run a future on the runtime, and block until it finishes.
+        ///
+        /// This would be needed to use this as a self contained runtime, but since we currently
+        /// do not use it that way it is marked as cfg(test).
+        #[cfg(test)]
         pub fn run_blocking<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
@@ -274,9 +283,12 @@ pub mod tpc {
                 });
                 // will choose a thread at random, might be different
                 handle
-                    .spawn(move || async move {
-                        tracing::info!("hello from spawn_async! {}", thread_name());
-                        values4.lock().unwrap().insert("spawn_async");
+                    .spawn(move || {
+                        async move {
+                            tracing::info!("hello from spawn_async! {}", thread_name());
+                            values4.lock().unwrap().insert("spawn_async");
+                        }
+                        .boxed_local()
                     })
                     .await;
                 // will choose a thread at random, might be different, awaits result
@@ -398,10 +410,9 @@ impl Handle {
     }
 
     /// spawn a task on one of the thread per core executors
-    pub async fn spawn_tpc<F, Fut, T>(&self, f: F)
+    pub async fn spawn_tpc<F>(&self, f: F)
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = T> + 'static,
+        F: FnOnce() -> LocalBoxFuture<'static, ()> + Send + 'static,
     {
         self.inner.tpc.spawn(f).await
     }
