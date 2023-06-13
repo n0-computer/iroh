@@ -71,10 +71,7 @@ mod tests {
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
     fn test_runtime() -> crate::runtime::Runtime {
-        crate::runtime::Runtime::new(
-            tokio::runtime::Handle::current(),
-            crate::runtime::tpc::Runtime::new("test", 1),
-        )
+        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
     }
 
     #[tokio::test]

@@ -280,7 +280,7 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Provider> {
         trace!("spawning provider");
-        let rt = self.rt.unwrap();
+        let rt = self.rt.context("runtime not set")?;
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -1282,10 +1282,7 @@ mod tests {
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
     fn test_runtime() -> crate::runtime::Runtime {
-        crate::runtime::Runtime::new(
-            tokio::runtime::Handle::current(),
-            crate::runtime::tpc::Runtime::new("test", 1),
-        )
+        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
     }
 
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {

@@ -133,7 +133,7 @@ pub mod tpc {
     impl Handle {
         fn sender(&self) -> flume::Sender<Task> {
             let inner = self.sender.lock().unwrap();
-            let sender = inner.as_ref().unwrap().clone();
+            let sender = inner.as_ref().expect("runtime dropped").clone();
             sender
         }
 
@@ -146,17 +146,19 @@ pub mod tpc {
             self.sender()
                 .into_send_async(Task(Box::new(f)))
                 .await
-                .unwrap();
+                .expect("runtime dropped");
         }
 
-        pub fn spawn_sync<F, Fut>(&self, f: F)
+        pub fn spawn_blocking<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
             Fut: Future + 'static,
             Fut::Output: 'static,
         {
             let f = || f().map(|_| ()).boxed_local();
-            self.sender().send(Task(Box::new(f))).unwrap();
+            self.sender()
+                .send(Task(Box::new(f)))
+                .expect("runtime dropped");
         }
 
         pub async fn run<F, Fut>(&self, f: F) -> Fut::Output
@@ -165,7 +167,7 @@ pub mod tpc {
             Fut: Future + 'static,
             Fut::Output: Send + 'static,
         {
-            let (tx, rx) = futures::channel::oneshot::channel();
+            let (tx, rx) = tokio::sync::oneshot::channel();
             let f = || {
                 f().map(|x| {
                     tx.send(x).ok();
@@ -175,11 +177,11 @@ pub mod tpc {
             self.sender()
                 .into_send_async(Task(Box::new(f)))
                 .await
-                .unwrap();
-            rx.await.unwrap()
+                .expect("runtime dropped");
+            rx.await.expect("runtime dropped")
         }
 
-        pub fn run_sync<F, Fut>(&self, f: F) -> Fut::Output
+        pub fn run_blocking<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
             Fut: Future + 'static,
@@ -194,8 +196,10 @@ pub mod tpc {
                 .boxed_local()
             };
             // wait for completion (blocking)
-            self.sender().send(Task(Box::new(f))).unwrap();
-            rx.recv().unwrap()
+            self.sender()
+                .send(Task(Box::new(f)))
+                .expect("runtime dropped");
+            rx.recv().expect("runtime dropped")
         }
     }
 
@@ -224,7 +228,7 @@ pub mod tpc {
             let handle = rt.handle().clone();
             let values = Arc::new(Mutex::new(BTreeSet::new()));
             let values2 = values.clone();
-            rt.handle().run_sync(|| async move {
+            rt.handle().run_blocking(|| async move {
                 let values1 = values.clone();
                 let values2 = values.clone();
                 let values3 = values.clone();
@@ -319,6 +323,18 @@ impl Runtime {
             tpc,
             handle,
         }
+    }
+
+    /// Create a new iroh runtime using the current tokio runtime as the main
+    /// runtime, and the given number of thread per core executors.
+    pub fn from_currrent(
+        name: &str,
+        size: usize,
+    ) -> std::result::Result<Self, tokio::runtime::TryCurrentError> {
+        Ok(Self::new(
+            tokio::runtime::Handle::try_current()?,
+            crate::runtime::tpc::Runtime::new(name, size),
+        ))
     }
 
     /// Get a handle to the runtime
