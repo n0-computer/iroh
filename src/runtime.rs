@@ -1,3 +1,11 @@
+//! The runtime module provides the iroh runtime, consisting of a general purpose
+//! tokio runtime and a set of single threaded runtimes.
+//!
+//! Functions spawned on single threaded runtimes should not panic,
+//! because panics will shut down the worker thread running the function, and
+//! the runtime will not spawn new threads.
+//!
+//! It is best to run the entire program with panic = 'abort'.
 use futures::Future;
 use std::sync::Arc;
 
@@ -36,7 +44,9 @@ pub mod tpc {
         }
     }
 
-    /// The handle to spawn tasks on the runtime
+    /// The handle to spawn tasks on the runtime.
+    ///
+    /// This is cheaply cloneable, and can be sent to other threads.
     #[derive(Clone)]
     pub struct Handle {
         sender: Arc<Mutex<Option<flume::Sender<Task>>>>,
@@ -72,6 +82,9 @@ pub mod tpc {
                                 .build()
                                 .expect("failed to build tokio runtime");
                             rt.block_on(local.run_until(async move {
+                                // this will run until recv_async returns an error, which happens
+                                // when all senders are dropped. There is just one sender, which
+                                // is dropped when the runtime is dropped.
                                 while let Ok(Task(f)) = task_receiver.recv_async().await {
                                     tokio::task::spawn_local(f());
                                 }
@@ -137,6 +150,9 @@ pub mod tpc {
             sender
         }
 
+        /// Spawn a future on the runtime.
+        ///
+        /// Will not wait for the future to finish, but may yield while all runtimes are busy.
         pub async fn spawn<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
@@ -149,6 +165,9 @@ pub mod tpc {
                 .expect("runtime dropped");
         }
 
+        /// Spawn a future on the runtime.
+        ///
+        /// Will not wait for the future to finish, but may block while all runtimes are busy.
         pub fn spawn_blocking<F, Fut>(&self, f: F)
         where
             F: FnOnce() -> Fut + Send + 'static,
@@ -161,6 +180,7 @@ pub mod tpc {
                 .expect("runtime dropped");
         }
 
+        /// Run a future on the runtime, and wait for it to finish.
         pub async fn run<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
@@ -181,6 +201,7 @@ pub mod tpc {
             rx.await.expect("runtime dropped")
         }
 
+        /// Run a future on the runtime, and block until it finishes.
         pub fn run_blocking<F, Fut>(&self, f: F) -> Fut::Output
         where
             F: FnOnce() -> Fut + Send + 'static,
