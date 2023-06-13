@@ -833,6 +833,7 @@ impl Actor {
                     }
                 }
                 Some(msg) = self.ip_receiver.recv() => {
+                    trace!("tick: ip_receiver");
                     match msg {
                         IpPacket::Disco { source, sealed_box, src } => {
                             self.handle_disco_message(source, &sealed_box, src, None).await;

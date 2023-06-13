@@ -65,9 +65,9 @@ where
     conn_handler.accept(io).await
 }
 
-#[derive(Debug)]
 /// A Derp Server handler. Created using `Server::Builder::spawn`, it starts a derp server
 /// listening over HTTP or HTTPS.
+#[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
