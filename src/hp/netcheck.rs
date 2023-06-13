@@ -538,7 +538,7 @@ impl ReportState {
         let mut port_mapping = MaybeFuture::default();
         if !skip_external_network {
             if let Some(ref port_mapper) = port_mapper {
-                let port_mapper = port_mapper.clone();
+                let mut port_mapper = port_mapper.clone();
                 port_mapping.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
                         Ok(res) => Some(res),
@@ -645,15 +645,14 @@ impl ReportState {
                 },
                 pm = &mut port_mapping => {
                     let mut report = self.report.write().await;
-                    debug!("port mapping probe result: {pm:?}");
                     match pm {
                         Some(ProbeResult{upnp, pmp, pcp}) => {
+                            debug!("port mapping probe result: {pm:?}");
                             report.upnp = Some(upnp);
                             report.pmp = Some(pmp);
                             report.pcp = Some(pcp);
                         }
                         None => {
-                            // TODO: check this
                             report.upnp = None;
                             report.pmp = None;
                             report.pcp = None;
