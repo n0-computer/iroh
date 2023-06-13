@@ -481,7 +481,7 @@ const PROGRESS_STYLE: &str =
 #[cfg(feature = "metrics")]
 fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
-    rt: &tokio::runtime::Handle,
+    rt: &iroh::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     init_metrics();
     // doesn't start the server if the address is None
@@ -500,6 +500,8 @@ fn init_metrics_collection(
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("main-runtime")
+        .worker_threads(2)
         .enable_all()
         .build()?;
     rt.block_on(main_impl())?;
@@ -511,7 +513,9 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let rt = tokio::runtime::Handle::current();
+    let tokio = tokio::runtime::Handle::current();
+    let tpc = iroh::runtime::tpc::Runtime::new("io", num_cpus::get());
+    let rt = iroh::runtime::Runtime::new(tokio, tpc);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
@@ -531,7 +535,7 @@ async fn main_impl() -> Result<()> {
     )?;
 
     #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
+    let metrics_fut = init_metrics_collection(cli.metrics_addr, rt.handle());
 
     let r = match cli.command {
         Commands::Get {
@@ -606,7 +610,7 @@ async fn main_impl() -> Result<()> {
                 cli.keylog,
                 rpc_port.into(),
                 config.derp_map(),
-                rt,
+                rt.handle(),
             )
             .await?;
             let controller = provider.controller();
@@ -777,7 +781,7 @@ async fn provide(
     keylog: bool,
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
-    rt: tokio::runtime::Handle,
+    rt: &iroh::runtime::Handle,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
