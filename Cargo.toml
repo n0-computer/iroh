@@ -130,5 +130,6 @@ opt-level = 3
 panic = 'abort'
 incremental = false
 
-[patch.crates-io]
-ed25519-dalek = { git = "https://github.com/dalek-cryptography/ed25519-dalek", branch = "main" }
+[patch.crates-io.ed25519-dalek]
+git = "https://github.com/dalek-cryptography/ed25519-dalek"
+rev = "4afbf09e1cb15bedc6f79c25cec388b5cd436f0d"
