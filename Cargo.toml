@@ -24,8 +24,8 @@ console = { version = "0.15.5", optional = true }
 crypto_box = { version = "0.9.0-rc.0", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.2"
 data-encoding = { version = "2.3.3" }
-default-net = "0.14.1"
-der = { version = "0.6", features = ["alloc", "derive"] }
+default-net = "0.15"
+der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
 dirs-next = "2.0.0"
 ed25519-dalek = { version = "=2.0.0-rc.2", features = ["serde", "rand_core"] }
@@ -46,7 +46,7 @@ os_info = "3.6.0"
 paste = "1.0.12"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-prometheus-client = { version = "0.18.0", optional = true }
+prometheus-client = { version = "0.21.0", optional = true }
 quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
 quinn = "0.10"
 quinn-proto = "0.10"
@@ -86,7 +86,7 @@ walkdir = "2"
 webpki = { version = "0.22", features = ["std"] }
 webpki-roots = "0.23.0"
 wg = "0.3.1"
-x509-parser = "0.14"
+x509-parser = "0.15"
 zeroize = "1.5"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
@@ -94,7 +94,7 @@ netlink-packet-route = "0.15.0"
 rtnetlink = "0.12.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wmi = "0.12.2"
+wmi = "0.13"
 
 [dev-dependencies]
 duct = "0.13.6"
