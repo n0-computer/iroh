@@ -60,7 +60,7 @@ mod tests {
         blobs::Collection,
         get::{dial_peer, get_response_machine},
         get::{get_response_machine::ConnectedNext, Stats},
-        protocol::{AnyGetRequest, GetRequest},
+        protocol::{AnyGetRequest, AuthToken, GetRequest},
         provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
         tls::PeerId,
         util::Hash,
@@ -610,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_fsm() {
         let rt = test_runtime();
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let readme = readme_path();
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
@@ -625,6 +625,7 @@ mod tests {
                 return;
             }
         };
+
         let addrs = provider.local_endpoint_addresses().await.unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -635,7 +636,6 @@ mod tests {
                 derp_map: None,
             })
             .await?;
-            // TODO - pass a token here to confirm it bubbles up through FSM
             let request = GetRequest::all(hash).into();
             let stream = get::run_connection(connection, request);
             let (collection, children, _) = aggregate_get_response(stream).await?;
@@ -645,6 +645,71 @@ mod tests {
         .await
         .expect("timeout")
         .expect("get failed");
+    }
+
+    #[tokio::test]
+    async fn test_auth_token_passthrough() {
+        let rt = test_runtime();
+        let readme = readme_path();
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .runtime(rt.handle())
+            .spawn()
+            .await
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+
+        let auth_token = Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6]));
+        let mut events = provider.subscribe();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let mut token = None;
+            while let Ok(msg) = events.recv().await {
+                if let Event::GetRequestReceived { auth_token, .. } = msg {
+                    // println!("auth_token: {:?}", auth_token);
+                    token = auth_token;
+                    break;
+                }
+            }
+            tx.send(token).unwrap();
+        });
+
+        let addrs = provider.local_endpoint_addresses().await.unwrap();
+        let peer_id = provider.peer_id();
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            let connection = dial_peer(get::Options {
+                addrs,
+                peer_id,
+                keylog: true,
+                derp_map: None,
+            })
+            .await?;
+            let request = GetRequest::all(hash)
+                .with_auth_token(auth_token.clone())
+                .into();
+            let stream = get::run_connection(connection, request);
+            aggregate_get_response(stream).await?;
+            anyhow::Ok(())
+        })
+        .await
+        .expect("timeout")
+        .expect("get failed");
+
+        match rx.await {
+            Ok(token) => {
+                assert!(Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6])) == token);
+            }
+            Err(e) => {
+                panic!("error receiving auth_token: {:?}", e);
+            }
+        }
     }
 
     fn readme_path() -> PathBuf {
