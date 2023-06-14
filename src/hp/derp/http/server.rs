@@ -514,6 +514,7 @@ impl DerpService {
         match tls_config {
             Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
             None => {
+                debug!("HTTP: serve connection");
                 self.serve_connection(MaybeTlsStreamServer::Plain(stream))
                     .await
             }
@@ -526,18 +527,25 @@ impl DerpService {
         match acceptor {
             TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
                 None => {
-                    info!("received TLS-ALPN-01 validation request");
+                    info!("TLS[acme]: received TLS-ALPN-01 validation request");
                 }
                 Some(start_handshake) => {
-                    let tls_stream = start_handshake.into_stream(config).await?;
+                    debug!("TLS[acme]: start handshake");
+                    let tls_stream = start_handshake
+                        .into_stream(config)
+                        .await
+                        .context("TLS[acme] handshake")?;
                     self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
-                        .await?;
+                        .await
+                        .context("TLS[acme] serve connection")?;
                 }
             },
             TlsAcceptor::Manual(a) => {
-                let tls_stream = a.accept(stream).await?;
+                debug!("TLS[manual]: accept");
+                let tls_stream = a.accept(stream).await.context("TLS[manual] accept")?;
                 self.serve_connection(MaybeTlsStreamServer::Tls(tls_stream))
-                    .await?;
+                    .await
+                    .context("TLS[manual] serve connection")?;
             }
         }
         Ok(())
