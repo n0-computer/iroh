@@ -635,6 +635,7 @@ mod tests {
                 derp_map: None,
             })
             .await?;
+            // TODO - pass a token here to confirm it bubbles up through FSM
             let request = GetRequest::all(hash).into();
             let stream = get::run_connection(connection, request);
             let (collection, children, _) = aggregate_get_response(stream).await?;
@@ -711,7 +712,11 @@ mod tests {
         let addrs = provider.local_endpoint_addresses().await.unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let request: AnyGetRequest = protocol::CustomGetRequest {
+                data: Bytes::from(&b"hello"[..]),
+                auth_token: None,
+            }
+            .into();
             let response = get::run(
                 request,
                 get::Options {
@@ -749,7 +754,11 @@ mod tests {
         let addrs = provider.local_endpoint_addresses().await.unwrap();
         let peer_id = provider.peer_id();
         tokio::time::timeout(Duration::from_secs(10), async move {
-            let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+            let request: AnyGetRequest = protocol::CustomGetRequest {
+                data: Bytes::from(&b"hello"[..]),
+                auth_token: None,
+            }
+            .into();
             let response = get::run(
                 request,
                 get::Options {
