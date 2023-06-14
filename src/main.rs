@@ -954,11 +954,9 @@ async fn get_to_file_single(
     // collection info, in case we won't get a callback with is_root
     let collection_info = Some((1, 0));
 
-    let mut request = GetRequest::new(get.hash(), query);
-    if let Some(auth_token) = get.auth_token() {
-        request = request.with_auth_token(auth_token);
-    }
-    let request = request.into();
+    let request = GetRequest::new(get.hash(), query)
+        .with_auth_token(get.auth_token())
+        .into();
     let response = match get {
         GetInteractive::Ticket {
             ticket,
@@ -1047,7 +1045,9 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
         Some((collection.len() as u64, 0))
     };
 
-    let request = GetRequest::new(get.hash(), query).into();
+    let request = GetRequest::new(get.hash(), query)
+        .with_auth_token(get.auth_token())
+        .into();
     let response = match get {
         GetInteractive::Ticket {
             ticket,
@@ -1283,7 +1283,9 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     };
 
     let pb = make_download_pb();
-    let request = GetRequest::new(get.hash(), query).into();
+    let request = GetRequest::new(get.hash(), query)
+        .with_auth_token(get.auth_token())
+        .into();
     let response = match get {
         GetInteractive::Ticket {
             ticket,

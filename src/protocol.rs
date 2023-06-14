@@ -151,11 +151,8 @@ impl GetRequest {
         }
     }
 
-    pub fn with_auth_token(self, token: AuthToken) -> Self {
-        Self {
-            auth_token: Some(token),
-            ..self
-        }
+    pub fn with_auth_token(self, auth_token: Option<AuthToken>) -> Self {
+        Self { auth_token, ..self }
     }
 
     pub fn auth_token(&self) -> Option<AuthToken> {
