@@ -1,5 +1,7 @@
 //! Protocol for communication between provider and client.
+use std::fmt::{self, Display};
 use std::io;
+use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -18,16 +20,63 @@ use crate::util::Hash;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
+/// Connection tokens are 32 byte values used to authorize connections.
+//
+/// These are currently unused, but exist to distinguish connection authorization
+/// from request authorization.
+pub type ConnectionToken = [u8; 32];
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, MaxSize, Clone)]
 pub(crate) struct Handshake {
     pub version: u64,
+    pub conn_token: Option<ConnectionToken>,
 }
 
 impl Handshake {
     pub fn new() -> Self {
-        Self { version: VERSION }
+        Self {
+            version: VERSION,
+            conn_token: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
+/// Authorization tokens are opaque byte sequences used to authorize requests.
+pub struct AuthToken {
+    bytes: Vec<u8>,
+}
+
+impl AuthToken {
+    pub fn new(bytes: Vec<u8>) -> Result<Self> {
+        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        Ok(Self { bytes })
+    }
+
+    /// Serializes to bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+}
+
+impl FromStr for AuthToken {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        Ok(AuthToken { bytes })
+    }
+}
+
+/// Serializes to base32.
+impl Display for AuthToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
     }
 }
 
@@ -37,7 +86,23 @@ pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
     /// A get request that allows the receiver to create a collection
-    CustomGet(Bytes),
+    CustomGet(CustomGetRequest),
+}
+
+impl Request {
+    pub fn auth_token(&self) -> Option<AuthToken> {
+        match self {
+            Request::Get(get) => get.auth_token(),
+            Request::CustomGet(get) => get.auth_token.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+/// A get request that allows the receiver to create a collection
+pub struct CustomGetRequest {
+    pub auth_token: Option<AuthToken>,
+    pub data: Bytes,
 }
 
 /// Currently all requests are get requests. But that won't always be the case.
@@ -54,18 +119,25 @@ pub struct GetRequest {
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
+    /// Optional Authorization token
+    auth_token: Option<AuthToken>,
 }
 
 impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
-        Self { hash, ranges }
+        Self {
+            hash,
+            ranges,
+            auth_token: None,
+        }
     }
 
     /// Request a collection and all its children
     pub fn all(hash: Hash) -> Self {
         Self {
             hash,
+            auth_token: None,
             ranges: RangeSpecSeq::all(),
         }
     }
@@ -74,8 +146,17 @@ impl GetRequest {
     pub fn single(hash: Hash) -> Self {
         Self {
             hash,
+            auth_token: None,
             ranges: RangeSpecSeq::new([RangeSet2::all()]),
         }
+    }
+
+    pub fn with_auth_token(self, auth_token: Option<AuthToken>) -> Self {
+        Self { auth_token, ..self }
+    }
+
+    pub fn auth_token(&self) -> Option<AuthToken> {
+        self.auth_token.clone()
     }
 }
 
