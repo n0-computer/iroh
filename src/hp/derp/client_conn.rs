@@ -298,7 +298,9 @@ where
 
                 _ = done.cancelled() => {
                     trace!("cancelled");
-                    break;
+                    // final flush
+                    self.io.flush().await?;
+                    return Ok(());
                 }
                 read_res = read_frame(&mut self.io, MAX_FRAME_SIZE, &mut read_buf) => {
                     self.handle_read(read_res, &mut read_buf).await?;
@@ -337,8 +339,6 @@ where
             // refactor to get something similar
             self.io.flush().await?;
         }
-
-        Ok(())
     }
 
     /// Send  `FrameType::KeepAlive`, does not flush
