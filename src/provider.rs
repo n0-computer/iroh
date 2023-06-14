@@ -97,6 +97,17 @@ where
     rt: Option<crate::runtime::Handle>,
 }
 
+/// Handlers associated with providing
+struct ProviderHandlers<C, A>
+where
+    C: CustomGetHandler,
+    A: AuthorizationHandler,
+{
+    rpc: RpcHandler,
+    custom_get: C,
+    authorization: A,
+}
+
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
 pub trait CustomGetHandler: Send + Sync + Clone + 'static {
@@ -400,19 +411,21 @@ where
             rt,
         });
         let task = {
-            let handler = RpcHandler {
-                inner: inner.clone(),
+            let handlers = ProviderHandlers {
+                rpc: RpcHandler {
+                    inner: inner.clone(),
+                },
+                custom_get: self.custom_get_handler,
+                authorization: self.authorization_handler,
             };
             rt2.spawn(async move {
                 Self::run(
                     endpoint,
                     events_sender,
-                    handler,
                     self.rpc_endpoint,
                     internal_rpc,
-                    self.custom_get_handler,
-                    self.authorization_handler,
                     rt3,
+                    handlers,
                 )
                 .await
             })
@@ -436,19 +449,19 @@ where
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
-        handler: RpcHandler,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
-        custom_get_handler: C,
-        authorization_handler: A,
         rt: crate::runtime::Handle,
+        handlers: ProviderHandlers<C, A>,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
+        let (rpc_handler, custom_get_handler, authorization_handler) =
+            (handlers.rpc, handlers.custom_get, handlers.authorization);
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
-        let cancel_token = handler.inner.cancel_token.clone();
+        let cancel_token = rpc_handler.inner.cancel_token.clone();
         loop {
             tokio::select! {
                 biased;
@@ -458,7 +471,7 @@ where
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            handle_rpc_request(msg, chan, &rpc_handler, &rt);
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -469,7 +482,7 @@ where
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            handle_rpc_request(msg, chan, &rpc_handler, &rt);
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -479,7 +492,7 @@ where
                 },
                 // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
-                    let db = handler.inner.db.clone();
+                    let db = rpc_handler.inner.db.clone();
                     let events = events.clone();
                     let custom_get_handler = custom_get_handler.clone();
                     let authorization_handler = authorization_handler.clone();
