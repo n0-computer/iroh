@@ -1,5 +1,7 @@
 //! Protocol for communication between provider and client.
+use std::fmt::{self, Display};
 use std::io;
+use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -41,8 +43,42 @@ impl Handshake {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
 /// Authorization tokens are opaque byte sequences used to authorize requests.
-pub type AuthToken = Vec<u8>;
+pub struct AuthToken {
+    bytes: Vec<u8>,
+}
+
+impl AuthToken {
+    pub fn new(bytes: Vec<u8>) -> Result<Self> {
+        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        Ok(Self { bytes })
+    }
+
+    /// Serializes to bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+}
+
+impl FromStr for AuthToken {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        Ok(AuthToken { bytes })
+    }
+}
+
+/// Serializes to base32.
+impl Display for AuthToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
 /// A request to the provider

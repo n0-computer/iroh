@@ -115,7 +115,7 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let auth_token: AuthToken = vec![1, 2, 3, 4, 5, 6];
+        let auth_token = AuthToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let ticket = Ticket {
             hash,
             peer,

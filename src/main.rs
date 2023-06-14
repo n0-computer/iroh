@@ -172,6 +172,7 @@ enum Commands {
         /// The hash to retrieve, as a Blake3 CID
         hash: Blake3Cid,
         /// Optional Authorization Token
+        #[clap(long)]
         auth: Option<AuthToken>,
         /// PeerId of the provider
         #[clap(long, short)]
