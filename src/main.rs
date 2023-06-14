@@ -17,7 +17,7 @@ use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
 use iroh::pathbuf_from_name;
-use iroh::protocol::{GetRequest, RangeSpecSeq};
+use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -171,6 +171,8 @@ enum Commands {
     Get {
         /// The hash to retrieve, as a Blake3 CID
         hash: Blake3Cid,
+        /// Optional Authorization Token
+        auth: Option<AuthToken>,
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
@@ -541,6 +543,7 @@ async fn main_impl() -> Result<()> {
         Commands::Get {
             hash,
             peer,
+            auth,
             addrs,
             out,
             single,
@@ -553,6 +556,7 @@ async fn main_impl() -> Result<()> {
             };
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
+                auth_token: auth,
                 opts,
                 single,
             };
@@ -865,6 +869,7 @@ enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
+        auth_token: Option<AuthToken>,
         single: bool,
     },
 }
@@ -874,6 +879,13 @@ impl GetInteractive {
         match self {
             GetInteractive::Ticket { ticket, .. } => ticket.hash(),
             GetInteractive::Hash { hash, .. } => *hash,
+        }
+    }
+
+    fn auth_token(&self) -> Option<AuthToken> {
+        match self {
+            GetInteractive::Ticket { ticket, .. } => ticket.auth_token(),
+            GetInteractive::Hash { auth_token, .. } => auth_token.clone(),
         }
     }
 
@@ -941,7 +953,11 @@ async fn get_to_file_single(
     // collection info, in case we won't get a callback with is_root
     let collection_info = Some((1, 0));
 
-    let request = GetRequest::new(get.hash(), query).into();
+    let mut request = GetRequest::new(get.hash(), query);
+    if let Some(auth_token) = get.auth_token() {
+        request = request.with_auth_token(auth_token);
+    }
+    let request = request.into();
     let response = match get {
         GetInteractive::Ticket {
             ticket,

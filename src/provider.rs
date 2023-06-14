@@ -40,7 +40,8 @@ use crate::blobs::Collection;
 use crate::hp::cfg::Endpoint;
 use crate::hp::derp::DerpMap;
 use crate::protocol::{
-    read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
+    read_lp, write_lp, AuthToken, Closed, ConnectionToken, CustomGetRequest, GetRequest, Handshake,
+    RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -80,7 +81,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = ()>
+pub struct Builder<E = DummyServerEndpoint, C = (), A = ()>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
@@ -91,6 +92,7 @@ where
     db: Database,
     keylog: bool,
     custom_get_handler: C,
+    authorization_handler: A,
     derp_map: Option<DerpMap>,
     rt: Option<crate::runtime::Handle>,
 }
@@ -114,6 +116,28 @@ impl CustomGetHandler for () {
         _db: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
         async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+    }
+}
+
+pub trait AuthorizationHandler: Send + Sync + Clone + 'static {
+    /// Handle the authorization request, given an opaque data blob from the requester.
+    fn authorize(
+        &self,
+        db: Database,
+        token: Option<AuthToken>,
+        request: Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>>;
+}
+
+/// Define AuthorizationHandler for () so we can use it as a no-op default.
+impl AuthorizationHandler for () {
+    fn authorize(
+        &self,
+        _db: Database,
+        _token: Option<AuthToken>,
+        _request: Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move { Ok(()) }.boxed()
     }
 }
 
@@ -199,18 +223,23 @@ impl Builder {
             derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
+            authorization_handler: Default::default(),
             rt: None,
         }
     }
 }
 
-impl<E, C> Builder<E, C>
+impl<E, C, A> Builder<E, C, A>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
+    A: AuthorizationHandler,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
+        self,
+        value: E2,
+    ) -> Builder<E2, C, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -220,6 +249,7 @@ where
             custom_get_handler: self.custom_get_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
+            authorization_handler: self.authorization_handler,
             rt: self.rt,
         }
     }
@@ -231,7 +261,7 @@ where
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -241,6 +271,26 @@ where
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
             derp_map: self.derp_map,
+            authorization_handler: self.authorization_handler,
+            rt: self.rt,
+        }
+    }
+
+    /// Configure the custom authorization handler, changing the type of the builder to the new handler type.
+    pub fn authorization_handler<A2: AuthorizationHandler>(
+        self,
+        authorization_handler: A2,
+    ) -> Builder<E, C, A2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: self.custom_get_handler,
+            derp_map: self.derp_map,
+            authorization_handler,
             rt: self.rt,
         }
     }
@@ -361,6 +411,7 @@ where
                     self.rpc_endpoint,
                     internal_rpc,
                     self.custom_get_handler,
+                    self.authorization_handler,
                     rt3,
                 )
                 .await
@@ -389,6 +440,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
+        authorization_handler: A,
         rt: crate::runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -430,8 +482,9 @@ where
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let custom_get_handler = custom_get_handler.clone();
+                    let authorization_handler = authorization_handler.clone();
                     let rt2 = rt.clone();
-                    rt.spawn(handle_connection(connecting, db, events, custom_get_handler, rt2));
+                    rt.spawn(handle_connection(connecting, db, events, custom_get_handler, authorization_handler, rt2));
                 }
                 else => break,
             }
@@ -489,6 +542,8 @@ pub enum Event {
         request_id: u64,
         /// The hash for which the client wants to receive data.
         hash: Hash,
+        /// Authorization token, if any
+        auth_token: Option<AuthToken>,
     },
     /// A request was received from a client.
     CustomGetRequestReceived {
@@ -498,6 +553,8 @@ pub enum Event {
         request_id: u64,
         /// The size of the custom get request.
         len: usize,
+        /// Authorization token, if any
+        auth_token: Option<AuthToken>,
     },
     /// A collection has been found and is being transferred.
     TransferCollectionStarted {
@@ -590,7 +647,8 @@ impl Provider {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
+        // TODO - implement simple auth token system for tickets (reviving 0.4.3 functionality)
+        Ticket::new(hash, self.peer_id(), addrs, None)
     }
 
     /// Aborts the provider.
@@ -836,11 +894,12 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     });
 }
 
-async fn handle_connection<C: CustomGetHandler>(
+async fn handle_connection<C: CustomGetHandler, A: AuthorizationHandler>(
     connecting: quinn::Connecting,
     db: Database,
     events: broadcast::Sender<Event>,
     custom_get_handler: C,
+    authorization_handler: A,
     rt: crate::runtime::Handle,
 ) {
     // let _x = NonSend::default();
@@ -868,9 +927,18 @@ async fn handle_connection<C: CustomGetHandler>(
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
+            let authorization_handler = authorization_handler.clone();
             rt.spawn_tpc(|| {
                 async move {
-                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
+                    if let Err(err) = handle_stream(
+                        db,
+                        reader,
+                        writer,
+                        custom_get_handler,
+                        authorization_handler,
+                    )
+                    .await
+                    {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -891,7 +959,10 @@ async fn handle_connection<C: CustomGetHandler>(
 ///
 /// When successful, the reader is still useable after this function and the buffer will be
 /// drained of any handshake data.
-async fn read_handshake<R: AsyncRead + Unpin>(mut reader: R, buffer: &mut BytesMut) -> Result<()> {
+async fn read_handshake<R: AsyncRead + Unpin>(
+    mut reader: R,
+    buffer: &mut BytesMut,
+) -> Result<Option<ConnectionToken>> {
     let payload = read_lp(&mut reader, buffer)
         .await?
         .context("no valid handshake received")?;
@@ -902,7 +973,7 @@ async fn read_handshake<R: AsyncRead + Unpin>(mut reader: R, buffer: &mut BytesM
         VERSION,
         handshake.version
     );
-    Ok(())
+    Ok(handshake.conn_token)
 }
 
 /// Read the request from the getter.
@@ -1016,15 +1087,19 @@ async fn handle_stream(
     mut reader: quinn::RecvStream,
     writer: ResponseWriter,
     custom_get_handler: impl CustomGetHandler,
+    authorization_handler: impl AuthorizationHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
     // 1. Read Handshake
     debug!("reading handshake");
-    if let Err(e) = read_handshake(&mut reader, &mut in_buffer).await {
-        writer.notify_transfer_aborted();
-        return Err(e);
-    }
+    let _token = match read_handshake(&mut reader, &mut in_buffer).await {
+        Ok(t) => t,
+        Err(e) => {
+            writer.notify_transfer_aborted();
+            return Err(e);
+        }
+    };
 
     // 2. Decode the request.
     debug!("reading request");
@@ -1036,6 +1111,10 @@ async fn handle_stream(
         }
     };
 
+    authorization_handler
+        .authorize(db.clone(), request.auth_token(), request.clone())
+        .await?;
+
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,
         Request::CustomGet(request) => {
@@ -1046,17 +1125,18 @@ async fn handle_stream(
 
 async fn handle_custom_get(
     db: Database,
-    request: Bytes,
+    request: CustomGetRequest,
     mut writer: ResponseWriter,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
-        len: request.len(),
+        len: request.data.len(),
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        auth_token: request.auth_token,
     });
     // try to make a GetRequest from the custom bytes
-    let request = custom_get_handler.handle(request, db.clone()).await?;
+    let request = custom_get_handler.handle(request.data, db.clone()).await?;
     // write it to the requester as the first thing
     let data = postcard::to_stdvec(&request)?;
     write_lp(&mut writer.inner, &data).await?;
@@ -1071,6 +1151,7 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
         hash,
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        auth_token: request.auth_token(),
     });
 
     // 4. Attempt to find hash

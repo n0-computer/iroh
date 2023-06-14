@@ -10,9 +10,8 @@ use std::str::FromStr;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::AuthToken;
 use crate::{Hash, PeerId};
-
-/// A token containing everything to get a file from the provider.
 
 /// A token containing everything to get a file from the provider.
 ///
@@ -24,6 +23,8 @@ pub struct Ticket {
     hash: Hash,
     /// The peer ID identifying the provider.
     peer: PeerId,
+    /// Optional Authorization token.
+    auth_token: Option<AuthToken>,
     /// The socket addresses the provider is listening on.
     ///
     /// This will never be empty.
@@ -31,9 +32,19 @@ pub struct Ticket {
 }
 
 impl Ticket {
-    pub(super) fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>) -> Result<Self> {
+    pub(super) fn new(
+        hash: Hash,
+        peer: PeerId,
+        addrs: Vec<SocketAddr>,
+        auth_token: Option<AuthToken>,
+    ) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
-        Ok(Self { hash, peer, addrs })
+        Ok(Self {
+            hash,
+            peer,
+            addrs,
+            auth_token,
+        })
     }
 
     /// Deserializes from bytes.
@@ -56,6 +67,11 @@ impl Ticket {
     /// The [`PeerId`] of the provider for this ticket.
     pub fn peer(&self) -> PeerId {
         self.peer
+    }
+
+    /// The [`AuthToken`] for this ticket.
+    pub fn auth_token(&self) -> Option<AuthToken> {
+        self.auth_token.clone()
     }
 
     /// The addresses on which the provider can be reached.
@@ -99,10 +115,12 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
+        let auth_token: AuthToken = vec![1, 2, 3, 4, 5, 6];
         let ticket = Ticket {
             hash,
             peer,
             addrs: vec![addr],
+            auth_token: Some(auth_token),
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");
