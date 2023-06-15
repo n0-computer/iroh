@@ -1497,7 +1497,7 @@ impl Actor {
             upnp: r.upnp,
             pmp: r.pmp,
             pcp: r.pcp,
-            have_port_map: self.port_mapper.have_mapping(),
+            have_port_map: self.port_mapper.has_mapping(),
             working_ipv6: Some(r.ipv6),
             os_has_ipv6: Some(r.os_has_ipv6),
             working_udp: Some(r.udp),
