@@ -31,7 +31,7 @@ use crate::{
     metrics::magicsock::MagicsockMetrics,
     metrics::{inc, record},
     net::ip::LocalAddresses,
-    tokio_util::AbortingJoinHandle,
+    util::AbortingJoinHandle,
 };
 
 use super::{

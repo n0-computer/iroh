@@ -9,8 +9,6 @@ pub mod doctor;
 pub mod get;
 #[cfg(feature = "cli")]
 pub mod main_util;
-pub mod metrics;
-pub mod net;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
@@ -18,20 +16,19 @@ pub mod rpc_protocol;
 pub mod runtime;
 pub mod tokio_util;
 
-#[allow(missing_docs)]
-pub mod tls;
 mod util;
-
-#[allow(missing_docs)]
-pub mod hp;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
 
-pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
-pub use util::{pathbuf_from_name, Hash};
+pub use crate::util::{pathbuf_from_name, Hash};
+pub use iroh_net::tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
+
+pub use iroh_net as net;
 
 use bao_tree::BlockSize;
+
+pub const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
 
 /// Block size used by iroh, 2^4*1024 = 16KiB
 pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
@@ -62,8 +59,8 @@ mod tests {
         get::{get_response_machine::ConnectedNext, Stats},
         protocol::{AnyGetRequest, GetRequest},
         provider::{create_collection, CustomGetHandler, DataSource, Database, Event, Provider},
-        tls::PeerId,
         util::Hash,
+        PeerId,
     };
 
     use super::*;

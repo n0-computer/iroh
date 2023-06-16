@@ -23,6 +23,10 @@ use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
+use iroh_net::{
+    hp::{cfg::Endpoint, derp::DerpMap},
+    tls::{self, Keypair, PeerId},
+};
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -37,8 +41,6 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
-use crate::hp::cfg::Endpoint;
-use crate::hp::derp::DerpMap;
 use crate::protocol::{
     read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
 };
@@ -48,7 +50,6 @@ use crate::rpc_protocol::{
     ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
     ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress};
 use crate::IROH_BLOCK_SIZE;
@@ -285,11 +286,8 @@ where
     pub async fn spawn(self) -> Result<Provider> {
         trace!("spawning provider");
         let rt = self.rt.context("runtime not set")?;
-        let tls_server_config = tls::make_server_config(
-            &self.keypair,
-            vec![crate::tls::P2P_ALPN.to_vec()],
-            self.keylog,
-        )?;
+        let tls_server_config =
+            tls::make_server_config(&self.keypair, vec![crate::P2P_ALPN.to_vec()], self.keylog)?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
@@ -301,7 +299,7 @@ where
             .concurrent_connections(MAX_CONNECTIONS);
 
         let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
-        let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+        let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
             port: self.bind_addr.port(),
             private_key: self.keypair.secret().clone().into(),
             on_endpoints: Some(Box::new(move |eps| {
@@ -465,7 +463,7 @@ pub struct Provider {
 #[derive(Debug)]
 struct ProviderInner {
     db: Database,
-    conn: crate::hp::magicsock::Conn,
+    conn: iroh_net::hp::magicsock::Conn,
     keypair: Keypair,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,

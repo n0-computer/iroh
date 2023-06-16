@@ -688,8 +688,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
-        let _guard = crate::test_utils::setup_logging();
-
         let mut buf = BytesMut::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);

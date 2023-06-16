@@ -11,22 +11,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
-use crate::hp::cfg::DERP_MAGIC_IP;
-use crate::hp::derp::DerpMap;
-use crate::hp::hostinfo::Hostinfo;
-use crate::hp::{cfg, netmap};
 use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
 use crate::provider::Ticket;
-use crate::tls::{self, Keypair, PeerId};
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
+
 use anyhow::{Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
+use iroh_net::{
+    hp::{cfg, cfg::DERP_MAGIC_IP, derp::DerpMap, hostinfo::Hostinfo, netmap},
+    tls::{self, Keypair, PeerId},
+};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -79,14 +79,14 @@ pub async fn make_client_endpoint(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
     derp_map: Option<DerpMap>,
-) -> Result<(quinn::Endpoint, crate::hp::magicsock::Conn)> {
+) -> Result<(quinn::Endpoint, iroh_net::hp::magicsock::Conn)> {
     let keypair = Keypair::generate();
 
     let tls_client_config =
         tls::make_client_config(&keypair, Some(peer_id), alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
 
-    let conn = crate::hp::magicsock::Conn::new(crate::hp::magicsock::Options {
+    let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
         port: bind_addr.port(),
         private_key: keypair.secret().clone().into(),
         ..Default::default()
@@ -120,7 +120,7 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
     let (endpoint, magicsock) = make_client_endpoint(
         bind_addr,
         opts.peer_id,
-        vec![tls::P2P_ALPN.to_vec()],
+        vec![crate::P2P_ALPN.to_vec()],
         false,
         opts.derp_map,
     )
@@ -128,7 +128,7 @@ pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
 
     // Only a single peer in our network currently.
     let peer_id = opts.peer_id;
-    let node_key: crate::hp::key::node::PublicKey = peer_id.into();
+    let node_key: iroh_net::hp::key::node::PublicKey = peer_id.into();
     const DEFAULT_DERP_REGION: u16 = 1;
 
     let mut addresses = Vec::new();
