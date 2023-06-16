@@ -303,6 +303,7 @@ where
                     return Ok(());
                 }
                 read_res = read_frame(&mut self.io, MAX_FRAME_SIZE, &mut read_buf) => {
+                    trace!("handle read");
                     self.handle_read(read_res, &mut read_buf).await?;
                 }
                 peer = self.peer_gone.recv() => {
@@ -500,14 +501,7 @@ where
                 }
                 Ok(())
             }
-            Err(err) => {
-                if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-                    if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
-                        return Ok(());
-                    }
-                }
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 

@@ -365,21 +365,26 @@ where
                 // Note: This can't possibly be fulfilled until the 101 response
                 // is returned below, so it's better to spawn this future instead
                 // waiting for it to complete to then return a response.
-                tokio::task::spawn(async move {
-                    match hyper::upgrade::on(&mut req).await {
-                        Ok(upgraded) => {
-                            if let Err(e) =
-                                derp_connection_handler(&closure_conn_handler, upgraded).await
-                            {
-                                tracing::warn!(
-                                    "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
-                                    e
-                                )
-                            };
+                tokio::task::spawn(
+                    async move {
+                        match hyper::upgrade::on(&mut req).await {
+                            Ok(upgraded) => {
+                                if let Err(e) =
+                                    derp_connection_handler(&closure_conn_handler, upgraded).await
+                                {
+                                    tracing::warn!(
+                                        "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!("server \"{HTTP_UPGRADE_PROTOCOL}\" success");
+                                };
+                            }
+                            Err(e) => tracing::warn!("upgrade error: {:?}", e),
                         }
-                        Err(e) => tracing::warn!("upgrade error: {:?}", e),
                     }
-                });
+                    .instrument(tracing::debug_span!("derp_connection_handler")),
+                );
 
                 // Now return a 101 Response saying we agree to the upgrade to the
                 // HTTP_UPGRADE_PROTOCOL
