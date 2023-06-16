@@ -7,7 +7,7 @@ use config::{Environment, File, Value};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use iroh_net::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";

@@ -6,22 +6,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    config::Config,
+use crate::{config::Config, main_util::iroh_data_root, tokio_util::ProgressWriter, Keypair};
+
+use anyhow::Context;
+use clap::Subcommand;
+use indicatif::{HumanBytes, MultiProgress, ProgressBar};
+use iroh_net::{
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
         magicsock,
     },
-    main_util::iroh_data_root,
     tls,
-    tokio_util::ProgressWriter,
-    Keypair,
 };
-use anyhow::Context;
-use clap::Subcommand;
-use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -258,7 +256,7 @@ impl Gui {
     }
 
     fn update_counters(target: &ProgressBar) {
-        let metrics = &crate::metrics::core::CORE;
+        let metrics = &iroh_net::metrics::core::CORE;
         if metrics.is_enabled() {
             let mm = metrics.magicsock_metrics();
             let send_ipv4 = HumanBytes(mm.send_ipv4.get());
@@ -528,7 +526,7 @@ async fn connect(
             addresses,
             derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
             created: Instant::now(),
-            hostinfo: crate::hp::hostinfo::Hostinfo::default(),
+            hostinfo: iroh_net::hp::hostinfo::Hostinfo::default(),
             keep_alive: false,
             expired: false,
             online: None,

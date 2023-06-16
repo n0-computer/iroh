@@ -143,7 +143,7 @@ impl fmt::Display for Report {
 /// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this
 /// client needs to be wired up to do so.
 #[derive(Debug, Clone)]
-pub(crate) struct Client {
+pub struct Client {
     /// Channel to send message to the [`Actor`].
     ///
     /// If all senders are dropped, in other words all clones of this struct are dropped,
@@ -243,7 +243,7 @@ impl Client {
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
-    pub(crate) async fn get_report(
+    pub async fn get_report(
         &mut self,
         dm: DerpMap,
         stun_conn4: Option<Arc<UdpSocket>>,
@@ -1723,13 +1723,10 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::setup_logging;
     use bytes::BytesMut;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
-        let _guard = setup_logging();
-
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
         let mut client = Client::new(None).await?;
@@ -1772,8 +1769,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
-        let _guard = setup_logging();
-
         let mut client = Client::new(None)
             .await
             .context("failed to create netcheck client")?;
@@ -1839,7 +1834,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_tokio() -> Result<()> {
-        let _guard = setup_logging();
         let local_addr = "127.0.0.1";
         let bind_addr = "0.0.0.0";
 
@@ -1872,8 +1866,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
-        let _guard = setup_logging();
-
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
@@ -1906,8 +1898,6 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
-        let _guard = setup_logging();
-
         // report returns a *Report from (DERP host, Duration)+ pairs.
         fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
             let mut report = Report::default();
@@ -2083,8 +2073,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_hairpin() -> Result<()> {
-        let _guard = setup_logging();
-
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own

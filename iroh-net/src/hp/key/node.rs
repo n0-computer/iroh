@@ -12,8 +12,8 @@ pub(crate) const NONCE_LEN: usize = 24;
 #[derive(Clone, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
 
-impl From<crate::PeerId> for PublicKey {
-    fn from(value: crate::PeerId) -> Self {
+impl From<crate::tls::PeerId> for PublicKey {
+    fn from(value: crate::tls::PeerId) -> Self {
         let key: ed25519_dalek::VerifyingKey = value.into();
         PublicKey(crypto_box::PublicKey::from(key.to_montgomery()))
     }
@@ -77,8 +77,8 @@ impl PublicKey {
 #[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
 
-impl From<crate::SecretKey> for SecretKey {
-    fn from(key: crate::SecretKey) -> Self {
+impl From<crate::tls::SecretKey> for SecretKey {
+    fn from(key: crate::tls::SecretKey) -> Self {
         SecretKey(crypto_box::SecretKey::from(key.to_scalar()))
     }
 }

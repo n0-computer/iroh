@@ -16,8 +16,6 @@ pub use ed25519_dalek::{Signature, SigningKey as SecretKey, VerifyingKey as Publ
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
-pub(crate) const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
-
 /// A keypair.
 #[derive(Debug)]
 pub struct Keypair {

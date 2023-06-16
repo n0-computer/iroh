@@ -5,9 +5,9 @@ use prometheus_client::{encoding::text::encode, registry::Registry};
 
 use crate::metrics::{iroh, magicsock, netcheck};
 
-pub(crate) static CORE: Lazy<Core> = Lazy::new(Core::default);
+pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 
-pub(crate) struct Core {
+pub struct Core {
     enabled: AtomicBool,
     registry: Registry,
     iroh_metrics: iroh::Metrics,
@@ -29,19 +29,19 @@ impl Default for Core {
 }
 
 impl Core {
-    pub(crate) fn registry(&self) -> &Registry {
+    pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
-    pub(crate) fn iroh_metrics(&self) -> &iroh::Metrics {
+    pub fn iroh_metrics(&self) -> &iroh::Metrics {
         &self.iroh_metrics
     }
 
-    pub(crate) fn magicsock_metrics(&self) -> &magicsock::Metrics {
+    pub fn magicsock_metrics(&self) -> &magicsock::Metrics {
         &self.magicsock_metrics
     }
 
-    pub(crate) fn netcheck_metrics(&self) -> &netcheck::Metrics {
+    pub fn netcheck_metrics(&self) -> &netcheck::Metrics {
         &self.netcheck_metrics
     }
 
@@ -55,7 +55,7 @@ impl Core {
         self.enabled.swap(enabled, Ordering::Relaxed);
     }
 
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
 }

@@ -9,11 +9,12 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-
-use crate::{
+use iroh_net::{
     hp::derp::{DerpMap, UseIpv4, UseIpv6},
-    tls, Hash, Keypair, PeerId,
+    tls,
 };
+
+use crate::{Hash, Keypair, PeerId};
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";

@@ -73,9 +73,9 @@ macro_rules! make_metric_recorders {
 
             #[cfg(feature = "metrics")]
             #[derive(Default, Clone, Debug)]
-                pub(crate) struct Metrics {
+                pub struct Metrics {
                     $(
-                        pub(crate) [<$name:snake>]: $type,
+                        pub [<$name:snake>]: $type,
                     )+
                 }
 

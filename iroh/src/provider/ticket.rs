@@ -89,7 +89,7 @@ impl FromStr for Ticket {
 
 #[cfg(test)]
 mod tests {
-    use crate::tls::Keypair;
+    use iroh_net::tls::Keypair;
 
     use super::*;
 

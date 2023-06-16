@@ -1,6 +1,4 @@
-use std::{io, net::SocketAddr, pin::Pin};
-
-use futures::Future;
+use std::{future::Future, io, net::SocketAddr, pin::Pin};
 
 use hyper::{
     service::{make_service_fn, service_fn},
