@@ -56,7 +56,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database which can be created using [`create_collection`], everything else is
+/// You must supply a database which can be created using [`iroh_bytes::provider::create_collection`], everything else is
 /// optional.  Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
