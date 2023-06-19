@@ -918,7 +918,7 @@ mod tests {
 
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
-        if let Ok(_) = client.recv_detail().await {
+        if (client.recv_detail().await).is_ok() {
             bail!("expected client with bad derp region detail to return with an error");
         }
         Ok(())
