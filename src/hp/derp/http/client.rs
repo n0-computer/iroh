@@ -16,7 +16,7 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
@@ -40,6 +40,8 @@ pub enum ClientError {
     NoClient,
     #[error("error sending a packet")]
     Send,
+    #[error("error receiving a packet")]
+    Receive,
     #[error("connect timeout")]
     ConnectTimeout,
     #[error("DERP region is not available")]
@@ -712,9 +714,10 @@ impl Client {
 
     /// Reads a message from the server. Returns the message and the `conn_get`, or the number of
     /// re-connections this Client has ever made
+    #[instrument(skip(self))]
     pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
         loop {
-            debug!("recv_detail");
+            debug!("recv_detail tick");
             let (client, conn_gen) = self.connect().await?;
             match client.recv().await {
                 Ok(msg) => {
@@ -736,6 +739,8 @@ impl Client {
                     if self.inner.is_closed.load(Ordering::SeqCst) {
                         return Err(ClientError::Closed);
                     }
+                    // TODO(ramfox): more specific error?
+                    return Err(ClientError::Receive);
                 }
             }
         }
@@ -876,5 +881,46 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
         _now: std::time::SystemTime,
     ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::hp::key::node::SecretKey;
+    use anyhow::Result;
+
+    #[tokio::test]
+    async fn test_recv_detail_connect_error() -> Result<()> {
+        let key = SecretKey::generate();
+        let bad_region = DerpRegion {
+            region_id: 1,
+            avoid: false,
+            nodes: vec![DerpNode {
+                name: "test_node".to_string(),
+                region_id: 1,
+                host_name: "bad.url".into(),
+                stun_only: false,
+                stun_port: 0,
+                stun_test_ip: None,
+                ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
+                ipv6: UseIpv6::Disabled,
+                derp_port: 443,
+            }],
+            region_code: "test_region".to_string(),
+        };
+
+        let client = ClientBuilder::new().new_region(key.clone(), move || {
+            let region = bad_region.clone();
+            Box::pin(async move { Some(region) })
+        });
+
+        // ensure that the client will bubble up any connection error & not
+        // just loop ad infinitum attempting to connect
+        if let Ok(_) = client.recv_detail().await {
+            bail!("expected client with bad derp region detail to return with an error");
+        }
+        Ok(())
     }
 }
