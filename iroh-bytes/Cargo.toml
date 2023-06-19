@@ -27,7 +27,6 @@ num_cpus = "1.15.0"
 once_cell = "1.17.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
 quinn = "0.10"
 range-collections = "0.4.0"
 self_cell = "1.0.1"
@@ -37,7 +36,6 @@ smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
 subtle = "2.4"
 thiserror = "1"
 tokio = { version = "1", features = [] }
-tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
 tracing-futures = "0.2.5"

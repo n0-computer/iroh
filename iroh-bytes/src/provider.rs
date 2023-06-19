@@ -8,472 +8,40 @@
 //!
 //! To shut down the provider, call [`Provider::shutdown`].
 use std::borrow::Cow;
-use std::future::Future;
 use std::io::{self, Cursor};
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::encode_ranges_validated;
 use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
-use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, Stream, TryFutureExt};
-use iroh_net::{
-    hp::{cfg::Endpoint, derp::DerpMap},
-    tls::{self, Keypair, PeerId},
-};
-use quic_rpc::server::RpcChannel;
-use quic_rpc::transport::flume::FlumeConnection;
-use quic_rpc::transport::misc::DummyServerEndpoint;
-use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use futures::future::BoxFuture;
+use futures::FutureExt;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{broadcast, mpsc};
-use tokio::task::JoinError;
 use tokio_util::either::Either;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, trace, warn};
+use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
-use crate::protocol::{
-    read_lp, write_lp, Closed, GetRequest, Handshake, RangeSpec, Request, VERSION,
-};
-use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ProvideProgress, ProvideRequest,
-    ProviderRequest, ProviderResponse, ProviderService, ShutdownRequest, ValidateProgress,
-    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
-};
+use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
 use crate::tokio_util::read_as_bytes;
-use crate::util::{canonicalize_path, Hash, Progress};
+use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 use crate::IROH_BLOCK_SIZE;
 
-mod collection;
-mod database;
+pub mod collection;
+pub mod database;
 mod ticket;
 
 pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
-const MAX_CONNECTIONS: u32 = 1024;
-const MAX_STREAMS: u64 = 10;
-const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
-
-/// Default bind address for the provider.
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
-
-/// How long we wait at most for some endpoints to be discovered.
-const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
-
-/// Builder for the [`Provider`].
-///
-/// You must supply a database which can be created using [`create_collection`], everything else is
-/// optional.  Finally you can create and run the provider by calling [`Builder::spawn`].
-///
-/// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
-/// using [`Provider::shutdown`].
-#[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = ()>
-where
-    E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
-{
-    bind_addr: SocketAddr,
-    keypair: Keypair,
-    rpc_endpoint: E,
-    db: Database,
-    keylog: bool,
-    custom_get_handler: C,
-    derp_map: Option<DerpMap>,
-    rt: Option<crate::runtime::Handle>,
-}
-
-/// A custom get request handler that allows the user to make up a get request
-/// on the fly.
-pub trait CustomGetHandler: Send + Sync + Clone + 'static {
-    /// Handle the custom request, given an opaque data blob from the requester.
-    fn handle(
-        &self,
-        request: Bytes,
-        db: Database,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
-/// Define CustomGetHandler for () so we can use it as a no-op default.
-impl CustomGetHandler for () {
-    fn handle(
-        &self,
-        _request: Bytes,
-        _db: Database,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
-    }
-}
-
-/// A [`Database`] entry.
-///
-/// This is either stored externally in the file system, or internally in the database.
-/// Collections are always stored internally for now.
-///
-/// Internally stored entries are stored in the iroh home directory when the database is
-/// persisted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DbEntry {
-    /// A blob.
-    External {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// Path to the original data, which must not change while in use.
-        ///
-        /// Note that when adding multiple files with the same content, only one of them
-        /// will get added to the store. So the path is not that useful for information.  It
-        /// is just a place to look for the data correspoding to the hash and outboard.
-        // TODO: Change this to a list of paths.
-        path: PathBuf,
-        /// Size of the original data.
-        size: u64,
-    },
-    /// A collection.
-    Internal {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// The inline data.
-        data: Bytes,
-    },
-}
-
-impl DbEntry {
-    pub(crate) fn is_external(&self) -> bool {
-        matches!(self, DbEntry::External { .. })
-    }
-
-    pub(crate) fn blob_path(&self) -> Option<&Path> {
-        match self {
-            DbEntry::External { path, .. } => Some(path),
-            DbEntry::Internal { .. } => None,
-        }
-    }
-
-    pub(crate) fn outboard(&self) -> &Bytes {
-        match self {
-            DbEntry::External { outboard, .. } => outboard,
-            DbEntry::Internal { outboard, .. } => outboard,
-        }
-    }
-
-    /// A reader for the data
-    async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
-        Ok(match self {
-            DbEntry::External { path, .. } => Either::Right(tokio::fs::File::open(path).await?),
-            DbEntry::Internal { data, .. } => Either::Left(Cursor::new(data.clone())),
-        })
-    }
-
-    /// Returns the size of the blob or collection.
-    ///
-    /// For collections this is the size of the serialized collection.
-    /// For blobs it is the blob size.
-    pub fn size(&self) -> u64 {
-        match self {
-            DbEntry::External { size, .. } => *size,
-            DbEntry::Internal { data, .. } => data.len() as u64,
-        }
-    }
-}
-
-impl Builder {
-    /// Creates a new builder for [`Provider`] using the given [`Database`].
-    pub fn with_db(db: Database) -> Self {
-        Self {
-            bind_addr: DEFAULT_BIND_ADDR.into(),
-            keypair: Keypair::generate(),
-            db,
-            keylog: false,
-            derp_map: None,
-            rpc_endpoint: Default::default(),
-            custom_get_handler: Default::default(),
-            rt: None,
-        }
-    }
-}
-
-impl<E, C> Builder<E, C>
-where
-    E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
-{
-    /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            bind_addr: self.bind_addr,
-            keypair: self.keypair,
-            db: self.db,
-            keylog: self.keylog,
-            custom_get_handler: self.custom_get_handler,
-            rpc_endpoint: value,
-            derp_map: self.derp_map,
-            rt: self.rt,
-        }
-    }
-
-    /// Sets the `[DerpMap]`
-    pub fn derp_map(mut self, dm: DerpMap) -> Self {
-        self.derp_map = Some(dm);
-        self
-    }
-
-    /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            bind_addr: self.bind_addr,
-            keypair: self.keypair,
-            db: self.db,
-            keylog: self.keylog,
-            rpc_endpoint: self.rpc_endpoint,
-            custom_get_handler: custom_handler,
-            derp_map: self.derp_map,
-            rt: self.rt,
-        }
-    }
-
-    /// Binds the provider service to a different socket.
-    ///
-    /// By default it binds to `127.0.0.1:4433`.
-    pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
-        self
-    }
-
-    /// Uses the given [`Keypair`] for the [`PeerId`] instead of a newly generated one.
-    pub fn keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
-        self
-    }
-
-    /// Whether to log the SSL pre-master key.
-    ///
-    /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
-    /// file will be used to log the SSL pre-master key.  This is useful to inspect captured
-    /// traffic.
-    pub fn keylog(mut self, keylog: bool) -> Self {
-        self.keylog = keylog;
-        self
-    }
-
-    /// Sets the tokio runtime to use.
-    ///
-    /// If not set, the current runtime will be picked up.
-    pub fn runtime(mut self, rt: &crate::runtime::Handle) -> Self {
-        self.rt = Some(rt.clone());
-        self
-    }
-
-    /// Spawns the [`Provider`] in a tokio task.
-    ///
-    /// This will create the underlying network server and spawn a tokio task accepting
-    /// connections.  The returned [`Provider`] can be used to control the task as well as
-    /// get information about it.
-    pub async fn spawn(self) -> Result<Provider> {
-        trace!("spawning provider");
-        let rt = self.rt.context("runtime not set")?;
-        let tls_server_config =
-            tls::make_server_config(&self.keypair, vec![crate::P2P_ALPN.to_vec()], self.keylog)?;
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config
-            .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
-            .max_concurrent_uni_streams(0u32.into());
-
-        server_config
-            .transport_config(Arc::new(transport_config))
-            .concurrent_connections(MAX_CONNECTIONS);
-
-        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
-        let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
-            port: self.bind_addr.port(),
-            private_key: self.keypair.secret().clone().into(),
-            on_endpoints: Some(Box::new(move |eps| {
-                if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
-                    endpoints_update_s.send(()).ok();
-                }
-            })),
-            ..Default::default()
-        })
-        .await?;
-        trace!("created magicsock");
-
-        let derp_map = self.derp_map.unwrap_or_default();
-        conn.set_derp_map(Some(derp_map))
-            .await
-            .context("setting derp map")?;
-
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            Some(server_config),
-            conn.clone(),
-            Arc::new(quinn::TokioRuntime),
-        )?;
-
-        trace!("created quinn endpoint");
-
-        // the size of this channel must be large because the producer can be on
-        // a different thread than the consumer, and can produce a lot of events
-        // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(256);
-        let events = events_sender.clone();
-        let cancel_token = CancellationToken::new();
-
-        debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
-
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
-        let rt2 = rt.clone();
-        let rt3 = rt.clone();
-        let inner = Arc::new(ProviderInner {
-            db: self.db,
-            conn,
-            keypair: self.keypair,
-            events,
-            controller,
-            cancel_token,
-            rt,
-        });
-        let task = {
-            let handler = RpcHandler {
-                inner: inner.clone(),
-            };
-            rt2.spawn(async move {
-                Self::run(
-                    endpoint,
-                    events_sender,
-                    handler,
-                    self.rpc_endpoint,
-                    internal_rpc,
-                    self.custom_get_handler,
-                    rt3,
-                )
-                .await
-            })
-        };
-        let provider = Provider {
-            inner,
-            task: task.map_err(Arc::new).boxed().shared(),
-        };
-
-        // Wait for a single endpoint update, to make sure
-        // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, async move {
-            endpoints_update_r.recv_async().await
-        })
-        .await
-        .context("waiting for endpoint")??;
-
-        Ok(provider)
-    }
-
-    async fn run(
-        server: quinn::Endpoint,
-        events: broadcast::Sender<Event>,
-        handler: RpcHandler,
-        rpc: E,
-        internal_rpc: impl ServiceEndpoint<ProviderService>,
-        custom_get_handler: C,
-        rt: crate::runtime::Handle,
-    ) {
-        let rpc = RpcServer::new(rpc);
-        let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok(addr) = server.local_addr() {
-            debug!("listening at: {addr}");
-        }
-        let cancel_token = handler.inner.cancel_token.clone();
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_token.cancelled() => break,
-                // handle rpc requests. This will do nothing if rpc is not configured, since
-                // accept is just a pending future.
-                request = rpc.accept() => {
-                    match request {
-                        Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
-                        }
-                        Err(e) => {
-                            tracing::info!("rpc request error: {:?}", e);
-                        }
-                    }
-                },
-                // handle internal rpc requests.
-                request = internal_rpc.accept() => {
-                    match request {
-                        Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
-                        }
-                        Err(_) => {
-                            tracing::info!("last controller dropped, shutting down");
-                            break;
-                        }
-                    }
-                },
-                // handle incoming p2p connections
-                Some(connecting) = server.accept() => {
-                    let db = handler.inner.db.clone();
-                    let events = events.clone();
-                    let custom_get_handler = custom_get_handler.clone();
-                    let rt2 = rt.clone();
-                    rt.spawn(handle_connection(connecting, db, events, custom_get_handler, rt2));
-                }
-                else => break,
-            }
-        }
-
-        // Closing the Endpoint is the equivalent of calling Connection::close on all
-        // connections: Operations will immediately fail with
-        // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
-        // graceful.
-        let error_code = Closed::ProviderTerminating;
-        server.close(error_code.into(), error_code.reason());
-    }
-}
-
-/// A server which implements the iroh provider.
-///
-/// Clients can connect to this server and requests hashes from it.
-///
-/// The only way to create this is by using the [`Builder::spawn`].  [`Provider::builder`]
-/// is a shorthand to create a suitable [`Builder`].
-///
-/// This runs a tokio task which can be aborted and joined if desired.  To join the task
-/// await the [`Provider`] struct directly, it will complete when the task completes.  If
-/// this is dropped the provider task is not stopped but keeps running.
-#[derive(Debug, Clone)]
-pub struct Provider {
-    inner: Arc<ProviderInner>,
-    task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
-}
-
-#[derive(Debug)]
-struct ProviderInner {
-    db: Database,
-    conn: iroh_net::hp::magicsock::Conn,
-    keypair: Keypair,
-    events: broadcast::Sender<Event>,
-    cancel_token: CancellationToken,
-    controller: FlumeConnection<ProviderResponse, ProviderRequest>,
-    rt: crate::runtime::Handle,
-}
-
-/// Events emitted by the [`Provider`] informing about the current status.
+/// Events emitted by the [`Node`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// A new client connected to the provider.
+    /// A new client connected to the node.
     ClientConnected {
         /// An unique connection id.
         connection_id: u64,
@@ -536,235 +104,133 @@ pub enum Event {
     },
 }
 
-impl Provider {
-    /// Returns a new builder for the [`Provider`].
-    ///
-    /// Once the done with the builder call [`Builder::spawn`] to create the provider.
-    pub fn builder(db: Database) -> Builder {
-        Builder::with_db(db)
-    }
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ValidateProgress {
+    /// started validating
+    Starting { total: u64 },
+    /// We started validating an entry
+    Entry {
+        id: u64,
+        hash: Hash,
+        path: Option<PathBuf>,
+        size: u64,
+    },
+    /// We got progress ingesting item `id`
+    Progress { id: u64, offset: u64 },
+    /// We are done with `id`
+    Done { id: u64, error: Option<String> },
+    /// We are done with the whole operation
+    AllDone,
+    /// We got an error and need to abort
+    Abort(RpcError),
+}
 
-    /// The address on which the provider socket is bound.
-    ///
-    /// Note that this could be an unspecified address, if you need an address on which you
-    /// can contact the provider consider using [`Provider::local_endpoint_addresses`].  However the
-    /// port will always be the concrete port.
-    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.local_address()
-    }
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProvideProgress {
+    /// An item was found with name `name`, from now on referred to via `id`
+    Found { name: String, id: u64, size: u64 },
+    /// We got progress ingesting item `id`
+    Progress { id: u64, offset: u64 },
+    /// We are done with `id`, and the hash is `hash`
+    Done { id: u64, hash: Hash },
+    /// We are done with the whole operation
+    AllDone { hash: Hash },
+    /// We got an error and need to abort
+    Abort(RpcError),
+}
 
-    /// Lists the local endpoint of this node.
-    pub async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.inner.local_endpoints().await
-    }
-
-    /// Convenience method to get just the addr part of [`Provider::local_endpoints`].
-    pub async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.local_endpoint_addresses().await
-    }
-
-    /// Returns the [`PeerId`] of the provider.
-    pub fn peer_id(&self) -> PeerId {
-        self.inner.keypair.public().into()
-    }
-
-    /// Subscribe to [`Event`]s emitted from the provider, informing about connections and
-    /// progress.
-    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        self.inner.events.subscribe()
-    }
-
-    /// Returns a handle that can be used to do RPC calls to the provider internally.
-    pub fn controller(
+/// A custom get request handler that allows the user to make up a get request
+/// on the fly.
+pub trait CustomGetHandler: Send + Sync + Clone + 'static {
+    /// Handle the custom request, given an opaque data blob from the requester.
+    fn handle(
         &self,
-    ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
-        RpcClient::new(self.inner.controller.clone())
-    }
+        request: Bytes,
+        db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
+}
 
-    /// Return a single token containing everything needed to get a hash.
-    ///
-    /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
-        // TODO: Verify that the hash exists in the db?
-        let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
-    }
-
-    /// Aborts the provider.
-    ///
-    /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running and awaiting this
-    /// [`Provider`] will complete.
-    ///
-    /// The shutdown behaviour will become more graceful in the future.
-    pub fn shutdown(&self) {
-        self.inner.cancel_token.cancel();
-    }
-
-    /// Returns a token that can be used to cancel the provider.
-    pub fn cancel_token(&self) -> CancellationToken {
-        self.inner.cancel_token.clone()
+/// Define CustomGetHandler for () so we can use it as a no-op default.
+impl CustomGetHandler for () {
+    fn handle(
+        &self,
+        _request: Bytes,
+        _db: Database,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
     }
 }
 
-impl ProviderInner {
-    async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.conn.local_endpoints().await
-    }
-
-    async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
-        let endpoints = self.local_endpoints().await?;
-        Ok(endpoints.into_iter().map(|x| x.addr).collect())
-    }
-
-    fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.conn.local_addr()?;
-        let mut addrs = vec![v4];
-        if let Some(v6) = v6 {
-            addrs.push(v6);
-        }
-        Ok(addrs)
-    }
+/// A [`Database`] entry.
+///
+/// This is either stored externally in the file system, or internally in the database.
+/// Collections are always stored internally for now.
+///
+/// Internally stored entries are stored in the iroh home directory when the database is
+/// persisted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbEntry {
+    /// A blob.
+    External {
+        /// The bao outboard data.
+        outboard: Bytes,
+        /// Path to the original data, which must not change while in use.
+        ///
+        /// Note that when adding multiple files with the same content, only one of them
+        /// will get added to the store. So the path is not that useful for information.  It
+        /// is just a place to look for the data correspoding to the hash and outboard.
+        // TODO: Change this to a list of paths.
+        path: PathBuf,
+        /// Size of the original data.
+        size: u64,
+    },
+    /// A collection.
+    Internal {
+        /// The bao outboard data.
+        outboard: Bytes,
+        /// The inline data.
+        data: Bytes,
+    },
 }
 
-/// The future completes when the spawned tokio task finishes.
-impl Future for Provider {
-    type Output = Result<(), Arc<JoinError>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.task).poll(cx)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RpcHandler {
-    inner: Arc<ProviderInner>,
-}
-
-impl RpcHandler {
-    fn rt(&self) -> crate::runtime::Handle {
-        self.inner.rt.clone()
+impl DbEntry {
+    pub fn is_external(&self) -> bool {
+        matches!(self, DbEntry::External { .. })
     }
 
-    fn list_blobs(
-        self,
-        _msg: ListBlobsRequest,
-    ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
-        let items = self
-            .inner
-            .db
-            .external()
-            .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
-        futures::stream::iter(items)
-    }
-
-    fn list_collections(
-        self,
-        _msg: ListCollectionsRequest,
-    ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        // collections are always stored internally, so we take everything that is stored internally
-        // and try to parse it as a collection
-        let items = self.inner.db.internal().filter_map(|(hash, collection)| {
-            Collection::from_bytes(&collection)
-                .ok()
-                .map(|collection| ListCollectionsResponse {
-                    hash,
-                    total_blobs_count: collection.blobs.len(),
-                    total_blobs_size: collection.total_blobs_size,
-                })
-        });
-        futures::stream::iter(items)
-    }
-
-    /// Invoke validate on the database and stream out the result
-    fn validate(
-        self,
-        _msg: ValidateRequest,
-    ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = mpsc::channel(1);
-        let tx2 = tx.clone();
-        self.rt().spawn(async move {
-            if let Err(e) = self.inner.db.validate(tx).await {
-                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
-            }
-        });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
-    }
-
-    fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-        let (tx, rx) = mpsc::channel(1);
-        let tx2 = tx.clone();
-        self.rt().spawn(async move {
-            if let Err(e) = self.provide0(msg, tx).await {
-                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
-            }
-        });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
-    }
-
-    async fn provide0(
-        self,
-        msg: ProvideRequest,
-        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
-    ) -> anyhow::Result<()> {
-        let root = msg.path;
-        anyhow::ensure!(
-            root.is_dir() || root.is_file(),
-            "path must be either a Directory or a File"
-        );
-        let data_sources = create_data_sources(root)?;
-        // create the collection
-        // todo: provide feedback for progress
-        let (db, _) = collection::create_collection(data_sources, Progress::new(progress)).await?;
-        self.inner.db.union_with(db);
-
-        Ok(())
-    }
-    async fn version(self, _: VersionRequest) -> VersionResponse {
-        VersionResponse {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+    pub fn blob_path(&self) -> Option<&Path> {
+        match self {
+            DbEntry::External { path, .. } => Some(path),
+            DbEntry::Internal { .. } => None,
         }
     }
-    async fn id(self, _: IdRequest) -> IdResponse {
-        IdResponse {
-            peer_id: Box::new(self.inner.keypair.public().into()),
-            listen_addrs: self
-                .inner
-                .local_endpoint_addresses()
-                .await
-                .unwrap_or_default(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+
+    pub fn outboard(&self) -> &Bytes {
+        match self {
+            DbEntry::External { outboard, .. } => outboard,
+            DbEntry::Internal { outboard, .. } => outboard,
         }
     }
-    async fn addrs(self, _: AddrsRequest) -> AddrsResponse {
-        AddrsResponse {
-            addrs: self
-                .inner
-                .local_endpoint_addresses()
-                .await
-                .unwrap_or_default(),
-        }
-    }
-    async fn shutdown(self, request: ShutdownRequest) {
-        if request.force {
-            tracing::info!("hard shutdown requested");
-            std::process::exit(0);
-        } else {
-            // trigger a graceful shutdown
-            tracing::info!("graceful shutdown requested");
-            self.inner.cancel_token.cancel();
-        }
-    }
-    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
-        futures::stream::unfold((), |()| async move {
-            tokio::time::sleep(HEALTH_POLL_WAIT).await;
-            Some((
-                WatchResponse {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                },
-                (),
-            ))
+
+    /// A reader for the data.
+    pub async fn data_reader(&self) -> io::Result<Either<Cursor<Bytes>, tokio::fs::File>> {
+        Ok(match self {
+            DbEntry::External { path, .. } => Either::Right(tokio::fs::File::open(path).await?),
+            DbEntry::Internal { data, .. } => Either::Left(Cursor::new(data.clone())),
         })
+    }
+
+    /// Returns the size of the blob or collection.
+    ///
+    /// For collections this is the size of the serialized collection.
+    /// For blobs it is the blob size.
+    pub fn size(&self) -> u64 {
+        match self {
+            DbEntry::External { size, .. } => *size,
+            DbEntry::Internal { data, .. } => data.len() as u64,
+        }
     }
 }
 
@@ -798,89 +264,6 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
     })
 }
 
-fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
-    msg: ProviderRequest,
-    chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler,
-    rt: &crate::runtime::Handle,
-) {
-    let handler = handler.clone();
-    rt.spawn(async move {
-        use ProviderRequest::*;
-        match msg {
-            ListBlobs(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_blobs)
-                    .await
-            }
-            ListCollections(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::list_collections)
-                    .await
-            }
-            Provide(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::provide)
-                    .await
-            }
-            Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
-            Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
-            Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
-            Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
-            Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
-            Validate(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::validate)
-                    .await
-            }
-        }
-    });
-}
-
-async fn handle_connection<C: CustomGetHandler>(
-    connecting: quinn::Connecting,
-    db: Database,
-    events: broadcast::Sender<Event>,
-    custom_get_handler: C,
-    rt: crate::runtime::Handle,
-) {
-    // let _x = NonSend::default();
-    let remote_addr = connecting.remote_address();
-    let connection = match connecting.await {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!(%remote_addr, "Error connecting: {err:#}");
-            return;
-        }
-    };
-    let connection_id = connection.stable_id() as u64;
-    let span = debug_span!("connection", connection_id, %remote_addr);
-    async move {
-        while let Ok((writer, reader)) = connection.accept_bi().await {
-            // The stream ID index is used to identify this request.  Requests only arrive in
-            // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
-            let request_id = reader.id().index();
-            let span = debug_span!("stream", stream_id = %request_id);
-            let writer = ResponseWriter {
-                connection_id,
-                events: events.clone(),
-                inner: writer,
-            };
-            events.send(Event::ClientConnected { connection_id }).ok();
-            let db = db.clone();
-            let custom_get_handler = custom_get_handler.clone();
-            rt.spawn_tpc(|| {
-                async move {
-                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
-                        warn!("error: {err:#?}",);
-                    }
-                }
-                .instrument(span)
-                .boxed_local()
-            })
-            .await;
-        }
-    }
-    .instrument(span)
-    .await
-}
-
 /// Read and decode the handshake.
 ///
 /// Will fail if there is an error while reading, there is a token mismatch, or no valid
@@ -888,7 +271,10 @@ async fn handle_connection<C: CustomGetHandler>(
 ///
 /// When successful, the reader is still useable after this function and the buffer will be
 /// drained of any handshake data.
-async fn read_handshake<R: AsyncRead + Unpin>(mut reader: R, buffer: &mut BytesMut) -> Result<()> {
+pub async fn read_handshake<R: AsyncRead + Unpin>(
+    mut reader: R,
+    buffer: &mut BytesMut,
+) -> Result<()> {
     let payload = read_lp(&mut reader, buffer)
         .await?
         .context("no valid handshake received")?;
@@ -908,7 +294,7 @@ async fn read_handshake<R: AsyncRead + Unpin>(mut reader: R, buffer: &mut BytesM
 /// contains more data than the Request, or if no valid request is sent.
 ///
 /// When successful, the buffer is empty after this function call.
-async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> Result<Request> {
+pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> Result<Request> {
     let payload = read_lp(&mut reader, buffer)
         .await?
         .context("No request received")?;
@@ -932,12 +318,12 @@ async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> R
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-async fn transfer_collection(
+pub async fn transfer_collection<E: EventSender>(
     request: GetRequest,
     // Database from which to fetch blobs.
     db: &Database,
     // Response writer, containing the quinn stream.
-    writer: &mut ResponseWriter,
+    writer: &mut ResponseWriter<E>,
     // the collection to transfer
     outboard: &Bytes,
     data: Either<Cursor<Bytes>, tokio::fs::File>,
@@ -1008,10 +394,62 @@ async fn transfer_collection(
     Ok(SentStatus::Sent)
 }
 
-async fn handle_stream(
+pub trait EventSender: Clone + Send + 'static {
+    fn send(&self, event: Event) -> Option<Event>;
+}
+
+pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
+    connecting: quinn::Connecting,
+    db: Database,
+    events: E,
+    custom_get_handler: C,
+    rt: crate::runtime::Handle,
+) {
+    // let _x = NonSend::default();
+    let remote_addr = connecting.remote_address();
+    let connection = match connecting.await {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!(%remote_addr, "Error connecting: {err:#}");
+            return;
+        }
+    };
+    let connection_id = connection.stable_id() as u64;
+    let span = debug_span!("connection", connection_id, %remote_addr);
+    async move {
+        while let Ok((writer, reader)) = connection.accept_bi().await {
+            // The stream ID index is used to identify this request.  Requests only arrive in
+            // bi-directional RecvStreams initiated by the client, so this uniquely identifies them.
+            let request_id = reader.id().index();
+            let span = debug_span!("stream", stream_id = %request_id);
+            let writer = ResponseWriter {
+                connection_id,
+                events: events.clone(),
+                inner: writer,
+            };
+            events.send(Event::ClientConnected { connection_id });
+            let db = db.clone();
+            let custom_get_handler = custom_get_handler.clone();
+            rt.spawn_tpc(|| {
+                async move {
+                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
+                        warn!("error: {err:#?}",);
+                    }
+                }
+                .instrument(span)
+                .boxed_local()
+            })
+            .await;
+        }
+    }
+    .instrument(span)
+    .await
+}
+
+async fn handle_stream<E: EventSender>(
     db: Database,
     mut reader: quinn::RecvStream,
-    writer: ResponseWriter,
+    writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -1040,11 +478,10 @@ async fn handle_stream(
         }
     }
 }
-
-async fn handle_custom_get(
+async fn handle_custom_get<E: EventSender>(
     db: Database,
     request: Bytes,
-    mut writer: ResponseWriter,
+    mut writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
@@ -1061,7 +498,11 @@ async fn handle_custom_get(
     handle_get(db, request, writer).await
 }
 
-async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWriter) -> Result<()> {
+pub async fn handle_get<E: EventSender>(
+    db: Database,
+    request: GetRequest,
+    mut writer: ResponseWriter<E>,
+) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
     let _ = writer.events.send(Event::GetRequestReceived {
@@ -1109,13 +550,14 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
 }
 
 /// A helper struct that combines a quinn::SendStream with auxiliary information
-struct ResponseWriter {
+#[derive(Debug)]
+pub struct ResponseWriter<E> {
     inner: quinn::SendStream,
-    events: broadcast::Sender<Event>,
+    events: E,
     connection_id: u64,
 }
 
-impl ResponseWriter {
+impl<E: EventSender> ResponseWriter<E> {
     fn connection_id(&self) -> u64 {
         self.connection_id
     }
@@ -1140,12 +582,12 @@ impl ResponseWriter {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum SentStatus {
+pub enum SentStatus {
     Sent,
     NotFound,
 }
 
-async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: &Database,
     name: Hash,
     ranges: &RangeSpec,
@@ -1180,7 +622,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BlobData {
+pub struct BlobData {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -1248,32 +690,10 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     Ok((Database::from(db), hash))
 }
 
-/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
-pub fn make_server_config(
-    keypair: &Keypair,
-    max_streams: u64,
-    max_connections: u32,
-    alpn_protocols: Vec<Vec<u8>>,
-) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(max_streams.try_into()?)
-        .max_concurrent_uni_streams(0u32.into());
-
-    server_config
-        .transport_config(Arc::new(transport_config))
-        .concurrent_connections(max_connections);
-    Ok(server_config)
-}
-
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
     use std::collections::HashMap;
-    use std::net::Ipv4Addr;
-    use std::path::Path;
     use std::str::FromStr;
     use testdir::testdir;
 
@@ -1281,12 +701,6 @@ mod tests {
     use crate::provider::database::Snapshot;
 
     use super::*;
-
-    /// Pick up the tokio runtime from the thread local and add a
-    /// thread per core runtime.
-    fn test_runtime() -> crate::runtime::Runtime {
-        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
-    }
 
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
         proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
@@ -1408,22 +822,5 @@ mod tests {
         assert_eq!(expect_collection, collection);
 
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_ticket_multiple_addrs() {
-        let rt = test_runtime();
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-        let provider = Provider::builder(db)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(rt.handle())
-            .spawn()
-            .await
-            .unwrap();
-        let _drop_guard = provider.cancel_token().drop_guard();
-        let ticket = provider.ticket(hash).await.unwrap();
-        println!("addrs: {:?}", ticket.addrs());
-        assert!(!ticket.addrs().is_empty());
     }
 }

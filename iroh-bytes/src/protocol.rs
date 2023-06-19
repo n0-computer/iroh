@@ -134,7 +134,7 @@ pub(crate) async fn read_lp(
 /// This enum exists so we have a single namespace for `error_code`s used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
-pub(crate) enum Closed {
+pub enum Closed {
     /// The [`quinn::RecvStream`] was dropped.
     ///
     /// Used implicitly when a [`quinn::RecvStream`] is dropped without explicit call to
@@ -171,7 +171,7 @@ impl From<Closed> for VarInt {
 /// Unknown error_code, can not be converted into [`Closed`].
 #[derive(thiserror::Error, Debug)]
 #[error("Unknown error_code: {0}")]
-pub(crate) struct UnknownErrorCode(u64);
+pub struct UnknownErrorCode(u64);
 
 impl TryFrom<VarInt> for Closed {
     type Error = UnknownErrorCode;

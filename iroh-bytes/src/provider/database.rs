@@ -1,6 +1,6 @@
 use super::DbEntry;
 use crate::{
-    rpc_protocol::ValidateProgress,
+    provider::ValidateProgress,
     util::{validate_bao, BaoValidationError},
     Hash,
 };
@@ -298,7 +298,7 @@ impl Database {
     /// Validate the entire database, including collections.
     ///
     /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
-    pub(crate) async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
+    pub async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
         // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
         let mut data = self
             .0
@@ -411,11 +411,11 @@ impl Database {
         }
     }
 
-    pub(crate) fn get(&self, key: &Hash) -> Option<DbEntry> {
+    pub fn get(&self, key: &Hash) -> Option<DbEntry> {
         self.0.read().unwrap().get(key).cloned()
     }
 
-    pub(crate) fn union_with(&self, db: HashMap<Hash, DbEntry>) {
+    pub fn union_with(&self, db: HashMap<Hash, DbEntry>) {
         let mut inner = self.0.write().unwrap();
         for (k, v) in db {
             inner.entry(k).or_insert(v);

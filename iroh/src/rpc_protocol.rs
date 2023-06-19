@@ -1,32 +1,20 @@
 #![allow(missing_docs)]
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::{util::RpcError, Hash, PeerId};
 use derive_more::{From, TryInto};
+use iroh_bytes::{Hash, PeerId};
+
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
 };
 use serde::{Deserialize, Serialize};
 
+pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideRequest {
     pub path: PathBuf,
-}
-
-/// Progress updates for the provide operation
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ProvideProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found { name: String, id: u64, size: u64 },
-    /// We got progress ingesting item `id`
-    Progress { id: u64, offset: u64 },
-    /// We are done with `id`, and the hash is `hash`
-    Done { id: u64, hash: Hash },
-    /// We are done with the whole operation
-    AllDone { hash: Hash },
-    /// We got an error and need to abort
-    Abort(RpcError),
 }
 
 impl Msg<ProviderService> for ProvideRequest {
@@ -39,28 +27,6 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ValidateRequest;
-
-/// Progress updates for the provide operation
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ValidateProgress {
-    /// started validating
-    Starting { total: u64 },
-    /// We started validating an entry
-    Entry {
-        id: u64,
-        hash: Hash,
-        path: Option<PathBuf>,
-        size: u64,
-    },
-    /// We got progress ingesting item `id`
-    Progress { id: u64, offset: u64 },
-    /// We are done with `id`
-    Done { id: u64, error: Option<String> },
-    /// We are done with the whole operation
-    AllDone,
-    /// We got an error and need to abort
-    Abort(RpcError),
-}
 
 impl Msg<ProviderService> for ValidateRequest {
     type Pattern = ServerStreaming;

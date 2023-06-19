@@ -13,8 +13,11 @@ default-run = "iroh"
 rust-version = "1.65"
 
 [dependencies]
+flume = "0.10.14"
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
+tokio-util = { version = "0.7", features = ["io-util", "io"] }
+tokio-stream = "0.1"
 
 # CLI
 anyhow = { version = "1", features = ["backtrace"], optional = true }

@@ -16,17 +16,16 @@ use tracing::{trace, trace_span};
 
 use crate::blobs::{Blob, Collection};
 use crate::protocol::MAX_MESSAGE_SIZE;
-use crate::rpc_protocol::ProvideProgress;
 use crate::util::{Progress, ProgressReader, ProgressReaderUpdate};
 use crate::{Hash, IROH_BLOCK_SIZE};
 
-use super::{DataSource, DbEntry};
+use super::{DataSource, DbEntry, ProvideProgress};
 
 /// Creates a collection blob and returns all blobs in a hashmap.
 ///
 /// Returns the hashmap with all blobs, including the created collection blob itself, as
 /// well as the [`Hash`] of the collection blob.
-pub(super) async fn create_collection(
+pub async fn create_collection(
     data_sources: Vec<DataSource>,
     progress: Progress<ProvideProgress>,
 ) -> Result<(HashMap<Hash, DbEntry>, Hash)> {
