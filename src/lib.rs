@@ -691,9 +691,7 @@ mod tests {
                 derp_map: None,
             })
             .await?;
-            let request = GetRequest::all(hash)
-                .with_auth_token(auth_token.clone())
-                .into();
+            let request = GetRequest::all(hash).with_auth_token(auth_token).into();
             let stream = get::run_connection(connection, request);
             aggregate_get_response(stream).await?;
             anyhow::Ok(())

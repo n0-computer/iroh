@@ -883,10 +883,10 @@ impl GetInteractive {
         }
     }
 
-    fn auth_token(&self) -> Option<AuthToken> {
+    fn auth_token(&self) -> Option<&AuthToken> {
         match self {
             GetInteractive::Ticket { ticket, .. } => ticket.auth_token(),
-            GetInteractive::Hash { auth_token, .. } => auth_token.clone(),
+            GetInteractive::Hash { auth_token, .. } => auth_token.as_ref(),
         }
     }
 
@@ -954,16 +954,41 @@ async fn get_to_file_single(
     // collection info, in case we won't get a callback with is_root
     let collection_info = Some((1, 0));
 
-    let request = GetRequest::new(get.hash(), query)
-        .with_auth_token(get.auth_token())
-        .into();
+    // This code should probably be a function. It's used some lines below again.
     let response = match get {
         GetInteractive::Ticket {
             ticket,
             keylog,
             derp_map,
-        } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
-        GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
+        } => {
+            let (hash, peer_id, addresses, auth_token) = ticket.destructure();
+            let request = GetRequest::new(hash, query)
+                .with_auth_token(auth_token)
+                .into();
+
+            // let response = get::run_ticket(&ticket, request, keylog, derp_map).await?;
+            // below is the code of run_ticket
+            let connection = get::dial_peer(get::Options {
+                addrs: addresses,
+                peer_id,
+                keylog,
+                derp_map,
+            })
+            .await?;
+
+            get::run_connection(connection, request)
+        }
+        GetInteractive::Hash {
+            hash,
+            opts,
+            auth_token,
+            single: _,
+        } => {
+            let request = GetRequest::new(hash, query)
+                .with_auth_token(auth_token)
+                .into();
+            get::run(request, opts).await?
+        }
     };
     let connected = response.next().await?;
     progress!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -1045,8 +1070,9 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
         Some((collection.len() as u64, 0))
     };
 
+    // Same here as above.
     let request = GetRequest::new(get.hash(), query)
-        .with_auth_token(get.auth_token())
+        .with_auth_token(get.auth_token().cloned())
         .into();
     let response = match get {
         GetInteractive::Ticket {
@@ -1283,8 +1309,9 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     };
 
     let pb = make_download_pb();
+    // same as above
     let request = GetRequest::new(get.hash(), query)
-        .with_auth_token(get.auth_token())
+        .with_auth_token(get.auth_token().cloned())
         .into();
     let response = match get {
         GetInteractive::Ticket {

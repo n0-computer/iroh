@@ -56,8 +56,8 @@ impl AuthToken {
     }
 
     /// Serializes to bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.bytes.clone()
+    pub fn to_bytes(self) -> Vec<u8> {
+        self.bytes
     }
 }
 
@@ -90,10 +90,10 @@ pub enum Request {
 }
 
 impl Request {
-    pub fn auth_token(&self) -> Option<AuthToken> {
+    pub fn auth_token(&self) -> Option<&AuthToken> {
         match self {
             Request::Get(get) => get.auth_token(),
-            Request::CustomGet(get) => get.auth_token.clone(),
+            Request::CustomGet(get) => get.auth_token.as_ref(),
         }
     }
 }
@@ -155,8 +155,8 @@ impl GetRequest {
         Self { auth_token, ..self }
     }
 
-    pub fn auth_token(&self) -> Option<AuthToken> {
-        self.auth_token.clone()
+    pub fn auth_token(&self) -> Option<&AuthToken> {
+        self.auth_token.as_ref()
     }
 }
 
