@@ -31,7 +31,7 @@ pub struct Ticket {
 }
 
 impl Ticket {
-    pub(super) fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>) -> Result<Self> {
+    pub fn new(hash: Hash, peer: PeerId, addrs: Vec<SocketAddr>) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
         Ok(Self { hash, peer, addrs })
     }

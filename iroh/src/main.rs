@@ -18,15 +18,16 @@ use iroh::bytes::{
         get_response_machine::{ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider::{Database, Provider, Ticket},
-    rpc_protocol::*,
+    provider::{Database, Ticket},
     tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized},
     util::pathbuf_from_name,
 };
 use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh::net::hp::derp::DerpMap;
+use iroh::node::Node;
+use iroh::rpc_protocol::*;
 
-use iroh::bytes::{cid::Blake3Cid, get, provider, provider::FNAME_PATHS, Hash, Keypair, PeerId};
+use iroh::bytes::{cid::Blake3Cid, get, provider::FNAME_PATHS, Hash, Keypair, PeerId};
 use iroh::config::{iroh_config_path, iroh_data_root};
 use iroh::net::util::create_quinn_client;
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
@@ -127,7 +128,7 @@ enum Commands {
         path: Option<PathBuf>,
         #[clap(long, short)]
         /// Listening address to bind to
-        #[clap(long, short, default_value_t = SocketAddr::from(provider::DEFAULT_BIND_ADDR))]
+        #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
@@ -783,10 +784,10 @@ async fn provide(
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
     rt: &iroh::bytes::runtime::Handle,
-) -> Result<Provider> {
+) -> Result<Node> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = provider::Provider::builder(db).keylog(keylog);
+    let mut builder = Node::builder(db).keylog(keylog);
     if let Some(dm) = dm {
         builder = builder.derp_map(dm);
     }
@@ -819,7 +820,7 @@ fn make_rpc_endpoint(
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::bytes::provider::make_server_config(
+        iroh::node::make_server_config(
             keypair,
             MAX_RPC_STREAMS,
             MAX_RPC_CONNECTIONS,

@@ -35,12 +35,6 @@ use tracing::{debug, error};
 
 pub use crate::util::Hash;
 
-/// Default provider address.
-///
-/// As [`SocketAddr::from`] is not `const fn` this still needs to be passed to this
-/// constructor.
-pub const DEFAULT_PROVIDER_ADDR: (Ipv4Addr, u16) = crate::provider::DEFAULT_BIND_ADDR;
-
 /// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {

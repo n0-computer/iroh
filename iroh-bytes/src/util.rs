@@ -275,6 +275,7 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ProgressReaderUpdate {
     Progress(u64),
     Done,
@@ -283,6 +284,7 @@ pub enum ProgressReaderUpdate {
 /// A sender for progress messages.
 ///
 /// This may optionally be a no-op if the [`Progress::none`] constructor is used.
+#[derive(Debug)]
 pub struct Progress<T>(Option<mpsc::Sender<T>>);
 
 impl<T> Clone for Progress<T> {

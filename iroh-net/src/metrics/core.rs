@@ -7,6 +7,7 @@ use crate::metrics::{iroh, magicsock, netcheck};
 
 pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 
+#[derive(Debug)]
 pub struct Core {
     enabled: AtomicBool,
     registry: Registry,
