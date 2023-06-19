@@ -13,6 +13,7 @@ use tracing_subscriber::EnvFilter;
 /// The logging is unfiltered, it logs all crates and modules on TRACE level.  If that's too
 /// much consider if your test is too large (or write a version that allows filtering...).
 #[must_use = "The tracing guard must only be dropped at the end of the test"]
+#[allow(dead_code)]
 pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
     let var = std::env::var_os("RUST_LOG");
     let trace_log_layer = match var {

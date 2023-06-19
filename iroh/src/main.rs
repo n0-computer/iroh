@@ -483,13 +483,13 @@ const PROGRESS_STYLE: &str =
 #[cfg(feature = "metrics")]
 fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
-    rt: &iroh::runtime::Handle,
+    rt: &iroh_bytes::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     init_metrics();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         return Some(rt.main().spawn(async move {
-            iroh::metrics::start_metrics_server(metrics_addr)
+            iroh_net::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
                     eprintln!("Failed to start metrics server: {e}");
@@ -962,7 +962,7 @@ async fn get_to_file_single(
     };
     let header = curr.next();
     let final_path = out_dir.join(&name);
-    let tempname = iroh::bytes::Hash::from(hash).to_hex();
+    let tempname = hash.to_hex();
     let data_path = temp_dir.join(format!("{tempname}.data.part"));
     let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
     let data_file = tokio::fs::OpenOptions::new()
@@ -1095,7 +1095,7 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
 
         let curr = {
             let final_path = out_dir.join(&name);
-            let tempname = iroh::bytes::Hash::from(hash).to_hex();
+            let tempname = hash.to_hex();
             let data_path = temp_dir.join(format!("{tempname}.data.part"));
             let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
             let data_file = tokio::fs::OpenOptions::new()
