@@ -219,7 +219,7 @@ impl Client {
     ///
     /// There is an implicit queue here which may drop packets if the actor does not keep up
     /// consuming them.
-    pub(crate) fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
+    pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
         if let Err(mpsc::error::TrySendError::Full(_)) =
             self.addr.try_send(ActorMessage::StunPacket {
                 payload,

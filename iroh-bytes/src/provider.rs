@@ -1,12 +1,5 @@
 //! Provider API
-//!
-//! A provider is a server that serves content-addressed data (blobs or collections).
-//! To create a provider, create a database using [`create_collection`], then build a
-//! provider using [`Builder`] and spawn it using [`Builder::spawn`].
-//!
-//! You can monitor what is happening in the provider using [`Provider::subscribe`].
-//!
-//! To shut down the provider, call [`Provider::shutdown`].
+
 use std::borrow::Cow;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
@@ -38,7 +31,7 @@ pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
-/// Events emitted by the [`Node`] informing about the current status.
+/// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
     /// A new client connected to the node.
