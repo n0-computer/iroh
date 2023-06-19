@@ -8,8 +8,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
-use iroh::main_util::Blake3Cid;
-use iroh::provider::Ticket;
+use iroh::bytes::{cid::Blake3Cid, provider::Ticket, Hash};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -18,7 +17,7 @@ use walkdir::WalkDir;
 const ADDR: &str = "127.0.0.1:0";
 const RPC_PORT: &str = "4999";
 
-fn make_rand_file(size: usize, path: &Path) -> Result<iroh::Hash> {
+fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     let mut content = vec![0u8; size];
     rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
     let hash = blake3::hash(&content);
@@ -29,8 +28,8 @@ fn make_rand_file(size: usize, path: &Path) -> Result<iroh::Hash> {
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
-fn make_partial_download(out_dir: &Path) -> anyhow::Result<iroh::Hash> {
-    use iroh::provider::{create_collection, create_data_sources, DbEntry};
+fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
+    use iroh_bytes::provider::{create_collection, create_data_sources, DbEntry};
 
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
@@ -162,7 +161,7 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 fn cli_provide_persistence() -> anyhow::Result<()> {
     use std::time::Duration;
 
-    use iroh::provider::Database;
+    use iroh_bytes::provider::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -406,7 +405,7 @@ fn test_provide_get_loop_single(
     path: &Path,
     input: Input,
     output: Output,
-    hash: iroh::Hash,
+    hash: Hash,
 ) -> Result<()> {
     let out = match output {
         Output::Stdout => None,

@@ -6,11 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{config::Config, main_util::iroh_data_root, tokio_util::ProgressWriter, Keypair};
+use crate::config::{iroh_data_root, Config};
 
 use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
+use iroh_bytes::tokio_util::ProgressWriter;
 use iroh_net::{
     hp::{
         self,
@@ -18,7 +19,7 @@ use iroh_net::{
         key::node::SecretKey,
         magicsock,
     },
-    tls,
+    tls::{self, Keypair},
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};

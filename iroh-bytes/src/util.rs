@@ -28,6 +28,14 @@ impl Hash {
         let val = blake3::hash(buf.as_ref());
         Hash(val)
     }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.as_bytes()
+    }
+
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex().to_string()
+    }
 }
 
 impl AsRef<[u8]> for Hash {

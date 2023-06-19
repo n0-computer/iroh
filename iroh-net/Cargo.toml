@@ -47,7 +47,6 @@ surge-ping = "0.8.0"
 thiserror = "1"
 paste = "1.0.12"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trust-dns-resolver = "0.22.0"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs"] }
@@ -80,6 +79,7 @@ wmi = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 build-data = "0.1.3"

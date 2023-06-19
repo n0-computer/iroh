@@ -2672,6 +2672,8 @@ mod tests {
         quic_ep: quinn::Endpoint,
     }
 
+    const ALPN: [u8; 9] = *b"n0/test/1";
+
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
@@ -2694,7 +2696,7 @@ mod tests {
                 .context("wait for derp connection")?;
 
             let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -2707,12 +2709,8 @@ mod tests {
                 Arc::new(quinn::TokioRuntime),
             )?;
 
-            let tls_client_config = tls::make_client_config(
-                &key.clone().into(),
-                None,
-                vec![tls::P2P_ALPN.to_vec()],
-                false,
-            )?;
+            let tls_client_config =
+                tls::make_client_config(&key.clone().into(), None, vec![ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3059,7 +3057,7 @@ mod tests {
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -3073,7 +3071,7 @@ mod tests {
             )?;
 
             let tls_client_config =
-                tls::make_client_config(&key.into(), None, vec![tls::P2P_ALPN.to_vec()], false)?;
+                tls::make_client_config(&key.into(), None, vec![ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3203,7 +3201,7 @@ mod tests {
             let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into()).await?;
 
             let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![tls::P2P_ALPN.to_vec()], false)?;
+                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -3216,12 +3214,8 @@ mod tests {
                 Arc::new(quinn::TokioRuntime),
             )?;
 
-            let tls_client_config = tls::make_client_config(
-                &key.clone().into(),
-                None,
-                vec![tls::P2P_ALPN.to_vec()],
-                false,
-            )?;
+            let tls_client_config =
+                tls::make_client_config(&key.clone().into(), None, vec![ALPN.to_vec()], false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));

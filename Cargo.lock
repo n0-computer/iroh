@@ -1520,24 +1520,52 @@ name = "iroh"
 version = "0.4.1"
 dependencies = [
  "anyhow",
- "bao-tree",
  "blake3",
- "bytes",
  "clap",
  "config",
  "console",
- "data-encoding",
  "derive_more",
  "dirs-next",
  "duct",
+ "futures",
+ "hex",
+ "indicatif",
+ "iroh-bytes",
+ "iroh-net",
+ "multibase",
+ "nix",
+ "num_cpus",
+ "postcard",
+ "quic-rpc",
+ "quinn",
+ "rand",
+ "range-collections",
+ "regex",
+ "serde",
+ "tempfile",
+ "testdir",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
+name = "iroh-bytes"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "bao-tree",
+ "blake3",
+ "bytes",
+ "data-encoding",
+ "derive_more",
  "flume",
  "futures",
  "hex",
  "http-body",
- "indicatif",
  "iroh-net",
  "multibase",
- "nix",
  "num_cpus",
  "once_cell",
  "portable-atomic",
@@ -1545,11 +1573,8 @@ dependencies = [
  "proptest",
  "quic-rpc",
  "quinn",
- "quinn-proto",
- "quinn-udp",
  "rand",
  "range-collections",
- "regex",
  "self_cell",
  "serde",
  "serde-error",
@@ -1566,10 +1591,6 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
 ]
-
-[[package]]
-name = "iroh-bytes"
-version = "0.4.1"
 
 [[package]]
 name = "iroh-net"
