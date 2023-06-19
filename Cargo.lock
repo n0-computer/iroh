@@ -271,6 +271,21 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941faf14993d0a71a924921abfdb0b028b1e8c160720f8a9b47fb64b0e56f5dc"
+dependencies = [
+ "blake3",
+ "bytes",
+ "futures",
+ "range-collections",
+ "self_cell",
+ "smallvec",
+ "tokio",
+]
+
+[[package]]
+name = "bao-tree"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "583ea88dc27232897e10ab0ac40977c64005a52d68814f4ae1838ec8472da84e"
@@ -634,6 +649,64 @@ name = "crc-catalog"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cace84e55f07e7301bae1c519df89cdad8cc3cd868413d3fdbdeca9ff3db484"
+
+[[package]]
+name = "crossbeam"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2801af0d36612ae591caa9568261fddce32ce6e08a7275ea334a06a4ad021a2c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce6fd6f855243022dcecf8702fef0c297d4338e226845fe067f6341ad9fa0cef"
+dependencies = [
+ "cfg-if",
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae211234986c545741a7dc064309f67ee1e5ad243d0e48335adc0484d960bcc7"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "crossbeam-utils",
+ "memoffset 0.9.0",
+ "scopeguard",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
 
 [[package]]
 name = "crossbeam-utils"
@@ -1179,6 +1252,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-rustls"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35bd3cf68c183738046838e300353e4716c674dc5e56890de4826801a6622a28"
+dependencies = [
+ "futures-io",
+ "rustls",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1608,6 +1691,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
+ "iroh-sync",
  "multibase",
  "nix",
  "num_cpus",
@@ -1629,11 +1713,97 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh"
+version = "0.4.1"
+source = "git+https://github.com/n0-computer/iroh?branch=main#e1752bc07184ec9e0801cde0e0d86065c25e3cbb"
+dependencies = [
+ "anyhow",
+ "backoff",
+ "bao-tree 0.3.2",
+ "blake3",
+ "build-data",
+ "bytes",
+ "clap",
+ "config",
+ "console",
+ "crypto_box",
+ "curve25519-dalek",
+ "data-encoding",
+ "default-net",
+ "der",
+ "derive_more",
+ "dirs-next",
+ "ed25519-dalek",
+ "flume",
+ "futures",
+ "futures-rustls",
+ "governor",
+ "hex",
+ "hostname",
+ "http",
+ "hyper",
+ "indicatif",
+ "libc",
+ "multibase",
+ "netlink-packet-route",
+ "num_cpus",
+ "once_cell",
+ "os_info",
+ "paste",
+ "portable-atomic",
+ "postcard",
+ "prometheus-client",
+ "quic-rpc",
+ "quinn",
+ "quinn-proto",
+ "quinn-udp",
+ "rand",
+ "range-collections",
+ "rcgen",
+ "regex",
+ "reqwest",
+ "ring",
+ "rtnetlink",
+ "rustls",
+ "rustls-pemfile",
+ "self_cell",
+ "serde",
+ "serde-error",
+ "serdect",
+ "smallvec",
+ "socket2 0.5.3",
+ "ssh-key",
+ "stun-rs",
+ "subtle",
+ "surge-ping",
+ "tempfile",
+ "thiserror",
+ "time 0.3.22",
+ "tokio",
+ "tokio-rustls",
+ "tokio-rustls-acme",
+ "tokio-stream",
+ "tokio-util",
+ "toml 0.7.4",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
+ "trust-dns-resolver",
+ "walkdir",
+ "webpki",
+ "webpki-roots 0.23.1",
+ "wg",
+ "wmi",
+ "x509-parser",
+ "zeroize",
+]
+
+[[package]]
 name = "iroh-bytes"
 version = "0.4.1"
 dependencies = [
  "anyhow",
- "bao-tree",
+ "bao-tree 0.4.1",
  "blake3",
  "bytes",
  "data-encoding",
@@ -1760,6 +1930,25 @@ dependencies = [
  "wmi",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "iroh-sync"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "bytes",
+ "crossbeam",
+ "ed25519-dalek",
+ "hex",
+ "iroh 0.4.1 (git+https://github.com/n0-computer/iroh?branch=main)",
+ "once_cell",
+ "parking_lot",
+ "rand",
+ "rand_core",
+ "serde",
+ "url",
 ]
 
 [[package]]
@@ -1911,6 +2100,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a634b1c61a95585bd15607c6ab0c4e5b226e695ff2800ba0cdccddf208c406c"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2037,7 +2235,7 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "libc",
- "memoffset",
+ "memoffset 0.7.1",
  "pin-utils",
  "static_assertions",
 ]

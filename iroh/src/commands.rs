@@ -127,6 +127,12 @@ impl Cli {
                 Ok(())
             }
             Commands::Doctor { command } => self::doctor::run(command, config).await,
+            Commands::Sync {
+                namespace,
+                author,
+                peer,
+                addrs,
+            } => crate::sync::run(namespace, author, addrs, peer, config.derp_map()).await,
         }
     }
 }
@@ -227,6 +233,20 @@ pub enum Commands {
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
+    },
+    /// Sync with given peer.
+    Sync {
+        /// The key to sync.
+        #[clap(long)]
+        namespace: String,
+        #[clap(long)]
+        author: String,
+        /// PeerId of the provider
+        #[clap(long, short)]
+        peer: PeerId,
+        /// Addresses of the provider.
+        #[clap(long, short)]
+        addrs: Vec<SocketAddr>,
     },
 }
 

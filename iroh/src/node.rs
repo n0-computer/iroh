@@ -81,7 +81,7 @@ where
     rt: Option<runtime::Handle>,
 }
 
-const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
+const PROTOCOLS: [&[u8]; 2] = [&iroh_bytes::P2P_ALPN, crate::sync::SYNC_ALPN];
 
 impl Builder {
     /// Creates a new builder for [`Node`] using the given [`Database`].
@@ -320,6 +320,27 @@ where
             debug!("listening at: {addr}");
         }
         let cancel_token = handler.inner.cancel_token.clone();
+
+        let (author, namespace) = {
+            let mut rng = rand::thread_rng();
+            let author = iroh_sync::sync::Author::new(&mut rng);
+            let namespace = iroh_sync::sync::Namespace::new(&mut rng);
+            (author, namespace)
+        };
+        println!("Author: {}", author);
+        println!("Namespace: {}", namespace);
+        let replica = iroh_sync::sync::Replica::new(namespace);
+        // insert some dummy data
+
+        replica.insert("iroh-is-cool", &author, "hello world");
+        for (hash, path, size) in handler.inner.db.external() {
+            replica.insert(
+                hash,
+                &author,
+                format!("size: {}, path: {}", size, path.display()),
+            );
+        }
+
         loop {
             tokio::select! {
                 biased;
@@ -365,6 +386,14 @@ where
                         let auth_handler = auth_handler.clone();
                         let rt2 = rt.clone();
                         rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
+                    } else if alpn.as_bytes() == crate::sync::SYNC_ALPN {
+                        let replica = replica.clone();
+                        rt.main().spawn(async move {
+                            println!("Sync request received");
+                            if let Err(err) = crate::sync::handle_connection(connecting, replica).await {
+                                tracing::error!("sync error: {:?}", err);
+                            }
+                        });
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
