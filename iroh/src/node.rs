@@ -6,6 +6,7 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 
+use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
@@ -75,6 +76,8 @@ where
     derp_map: Option<DerpMap>,
     rt: Option<runtime::Handle>,
 }
+
+const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
 
 impl Builder {
     /// Creates a new builder for [`Node`] using the given [`Database`].
@@ -175,7 +178,7 @@ where
         let rt = self.rt.context("runtime not set")?;
         let tls_server_config = tls::make_server_config(
             &self.keypair,
-            vec![iroh_bytes::P2P_ALPN.to_vec()],
+            PROTOCOLS.iter().map(|p| p.to_vec()).collect(),
             self.keylog,
         )?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
@@ -314,12 +317,25 @@ where
                     }
                 },
                 // handle incoming p2p connections
-                Some(connecting) = server.accept() => {
-                    let db = handler.inner.db.clone();
-                    let events = MappedSender(events.clone());
-                    let custom_get_handler = custom_get_handler.clone();
-                    let rt2 = rt.clone();
-                    rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, rt2));
+                Some(mut connecting) = server.accept() => {
+
+                    let alpn = match get_alpn(&mut connecting).await {
+                        Ok(alpn) => alpn,
+                        Err(err) => {
+                            tracing::error!("invalid handshake: {:?}", err);
+                            continue;
+                        }
+                    };
+                    if alpn.as_bytes() == iroh_bytes::P2P_ALPN.as_ref() {
+                        let db = handler.inner.db.clone();
+                        let events = MappedSender(events.clone());
+                        let custom_get_handler = custom_get_handler.clone();
+                        let rt2 = rt.clone();
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, rt2));
+                    } else {
+                        tracing::error!("unknown protocol: {}", alpn);
+                        continue;
+                    }
                 }
                 else => break,
             }
@@ -331,6 +347,17 @@ where
         // graceful.
         let error_code = Closed::ProviderTerminating;
         server.close(error_code.into(), error_code.reason());
+    }
+}
+
+async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
+    let data = connecting.handshake_data().await?;
+    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+        Ok(data) => match data.protocol {
+            Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
+            None => anyhow::bail!("no ALPN protocol available"),
+        },
+        Err(_) => anyhow::bail!("unknown handshake type"),
     }
 }
 
