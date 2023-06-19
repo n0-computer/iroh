@@ -210,14 +210,12 @@ where
 
 impl Database {
     /// Load a database from disk for testing. Synchronous.
-    #[cfg(feature = "cli")]
     pub fn load_test(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         Self::load_internal(dir)
     }
 
     /// Save a database to disk for testing. Synchronous.
-    #[cfg(feature = "cli")]
     pub fn save_test(&self, dir: impl AsRef<Path>) -> io::Result<()> {
         let dir = dir.as_ref().to_path_buf();
         self.save_internal(dir)

@@ -16,7 +16,7 @@ macro_rules! record {
         }
     }};
 }
-pub(crate) use record;
+pub use record;
 
 /// Increments a counter metric by 1.
 ///
@@ -39,7 +39,7 @@ macro_rules! inc {
         }
     }};
 }
-pub(crate) use inc;
+pub use inc;
 
 /// Observes a value into a histogram or summary metric.
 ///
@@ -60,7 +60,7 @@ macro_rules! observe {
         }
     }};
 }
-pub(crate) use observe;
+pub use observe;
 
 /// Generate recorder metrics for a module.
 #[macro_export]
@@ -190,4 +190,4 @@ macro_rules! make_metric_recorders {
         }
     }
 }
-pub(crate) use make_metric_recorders;
+pub use make_metric_recorders;

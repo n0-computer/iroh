@@ -13,62 +13,47 @@ default-run = "iroh"
 rust-version = "1.65"
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.3.2", features = ["tokio_fsm"], default-features = false }
-blake3 = "1.3.3"
-bytes = { version = "1.4", features = ["serde"] }
+iroh-net = { path = "../iroh-net" }
+iroh-bytes = { path = "../iroh-bytes" }
+
+# CLI
+anyhow = { version = "1", features = ["backtrace"], optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
-config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"] }
+config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"], optional = true }
 console = { version = "0.15.5", optional = true }
-data-encoding = "2.3.3"
-derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
-dirs-next = "2.0.0"
-flume = "0.10.14"
-futures = "0.3.25"
-hex = "0.4.3"
+derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"], optional = true }
+dirs-next = { version = "2.0.0", optional = true }
+futures = { version = "0.3.25", optional = true }
+hex = { version = "0.4.3", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
-num_cpus = "1.15.0"
-once_cell = "1.17.0"
-portable-atomic = "1"
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
-quinn = "0.10"
-quinn-proto = "0.10"
-quinn-udp = "0.4"
-range-collections = "0.4.0"
-self_cell = "1.0.1"
-serde = { version = "1", features = ["derive"] }
-serde-error = "0.1.2"
-smallvec = { version = "1.10.0", features = ["serde", "const_new"] }
-subtle = "2.4"
-tempfile = "3.4"
-thiserror = "1"
-tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
-tokio-util = { version = "0.7", features = ["io-util", "io"] }
-tracing = "0.1"
-tracing-futures = "0.2.5"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-walkdir = "2"
+num_cpus = { version = "1.15.0", optional = true }
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
+quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"], optional = true }
+quinn = { version = "0.10", optional = true }
+range-collections = { version = "0.4.0", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+tempfile = { version = "3.4", optional = true }
+tokio = { version = "1", features = ["io-util", "rt"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
-iroh-net = { path = "../iroh-net" }
-
-
-[dev-dependencies]
-duct = "0.13.6"
-http-body = "0.4.5"
-nix = "0.26.2"
-proptest = "1.0.0"
-rand = "0.8"
-regex = { version = "1.7.1", features = ["std"] }
-testdir = "0.7.2"
-tokio = { version = "1", features = ["full", "test-util"] }
 
 [features]
 default = ["cli"]
-cli = ["clap", "console", "indicatif", "multibase"]
+cli = ["anyhow", "clap", "config", "console", "derive_more", "dirs-next", "futures", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc", "quinn", "range-collections", "serde", "tempfile", "tokio", "tracing", "tracing-subscriber"]
+metrics = ["iroh-net/metrics"]
 test = []
+
+[dev-dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+blake3 = "1.3.3"
+duct = "0.13.6"
+nix = "0.26.2"
+rand = "0.8"
+regex = { version = "1.7.1", features = ["std"] }
+testdir = "0.7.2"
+walkdir = "2"
 
 [[bin]]
 name = "iroh"

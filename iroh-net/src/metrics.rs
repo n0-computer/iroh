@@ -16,13 +16,13 @@
 //!
 //! # Example:
 //! ```
-//! use iroh::metrics::init_metrics;
-//! use iroh::metrics::iroh::IrohMetrics;
-//! use crate::iroh::metrics::core::MRecorder;
+//! use iroh_net::metrics::init_metrics;
+//! use iroh_net::metrics::iroh::IrohMetrics;
+//! use iroh_net::metrics::core::MRecorder;
 //!
 //! init_metrics();
-//! iroh::record!(IrohMetrics::RequestsTotal, 2);
-//! iroh::inc!(IrohMetrics::RequestsTotal);
+//! iroh_net::metrics::record!(IrohMetrics::RequestsTotal, 2);
+//! iroh_net::metrics::inc!(IrohMetrics::RequestsTotal);
 //! ```
 #[cfg(feature = "metrics")]
 use self::core::CORE;
@@ -46,7 +46,7 @@ pub mod netcheck;
 
 // Expose the macros in this crate.
 #[allow(unused_imports)]
-pub(crate) use macros::{inc, make_metric_recorders, observe, record};
+pub use macros::{inc, make_metric_recorders, observe, record};
 
 /// Enables metrics collection, otherwise all inc!, record! & observe! calls are no-ops
 #[cfg(feature = "metrics")]

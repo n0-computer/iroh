@@ -4,5 +4,4 @@ pub mod hp;
 pub mod metrics;
 pub mod net;
 pub mod tls;
-
-mod util;
+pub mod util;

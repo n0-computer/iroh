@@ -1,13 +1,16 @@
 //! Configuration for the iroh CLI.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use config::{Environment, File, Value};
+use iroh_net::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
-
-use iroh_net::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -115,6 +118,89 @@ fn default_derp_region() -> DerpRegion {
         avoid: false,
         region_code: "default-1".into(),
     }
+}
+
+/// Name of directory that wraps all iroh files in a given application directory
+const IROH_DIR: &str = "iroh";
+
+/// Returns the path to the user's iroh config directory.
+///
+/// If the `IROH_CONFIG_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
+///
+/// | Platform | Value                                 | Example                          |
+/// | -------- | ------------------------------------- | -------------------------------- |
+/// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
+/// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
+/// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
+pub fn iroh_config_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let cfg = dirs_next::config_dir()
+        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
+    Ok(cfg.join(IROH_DIR))
+}
+
+/// Path that leads to a file in the iroh config directory.
+pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
+    let path = iroh_config_root()?.join(file_name);
+    Ok(path)
+}
+
+/// Returns the path to the user's iroh data directory.
+///
+/// If the `IROH_DATA_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
+///
+/// | Platform | Value                                         | Example                                  |
+/// | -------- | --------------------------------------------- | ---------------------------------------- |
+/// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
+/// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
+/// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
+pub fn iroh_data_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_DATA_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let path = dirs_next::data_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(IROH_DIR))
+}
+
+/// Path that leads to a file in the iroh data directory.
+pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
+    let path = iroh_data_root()?.join(file_name);
+    Ok(path)
+}
+
+/// Returns the path to the user's iroh cache directory.
+///
+/// If the `IROH_CACHE_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
+///
+/// | Platform | Value                                         | Example                                  |
+/// | -------- | --------------------------------------------- | ---------------------------------------- |
+/// | Linux    | `$XDG_CACHE_HOME`/iroh or `$HOME`/.cache/iroh | /home/.cache/iroh                        |
+/// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
+/// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
+pub fn iroh_cache_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_CACHE_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let path = dirs_next::cache_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(IROH_DIR))
+}
+
+/// Path that leads to a file in the iroh cache directory.
+pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
+    let path = iroh_cache_root()?.join(file_name);
+    Ok(path)
 }
 
 #[cfg(test)]

@@ -11,19 +11,24 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::blobs::Collection;
-use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
-use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
-use iroh::net::hp::derp::DerpMap;
-use iroh::pathbuf_from_name;
-use iroh::protocol::{GetRequest, RangeSpecSeq};
-use iroh::provider::{Database, Provider, Ticket};
-use iroh::rpc_protocol::*;
-use iroh::rpc_protocol::{
-    ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
+use iroh::bytes::{
+    blobs::Collection,
+    get::{
+        get_data_path, get_missing_range, get_missing_ranges,
+        get_response_machine::{ConnectedNext, EndBlobNext},
+    },
+    protocol::{GetRequest, RangeSpecSeq},
+    provider::{Database, Provider, Ticket},
+    rpc_protocol::*,
+    tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized},
+    util::pathbuf_from_name,
 };
-use iroh::tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized};
+use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use iroh::net::hp::derp::DerpMap;
+
+use iroh::bytes::{cid::Blake3Cid, get, provider, provider::FNAME_PATHS, Hash, Keypair, PeerId};
+use iroh::config::{iroh_config_path, iroh_data_root};
+use iroh::net::util::create_quinn_client;
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use range_collections::RangeSet2;
@@ -31,12 +36,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh::main_util::{create_quinn_client, iroh_config_path, iroh_data_root, Blake3Cid};
-use iroh::provider::FNAME_PATHS;
-use iroh::{get, provider, Hash, Keypair, PeerId};
-
 #[cfg(feature = "metrics")]
-use iroh::metrics::init_metrics;
+use iroh::net::metrics::init_metrics;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -514,8 +515,8 @@ fn main() -> Result<()> {
 
 async fn main_impl() -> Result<()> {
     let tokio = tokio::runtime::Handle::current();
-    let tpc = iroh::runtime::tpc::Runtime::new("io", num_cpus::get());
-    let rt = iroh::runtime::Runtime::new(tokio, tpc);
+    let tpc = iroh::bytes::runtime::tpc::Runtime::new("io", num_cpus::get());
+    let rt = iroh::bytes::runtime::Runtime::new(tokio, tpc);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
@@ -781,7 +782,7 @@ async fn provide(
     keylog: bool,
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
-    rt: &iroh::runtime::Handle,
+    rt: &iroh::bytes::runtime::Handle,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
@@ -818,7 +819,7 @@ fn make_rpc_endpoint(
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::provider::make_server_config(
+        iroh::bytes::provider::make_server_config(
             keypair,
             MAX_RPC_STREAMS,
             MAX_RPC_CONNECTIONS,
@@ -960,7 +961,7 @@ async fn get_to_file_single(
     };
     let header = curr.next();
     let final_path = out_dir.join(&name);
-    let tempname = blake3::Hash::from(hash).to_hex();
+    let tempname = iroh::bytes::Hash::from(hash).to_hex();
     let data_path = temp_dir.join(format!("{tempname}.data.part"));
     let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
     let data_file = tokio::fs::OpenOptions::new()
@@ -1093,7 +1094,7 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
 
         let curr = {
             let final_path = out_dir.join(&name);
-            let tempname = blake3::Hash::from(hash).to_hex();
+            let tempname = iroh::bytes::Hash::from(hash).to_hex();
             let data_path = temp_dir.join(format!("{tempname}.data.part"));
             let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
             let data_file = tokio::fs::OpenOptions::new()

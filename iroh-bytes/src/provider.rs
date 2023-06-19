@@ -59,7 +59,6 @@ mod database;
 mod ticket;
 
 pub use database::Database;
-#[cfg(feature = "cli")]
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
