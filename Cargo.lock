@@ -1587,6 +1587,7 @@ dependencies = [
  "backoff",
  "build-data",
  "bytes",
+ "clap",
  "crypto_box",
  "curve25519-dalek",
  "data-encoding",

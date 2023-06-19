@@ -52,9 +52,15 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-      
-    - name: tests
+
+    - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests
+      
+    - name: tests (no features)
+      run: cargo test --workspace --no-default-features --lib --bins --tests
+
+    - name: tests (default features)
+      run: cargo test --workspace --lib --bins --tests
 
     - name: doctests
       run: cargo test --workspace --all-features --doc
@@ -89,8 +95,14 @@ jobs:
     
     - uses: msys2/setup-msys2@v2
 
-    - name: tests
+    - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+
+    - name: tests (no features)
+      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+      
+    - name: tests (default features)
+      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
     name: Build release binaries
@@ -244,8 +256,14 @@ jobs:
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
-    - name: clippy check
-      run: cargo clippy --all-features --all-targets
+    - name: clippy check (all features)
+      run: cargo clippy --workspace --all-features --all-targets
+
+    - name: clippy check (no features)
+      run: cargo clippy --workspace --no-default-features --all-targets
+
+    - name: clippy check (default features)
+      run: cargo clippy --workspace --all-targets
 
   msrv:
     name: Minimal Supported Rust Version

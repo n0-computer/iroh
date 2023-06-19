@@ -16,7 +16,7 @@ use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
-use iroh::hp::{
+use iroh_net::hp::{
     derp::{
         self,
         http::{ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},

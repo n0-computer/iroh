@@ -30,7 +30,7 @@ impl Hash {
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0.as_bytes()
+        self.0.as_bytes()
     }
 
     pub fn to_hex(&self) -> String {
