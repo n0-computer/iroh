@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -7,6 +8,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
+use tabwriter::TabWriter;
 use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
@@ -34,6 +36,7 @@ use iroh::{
     },
     node::Node,
     rpc_protocol::*,
+    fake::FakeDB
 };
 use iroh_io::{AsyncSliceWriter, FileAdapter};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
@@ -42,25 +45,27 @@ use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
-/// Send data.
-///
-/// The iroh command line tool has two modes: provide and get.
-///
-/// The provide mode is a long-running process binding to a socket which the get mode
-/// contacts to request data.  By default the provide process also binds to an RPC port
-/// which allows adding additional data to be provided as well as a few other maintenance
-/// commands.
-///
-/// The get mode retrieves data from the provider, for this it needs the hash, provider
-/// address and PeerID as well as an authentication code.  The get-ticket subcommand is a
-/// shortcut to provide all this information conveniently in a single ticket.
+const IROH_DESCRIPTION: &str = "Iroh: blobs in space.
+
+Spaces are mutable, syncable, collaborative volumes of blobs. A Blob is whatever 
+bytes your use case needs to store & retrieve. Blobs could be movies, documents,
+JSON files, whatever. Iroh refers to blobs by hash, so we can get them from 
+anyone who has a copy of the blob you need, and trust we got the right thing.
+
+Use Iroh to create dynamic, peer-2-peer networks that collaborate on spaces to
+build a data model your app can use.
+
+For detailed info see https://iroh.computer";
+
 #[derive(Parser, Debug, Clone)]
 #[clap(version)]
+#[clap(about = IROH_DESCRIPTION)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -114,60 +119,32 @@ impl FromStr for ProviderRpcPort {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Diagnostic commands for the derp relay protocol.
-    Doctor {
-        /// Commands for doctor - defined in the mod
-        #[clap(subcommand)]
-        command: iroh::doctor::Commands,
-    },
-
-    /// Serve data from the given path.
-    ///
-    /// If PATH is a folder all files in that folder will be served.  If no PATH is
-    /// specified reads from STDIN.
-    Provide {
-        /// Path to initial file or directory to provide
-        path: Option<PathBuf>,
-        #[clap(long, short)]
-        /// Listening address to bind to
-        #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
-        addr: SocketAddr,
-        /// RPC port, set to "disabled" to disable RPC
-        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
-        rpc_port: ProviderRpcPort,
-    },
-    /// List availble content on the provider.
+    /// Run a server, manage networks, network utilities
     #[clap(subcommand)]
-    List(ListCommands),
-    /// Validate hashes on the running provider.
-    Validate {
+    Networks(NetworksCommands),
+    /// mutable, syncable, collaborative volumes of blobs
+    #[clap(subcommand)]
+    Spaces(iroh::spaces::Commands),
+    /// immutable, content-addressed data
+    #[clap(subcommand)]
+    Blobs(BlobsCommands),
+
+    /// other iroh nodes
+    #[clap(subcommand)]
+    Contacts(ContactsCommands),
+    /// Manage authorization tokens, revocations
+    #[clap(subcommand)]
+    Auth(AuthCommands),
+    /// Manage configuration
+    #[clap(subcommand)]
+    Config(ConfigCommands),
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum BlobsCommands {
+    /// List local blobs
+    List {
         /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// Shutdown provider.
-    Shutdown {
-        /// Shutdown mode.
-        ///
-        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
-        /// for all connections to close.
-        #[clap(long, default_value_t = false)]
-        force: bool,
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// Identify the running provider.
-    Id {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// Add data from PATH to the running provider's database.
-    Add {
-        /// The path to the file or folder to add
-        path: PathBuf,
-        /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
@@ -188,6 +165,23 @@ enum Commands {
         #[clap(long, default_value_t = false)]
         single: bool,
     },
+    /// Send blobs to a remote peer
+    Push {},
+    /// Validate hashes on the running provider.
+    Validate {
+        /// RPC port of the provider
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+
+    /// Add data from PATH to the running provider's database.
+    New {
+        /// The path to the file or folder to add
+        path: PathBuf,
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
     /// Fetch data from a provider using a ticket.
     ///
     /// The ticket contains all hash, authentication and connection information to connect
@@ -200,28 +194,358 @@ enum Commands {
         /// Ticket containing everything to retrieve the data from a provider.
         ticket: Ticket,
     },
+}
+
+async fn run_blob_command(
+    command: BlobsCommands,
+    keylog: bool,
+    config: &Config,
+) -> anyhow::Result<()> {
+    match command {
+        BlobsCommands::New { path, rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let absolute = path.canonicalize()?;
+            println!("Adding {} as {}...", path.display(), absolute.display());
+            let stream = client
+                .server_streaming(ProvideRequest { path: absolute })
+                .await?;
+            let (hash, entries) = aggregate_add_response(stream).await?;
+            print_add_response(hash, entries);
+            Ok(())
+        }
+        BlobsCommands::List { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let mut response = client.server_streaming(ListBlobsRequest).await?;
+            while let Some(item) = response.next().await {
+                let item = item?;
+                println!(
+                    "{} {} ({})",
+                    item.path.display(),
+                    Blake3Cid(item.hash),
+                    HumanBytes(item.size),
+                );
+            }
+            Ok(())
+        }
+        BlobsCommands::Push {} => {
+            println!("blobs push command");
+            Ok(())
+        }
+        BlobsCommands::Get {
+            hash,
+            peer,
+            addrs,
+            out,
+            single,
+        } => {
+            let opts = get::Options {
+                addrs,
+                peer_id: peer,
+                keylog,
+                derp_map: config.derp_map(),
+            };
+            let get = GetInteractive::Hash {
+                hash: *hash.as_hash(),
+                opts,
+                single,
+            };
+            tokio::select! {
+                biased;
+                res = get_interactive(get, out) => res,
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Ending transfer early...");
+                    Ok(())
+                }
+            }
+        }
+        BlobsCommands::GetTicket { out, ticket } => {
+            let get = GetInteractive::Ticket {
+                ticket,
+                keylog,
+                derp_map: config.derp_map(),
+            };
+            tokio::select! {
+                biased;
+                res = get_interactive(get, out) => res,
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Ending transfer early...");
+                    Ok(())
+                }
+            }
+        }
+        BlobsCommands::Validate { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let mut state = ValidateProgressState::new();
+            let mut response = client.server_streaming(ValidateRequest).await?;
+
+            while let Some(item) = response.next().await {
+                match item? {
+                    ValidateProgress::Starting { total } => {
+                        state.starting(total);
+                    }
+                    ValidateProgress::Entry {
+                        id,
+                        hash,
+                        path,
+                        size,
+                    } => {
+                        state.add_entry(id, hash, path, size);
+                    }
+                    ValidateProgress::Progress { id, offset } => {
+                        state.progress(id, offset);
+                    }
+                    ValidateProgress::Done { id, error } => {
+                        state.done(id, error);
+                    }
+                    ValidateProgress::Abort(error) => {
+                        state.abort(error.to_string());
+                        break;
+                    }
+                    ValidateProgress::AllDone => {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ContactsCommands {
+    /// Identify the running provider.
+    Me {
+        /// RPC port of the provider
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    List {},
+}
+
+async fn run_contacts_command(command: ContactsCommands, _config: &Config) -> anyhow::Result<()> {
+    match command {
+        ContactsCommands::Me { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(IdRequest).await?;
+
+            println!("Listening address: {:#?}", response.listen_addrs);
+            println!("PeerID: {}", response.peer_id);
+            Ok(())
+        }
+        ContactsCommands::List {} => {
+            println!("contacts list command");
+            Ok(())
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthCommands {
+    List {},
+}
+
+fn run_auth_command(command: AuthCommands, _config: &Config) -> anyhow::Result<()> {
+    match command {
+        AuthCommands::List {} => {
+            println!("auth list command");
+            Ok(())
+        }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum NetworksCommands {
+    /// Diagnostic commands for the derp relay protocol.
+    Doctor {
+        /// Commands for doctor - defined in the mod
+        #[clap(subcommand)]
+        command: iroh::doctor::Commands,
+    },
+
+    /// Serve data from the given path.
+    ///
+    /// If PATH is a folder all files in that folder will be served.  If no PATH is
+    /// specified reads from STDIN.
+    Serve {
+        /// Path to initial file or directory to provide
+        path: Option<PathBuf>,
+        #[clap(long, short)]
+        /// Listening address to bind to
+        #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
+        addr: SocketAddr,
+        /// RPC port, set to "disabled" to disable RPC
+        #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
+        rpc_port: ProviderRpcPort,
+    },
+    Status {
+        /// RPC port of the provider
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
+    /// Shutdown provider.
+    Shutdown {
+        /// Shutdown mode.
+        ///
+        /// Hard shutdown will immediately terminate the process, soft shutdown will wait
+        /// for all connections to close.
+        #[clap(long, default_value_t = false)]
+        force: bool,
+        /// RPC port of the provider
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    },
     /// List listening addresses of the provider.
     Addresses {
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
+    /// List known networks
+    List {
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    }
+}
+
+async fn run_networks_command(
+    command: NetworksCommands,
+    keylog: bool,
+    rt: &iroh::bytes::runtime::Handle,
+    config: &Config,
+) -> anyhow::Result<()> {
+    match command {
+        NetworksCommands::Status { .. } => {
+            println!("network status command");
+            Ok(())
+        }
+        NetworksCommands::Addresses { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            let response = client.rpc(AddrsRequest).await?;
+            println!("Listening addresses: {:?}", response.addrs);
+            Ok(())
+        }
+        NetworksCommands::Doctor { command } => iroh::doctor::run(command, &config).await,
+        NetworksCommands::List{ .. } => {
+            let path = FakeDB::default_path()?;
+            let db = FakeDB::load_or_create(&path)?;
+            let mut tw = TabWriter::new(vec![]).padding(4);
+            tw.write_all(b"default\tname\tID\n")?;
+            for ntwk in db.networks {
+                if ntwk.is_default {
+                    tw.write_all(format!("*\t{}\t{}\n", ntwk.name, ntwk.id).as_bytes())?;
+                } else {
+                    tw.write_all(format!("\t{}\t{}\n", ntwk.name, ntwk.id).as_bytes())?;
+                }
+            }
+            tw.flush()?;
+            let out = String::from_utf8(tw.into_inner()?)?;
+            println!("{}", out);
+
+            Ok(())
+        }
+        NetworksCommands::Serve {
+            path,
+            addr,
+            rpc_port,
+        } => {
+            let iroh_data_root = iroh_data_root()?;
+            let marker = iroh_data_root.join(FNAME_PATHS);
+            let db = {
+                if iroh_data_root.is_dir() && marker.exists() {
+                    // try to load db
+                    Database::load(&iroh_data_root).await.with_context(|| {
+                        format!(
+                            "Failed to load iroh database from {}",
+                            iroh_data_root.display()
+                        )
+                    })?
+                } else {
+                    // directory does not exist, create an empty db
+                    Database::default()
+                }
+            };
+            let key = Some(iroh_data_root.join("keypair"));
+
+            let provider = provide(
+                db.clone(),
+                addr,
+                key,
+                keylog,
+                rpc_port.into(),
+                config.derp_map(),
+                rt,
+            )
+            .await?;
+            let controller = provider.controller();
+
+            // task that will add data to the provider, either from a file or from stdin
+            let fut = {
+                let provider = provider.clone();
+                tokio::spawn(async move {
+                    let (path, tmp_path) = if let Some(path) = path {
+                        let absolute = path.canonicalize()?;
+                        println!("Adding {} as {}...", path.display(), absolute.display());
+                        (absolute, None)
+                    } else {
+                        // Store STDIN content into a temporary file
+                        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                        let mut file = tokio::fs::File::from_std(file);
+                        let path_buf = path.to_path_buf();
+                        // Copy from stdin to the file, until EOF
+                        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                        println!("Adding from stdin...");
+                        // return the TempPath to keep it alive
+                        (path_buf, Some(path))
+                    };
+                    // tell the provider to add the data
+                    let stream = controller.server_streaming(ProvideRequest { path }).await?;
+                    let (hash, entries) = aggregate_add_response(stream).await?;
+                    print_add_response(hash, entries);
+                    let ticket = provider.ticket(hash).await?;
+                    println!("All-in-one ticket: {ticket}");
+                    anyhow::Ok(tmp_path)
+                })
+            };
+
+            let provider2 = provider.clone();
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Shutting down provider...");
+                    provider2.shutdown();
+                }
+                res = provider => {
+                    res?;
+                }
+            }
+            // persist the db to disk.
+            db.save(&iroh_data_root).await?;
+
+            // the future holds a reference to the temp file, so we need to
+            // keep it for as long as the provider is running. The drop(fut)
+            // makes this explicit.
+            fut.abort();
+            drop(fut);
+            Ok(())
+        }
+        NetworksCommands::Shutdown { force, rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
+            client.rpc(ShutdownRequest { force }).await?;
+            Ok(())
+        }
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ListCommands {
-    /// List the available blobs on the running provider.
-    Blobs {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
-    /// List the available collections on the running provider.
-    Collections {
-        /// RPC port of the provider
-        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
-        rpc_port: u16,
-    },
+enum ConfigCommands {
+    Show{},
+}
+
+fn run_config_command(command: ConfigCommands, _config: &Config) -> anyhow::Result<()> {
+    match command {
+        ConfigCommands::Show{} => { println!("show config command"); Ok(()) }
+    }
 }
 
 // Note about writing to STDOUT vs STDERR
@@ -542,232 +866,12 @@ async fn main_impl() -> Result<()> {
     let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
 
     let r = match cli.command {
-        Commands::Get {
-            hash,
-            peer,
-            addrs,
-            out,
-            single,
-        } => {
-            let opts = get::Options {
-                addrs,
-                peer_id: peer,
-                keylog: cli.keylog,
-                derp_map: config.derp_map(),
-            };
-            let get = GetInteractive::Hash {
-                hash: *hash.as_hash(),
-                opts,
-                single,
-            };
-            tokio::select! {
-                biased;
-                res = get_interactive(get, out) => res,
-                _ = tokio::signal::ctrl_c() => {
-                    println!("Ending transfer early...");
-                    Ok(())
-                }
-            }
-        }
-        Commands::GetTicket { out, ticket } => {
-            let get = GetInteractive::Ticket {
-                ticket,
-                keylog: cli.keylog,
-                derp_map: config.derp_map(),
-            };
-            tokio::select! {
-                biased;
-                res = get_interactive(get, out) => res,
-                _ = tokio::signal::ctrl_c() => {
-                    println!("Ending transfer early...");
-                    Ok(())
-                }
-            }
-        }
-        Commands::Provide {
-            path,
-            addr,
-            rpc_port,
-        } => {
-            let iroh_data_root = iroh_data_root()?;
-            let marker = iroh_data_root.join(FNAME_PATHS);
-            let db = {
-                if iroh_data_root.is_dir() && marker.exists() {
-                    // try to load db
-                    Database::load(&iroh_data_root).await.with_context(|| {
-                        format!(
-                            "Failed to load iroh database from {}",
-                            iroh_data_root.display()
-                        )
-                    })?
-                } else {
-                    // directory does not exist, create an empty db
-                    Database::default()
-                }
-            };
-            let key = Some(iroh_data_root.join("keypair"));
-
-            let provider = provide(
-                db.clone(),
-                addr,
-                key,
-                cli.keylog,
-                rpc_port.into(),
-                config.derp_map(),
-                &rt,
-            )
-            .await?;
-            let controller = provider.controller();
-
-            // task that will add data to the provider, either from a file or from stdin
-            let fut = {
-                let provider = provider.clone();
-                tokio::spawn(async move {
-                    let (path, tmp_path) = if let Some(path) = path {
-                        let absolute = path.canonicalize()?;
-                        println!("Adding {} as {}...", path.display(), absolute.display());
-                        (absolute, None)
-                    } else {
-                        // Store STDIN content into a temporary file
-                        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                        let mut file = tokio::fs::File::from_std(file);
-                        let path_buf = path.to_path_buf();
-                        // Copy from stdin to the file, until EOF
-                        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                        println!("Adding from stdin...");
-                        // return the TempPath to keep it alive
-                        (path_buf, Some(path))
-                    };
-                    // tell the provider to add the data
-                    let stream = controller.server_streaming(ProvideRequest { path }).await?;
-                    let (hash, entries) = aggregate_add_response(stream).await?;
-                    print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash).await?;
-                    println!("All-in-one ticket: {ticket}");
-                    anyhow::Ok(tmp_path)
-                })
-            };
-
-            let provider2 = provider.clone();
-            tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    println!("Shutting down provider...");
-                    provider2.shutdown();
-                }
-                res = provider => {
-                    res?;
-                }
-            }
-            // persist the db to disk.
-            db.save(&iroh_data_root).await?;
-
-            // the future holds a reference to the temp file, so we need to
-            // keep it for as long as the provider is running. The drop(fut)
-            // makes this explicit.
-            fut.abort();
-            drop(fut);
-            Ok(())
-        }
-        Commands::List(ListCommands::Blobs { rpc_port }) => {
-            let client = make_rpc_client(rpc_port).await?;
-            let mut response = client.server_streaming(ListBlobsRequest).await?;
-            while let Some(item) = response.next().await {
-                let item = item?;
-                println!(
-                    "{} {} ({})",
-                    item.path.display(),
-                    Blake3Cid(item.hash),
-                    HumanBytes(item.size),
-                );
-            }
-            Ok(())
-        }
-        Commands::List(ListCommands::Collections { rpc_port }) => {
-            let client = make_rpc_client(rpc_port).await?;
-            let mut response = client.server_streaming(ListCollectionsRequest).await?;
-            while let Some(collection) = response.next().await {
-                let collection = collection?;
-                println!(
-                    "{}: {} {} ({})",
-                    Blake3Cid(collection.hash),
-                    collection.total_blobs_count,
-                    if collection.total_blobs_count > 1 {
-                        "blobs"
-                    } else {
-                        "blob"
-                    },
-                    HumanBytes(collection.total_blobs_size),
-                );
-            }
-            Ok(())
-        }
-        Commands::Validate { rpc_port } => {
-            let client = make_rpc_client(rpc_port).await?;
-            let mut state = ValidateProgressState::new();
-            let mut response = client.server_streaming(ValidateRequest).await?;
-
-            while let Some(item) = response.next().await {
-                match item? {
-                    ValidateProgress::Starting { total } => {
-                        state.starting(total);
-                    }
-                    ValidateProgress::Entry {
-                        id,
-                        hash,
-                        path,
-                        size,
-                    } => {
-                        state.add_entry(id, hash, path, size);
-                    }
-                    ValidateProgress::Progress { id, offset } => {
-                        state.progress(id, offset);
-                    }
-                    ValidateProgress::Done { id, error } => {
-                        state.done(id, error);
-                    }
-                    ValidateProgress::Abort(error) => {
-                        state.abort(error.to_string());
-                        break;
-                    }
-                    ValidateProgress::AllDone => {
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        }
-        Commands::Shutdown { force, rpc_port } => {
-            let client = make_rpc_client(rpc_port).await?;
-            client.rpc(ShutdownRequest { force }).await?;
-            Ok(())
-        }
-        Commands::Id { rpc_port } => {
-            let client = make_rpc_client(rpc_port).await?;
-            let response = client.rpc(IdRequest).await?;
-
-            println!("Listening address: {:#?}", response.listen_addrs);
-            println!("PeerID: {}", response.peer_id);
-            Ok(())
-        }
-        Commands::Add { path, rpc_port } => {
-            let client = make_rpc_client(rpc_port).await?;
-            let absolute = path.canonicalize()?;
-            println!("Adding {} as {}...", path.display(), absolute.display());
-            let stream = client
-                .server_streaming(ProvideRequest { path: absolute })
-                .await?;
-            let (hash, entries) = aggregate_add_response(stream).await?;
-            print_add_response(hash, entries);
-            Ok(())
-        }
-        Commands::Addresses { rpc_port } => {
-            let client = make_rpc_client(rpc_port).await?;
-            let response = client.rpc(AddrsRequest).await?;
-            println!("Listening addresses: {:?}", response.addrs);
-            Ok(())
-        }
-        Commands::Doctor { command } => iroh::doctor::run(command, &config).await,
+        Commands::Spaces(spaces) => iroh::spaces::run(spaces, &config).await,
+        Commands::Blobs(blobs) => run_blob_command(blobs, cli.keylog, &config).await,
+        Commands::Networks(network) => run_networks_command(network, cli.keylog, &rt, &config).await,
+        Commands::Auth(auth) => run_auth_command(auth, &config),
+        Commands::Contacts(contacts) => run_contacts_command(contacts, &config).await,
+        Commands::Config(command) => run_config_command(command, &config),
     };
 
     #[cfg(feature = "metrics")]

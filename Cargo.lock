@@ -1380,6 +1380,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4a1e36c821dbe04574f602848a19f742f4fb3c98d40449f11bcad18d6b17421"
 
 [[package]]
+name = "humantime"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
+
+[[package]]
 name = "hyper"
 version = "0.14.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1547,15 +1553,18 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "blake3",
+ "chrono",
  "clap",
  "config",
  "console",
+ "data-encoding",
  "derive_more",
  "dirs-next",
  "duct",
  "flume",
  "futures",
  "hex",
+ "humantime",
  "indicatif",
  "iroh-bytes",
  "iroh-io",
@@ -1571,6 +1580,8 @@ dependencies = [
  "range-collections",
  "regex",
  "serde",
+ "serde_json",
+ "tabwriter",
  "tempfile",
  "testdir",
  "tokio",
@@ -3612,6 +3623,15 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "tabwriter"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36205cfc997faadcc4b0b87aaef3fbedafe20d38d4959a7ca6ff803564051111"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]
