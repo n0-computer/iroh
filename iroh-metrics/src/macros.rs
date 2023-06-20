@@ -6,7 +6,7 @@ macro_rules! record {
     ( $e:expr, $v:expr) => {{
         #[cfg(feature = "metrics")]
         {
-            use $crate::metrics::core::MRecorder;
+            use $crate::core::MRecorder;
             $e.record($v);
         }
         #[cfg(not(feature = "metrics"))]
@@ -28,7 +28,7 @@ macro_rules! inc {
         {
             #[cfg(feature = "metrics")]
             {
-                use $crate::metrics::core::MRecorder;
+                use $crate::core::MRecorder;
                 $e.record(1);
             }
             #[cfg(not(feature = "metrics"))]
@@ -118,12 +118,12 @@ macro_rules! make_metric_recorders {
             }
 
             #[cfg(feature = "metrics")]
-            impl $crate::metrics::core::MetricsRecorder for Metrics {
+            impl $crate::core::MetricsRecorder for Metrics {
                 fn record<M>(&self, m: M, value: u64)
                 where
-                    M: $crate::metrics::core::MetricType + std::fmt::Display,
+                    M: $crate::core::MetricType + std::fmt::Display,
                 {
-                    use $crate::metrics::core::MetricType;
+                    use $crate::core::MetricType;
                     match m.name() {
                         $(
                             x if x ==  [<$module_name Metrics>]::$name.name() => {
@@ -139,14 +139,14 @@ macro_rules! make_metric_recorders {
 
                 fn observe<M>(&self, m: M, _value: f64)
                 where
-                    M: $crate::metrics::core::HistogramType + std::fmt::Display,
+                    M: $crate::core::HistogramType + std::fmt::Display,
                 {
                     tracing::error!("observe ([<$module_name:snake>]): unknown metric {}", m.name());
                 }
             }
 
             #[cfg(feature = "metrics")]
-            impl $crate::metrics::core::MetricType for [<$module_name Metrics>] {
+            impl $crate::core::MetricType for [<$module_name Metrics>] {
                 fn name(&self) -> &'static str {
                     match self {
                         $(
@@ -159,10 +159,10 @@ macro_rules! make_metric_recorders {
             }
 
             #[cfg(feature = "metrics")]
-            impl $crate::metrics::core::MRecorder for  [<$module_name Metrics>] {
+            impl $crate::core::MRecorder for  [<$module_name Metrics>] {
                 fn record(&self, value: u64) {
-                    $crate::metrics::core::record(
-                        $crate::metrics::core::Collector::$module_name,
+                    $crate::core::record(
+                        $crate::core::Collector::$module_name,
                         self.clone(),
                         value
                     );
@@ -173,7 +173,7 @@ macro_rules! make_metric_recorders {
             #[cfg(feature = "metrics")]
             impl std::fmt::Display for  [<$module_name Metrics>] {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    use $crate::metrics::core::MetricType;
+                    use $crate::core::MetricType;
 
                     write!(f, "{}", self.name())
                 }

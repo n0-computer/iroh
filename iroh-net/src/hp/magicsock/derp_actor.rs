@@ -7,17 +7,14 @@ use std::{
 
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
+use iroh_metrics::{inc, magicsock::MagicsockMetrics, record};
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::{
-    hp::{
-        derp::{self, DerpMap, MAX_PACKET_SIZE},
-        key::{self, node::PUBLIC_KEY_LENGTH},
-    },
-    metrics::magicsock::MagicsockMetrics,
-    metrics::{inc, record},
+use crate::hp::{
+    derp::{self, DerpMap, MAX_PACKET_SIZE},
+    key::{self, node::PUBLIC_KEY_LENGTH},
 };
 
 use super::conn::{ActorMessage, Inner};

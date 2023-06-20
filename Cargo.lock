@@ -1532,6 +1532,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh-bytes",
+ "iroh-metrics",
  "iroh-net",
  "multibase",
  "nix",
@@ -1594,6 +1595,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-metrics"
+version = "0.4.1"
+dependencies = [
+ "hyper",
+ "once_cell",
+ "paste",
+ "prometheus-client",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "iroh-net"
 version = "0.4.1"
 dependencies = [
@@ -1616,13 +1630,12 @@ dependencies = [
  "hostname",
  "http",
  "hyper",
+ "iroh-metrics",
  "libc",
  "netlink-packet-route",
  "once_cell",
  "os_info",
- "paste",
  "postcard",
- "prometheus-client",
  "quinn",
  "quinn-proto",
  "quinn-udp",

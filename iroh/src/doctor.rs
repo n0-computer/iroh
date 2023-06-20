@@ -25,6 +25,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
+use iroh_metrics::core::CORE;
+
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum PrivateKey {
     /// Generate random private key
@@ -257,7 +259,7 @@ impl Gui {
     }
 
     fn update_counters(target: &ProgressBar) {
-        let metrics = &iroh_net::metrics::core::CORE;
+        let metrics = &CORE;
         if metrics.is_enabled() {
             let mm = metrics.magicsock_metrics();
             let send_ipv4 = HumanBytes(mm.send_ipv4.get());

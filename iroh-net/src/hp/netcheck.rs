@@ -16,6 +16,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
     Future, FutureExt,
 };
+use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use rand::seq::IteratorRandom;
 use tokio::{
     net::UdpSocket,
@@ -26,11 +27,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::{
-    metrics::inc,
-    metrics::netcheck::NetcheckMetrics,
-    net::{interfaces, ip::to_canonical},
-};
+use crate::net::{interfaces, ip::to_canonical};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 

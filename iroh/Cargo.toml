@@ -19,6 +19,7 @@ flume = "0.10.14"
 futures = "0.3.25"
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
+iroh-metrics = { path = "../iroh-metrics", optional = true }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
 serde = { version = "1", features = ["derive"] }
@@ -43,9 +44,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 
 [features]
-default = ["cli"]
+default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
-metrics = ["iroh-net/metrics"]
+metrics = ["iroh-metrics"]
 test = []
 
 [dev-dependencies]
