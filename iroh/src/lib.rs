@@ -10,3 +10,5 @@ pub mod rpc_protocol;
 pub mod config;
 #[cfg(feature = "cli")]
 pub mod doctor;
+#[cfg(feature = "cli")]
+pub mod spaces;
