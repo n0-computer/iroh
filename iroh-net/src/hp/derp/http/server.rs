@@ -28,8 +28,9 @@ use tracing::{debug, debug_span, error, info, warn, Instrument};
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::{
     derp::{
-        http::client::Client as HttpClient, server::ClientConnHandler, server::MaybeTlsStream,
-        types::MeshKey, types::PacketForwarder, MaybeTlsStreamServer,
+        http::client::Client as HttpClient, http::mesh_clients::MeshClients,
+        server::ClientConnHandler, server::MaybeTlsStream, types::MeshKey, types::PacketForwarder,
+        DerpMap, MaybeTlsStreamServer,
     },
     key::node::SecretKey,
 };
@@ -73,6 +74,7 @@ pub struct Server {
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
+    mesh_clients: MeshClients,
 }
 
 impl Server {
@@ -81,6 +83,11 @@ impl Server {
         if let Some(server) = self.server {
             server.close().await;
         }
+
+        if let Err(e) = self.mesh_clients.shutdown().await {
+            warn!("Error shutting down mesh clients: {e:?}");
+        }
+
         self.cancel_server_loop.cancel();
         if let Err(e) = self.http_server_task.await {
             warn!("Error shutting down server: {e:?}");
@@ -121,6 +128,11 @@ pub struct ServerBuilder {
     /// Optional MeshKey for this server. When it exists it will ensure that This
     /// server will only mesh with other servers with the same key.
     mesh_key: Option<MeshKey>,
+    /// Optional DerpMap that details the other derp servers this server should
+    /// attempt to mesh with.
+    /// Having a `mesh_derp_map` but no `mesh_key` when attempting to `spawn` a
+    /// `Server` results in an error.
+    mesh_derp_map: Option<DerpMap>,
     /// Optional tls configuration/TlsAcceptor combination.
     ///
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
@@ -149,6 +161,7 @@ impl ServerBuilder {
             secret_key: None,
             addr,
             mesh_key: None,
+            mesh_derp_map: None,
             tls_config: None,
             handlers: Default::default(),
             derp_endpoint: "/derp",
@@ -168,6 +181,14 @@ impl ServerBuilder {
     /// The MeshKey for the mesh network this server belongs to.
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
+        self
+    }
+
+    /// The `DerpMap` describing the different derpers this server should
+    /// attempt to mesh with. If a `DerpMap` exists on the `ServerBuilder`,
+    /// but no `MeshKey`, `ServerBuilder::spawn` will error.
+    pub fn mesh_derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
+        self.mesh_derp_map = derp_map;
         self
     }
 
@@ -255,11 +276,14 @@ impl ServerBuilder {
             self.headers,
         );
 
+        let mesh_clients = MeshClients::new();
+
         let server_state = ServerState {
             addr: self.addr,
             tls_config: self.tls_config,
             server: derp_server,
             service,
+            mesh_clients,
         };
 
         server_state.serve().await
@@ -272,12 +296,13 @@ pub struct ServerState {
     tls_config: Option<TlsConfig>,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     service: DerpService,
+    mesh_clients: MeshClients,
 }
 
 impl ServerState {
     // Binds a TCP listener on `addr` and handles content using HTTPS.
     // Returns the local `SocketAddr` on which the server is listening.
-    async fn serve(self) -> Result<Server> {
+    async fn serve(mut self) -> Result<Server> {
         let listener = TcpListener::bind(&self.addr)
             .await
             .context("failed to bind https")?;
@@ -319,11 +344,16 @@ impl ServerState {
             }
             set.shutdown().await;
         }.instrument(debug_span!("serve")));
+
+        // start meshing
+        self.mesh_clients.mesh().await?;
+
         Ok(Server {
             addr,
             server: self.server,
             http_server_task: task,
             cancel_server_loop,
+            mesh_clients: self.mesh_clients,
         })
     }
 }

@@ -1,4 +1,5 @@
 mod client;
+mod mesh_clients;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};
