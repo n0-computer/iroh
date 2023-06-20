@@ -215,7 +215,7 @@ pub mod get_response_machine {
     use std::result;
 
     use crate::{
-        protocol::{read_lp, GetRequest},
+        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
         tokio_util::ConcatenateSliceWriter,
     };
 
@@ -229,14 +229,13 @@ pub mod get_response_machine {
         Leaf, Parent,
     };
     use derive_more::From;
-    use ouroboros::self_referencing;
 
-    #[self_referencing]
-    struct RangesIterInner {
-        owner: RangeSpecSeq,
-        #[borrows(owner)]
-        #[covariant]
-        iter: crate::protocol::NonEmptyRequestRangeSpecIter<'this>,
+    self_cell::self_cell! {
+        struct RangesIterInner {
+            owner: RangeSpecSeq,
+            #[covariant]
+            dependent: NonEmptyRequestRangeSpecIter,
+        }
     }
 
     /// Owned iterator for the ranges in a request
@@ -261,7 +260,7 @@ pub mod get_response_machine {
         type Item = (u64, RangeSet2<ChunkNum>);
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.0.with_iter_mut(|iter| {
+            self.0.with_dependent_mut(|_owner, iter| {
                 iter.next()
                     .map(|(offset, ranges)| (offset, ranges.to_chunk_ranges()))
             })
@@ -945,8 +944,8 @@ impl FilePaths {
     fn new(hash: &Hash, name: &str, temp_dir: &Path, target_dir: &Path) -> Self {
         let target = target_dir.join(pathbuf_from_name(name));
         let hash = blake3::Hash::from(*hash).to_hex();
-        let temp = temp_dir.join(format!("{}.data.part", hash));
-        let outboard = temp_dir.join(format!("{}.outboard.part", hash));
+        let temp = temp_dir.join(format!("{hash}.data.part"));
+        let outboard = temp_dir.join(format!("{hash}.outboard.part"));
         Self {
             target,
             temp,
@@ -966,7 +965,7 @@ impl FilePaths {
 /// get data path for a hash
 pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
     let hash = blake3::Hash::from(hash).to_hex();
-    data_path.join(format!("{}.data", hash))
+    data_path.join(format!("{hash}.data"))
 }
 
 /// Load a collection from a data path

@@ -833,6 +833,7 @@ impl Actor {
                     }
                 }
                 Some(msg) = self.ip_receiver.recv() => {
+                    trace!("tick: ip_receiver");
                     match msg {
                         IpPacket::Disco { source, sealed_box, src } => {
                             self.handle_disco_message(source, &sealed_box, src, None).await;
@@ -1506,12 +1507,10 @@ impl Actor {
             link_type: None,
         };
         for (rid, d) in &r.region_v4_latency {
-            ni.derp_latency
-                .insert(format!("{}-v4", rid), d.as_secs_f64());
+            ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
         }
         for (rid, d) in &r.region_v6_latency {
-            ni.derp_latency
-                .insert(format!("{}-v6", rid), d.as_secs_f64());
+            ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
         }
 
         if ni.preferred_derp == 0 {
@@ -2113,8 +2112,7 @@ impl Actor {
 
         if num_nodes == 0 {
             warn!(
-                "[unexpected] got disco ping from {:?}/{:?} for node not in peers",
-                src, derp_node_src
+                "[unexpected] got disco ping from {src:?}/{derp_node_src:?} for node not in peers",
             );
             return;
         }
@@ -2123,11 +2121,11 @@ impl Actor {
             let ping_node_src_str = if num_nodes > 1 {
                 "[one-of-multi]".to_string()
             } else {
-                format!("{:?}", dst_key)
+                format!("{dst_key:?}")
             };
             info!(
-                "disco: {:?}<-{:?} ({:?}, {:?})  got ping tx={:?}",
-                self.conn.public_key, di.node_key, ping_node_src_str, src, dm.tx_id
+                "disco: {:?}<-{:?} ({ping_node_src_str:?}, {src:?})  got ping tx={:?}",
+                self.conn.public_key, di.node_key, dm.tx_id
             );
         }
 
@@ -2138,7 +2136,7 @@ impl Actor {
         });
         let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
-            warn!("failed to send disco message to {}: {:?}", ip_dst, err);
+            warn!("failed to send disco message to {ip_dst}: {err:?}");
         }
     }
 
@@ -2474,7 +2472,6 @@ impl std::fmt::Display for QuicMappedAddr {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use hyper::server::conn::Http;
     use rand::RngCore;
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
@@ -2613,51 +2610,21 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    async fn run_derp_and_stun(stun_ip: IpAddr) -> Result<(DerpMap, impl FnOnce())> {
+    async fn run_derp_and_stun(
+        stun_ip: IpAddr,
+    ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
         // TODO: pass a mesh_key?
-        let derp_server: derp::Server<
-            net::tcp::OwnedReadHalf,
-            net::tcp::OwnedWriteHalf,
-            derp::http::Client,
-        > = derp::Server::new(key::node::SecretKey::generate(), None);
 
-        let http_listener = net::TcpListener::bind("127.0.0.1:0").await?;
-        let http_addr = http_listener.local_addr()?;
-        println!("DERP listening on {:?}", http_addr);
+        let server_key = key::node::SecretKey::generate();
+        let tls_config = crate::hp::derp::http::make_tls_config();
+        let server = crate::hp::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(server_key))
+            .tls_config(Some(tls_config))
+            .spawn()
+            .await?;
 
-        let (derp_shutdown, mut rx) = sync::oneshot::channel::<()>();
-
-        // TODO: TLS
-        // httpsrv.StartTLS()
-
-        tokio::task::spawn(async move {
-            let derp_client_handler = derp_server.client_conn_handler(Default::default());
-
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut rx => {
-                        derp_server.close().await;
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    conn = http_listener.accept() => {
-                        trace!("accepted derp connection");
-                        let (stream, _) = conn?;
-                        let derp_client_handler = derp_client_handler.clone();
-                        tokio::task::spawn(async move {
-                            if let Err(err) = Http::new()
-                                .serve_connection(stream, derp_client_handler)
-                                .with_upgrades()
-                                .await
-                            {
-                                eprintln!("Failed to serve connection: {:?}", err);
-                            }
-                        });
-                    }
-                }
-            }
-        });
+        let https_addr = server.addr();
+        println!("DERP listening on {:?}", https_addr);
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
         let m = DerpMap {
@@ -2675,7 +2642,7 @@ mod tests {
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
 
-                        derp_port: http_addr.port(),
+                        derp_port: https_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
@@ -2685,10 +2652,12 @@ mod tests {
             .collect(),
         };
 
-        let cleanup = || {
-            println!("CLEANUP");
-            stun_cleanup.send(()).unwrap();
-            derp_shutdown.send(()).unwrap();
+        let cleanup = move || {
+            Box::pin(async move {
+                println!("CLEANUP");
+                stun_cleanup.send(()).unwrap();
+                server.shutdown().await;
+            }) as BoxFuture<'static, ()>
         };
 
         Ok((m, cleanup))
@@ -3025,7 +2994,7 @@ mod tests {
         }
 
         println!("cleaning up");
-        cleanup();
+        cleanup().await;
         cleanup_mesh();
         Ok(())
     }
@@ -3075,7 +3044,7 @@ mod tests {
             assert!(m2.conn.is_closed());
 
             println!("cleaning up");
-            cleanup();
+            cleanup().await;
             cleanup_mesh();
         }
         Ok(())

@@ -411,20 +411,20 @@ where
     while let Some(item) = stream.next().await {
         match item? {
             ProvideProgress::Found { name, id, size } => {
-                tracing::info!("Found({},{},{})", id, name, size);
+                tracing::info!("Found({id},{name},{size})");
                 if let Some(mp) = mp.as_mut() {
                     mp.found(name.clone(), id, size);
                 }
                 collections.insert(id, (name, size, None));
             }
             ProvideProgress::Progress { id, offset } => {
-                tracing::info!("Progress({}, {})", id, offset);
+                tracing::info!("Progress({id}, {offset})");
                 if let Some(mp) = mp.as_mut() {
                     mp.progress(id, offset);
                 }
             }
             ProvideProgress::Done { hash, id } => {
-                tracing::info!("Done({},{:?})", id, hash);
+                tracing::info!("Done({id},{hash:?})");
                 if let Some(mp) = mp.as_mut() {
                     mp.done(id, hash);
                 }
@@ -433,12 +433,12 @@ where
                         *h = Some(hash);
                     }
                     None => {
-                        anyhow::bail!("Got Done for unknown collection id {}", id);
+                        anyhow::bail!("Got Done for unknown collection id {id}");
                     }
                 }
             }
             ProvideProgress::AllDone { hash } => {
-                tracing::info!("AllDone({:?})", hash);
+                tracing::info!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }
@@ -449,7 +449,7 @@ where
                 if let Some(mp) = mp.take() {
                     mp.error();
                 }
-                anyhow::bail!("Error while adding data: {}", e);
+                anyhow::bail!("Error while adding data: {e}");
             }
         }
     }
@@ -457,7 +457,7 @@ where
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let _hash = hash.context(format!("Missing hash for {}", name))?;
+            let _hash = hash.context(format!("Missing hash for {name}"))?;
             Ok(ProvideResponseEntry { name, size })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -481,15 +481,16 @@ const PROGRESS_STYLE: &str =
 #[cfg(feature = "metrics")]
 fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
+    rt: &iroh::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     init_metrics();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
-        return Some(tokio::spawn(async move {
+        return Some(rt.spawn(async move {
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
-                    eprintln!("Failed to start metrics server: {}", e);
+                    eprintln!("Failed to start metrics server: {e}");
                 });
         }));
     }
@@ -499,6 +500,8 @@ fn init_metrics_collection(
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("main-runtime")
+        .worker_threads(2)
         .enable_all()
         .build()?;
     rt.block_on(main_impl())?;
@@ -510,11 +513,13 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
+    let tokio = tokio::runtime::Handle::current();
+    let tpc = iroh::runtime::tpc::Runtime::new("io", num_cpus::get());
+    let rt = iroh::runtime::Runtime::new(tokio, tpc);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
         .init();
-
     let cli = Cli::parse();
 
     let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
@@ -530,7 +535,7 @@ async fn main_impl() -> Result<()> {
     )?;
 
     #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr);
+    let metrics_fut = init_metrics_collection(cli.metrics_addr, rt.handle());
 
     let r = match cli.command {
         Commands::Get {
@@ -605,6 +610,7 @@ async fn main_impl() -> Result<()> {
                 cli.keylog,
                 rpc_port.into(),
                 config.derp_map(),
+                rt.handle(),
             )
             .await?;
             let controller = provider.controller();
@@ -775,6 +781,7 @@ async fn provide(
     keylog: bool,
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
+    rt: &iroh::runtime::Handle,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
 
@@ -782,7 +789,7 @@ async fn provide(
     if let Some(dm) = dm {
         builder = builder.derp_map(dm);
     }
-    let builder = builder.bind_addr(addr);
+    let builder = builder.bind_addr(addr).runtime(rt);
 
     let provider = if let Some(rpc_port) = rpc_port {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
@@ -954,8 +961,8 @@ async fn get_to_file_single(
     let header = curr.next();
     let final_path = out_dir.join(&name);
     let tempname = blake3::Hash::from(hash).to_hex();
-    let data_path = temp_dir.join(format!("{}.data.part", tempname));
-    let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+    let data_path = temp_dir.join(format!("{tempname}.data.part"));
+    let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
     let data_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -1087,15 +1094,15 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
         let curr = {
             let final_path = out_dir.join(&name);
             let tempname = blake3::Hash::from(hash).to_hex();
-            let data_path = temp_dir.join(format!("{}.data.part", tempname));
-            let outboard_path = temp_dir.join(format!("{}.outboard.part", tempname));
+            let data_path = temp_dir.join(format!("{tempname}.data.part"));
+            let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
             let data_file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(&data_path)
                 .await?;
             let data_file = SeekOptimized::new(data_file);
-            tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
+            tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
             let (curr, size) = header.next().await?;
             pb.set_length(size);
             let mut outboard_file = if size > 0 {

@@ -198,10 +198,10 @@ async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> a
         // creating a derp map from host name and stun port
         DerpMap::default_from_node(host_name, stun_port, 0, UseIpv4::None, UseIpv6::None))
         .unwrap_or_else(|| config.derp_map().expect("derp map not configured"));
-    println!("getting report using derp map {:#?}", dm);
+    println!("getting report using derp map {dm:#?}");
 
     let r = client.get_report(dm, None, None).await?;
-    println!("{:#?}", r);
+    println!("{r:#?}");
     Ok(())
 }
 
@@ -418,11 +418,11 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
                 if let Err(cause) = handle_test_request(send, recv, &gui).await {
-                    eprintln!("Error handling test request {}", cause);
+                    eprintln!("Error handling test request {cause}");
                 }
             }
             Err(cause) => {
-                eprintln!("error accepting bidi stream {}", cause);
+                eprintln!("error accepting bidi stream {cause}");
                 break Err(cause.into());
             }
         };
@@ -543,11 +543,11 @@ async fn connect(
     match connecting.await {
         Ok(connection) => {
             if let Err(cause) = passive_side(connection).await {
-                eprintln!("error handling connection: {}", cause);
+                eprintln!("error handling connection: {cause}");
             }
         }
         Err(cause) => {
-            eprintln!("unable to connect to {}: {}", addr, cause);
+            eprintln!("unable to connect to {addr}: {cause}");
         }
     }
 
@@ -557,9 +557,9 @@ async fn connect(
 /// format a socket addr so that it does not have to be escaped on the console
 fn format_addr(addr: SocketAddr) -> String {
     if addr.is_ipv6() {
-        format!("'{}'", addr)
+        format!("'{addr}'")
     } else {
-        format!("{}", addr)
+        format!("{addr}")
     }
 }
 
@@ -588,11 +588,11 @@ async fn accept(
                 println!("\nAccepted connection. Performing test.\n");
                 let t0 = Instant::now();
                 if let Err(cause) = active_side(connection, &config).await {
-                    println!("error after {}: {}", t0.elapsed().as_secs_f64(), cause);
+                    println!("error after {}: {cause}", t0.elapsed().as_secs_f64());
                 }
             }
             Err(cause) => {
-                eprintln!("error accepting connection {}", cause);
+                eprintln!("error accepting connection {cause}");
             }
         }
     }

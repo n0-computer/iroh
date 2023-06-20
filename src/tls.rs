@@ -119,7 +119,7 @@ impl Debug for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
         text.make_ascii_lowercase();
-        write!(f, "PeerId({})", text)
+        write!(f, "PeerId({text})")
     }
 }
 
@@ -130,7 +130,7 @@ impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut text = data_encoding::BASE32_NOPAD.encode(self.0.as_bytes());
         text.make_ascii_lowercase();
-        write!(f, "{}", text)
+        write!(f, "{text}")
     }
 }
 

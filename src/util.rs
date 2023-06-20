@@ -71,7 +71,7 @@ impl Display for Hash {
         let text = data_encoding::BASE32_NOPAD
             .encode(self.0.as_bytes())
             .to_ascii_lowercase();
-        write!(f, "{}", text)
+        write!(f, "{text}")
     }
 }
 
@@ -319,6 +319,21 @@ pub fn pathbuf_from_name(name: &str) -> PathBuf {
         path.push(part);
     }
     path
+}
+
+/// A non-sendable marker type
+#[derive(Debug)]
+pub struct NonSend {
+    _marker: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl NonSend {
+    #[allow(dead_code)]
+    pub const fn new() -> Self {
+        Self {
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 #[cfg(test)]

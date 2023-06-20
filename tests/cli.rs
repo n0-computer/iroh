@@ -74,6 +74,16 @@ fn cli_provide_one_file() -> Result<()> {
 }
 
 #[test]
+#[ignore]
+fn cli_provide_one_file_large() -> Result<()> {
+    let dir = testdir!();
+    let path = dir.join("foo");
+    make_rand_file(1024 * 1024 * 1024, &path)?;
+    // provide a path to a file, do not pipe from stdin, do not pipe to stdout
+    test_provide_get_loop(&path, Input::Path, Output::Path)
+}
+
+#[test]
 fn cli_provide_one_file_single() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");

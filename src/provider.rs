@@ -92,6 +92,7 @@ where
     keylog: bool,
     custom_get_handler: C,
     derp_map: Option<DerpMap>,
+    rt: Option<crate::runtime::Handle>,
 }
 
 /// A custom get request handler that allows the user to make up a get request
@@ -198,6 +199,7 @@ impl Builder {
             derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
+            rt: None,
         }
     }
 }
@@ -218,6 +220,7 @@ where
             custom_get_handler: self.custom_get_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
+            rt: self.rt,
         }
     }
 
@@ -238,6 +241,7 @@ where
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
             derp_map: self.derp_map,
+            rt: self.rt,
         }
     }
 
@@ -265,6 +269,14 @@ where
         self
     }
 
+    /// Sets the tokio runtime to use.
+    ///
+    /// If not set, the current runtime will be picked up.
+    pub fn runtime(mut self, rt: &crate::runtime::Handle) -> Self {
+        self.rt = Some(rt.clone());
+        self
+    }
+
     /// Spawns the [`Provider`] in a tokio task.
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
@@ -272,6 +284,7 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Provider> {
         trace!("spawning provider");
+        let rt = self.rt.context("runtime not set")?;
         let tls_server_config = tls::make_server_config(
             &self.keypair,
             vec![crate::tls::P2P_ALPN.to_vec()],
@@ -315,13 +328,18 @@ where
 
         trace!("created quinn endpoint");
 
-        let (events_sender, _events_receiver) = broadcast::channel(8);
+        // the size of this channel must be large because the producer can be on
+        // a different thread than the consumer, and can produce a lot of events
+        // in a short time
+        let (events_sender, _events_receiver) = broadcast::channel(256);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let rt2 = rt.clone();
+        let rt3 = rt.clone();
         let inner = Arc::new(ProviderInner {
             db: self.db,
             conn,
@@ -329,12 +347,13 @@ where
             events,
             controller,
             cancel_token,
+            rt,
         });
         let task = {
             let handler = RpcHandler {
                 inner: inner.clone(),
             };
-            tokio::spawn(async move {
+            rt2.spawn(async move {
                 Self::run(
                     endpoint,
                     events_sender,
@@ -342,6 +361,7 @@ where
                     self.rpc_endpoint,
                     internal_rpc,
                     self.custom_get_handler,
+                    rt3,
                 )
                 .await
             })
@@ -369,6 +389,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
+        rt: crate::runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -385,7 +406,7 @@ where
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler);
+                            handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -396,7 +417,7 @@ where
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler);
+                            handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -409,7 +430,8 @@ where
                     let db = handler.inner.db.clone();
                     let events = events.clone();
                     let custom_get_handler = custom_get_handler.clone();
-                    tokio::spawn(handle_connection(connecting, db, events, custom_get_handler));
+                    let rt2 = rt.clone();
+                    rt.spawn(handle_connection(connecting, db, events, custom_get_handler, rt2));
                 }
                 else => break,
             }
@@ -448,6 +470,7 @@ struct ProviderInner {
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
+    rt: crate::runtime::Handle,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -622,6 +645,10 @@ struct RpcHandler {
 }
 
 impl RpcHandler {
+    fn rt(&self) -> crate::runtime::Handle {
+        self.inner.rt.clone()
+    }
+
     fn list_blobs(
         self,
         _msg: ListBlobsRequest,
@@ -659,7 +686,7 @@ impl RpcHandler {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        tokio::spawn(async move {
+        self.rt().spawn(async move {
             if let Err(e) = self.inner.db.validate(tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
@@ -670,7 +697,7 @@ impl RpcHandler {
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        tokio::task::spawn(async move {
+        self.rt().spawn(async move {
             if let Err(e) = self.provide0(msg, tx).await {
                 tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
             }
@@ -778,9 +805,10 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
     handler: &RpcHandler,
+    rt: &crate::runtime::Handle,
 ) {
     let handler = handler.clone();
-    tokio::spawn(async move {
+    rt.spawn(async move {
         use ProviderRequest::*;
         match msg {
             ListBlobs(msg) => {
@@ -813,7 +841,9 @@ async fn handle_connection<C: CustomGetHandler>(
     db: Database,
     events: broadcast::Sender<Event>,
     custom_get_handler: C,
+    rt: crate::runtime::Handle,
 ) {
+    // let _x = NonSend::default();
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
         Ok(conn) => conn,
@@ -838,14 +868,16 @@ async fn handle_connection<C: CustomGetHandler>(
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
-            tokio::spawn(
+            rt.spawn_tpc(|| {
                 async move {
                     if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }
                 }
-                .instrument(span),
-            );
+                .instrument(span)
+                .boxed_local()
+            })
+            .await;
         }
     }
     .instrument(span)
@@ -1253,6 +1285,12 @@ mod tests {
 
     use super::*;
 
+    /// Pick up the tokio runtime from the thread local and add a
+    /// thread per core runtime.
+    fn test_runtime() -> crate::runtime::Runtime {
+        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
+    }
+
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
         proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
     }
@@ -1377,10 +1415,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
+        let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(rt.handle())
             .spawn()
             .await
             .unwrap();

@@ -72,7 +72,7 @@ impl Display for Ticket {
         let encoded = self.to_bytes();
         let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
         text.make_ascii_lowercase();
-        write!(f, "{}", text)
+        write!(f, "{text}")
     }
 }
 

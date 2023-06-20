@@ -451,7 +451,7 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             )
         };
         if err != 0 {
-            panic!("failed {}", err);
+            panic!("failed {err}");
             // return nil, os.NewSyscallError("sysctl", err);
         }
         if n == 0 {
@@ -477,7 +477,7 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             if err == libc::ENOMEM && round < MAX_TRIES {
                 continue;
             }
-            panic!("error {}", err);
+            panic!("error {err}");
             // return nil, os.NewSyscallError("sysctl", err);
         }
         return Ok(b);

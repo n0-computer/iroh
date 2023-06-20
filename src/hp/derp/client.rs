@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::debug;
 
+use super::client_conn::Io;
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
 use super::{
     read_frame,
@@ -23,38 +24,24 @@ use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
-impl<R: AsyncRead + Unpin> PartialEq for Client<R> {
+impl PartialEq for Client {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
-impl<R: AsyncRead + Unpin> Eq for Client<R> {}
+impl Eq for Client {}
 
 /// A DERP Client.
 /// Cheaply clonable.
 /// Call `close` to shutdown the write loop and read functionality.
-#[derive(Debug)]
-pub struct Client<R>
-where
-    R: AsyncRead + Unpin,
-{
-    inner: Arc<InnerClient<R>>,
-}
-
-impl<R: AsyncRead + Unpin> Clone for Client<R> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
+#[derive(Debug, Clone)]
+pub struct Client {
+    inner: Arc<InnerClient>,
 }
 
 #[derive(Debug)]
-pub struct InnerClient<R>
-where
-    R: AsyncRead + Unpin,
-{
+pub struct InnerClient {
     // our local addrs
     local_addr: SocketAddr,
 
@@ -64,11 +51,11 @@ where
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
-    reader: Mutex<R>,
+    reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
 }
 
 // TODO: I believe that any of these that error should actually trigger a shut down of the client
-impl<R: AsyncRead + Unpin> Client<R> {
+impl Client {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
@@ -379,13 +366,12 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
 }
 
 /// The Builder returns a [`Client`] starts a [`ClientWriter] run task.
-pub struct ClientBuilder<W, R>
+pub struct ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
-    R: AsyncRead + Unpin,
 {
     secret_key: SecretKey,
-    reader: R,
+    reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
     writer: W,
     local_addr: SocketAddr,
     mesh_key: Option<MeshKey>,
@@ -394,12 +380,16 @@ where
     can_ack_pings: bool,
 }
 
-impl<W, R> ClientBuilder<W, R>
+impl<W> ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
-    R: AsyncRead + Send + Unpin + 'static,
 {
-    pub fn new(secret_key: SecretKey, local_addr: SocketAddr, reader: R, writer: W) -> Self {
+    pub fn new(
+        secret_key: SecretKey,
+        local_addr: SocketAddr,
+        reader: tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>,
+        writer: W,
+    ) -> Self {
         Self {
             secret_key,
             reader,
@@ -490,10 +480,7 @@ where
         Ok((server_key, rate_limiter))
     }
 
-    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client<R>>
-    where
-        R: AsyncRead + Unpin,
-    {
+    pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
         // exchange information with the server
         let (_, rate_limiter) = self.server_handshake(buf).await?;
 

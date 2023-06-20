@@ -105,7 +105,7 @@ macro_rules! make_metric_recorders {
                         sub_registry.register(
                             stringify!([<$name:snake>]),
                             $description,
-                            Box::new([<$name:snake>].clone())
+                            [<$name:snake>].clone()
                         );
                     )+
 
