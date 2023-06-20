@@ -909,7 +909,7 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
-                self.port_mapper.close();
+                self.port_mapper.close().await;
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
