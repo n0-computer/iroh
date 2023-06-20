@@ -905,4 +905,80 @@ mod tests {
         io_handle.await??;
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_client_conn_read_err() -> Result<()> {
+        let _guard = crate::test_utils::setup_logging();
+
+        let (_send_queue_s, send_queue_r) = mpsc::channel(10);
+        let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
+        let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
+
+        let preferred = Arc::from(AtomicBool::from(true));
+        let key = PublicKey::from([1u8; PUBLIC_KEY_LENGTH]);
+        let (io, mut io_rw) = tokio::io::duplex(1024);
+        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+
+        println!("-- create client conn");
+        let conn_io = ClientConnIo::<MockPacketForwarder> {
+            can_mesh: true,
+            io: MaybeTlsStream::Test(io),
+            timeout: None,
+            send_queue: send_queue_r,
+            disco_send_queue: disco_send_queue_r,
+            peer_gone: peer_gone_r,
+            mesh_update_r,
+            mesh_update_s: mesh_update_s.clone(),
+
+            key: key.clone(),
+            server_channel: server_channel_s,
+            preferred: Arc::clone(&preferred),
+        };
+
+        let done = CancellationToken::new();
+        let io_done = done.clone();
+
+        println!("-- run client conn");
+        let io_handle = tokio::task::spawn(async move { conn_io.run(io_done).await });
+
+        // send packet
+        println!("   send packet");
+        let data = b"hello world!";
+        let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
+
+        crate::hp::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        let msg = server_channel_r.recv().await.unwrap();
+        match msg {
+            ServerMessage::SendPacket((got_target, packet)) => {
+                assert_eq!(target, got_target);
+                assert_eq!(key, packet.src);
+                assert_eq!(&data[..], &packet.bytes);
+                println!("    send packet success");
+            }
+            m => {
+                bail!("expected ServerMessage::SendPacket, got {m:?}");
+            }
+        }
+
+        println!("-- drop io");
+        drop(io_rw);
+
+        // expect task to complete after encountering an error
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(1), io_handle).await?? {
+            if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+                if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                    println!("   task closed successfully with `UnexpectedEof` error");
+                } else {
+                    bail!("expected `UnexpectedEof` error, got unknown error: {io_err:?}");
+                }
+            } else {
+                bail!("expected `std::io::Error`, got `None`");
+            }
+        } else {
+            bail!("expected task to finish in `UnexpectedEof` error, got `Ok(())`");
+        }
+
+        Ok(())
+    }
 }
