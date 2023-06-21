@@ -519,7 +519,7 @@ impl ReportState {
             if let Some(port_mapper) = port_mapper {
                 port_mapping.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
-                        Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
+                        Ok(res) => Some(res),
                         Err(err) => {
                             warn!("skipping port mapping: {:?}", err);
                             None
@@ -624,7 +624,7 @@ impl ReportState {
                 pm = &mut port_mapping => {
                     let mut report = self.report.write().await;
                     match pm {
-                        Some((upnp, pmp, pcp)) => {
+                        Some(portmapper::ProbeResult{upnp, pmp, pcp}) => {
                             report.upnp = Some(upnp);
                             report.pmp = Some(pmp);
                             report.pcp = Some(pcp);
