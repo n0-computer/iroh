@@ -10,22 +10,32 @@ use std::{
 };
 use tokio::task::{spawn_blocking, JoinHandle};
 
-use super::{AsyncSliceReader, AsyncSliceWriter};
+use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter};
 
 /// A wrapper around a [std::fs::File] that implements [AsyncSliceReader] and [AsyncSliceWriter]
 #[derive(Debug)]
 pub struct FileAdapter(Option<FileAdapterFsm>);
 
 impl FileAdapter {
+    /// Create a new [FileAdapter] from a function that creates a [std::fs::File]
+    pub async fn create(
+        create_file: impl Fn() -> io::Result<std::fs::File> + Send + 'static,
+    ) -> io::Result<Self> {
+        let inner = spawn_blocking(create_file).await.map_err(make_io_error)??;
+        Ok(Self::from_std(inner))
+    }
+
+    /// Create a new [FileAdapter] from a [std::fs::File]
+    ///
+    /// This is fine if you already have a [std::fs::File] and want to use it with [FileAdapter],
+    /// but opening a file is a blocking op that you probably don't want to do in an async context.
     pub fn from_std(file: std::fs::File) -> Self {
         Self(Some(FileAdapterFsm(file)))
     }
 
+    /// Open a [FileAdapter] from a path
     pub async fn open(path: PathBuf) -> io::Result<Self> {
-        let inner = spawn_blocking(move || std::fs::File::open(path))
-            .await
-            .unwrap()?;
-        Ok(Self::from_std(inner))
+        Self::create(move || std::fs::File::open(&path)).await
     }
 
     #[cfg(test)]

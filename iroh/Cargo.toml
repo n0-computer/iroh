@@ -17,6 +17,7 @@ anyhow = { version = "1", features = ["backtrace"] }
 derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
+iroh-io = { path = "../iroh-io" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
