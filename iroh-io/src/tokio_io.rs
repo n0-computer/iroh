@@ -186,10 +186,7 @@ impl<'a, T: 'a, R> Future for Asyncify<'a, R, T> {
                         **h = Some(state);
                         r
                     }
-                    Err(_) => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "sync io op panicked or was canceled",
-                    )),
+                    Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
                 }
             }),
             AsyncifyProj::BusyErr => Poll::Ready(io::Result::Err(io::Error::new(
