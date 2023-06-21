@@ -19,7 +19,7 @@ use iroh::bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq},
     provider::{Database, Ticket},
-    tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter, SeekOptimized},
+    tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter},
     util::pathbuf_from_name,
 };
 use iroh::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
@@ -30,10 +30,10 @@ use iroh::rpc_protocol::*;
 use iroh::bytes::{cid::Blake3Cid, get, provider::FNAME_PATHS, Hash, Keypair, PeerId};
 use iroh::config::{iroh_config_path, iroh_data_root};
 use iroh::net::util::create_quinn_client;
+use iroh_io::{AsyncSliceWriter, FileAdapter};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use range_collections::RangeSet2;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -962,22 +962,21 @@ async fn get_to_file_single(
     let tempname = hash.to_hex();
     let data_path = temp_dir.join(format!("{tempname}.data.part"));
     let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
-    let data_file = tokio::fs::OpenOptions::new()
+    let data_file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .open(&data_path)
-        .await?;
-    let mut data_file = SeekOptimized::new(data_file).into();
+        .open(&data_path)?;
+    let mut data_file = FileAdapter::from_std(data_file);
     tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
     let (curr, size) = header.next().await?;
     pb.set_length(size);
     let mut outboard_file = if size > 0 {
-        let outboard_file = tokio::fs::OpenOptions::new()
+        let outboard_file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(&outboard_path)
-            .await?;
-        let outboard_file = SeekOptimized::new(outboard_file).into();
+            .open(&outboard_path)?;
+
+        let outboard_file = FileAdapter::from_std(outboard_file);
         Some(outboard_file)
     } else {
         None
@@ -986,13 +985,15 @@ async fn get_to_file_single(
         .write_all_with_outboard(&mut outboard_file, &mut data_file)
         .await?;
     // Flush the data file first, it is the only thing that matters at this point
-    data_file.into_inner().into_inner().shutdown().await?;
+    data_file.sync().await?;
+    drop(data_file);
+
     // Rename temp file, to target name
     // once this is done, the file is considered complete
     tokio::fs::rename(data_path, final_path).await?;
-    if let Some(outboard_file) = outboard_file.take() {
+    if let Some(mut outboard_file) = outboard_file.take() {
         // not sure if we have to do this
-        outboard_file.into_inner().shutdown().await?;
+        outboard_file.sync().await?;
         // delete the outboard file
         tokio::fs::remove_file(outboard_path).await?;
     }
@@ -1095,22 +1096,20 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
             let tempname = hash.to_hex();
             let data_path = temp_dir.join(format!("{tempname}.data.part"));
             let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
-            let data_file = tokio::fs::OpenOptions::new()
+            let data_file = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(&data_path)
-                .await?;
-            let data_file = SeekOptimized::new(data_file);
+                .open(&data_path)?;
+            let data_file = FileAdapter::from_std(data_file);
             tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
             let (curr, size) = header.next().await?;
             pb.set_length(size);
             let mut outboard_file = if size > 0 {
-                let outboard_file = tokio::fs::OpenOptions::new()
+                let outboard_file = std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(&outboard_path)
-                    .await?;
-                let outboard_file = SeekOptimized::new(outboard_file).into();
+                    .open(&outboard_path)?;
+                let outboard_file = FileAdapter::from_std(outboard_file);
                 Some(outboard_file)
             } else {
                 None
@@ -1124,12 +1123,13 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
                     pb2.set_position(offset);
                 }
             });
-            let mut data_file = ProgressSliceWriter::new(data_file, on_write).into();
+            let mut data_file = ProgressSliceWriter::new(data_file, on_write);
             let curr = curr
                 .write_all_with_outboard(&mut outboard_file, &mut data_file)
                 .await?;
             // Flush the data file first, it is the only thing that matters at this point
-            data_file.into_inner().into_inner().shutdown().await?;
+            data_file.sync().await?;
+            drop(data_file);
             // wait for the progress task to finish, only after dropping the ProgressSliceWriter
             progress_task.await.ok();
             tokio::fs::create_dir_all(
@@ -1141,9 +1141,9 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
             // Rename temp file, to target name
             // once this is done, the file is considered complete
             tokio::fs::rename(data_path, final_path).await?;
-            if let Some(outboard_file) = outboard_file.take() {
+            if let Some(mut outboard_file) = outboard_file.take() {
                 // not sure if we have to do this
-                outboard_file.into_inner().shutdown().await?;
+                outboard_file.sync().await?;
                 // delete the outboard file
                 tokio::fs::remove_file(outboard_path).await?;
             }
@@ -1178,7 +1178,7 @@ async fn get_to_dir(get: GetInteractive, out_dir: PathBuf) -> Result<()> {
 
 async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
     let curr = curr.next();
-    let mut handle = ConcatenateSliceWriter::new(tokio::io::stdout()).into();
+    let mut handle = ConcatenateSliceWriter::new(tokio::io::stdout());
     let curr = curr.write_all(&mut handle).await?;
     let EndBlobNext::Closing(curr) = curr.next() else {
         anyhow::bail!("expected end of stream")
@@ -1238,8 +1238,7 @@ async fn get_to_stdout_multi(
             }
         });
         let mut writer =
-            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write)
-                .into();
+            ProgressSliceWriter::new(ConcatenateSliceWriter::new(tokio::io::stdout()), on_write);
         let curr = header.write_all(&mut writer).await?;
         drop(writer);
         // wait for the progress task to finish, only after dropping the writer

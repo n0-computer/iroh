@@ -216,13 +216,11 @@ pub mod get_response_machine {
     use super::*;
 
     use bao_tree::io::{
-        fsm::{
-            AsyncSliceWriter, Handle, ResponseDecoderReading, ResponseDecoderReadingNext,
-            ResponseDecoderStart,
-        },
+        fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
         Leaf, Parent,
     };
     use derive_more::From;
+    use iroh_io::AsyncSliceWriter;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -535,15 +533,15 @@ pub mod get_response_machine {
         ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
             let (curr, size) = self.next().await?;
             let res = Vec::with_capacity(size as usize);
-            let mut handle = ConcatenateSliceWriter::new(res).into();
-            let res = curr.write_all(&mut handle).await?;
-            Ok((res, handle.into_inner().into_inner()))
+            let mut writer = ConcatenateSliceWriter::new(res);
+            let res = curr.write_all(&mut writer).await?;
+            Ok((res, writer.into_inner()))
         }
 
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut Handle<D>,
+            data: &mut D,
         ) -> result::Result<AtEndBlob, DecodeError> {
             self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
@@ -552,8 +550,8 @@ pub mod get_response_machine {
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<Handle<O>>,
-            data: &mut Handle<D>,
+            outboard: &mut Option<O>,
+            data: &mut D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -624,7 +622,7 @@ pub mod get_response_machine {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut Handle<D>,
+            data: &mut D,
         ) -> result::Result<AtEndBlob, DecodeError> {
             self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
@@ -633,8 +631,8 @@ pub mod get_response_machine {
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<Handle<O>>,
-            data: &mut Handle<D>,
+            outboard: &mut Option<O>,
+            data: &mut D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
