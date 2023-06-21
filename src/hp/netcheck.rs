@@ -518,20 +518,25 @@ impl ReportState {
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
         let mut port_mapping = MaybeFuture::default();
-        if !skip_external_network {
-            if let Some(ref port_mapper) = port_mapper {
-                let mut port_mapper = port_mapper.clone();
-                port_mapping.inner = Some(Box::pin(async move {
-                    match port_mapper.probe().await {
-                        Ok(res) => Some(res),
-                        Err(err) => {
-                            warn!("skipping port mapping: {:?}", err);
-                            None
-                        }
+        // if !skip_external_network {
+        if let Some(ref port_mapper) = port_mapper {
+            let mut port_mapper = port_mapper.clone();
+            port_mapping.inner = Some(Box::pin(async move {
+                match port_mapper.probe().await {
+                    Ok(res) => {
+                        info!("port mapping result! {res:?}");
+                        Some(res)
                     }
-                }));
-            }
+                    Err(err) => {
+                        warn!("skipping port mapping: {:?}", err);
+                        None
+                    }
+                }
+            }));
+        } else {
+            info!("no port mapping client")
         }
+        // }
 
         self.prepare_hairpin().await;
 
@@ -618,23 +623,26 @@ impl ReportState {
         let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
         tokio::pin!(stun_timer);
         let probes_aborted = self.stop_probe.clone();
+        let mut dummy_fuse = false;
 
         loop {
             tokio::select! {
                 _ = &mut stun_timer => {
-                    debug!("STUN timer expired");
+                    info!("STUN timer expired");
                     break;
                 },
                 pm = &mut port_mapping => {
+                    info!("port mapping finished");
                     let mut report = self.report.write().await;
                     match pm {
                         Some(ProbeResult{upnp, pmp, pcp}) => {
-                            debug!("port mapping probe result: {pm:?}");
+                            info!("port mapping probe result: {pm:?}");
                             report.upnp = Some(upnp);
                             report.pmp = Some(pmp);
                             report.pcp = Some(pcp);
                         }
                         None => {
+                            info!("no port mapping probe result");
                             report.upnp = None;
                             report.pmp = None;
                             report.pcp = None;
@@ -642,7 +650,7 @@ impl ReportState {
                     }
                     port_mapping.inner = None;
                 }
-                probe_report = probes.next() => {
+                probe_report = probes.next(), if !dummy_fuse => {
                     match probe_report {
                         Some(Ok(probe_report)) => {
                             debug!("finished probe: {:?}", probe_report);
@@ -677,7 +685,9 @@ impl ReportState {
                             if self.any_udp().await {
                                 captive_task.inner = None;
                             }
-                            break;
+                            info!("all probes finished");
+                            dummy_fuse = true;
+                            // break;
                         }
                     }
                 }
@@ -688,7 +698,7 @@ impl ReportState {
                 }
                 _ = probes_aborted.notified() => {
                     // Saw enough regions.
-                    debug!("saw enough regions; not waiting for rest");
+                    info!("saw enough regions; not waiting for rest");
                     // We can stop the captive portal check since we know that we
                     // got a bunch of STUN responses.
                     captive_task.inner = None;
@@ -698,7 +708,7 @@ impl ReportState {
         }
 
         // abort the rest of the probes
-        debug!("aborting {} probes, already done", probes.len());
+        info!("aborting {} probes, already done", probes.len());
         drop(probes);
 
         if let Some(hair_pin) = self.wait_hair_check().await {
@@ -706,8 +716,9 @@ impl ReportState {
         }
 
         if !skip_external_network && port_mapper.is_some() {
+            info!("waiting for port map ");
             self.wait_port_map.wait().await;
-            debug!("port_map done");
+            info!("port_map done");
         }
 
         self.stop_timers();

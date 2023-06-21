@@ -11,7 +11,7 @@ use igd::aio as aigd;
 const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
 
 /// Maximum duration a UPnP search can take before timing out.
-const SEARCH_TIMEOUT: Duration = Duration::from_millis(250);
+const SEARCH_TIMEOUT: Duration = Duration::from_millis(1000);
 
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 
@@ -100,11 +100,13 @@ impl Mapping {
 
 /// Searchs for upnp gateways, returns the [`SocketAddrV4`] if any was found.
 pub async fn probe_available() -> Result<SocketAddrV4, Error> {
+    tracing::info!("searching for gateway");
     let gateway = aigd::search_gateway(igd::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
     })
     .await?;
+    tracing::info!("gateway result! {gateway}");
     Ok(gateway.addr)
 }
 
