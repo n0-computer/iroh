@@ -222,13 +222,14 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.3.2"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "941faf14993d0a71a924921abfdb0b028b1e8c160720f8a9b47fb64b0e56f5dc"
+checksum = "583ea88dc27232897e10ab0ac40977c64005a52d68814f4ae1838ec8472da84e"
 dependencies = [
  "blake3",
  "bytes",
  "futures",
+ "iroh-io",
  "range-collections",
  "self_cell",
  "smallvec",
@@ -1557,6 +1558,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh-bytes",
+ "iroh-io",
  "iroh-metrics",
  "iroh-net",
  "multibase",
@@ -1593,6 +1595,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body",
+ "iroh-io",
  "iroh-net",
  "multibase",
  "num_cpus",
