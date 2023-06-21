@@ -1,0 +1,28 @@
+[package]
+name = "iroh-io"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+authors = ["rklaehn <rklaehn@protonmail.com>", "n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+description = "async local io"
+keywords = ["io", "async", "http"]
+categories = ["asynchronous"]
+
+[dependencies]
+bytes = "1.4.0"
+futures = "0.3.28"
+pin-project = "1"
+reqwest = { version = "0.11", features = ["stream"], default-features = false, optional = true }
+tokio = { version = "1", features = ["io-util", "rt"], optional = true }
+
+[features]
+http = ["reqwest"]
+tokio-io = ["tokio"]
+default = ["tokio-io"]
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "test-util", "macros"] }
+warp = { version = "0.3.5", default-features = false }
