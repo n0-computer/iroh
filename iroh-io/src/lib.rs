@@ -73,7 +73,7 @@ pub trait AsyncSliceReader {
 /// A trait to abstract async writing to different resources.
 ///
 /// This trait does not require the notion of a current position, but instead
-/// requires explicitly passing the offset to write_at and write_array_at.
+/// requires explicitly passing the offset to write_at and write_bytes_at.
 /// In addition to the ability to write at an arbitrary offset, it also provides
 /// the ability to set the length of the resource.
 ///
@@ -81,7 +81,7 @@ pub trait AsyncSliceReader {
 /// See xWrite in <https://www.sqlite.org/c3ref/io_methods.html>
 pub trait AsyncSliceWriter: Sized {
     /// The future returned by write_at
-    type WriteAtFuture<'a>: Future<Output = io::Result<()>> + 'a
+    type WriteBytesAtFuture<'a>: Future<Output = io::Result<()>> + 'a
     where
         Self: 'a;
     /// Write the entire Bytes at the given position.
@@ -89,10 +89,10 @@ pub trait AsyncSliceWriter: Sized {
     /// When writing with the end of the range after the end of the blob, the blob will be extended.
     /// When writing with the start of the range after the end of the blob, the gap will be filled with zeros.
     #[must_use = "io futures must be polled to completion"]
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_>;
 
     /// The future returned by write_slice_at
-    type WriteArrayAtFuture<'a>: Future<Output = io::Result<()>> + 'a
+    type WriteAtFuture<'a>: Future<Output = io::Result<()>> + 'a
     where
         Self: 'a;
     /// Write the entire fixed size array at the given position.
@@ -100,11 +100,7 @@ pub trait AsyncSliceWriter: Sized {
     ///
     /// Except for taking a fixed size array instead of a [bytes::Bytes], this is equivalent to [AsyncSliceWriter::write_at].
     #[must_use = "io futures must be polled to completion"]
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        data: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_>;
 
     /// The future returned by set_len
     type SetLenFuture<'a>: Future<Output = io::Result<()>> + 'a
@@ -193,23 +189,19 @@ where
     L: AsyncSliceWriter + 'static,
     R: AsyncSliceWriter + 'static,
 {
-    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+    type WriteBytesAtFuture<'a> = Either<L::WriteBytesAtFuture<'a>, R::WriteBytesAtFuture<'a>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.write_at(offset, data)),
-            Either::Right(r) => Either::Right(r.write_at(offset, data)),
+            Either::Left(l) => Either::Left(l.write_bytes_at(offset, data)),
+            Either::Right(r) => Either::Right(r.write_bytes_at(offset, data)),
         }
     }
 
-    type WriteArrayAtFuture<'a> = Either<L::WriteArrayAtFuture<'a>, R::WriteArrayAtFuture<'a>>;
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        data: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_> {
+    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.write_array_at(offset, data)),
-            Either::Right(r) => Either::Right(r.write_array_at(offset, data)),
+            Either::Left(l) => Either::Left(l.write_at(offset, data)),
+            Either::Right(r) => Either::Right(r.write_at(offset, data)),
         }
     }
 
@@ -297,15 +289,15 @@ mod tests {
         contents: C,
     ) -> io::Result<()> {
         // write 3 bytes at offset 0
-        file.write_at(0, vec![0, 1, 2].into()).await?;
+        file.write_bytes_at(0, vec![0, 1, 2].into()).await?;
         assert_eq!(contents(&file), &[0, 1, 2]);
 
         // write 3 bytes at offset 5
-        file.write_at(5, vec![0, 1, 2].into()).await?;
+        file.write_bytes_at(5, vec![0, 1, 2].into()).await?;
         assert_eq!(contents(&file), &[0, 1, 2, 0, 0, 0, 1, 2]);
 
         // write a u16 at offset 8
-        file.write_array_at(8, 1u16.to_le_bytes()).await?;
+        file.write_at(8, &1u16.to_le_bytes()).await?;
         assert_eq!(contents(&file), &[0, 1, 2, 0, 0, 0, 1, 2, 1, 0]);
 
         // truncate to 0
@@ -469,7 +461,7 @@ mod tests {
             apply_op(&mut reference, &op);
             match op {
                 WriteOp::Write(offset, data) => {
-                    AsyncSliceWriter::write_at(&mut bytes, offset, data.into()).await?;
+                    AsyncSliceWriter::write_bytes_at(&mut bytes, offset, data.into()).await?;
                 }
                 WriteOp::SetLen(offset) => {
                     AsyncSliceWriter::set_len(&mut bytes, offset).await?;

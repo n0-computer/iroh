@@ -1631,6 +1631,7 @@ dependencies = [
  "pin-project",
  "proptest",
  "reqwest",
+ "smallvec",
  "tempfile",
  "tokio",
  "warp",

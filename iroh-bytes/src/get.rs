@@ -559,7 +559,7 @@ pub mod get_response_machine {
         {
             let (content, size) = self.next().await?;
             if let Some(o) = outboard.as_mut() {
-                o.write_array_at(0, size.to_le_bytes()).await?;
+                o.write_at(0, &size.to_le_bytes()).await?;
             }
             content.write_all_with_outboard(outboard, data).await
         }
@@ -648,14 +648,12 @@ pub mod get_response_machine {
                                 if let Some(outboard) = outboard.as_mut() {
                                     let offset = parent.node.post_order_offset() * 64 + 8;
                                     let (l_hash, r_hash) = parent.pair;
-                                    outboard.write_array_at(offset, *l_hash.as_bytes()).await?;
-                                    outboard
-                                        .write_array_at(offset + 32, *r_hash.as_bytes())
-                                        .await?;
+                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
+                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {
-                                data.write_at(leaf.offset.0, leaf.data).await?;
+                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
                             }
                         }
                     }
