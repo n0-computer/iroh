@@ -2,7 +2,8 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
-use iroh_bytes::{Hash, PeerId};
+use iroh_bytes::Hash;
+use iroh_net::tls::PeerId;
 
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
