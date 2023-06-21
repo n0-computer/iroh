@@ -513,10 +513,10 @@ impl ReportState {
         debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
+        let do_port_map = port_mapper.is_some();
         let mut port_mapping = MaybeFuture::default();
         if !skip_external_network {
-            if let Some(ref port_mapper) = port_mapper {
-                let port_mapper = port_mapper.clone();
+            if let Some(port_mapper) = port_mapper {
                 port_mapping.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
                         Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
@@ -700,7 +700,7 @@ impl ReportState {
             self.report.write().await.hair_pinning = Some(hair_pin);
         }
 
-        if !skip_external_network && port_mapper.is_some() {
+        if !skip_external_network && do_port_map {
             self.wait_port_map.wait().await;
             debug!("port_map done");
         }
