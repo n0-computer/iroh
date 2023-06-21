@@ -52,9 +52,15 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-      
-    - name: tests
+
+    - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests
+      
+    - name: tests (no features)
+      run: cargo test --workspace --no-default-features --lib --bins --tests
+
+    - name: tests (default features)
+      run: cargo test --workspace --lib --bins --tests
 
     - name: doctests
       run: cargo test --workspace --all-features --doc
@@ -89,8 +95,14 @@ jobs:
     
     - uses: msys2/setup-msys2@v2
 
-    - name: tests
+    - name: tests (all features)
       run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+
+    - name: tests (no features)
+      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
+      
+    - name: tests (default features)
+      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
     name: Build release binaries
@@ -244,8 +256,14 @@ jobs:
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
-    - name: clippy check
-      run: cargo clippy --all-features --all-targets
+    - name: clippy check (all features)
+      run: cargo clippy --workspace --all-features --all-targets
+
+    - name: clippy check (no features)
+      run: cargo clippy --workspace --no-default-features --all-targets
+
+    - name: clippy check (default features)
+      run: cargo clippy --workspace --all-targets
 
   msrv:
     name: Minimal Supported Rust Version
@@ -285,29 +303,31 @@ jobs:
 
     - name: Build iroh
       run: |
-        cargo build --release
+        cargo build --release --workspace --all-features
 
     - name: Fetch and build chuck
       run: |
+        cd ..
+        rm -rf chuck
         git clone https://github.com/n0-computer/chuck.git
         cd chuck
         cargo build --release
     
     - name: Install netsim deps
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         sudo apt update
         ./setup.sh
 
     - name: Copy binaries to right location
       run: |
-        cp target/release/iroh chuck/netsim/bins/iroh
-        cp target/release/derper chuck/netsim/bins/derper
-        cp chuck/target/release/chuck chuck/netsim/bins/chuck
+        cp target/release/iroh ../chuck/netsim/bins/iroh
+        cp target/release/derper ../chuck/netsim/bins/derper
+        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Run tests
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
         sudo python3 main.py --integration sims/iroh/iroh.json
@@ -328,7 +348,7 @@ jobs:
 
     - name: Generate reports
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
@@ -343,7 +363,7 @@ jobs:
         unzip -q awscliv2.zip
         sudo ./aws/install --update
 
-        cd chuck/netsim
+        cd ../chuck/netsim
 
         aws_fname=intg_${{ env.LAST_COMMIT_SHA }}.tar.gz
         tar cvzf report.tar.gz report_prom.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
@@ -355,7 +375,7 @@ jobs:
 
     - name: Echo metrics
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         d=$(cat report_metro.txt)
         metro_data=$(printf "%s\n " "$d")
         echo "$metro_data" 
