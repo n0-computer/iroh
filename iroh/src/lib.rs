@@ -11,6 +11,6 @@ pub mod config;
 #[cfg(feature = "cli")]
 pub mod doctor;
 #[cfg(feature = "cli")]
-pub mod spaces;
+pub mod docs;
 #[cfg(feature = "cli")]
 pub mod fake;

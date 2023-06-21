@@ -8,8 +8,8 @@ use crate::config::iroh_config_path;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct FakeDB {
-    pub networks: Vec<Network>,
-    pub spaces: Vec<Space>,
+    pub apps: Vec<Network>,
+    pub docs: Vec<Space>,
     pub contacts: Vec<String>,
     pub keys: Vec<String>,
     pub tokens: Vec<Token>
@@ -18,8 +18,8 @@ pub struct FakeDB {
 impl FakeDB {
     pub fn new() -> Self {
         FakeDB{
-            networks: vec![Network::default()],
-            spaces: vec![],
+            apps: vec![Network::default()],
+            docs: vec![],
             contacts: vec![],
             keys: vec![],
             tokens: vec![],
@@ -32,24 +32,24 @@ impl FakeDB {
 
     pub fn load_or_create(path: &PathBuf) -> Result<Self> {
         if path.exists() {
-            let spaces = Self::load(path)?;
-            Ok(spaces)
+            let docs = Self::load(path)?;
+            Ok(docs)
         } else {
-            let spaces = Self::new();
-            spaces.save(path)?;
-            Ok(spaces)
+            let docs = Self::new();
+            docs.save(path)?;
+            Ok(docs)
         }
     }
 
     fn load(path: &PathBuf) -> Result<Self> {
-        let spaces = std::fs::read_to_string(path)?;
-        let spaces: FakeDB = serde_json::from_str(&spaces)?;
-        Ok(spaces)
+        let docs = std::fs::read_to_string(path)?;
+        let docs: FakeDB = serde_json::from_str(&docs)?;
+        Ok(docs)
     }
 
     pub fn save(&self, path: &PathBuf) -> Result<()> {
-        let spaces = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, spaces)?;
+        let docs = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, docs)?;
         Ok(())
     }
 }
