@@ -76,7 +76,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.24", optional = true }
 tokio-rustls-acme = { version = "0.1", optional = true }
 tokio-stream = "0.1"
-tokio-util = { version = "0.7", features = ["io-util", "io"] }
+tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 toml = { version = "0.7.3", optional = true }
 tracing = "0.1"
 tracing-futures = "0.2.5"
