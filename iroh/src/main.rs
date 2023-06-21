@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
@@ -7,6 +8,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
+use tabwriter::TabWriter;
 use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
@@ -38,6 +40,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+use iroh::fake::FakeDB;
+
 #[cfg(feature = "metrics")]
 use iroh::net::metrics::init_metrics;
 
@@ -46,20 +50,21 @@ const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
-/// Send data.
-///
-/// The iroh command line tool has two modes: provide and get.
-///
-/// The provide mode is a long-running process binding to a socket which the get mode
-/// contacts to request data.  By default the provide process also binds to an RPC port
-/// which allows adding additional data to be provided as well as a few other maintenance
-/// commands.
-///
-/// The get mode retrieves data from the provider, for this it needs the hash, provider
-/// address and PeerID as well as an authentication code.  The get-ticket subcommand is a
-/// shortcut to provide all this information conveniently in a single ticket.
+const IROH_DESCRIPTION: &str = "Iroh: blobs in space.
+
+Spaces are mutable, syncable, collaborative volumes of blobs. A Blob is whatever 
+bytes your use case needs to store & retrieve. Blobs could be movies, documents,
+JSON files, whatever. Iroh refers to blobs by hash, so we can get them from 
+anyone who has a copy of the blob you need, and trust we got the right thing.
+
+Use Iroh to create dynamic, peer-2-peer networks that collaborate on spaces to
+build a data model your app can use.
+
+For detailed info see https://iroh.computer";
+
 #[derive(Parser, Debug, Clone)]
 #[clap(version)]
+#[clap(about = IROH_DESCRIPTION)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -113,25 +118,25 @@ impl FromStr for ProviderRpcPort {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Manage iroh spaces: mutable, syncable, collaborative volumes of blobs
+    /// Run a server, manage networks, network utilities
+    #[clap(subcommand)]
+    Networks(NetworksCommands),
+    /// mutable, syncable, collaborative volumes of blobs
     #[clap(subcommand)]
     Spaces(iroh::spaces::Commands),
-
-    /// Manage iroh blobs: immutable, content-addressed data
+    /// immutable, content-addressed data
     #[clap(subcommand)]
     Blobs(BlobsCommands),
 
-    /// Manage peers: other iroh nodes
+    /// other iroh nodes
     #[clap(subcommand)]
     Contacts(ContactsCommands),
-
-    /// Serve iroh data + network utilities
-    #[clap(subcommand)]
-    Network(NetworkCommands),
-
-    /// Manage authorization tokens
+    /// Manage authorization tokens, revocations
     #[clap(subcommand)]
     Auth(AuthCommands),
+    /// Manage configuration
+    #[clap(subcommand)]
+    Config(ConfigCommands),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -348,7 +353,7 @@ fn run_auth_command(command: AuthCommands, _config: &Config) -> anyhow::Result<(
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum NetworkCommands {
+enum NetworksCommands {
     /// Diagnostic commands for the derp relay protocol.
     Doctor {
         /// Commands for doctor - defined in the mod
@@ -394,27 +399,51 @@ enum NetworkCommands {
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
+    /// List known networks
+    List {
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+    }
 }
 
-async fn run_network_command(
-    command: NetworkCommands,
+async fn run_networks_command(
+    command: NetworksCommands,
     keylog: bool,
     rt: Runtime,
     config: &Config,
 ) -> anyhow::Result<()> {
     match command {
-        NetworkCommands::Status { .. } => {
+        NetworksCommands::Status { .. } => {
             println!("network status command");
             Ok(())
         }
-        NetworkCommands::Addresses { rpc_port } => {
+        NetworksCommands::Addresses { rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
             let response = client.rpc(AddrsRequest).await?;
             println!("Listening addresses: {:?}", response.addrs);
             Ok(())
         }
-        NetworkCommands::Doctor { command } => iroh::doctor::run(command, &config).await,
-        NetworkCommands::Serve {
+        NetworksCommands::Doctor { command } => iroh::doctor::run(command, &config).await,
+        NetworksCommands::List{ .. } => {
+            let path = FakeDB::default_path()?;
+            let db = FakeDB::load_or_create(&path)?;
+            let mut tw = TabWriter::new(vec![]).padding(4);
+            tw.write_all(b"default\tname\tID\n")?;
+            for ntwk in db.networks {
+                if ntwk.is_default {
+                    tw.write_all(format!("*\t{}\t{}\n", ntwk.name, ntwk.id).as_bytes())?;
+                } else {
+                    tw.write_all(format!("\t{}\t{}\n", ntwk.name, ntwk.id).as_bytes())?;
+                }
+            }
+            tw.flush()?;
+            let out = String::from_utf8(tw.into_inner()?)?;
+            println!("{}", out);
+
+            Ok(())
+        }
+        NetworksCommands::Serve {
             path,
             addr,
             rpc_port,
@@ -499,11 +528,22 @@ async fn run_network_command(
             drop(fut);
             Ok(())
         }
-        NetworkCommands::Shutdown { force, rpc_port } => {
+        NetworksCommands::Shutdown { force, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
             client.rpc(ShutdownRequest { force }).await?;
             Ok(())
         }
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ConfigCommands {
+    Show{},
+}
+
+fn run_config_command(command: ConfigCommands, _config: &Config) -> anyhow::Result<()> {
+    match command {
+        ConfigCommands::Show{} => { println!("show config command"); Ok(()) }
     }
 }
 
@@ -827,9 +867,10 @@ async fn main_impl() -> Result<()> {
     let r = match cli.command {
         Commands::Spaces(spaces) => iroh::spaces::run(spaces, &config).await,
         Commands::Blobs(blobs) => run_blob_command(blobs, cli.keylog, &config).await,
-        Commands::Network(network) => run_network_command(network, cli.keylog, rt, &config).await,
+        Commands::Networks(network) => run_networks_command(network, cli.keylog, rt, &config).await,
         Commands::Auth(auth) => run_auth_command(auth, &config),
         Commands::Contacts(contacts) => run_contacts_command(contacts, &config).await,
+        Commands::Config(command) => run_config_command(command, &config),
     };
 
     #[cfg(feature = "metrics")]
