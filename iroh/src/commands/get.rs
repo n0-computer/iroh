@@ -5,11 +5,7 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use iroh_io::{AsyncSliceWriter, FileAdapter};
-use iroh_net::hp::derp::DerpMap;
-use tokio::sync::mpsc;
-
-use crate::{
+use iroh_bytes::{
     blobs::Collection,
     cid::Blake3Cid,
     get::{
@@ -22,6 +18,10 @@ use crate::{
     util::pathbuf_from_name,
     Hash,
 };
+use iroh_io::{AsyncSliceWriter, FileAdapter};
+use iroh_net::hp::derp::DerpMap;
+use range_collections::RangeSet2;
+use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub enum GetInteractive {
@@ -37,25 +37,9 @@ pub enum GetInteractive {
     },
 }
 
-/// Controls the writing of output.
-#[derive(Debug)]
-pub enum StdWriter {
-    /// No output at all.
-    None,
-    /// Uses `eprintln` to write content.
-    Stderr,
-}
-
-impl StdWriter {
-    /// Write the given data.
-    pub fn write(&self, data: impl AsRef<str>) {
-        match self {
-            StdWriter::None => {}
-            StdWriter::Stderr => {
-                eprintln!("{}", data.as_ref());
-            }
-        }
-    }
+/// Write the given data.
+pub fn write(data: impl AsRef<str>) {
+    eprintln!("{}", data.as_ref());
 }
 
 impl GetInteractive {
@@ -74,15 +58,10 @@ impl GetInteractive {
     }
 
     /// Get a single file.
-    async fn get_to_file_single(
-        self,
-        writer: &StdWriter,
-        out_dir: PathBuf,
-        temp_dir: PathBuf,
-    ) -> Result<()> {
+    async fn get_to_file_single(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
         let hash = self.hash();
-        writer.write(format!("Fetching: {}", Blake3Cid::new(hash)));
-        writer.write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
 
         let name = Blake3Cid::new(hash).to_string();
         // range I am missing for the 1 file I am downloading
@@ -111,9 +90,9 @@ impl GetInteractive {
             GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
         };
         let connected = response.next().await?;
-        writer.write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+        write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
-            init_download_progress(&pb, writer, count, missing_bytes)?;
+            init_download_progress(&pb, count, missing_bytes)?;
         }
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
             anyhow::bail!("Unexpected StartChild or Closing");
@@ -168,7 +147,7 @@ impl GetInteractive {
         let stats = finishing.next().await?;
         tokio::fs::remove_dir_all(temp_dir).await?;
         pb.finish_and_clear();
-        writer.write(format!(
+        write(format!(
             "Transferred {} in {}, {}/s",
             HumanBytes(stats.bytes_read),
             HumanDuration(stats.elapsed),
@@ -179,15 +158,10 @@ impl GetInteractive {
     }
 
     /// Get into a file or directory
-    async fn get_to_dir_multi(
-        self,
-        writer: &StdWriter,
-        out_dir: PathBuf,
-        temp_dir: PathBuf,
-    ) -> Result<()> {
+    async fn get_to_dir_multi(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
         let hash = self.hash();
-        writer.write(format!("Fetching: {}", Blake3Cid::new(hash)));
-        writer.write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let (query, collection) = get::get_missing_ranges(self.hash(), &out_dir, &temp_dir)?;
         let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
 
@@ -210,9 +184,9 @@ impl GetInteractive {
             GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
         };
         let connected = response.next().await?;
-        writer.write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+        write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
-            init_download_progress(&pb, writer, count, missing_bytes)?;
+            init_download_progress(&pb, count, missing_bytes)?;
         }
         let (mut next, collection) = match connected.next().await? {
             ConnectedNext::StartRoot(curr) => {
@@ -227,7 +201,6 @@ impl GetInteractive {
                 let collection = Collection::from_bytes(&collection_data)?;
                 init_download_progress(
                     &pb,
-                    writer,
                     collection.total_entries(),
                     collection.total_blobs_size(),
                 )?;
@@ -333,7 +306,7 @@ impl GetInteractive {
         let stats = finishing.next().await?;
         tokio::fs::remove_dir_all(temp_dir).await?;
         pb.finish_and_clear();
-        writer.write(format!(
+        write(format!(
             "Transferred {} in {}, {}/s",
             HumanBytes(stats.bytes_read),
             HumanDuration(stats.elapsed),
@@ -344,33 +317,33 @@ impl GetInteractive {
     }
 
     /// Get into a file or directory
-    async fn get_to_dir(self, writer: &StdWriter, out_dir: PathBuf) -> Result<()> {
+    async fn get_to_dir(self, out_dir: PathBuf) -> Result<()> {
         let single = self.single();
         let temp_dir = out_dir.join(".iroh-tmp");
         if single {
-            self.get_to_file_single(writer, out_dir, temp_dir).await
+            self.get_to_file_single(out_dir, temp_dir).await
         } else {
-            self.get_to_dir_multi(writer, out_dir, temp_dir).await
+            self.get_to_dir_multi(out_dir, temp_dir).await
         }
     }
 
-    pub async fn get_interactive(self, writer: &StdWriter, out_dir: Option<PathBuf>) -> Result<()> {
+    pub async fn get_interactive(self, out_dir: Option<PathBuf>) -> Result<()> {
         if let Some(out_dir) = out_dir {
-            self.get_to_dir(writer, out_dir).await
+            self.get_to_dir(out_dir).await
         } else {
-            self.get_to_stdout(writer).await
+            self.get_to_stdout().await
         }
     }
 
     /// Get to stdout, no resume possible.
-    async fn get_to_stdout(self, writer: &StdWriter) -> Result<()> {
+    async fn get_to_stdout(self) -> Result<()> {
         let hash = self.hash();
         let single = self.single();
-        writer.write(format!("Fetching: {}", Blake3Cid::new(hash)));
-        writer.write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let query = if single {
             // just get the entire first item
-            RangeSpecSeq::new([get::RangeSet2::all()])
+            RangeSpecSeq::new([RangeSet2::all()])
         } else {
             // get everything (collection and children)
             RangeSpecSeq::all()
@@ -387,17 +360,17 @@ impl GetInteractive {
             GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
         };
         let connected = response.next().await?;
-        // progress!("{} Requesting ...", style("[2/3]").bold().dim());
+        write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("expected root to be present");
     };
         let stats = if single {
             get_to_stdout_single(curr).await?
         } else {
-            get_to_stdout_multi(writer, curr, pb.clone()).await?
+            get_to_stdout_multi(curr, pb.clone()).await?
         };
         pb.finish_and_clear();
-        writer.write(format!(
+        write(format!(
             "Transferred {} in {}, {}/s",
             HumanBytes(stats.bytes_read),
             HumanDuration(stats.elapsed),
@@ -419,7 +392,6 @@ async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> R
 }
 
 async fn get_to_stdout_multi(
-    writer: &StdWriter,
     curr: get::get_response_machine::AtStartRoot,
     pb: ProgressBar,
 ) -> Result<get::Stats> {
@@ -429,8 +401,8 @@ async fn get_to_stdout_multi(
         let collection = Collection::from_bytes(&collection_data)?;
         let count = collection.total_entries();
         let missing_bytes = collection.total_blobs_size();
-        writer.write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-        writer.write(format!(
+        write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
+        write(format!(
             "  {} file(s) with total transfer size {}",
             count,
             HumanBytes(missing_bytes)
@@ -502,14 +474,9 @@ fn make_download_pb() -> ProgressBar {
     pb
 }
 
-fn init_download_progress(
-    pb: &ProgressBar,
-    writer: &StdWriter,
-    count: u64,
-    missing_bytes: u64,
-) -> Result<()> {
-    writer.write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
-    writer.write(format!(
+fn init_download_progress(pb: &ProgressBar, count: u64, missing_bytes: u64) -> Result<()> {
+    write(format!("{} Downloading ...", style("[3/3]").bold().dim()));
+    write(format!(
         "  {} file(s) with total transfer size {}",
         count,
         HumanBytes(missing_bytes)

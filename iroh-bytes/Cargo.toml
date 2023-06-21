@@ -43,10 +43,6 @@ tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
 
-# IO
-console = { version = "0.15.5", optional = true }
-indicatif = { version = "0.17", features = ["tokio"], optional = true }
-
 [dev-dependencies]
 http-body = "0.4.5"
 proptest = "1.0.0"
@@ -56,5 +52,4 @@ tempfile = "3.4"
 tokio = { version = "1", features = ["macros", "test-util"] }
 
 [features]
-default = ["io"]
-io = ["console", "indicatif", "tokio/io-std", "tokio/io-util"]
+default = []
