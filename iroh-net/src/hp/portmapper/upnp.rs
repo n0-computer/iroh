@@ -100,13 +100,11 @@ impl Mapping {
 
 /// Searchs for upnp gateways, returns the [`SocketAddrV4`] if any was found.
 pub async fn probe_available() -> Result<SocketAddrV4, Error> {
-    tracing::info!("searching for gateway");
     let gateway = aigd::search_gateway(igd::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
     })
     .await?;
-    tracing::info!("gateway result! {gateway}");
     Ok(gateway.addr)
 }
 
