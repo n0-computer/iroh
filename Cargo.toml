@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "iroh",
+  "iroh-io",
   "iroh-net",
   "iroh-bytes",
   "iroh-metrics",
