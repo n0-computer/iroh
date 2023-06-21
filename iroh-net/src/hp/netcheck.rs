@@ -693,7 +693,9 @@ impl ReportState {
         }
 
         // abort the rest of the probes
-        debug!("aborting {} probes, already done", probes.len());
+        if !probes.is_empty() {
+            debug!("aborting {} probes, already done", probes.len());
+        }
         drop(probes);
 
         if let Some(hair_pin) = self.wait_hair_check().await {
