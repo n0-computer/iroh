@@ -353,7 +353,7 @@ where
             let handler = RpcHandler {
                 inner: inner.clone(),
             };
-            rt2.spawn(async move {
+            rt2.main().spawn(async move {
                 Self::run(
                     endpoint,
                     events_sender,
@@ -431,7 +431,7 @@ where
                     let events = events.clone();
                     let custom_get_handler = custom_get_handler.clone();
                     let rt2 = rt.clone();
-                    rt.spawn(handle_connection(connecting, db, events, custom_get_handler, rt2));
+                    rt.main().spawn(handle_connection(connecting, db, events, custom_get_handler, rt2));
                 }
                 else => break,
             }
@@ -686,7 +686,7 @@ impl RpcHandler {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        self.rt().spawn(async move {
+        self.rt().main().spawn(async move {
             if let Err(e) = self.inner.db.validate(tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
@@ -697,7 +697,7 @@ impl RpcHandler {
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        self.rt().spawn(async move {
+        self.rt().main().spawn(async move {
             if let Err(e) = self.provide0(msg, tx).await {
                 tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
             }
@@ -808,7 +808,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     rt: &crate::runtime::Handle,
 ) {
     let handler = handler.clone();
-    rt.spawn(async move {
+    rt.main().spawn(async move {
         use ProviderRequest::*;
         match msg {
             ListBlobs(msg) => {
@@ -868,16 +868,14 @@ async fn handle_connection<C: CustomGetHandler>(
             events.send(Event::ClientConnected { connection_id }).ok();
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
-            rt.spawn_tpc(|| {
+            rt.local_pool().spawn_pinned(|| {
                 async move {
                     if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
                         warn!("error: {err:#?}",);
                     }
                 }
                 .instrument(span)
-                .boxed_local()
-            })
-            .await;
+            });
         }
     }
     .instrument(span)
@@ -1287,8 +1285,8 @@ mod tests {
 
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
-    fn test_runtime() -> crate::runtime::Runtime {
-        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
+    fn test_runtime() -> crate::runtime::Handle {
+        crate::runtime::Handle::from_currrent(1).unwrap()
     }
 
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
@@ -1420,7 +1418,7 @@ mod tests {
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await
             .unwrap();

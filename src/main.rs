@@ -486,7 +486,7 @@ fn init_metrics_collection(
     init_metrics();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
-        return Some(rt.spawn(async move {
+        return Some(rt.main().spawn(async move {
             iroh::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
@@ -514,8 +514,8 @@ fn main() -> Result<()> {
 
 async fn main_impl() -> Result<()> {
     let tokio = tokio::runtime::Handle::current();
-    let tpc = iroh::runtime::tpc::Runtime::new("io", num_cpus::get());
-    let rt = iroh::runtime::Runtime::new(tokio, tpc);
+    let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
+    let rt = iroh::runtime::Handle::new(tokio, tpc);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
@@ -535,7 +535,7 @@ async fn main_impl() -> Result<()> {
     )?;
 
     #[cfg(feature = "metrics")]
-    let metrics_fut = init_metrics_collection(cli.metrics_addr, rt.handle());
+    let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
 
     let r = match cli.command {
         Commands::Get {
@@ -610,7 +610,7 @@ async fn main_impl() -> Result<()> {
                 cli.keylog,
                 rpc_port.into(),
                 config.derp_map(),
-                rt.handle(),
+                &rt,
             )
             .await?;
             let controller = provider.controller();

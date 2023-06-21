@@ -70,8 +70,8 @@ mod tests {
 
     /// Pick up the tokio runtime from the thread local and add a
     /// thread per core runtime.
-    fn test_runtime() -> crate::runtime::Runtime {
-        crate::runtime::Runtime::from_currrent("test", 1).unwrap()
+    fn test_runtime() -> crate::runtime::Handle {
+        crate::runtime::Handle::from_currrent(1).unwrap()
     }
 
     #[tokio::test]
@@ -80,7 +80,7 @@ mod tests {
         let rt = test_runtime();
         transfer_data(
             vec![("hello_world", "hello world!".as_bytes().to_vec())],
-            rt.handle(),
+            &rt,
         )
         .await
     }
@@ -97,7 +97,7 @@ mod tests {
             // overkill, but it works! Just annoying to wait for
             // ("4", 1024 * 1024 * 90),
         ];
-        transfer_random_data(file_opts, rt.handle()).await
+        transfer_random_data(file_opts, &rt).await
     }
 
     #[tokio::test]
@@ -114,7 +114,7 @@ mod tests {
                     (name, 10)
                 })
                 .collect();
-            transfer_random_data(file_opts, rt.handle()).await?;
+            transfer_random_data(file_opts, &rt).await?;
         }
         Ok(())
     }
@@ -138,7 +138,7 @@ mod tests {
 
         for size in sizes {
             let now = Instant::now();
-            transfer_random_data(vec![("hello_world", size)], rt.handle()).await?;
+            transfer_random_data(vec![("hello_world", size)], &rt).await?;
             println!("  took {}ms", now.elapsed().as_millis());
         }
 
@@ -155,7 +155,7 @@ mod tests {
         for i in 0..num_files {
             file_opts.push((i.to_string(), 0));
         }
-        transfer_random_data(file_opts, rt.handle()).await
+        transfer_random_data(file_opts, &rt).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -176,7 +176,7 @@ mod tests {
 
         let rt = test_runtime();
         let provider = provider::Provider::builder(db)
-            .runtime(rt.handle())
+            .runtime(&rt)
             .bind_addr(addr)
             .spawn()
             .await?;
@@ -388,7 +388,7 @@ mod tests {
         let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
         let mut provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await
             .unwrap();
@@ -460,7 +460,7 @@ mod tests {
         let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await?;
         let provider_addr = provider.local_endpoint_addresses().await?;
@@ -501,7 +501,7 @@ mod tests {
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await
         {
@@ -540,7 +540,7 @@ mod tests {
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = Provider::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await
             .unwrap();
@@ -614,7 +614,7 @@ mod tests {
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .spawn()
             .await
         {
@@ -703,7 +703,7 @@ mod tests {
         let db = Database::default();
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .custom_get_handler(BlobCustomHandler)
             .spawn()
             .await
@@ -741,7 +741,7 @@ mod tests {
         let db = Database::default();
         let provider = Provider::builder(db)
             .bind_addr("127.0.0.1:0".parse().unwrap())
-            .runtime(rt.handle())
+            .runtime(&rt)
             .custom_get_handler(CollectionCustomHandler)
             .spawn()
             .await
