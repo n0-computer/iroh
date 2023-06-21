@@ -962,21 +962,26 @@ async fn get_to_file_single(
     let tempname = hash.to_hex();
     let data_path = temp_dir.join(format!("{tempname}.data.part"));
     let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
-    let data_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(&data_path)?;
-    let mut data_file = FileAdapter::from_std(data_file);
+    let data_path_2 = data_path.clone();
+    let mut data_file = FileAdapter::create(move || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&data_path_2)
+    })
+    .await?;
     tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
     let (curr, size) = header.next().await?;
     pb.set_length(size);
     let mut outboard_file = if size > 0 {
-        let outboard_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(&outboard_path)?;
-
-        let outboard_file = FileAdapter::from_std(outboard_file);
+        let outboard_path = outboard_path.clone();
+        let outboard_file = FileAdapter::create(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&outboard_path)
+        })
+        .await?;
         Some(outboard_file)
     } else {
         None
@@ -1096,20 +1101,26 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
             let tempname = hash.to_hex();
             let data_path = temp_dir.join(format!("{tempname}.data.part"));
             let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
-            let data_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(&data_path)?;
-            let data_file = FileAdapter::from_std(data_file);
+            let data_path_2 = data_path.clone();
+            let data_file = FileAdapter::create(move || {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&data_path_2)
+            })
+            .await?;
             tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
             let (curr, size) = header.next().await?;
             pb.set_length(size);
             let mut outboard_file = if size > 0 {
-                let outboard_file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(&outboard_path)?;
-                let outboard_file = FileAdapter::from_std(outboard_file);
+                let outboard_path = outboard_path.clone();
+                let outboard_file = FileAdapter::create(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(&outboard_path)
+                })
+                .await?;
                 Some(outboard_file)
             } else {
                 None
