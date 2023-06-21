@@ -5,7 +5,6 @@
 //! to store the received data.
 use std::error::Error;
 use std::fmt::{self, Debug};
-use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -30,6 +29,9 @@ use crate::provider::Ticket;
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
+
+#[cfg(feature = "io")]
+pub mod io;
 
 /// Options for the client
 #[derive(Clone, Debug)]
@@ -375,7 +377,7 @@ pub mod get_response_machine {
 
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtBlobContent, u64), io::Error> {
+        pub async fn next(self) -> Result<(AtBlobContent, u64), std::io::Error> {
             let (stream, size) = self.stream.next().await?;
             Ok((
                 AtBlobContent {
@@ -593,7 +595,7 @@ pub mod get_response_machine {
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> result::Result<Stats, io::Error> {
+        pub async fn next(self) -> result::Result<Stats, std::io::Error> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
             if let Some(chunk) = reader.read_chunk(8, false).await? {
@@ -708,12 +710,12 @@ pub fn get_missing_range(
     name: &str,
     temp_dir: &Path,
     target_dir: &Path,
-) -> io::Result<RangeSet2<ChunkNum>> {
+) -> std::io::Result<RangeSet2<ChunkNum>> {
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
             "Target directory exists but does not contain temp directory",
         ));
     }
@@ -727,7 +729,7 @@ fn get_missing_range_impl(
     name: &str,
     temp_dir: &Path,
     target_dir: &Path,
-) -> io::Result<RangeSet2<ChunkNum>> {
+) -> std::io::Result<RangeSet2<ChunkNum>> {
     let paths = FilePaths::new(hash, name, temp_dir, target_dir);
     Ok(if paths.is_final() {
         tracing::debug!("Found final file: {:?}", paths.target);
@@ -793,7 +795,7 @@ pub fn get_missing_ranges(
         .blobs()
         .iter()
         .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
-        .collect::<io::Result<Vec<_>>>()?;
+        .collect::<std::io::Result<Vec<_>>>()?;
     ranges
         .iter()
         .zip(collection.blobs())

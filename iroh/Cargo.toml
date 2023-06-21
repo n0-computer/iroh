@@ -17,7 +17,6 @@ anyhow = { version = "1", features = ["backtrace"] }
 derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
-iroh-io = { path = "../iroh-io" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
@@ -46,7 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
+cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "iroh-bytes/io", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
 test = []
 
