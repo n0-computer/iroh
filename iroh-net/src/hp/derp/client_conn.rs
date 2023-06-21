@@ -906,8 +906,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_conn_read_err() -> Result<()> {
-        let _guard = crate::test_utils::setup_logging();
-
         let (_send_queue_s, send_queue_r) = mpsc::channel(10);
         let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
