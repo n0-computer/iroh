@@ -37,9 +37,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-#[cfg(feature = "metrics")]
-use iroh::net::metrics::init_metrics;
-
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 const MAX_RPC_CONNECTIONS: u32 = 16;
@@ -485,11 +482,11 @@ fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    init_metrics();
+    iroh_metrics::metrics::init_metrics();
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         return Some(rt.main().spawn(async move {
-            iroh_net::metrics::start_metrics_server(metrics_addr)
+            iroh_metrics::metrics::start_metrics_server(metrics_addr)
                 .await
                 .unwrap_or_else(|e| {
                     eprintln!("Failed to start metrics server: {e}");

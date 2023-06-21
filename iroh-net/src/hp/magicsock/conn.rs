@@ -14,6 +14,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use iroh_metrics::{inc, magicsock::MagicsockMetrics, record};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -28,8 +29,6 @@ use crate::{
         derp::{self, DerpMap, DerpRegion},
         disco, key, netcheck, netmap, portmapper,
     },
-    metrics::magicsock::MagicsockMetrics,
-    metrics::{inc, record},
     net::ip::LocalAddresses,
     util::AbortingJoinHandle,
 };

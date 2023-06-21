@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 
-use crate::metrics::{iroh, magicsock, netcheck};
+use crate::{iroh, magicsock, netcheck};
 
 pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 
