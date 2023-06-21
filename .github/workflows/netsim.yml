@@ -49,25 +49,27 @@ jobs:
 
     - name: Build iroh
       run: |
-        cargo build --profile optimized-release
+        cargo build --profile optimized-release --workspace --all-features
 
     - name: Fetch and build chuck
       run: |
+        cd ..
+        rm -rf chuck
         git clone https://github.com/n0-computer/chuck.git
         cd chuck
         cargo build --release
     
     - name: Install netsim deps
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         sudo apt update
         ./setup.sh
 
     - name: Copy binaries to right location
       run: |
-        cp target/optimized-release/iroh chuck/netsim/bins/iroh
-        cp target/optimized-release/derper chuck/netsim/bins/derper
-        cp chuck/target/release/chuck chuck/netsim/bins/chuck
+        cp target/optimized-release/iroh ../chuck/netsim/bins/iroh
+        cp target/optimized-release/derper ../chuck/netsim/bins/derper
+        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
     
     - name: Detect comment commands
       if: github.event_name == 'issue_comment'
@@ -86,7 +88,7 @@ jobs:
 
     - name: Run tests
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         sudo kill -9 $(pgrep ovs)
         sudo mn --clean
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
@@ -102,7 +104,7 @@ jobs:
     - name: Generate report
       id: generate_report
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         python3 reports_csv.py --table > report.txt
         export NETSIM_REPORT=$(cat report.txt)
         echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
@@ -156,7 +158,7 @@ jobs:
 
     - name: Generate reports
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
@@ -171,7 +173,7 @@ jobs:
         unzip -q awscliv2.zip
         sudo ./aws/install --update
 
-        cd chuck/netsim
+        cd ../chuck/netsim
 
         aws_fname=${{ env.LAST_COMMIT_SHA }}.tar.gz
         tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
@@ -189,7 +191,7 @@ jobs:
     - name: Post metrics
       if: github.ref_name=='main' && github.event_name != 'issue_comment'
       run: |
-        cd chuck/netsim
+        cd ../chuck/netsim
         d=$(cat report_metro.txt)
         metro_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
