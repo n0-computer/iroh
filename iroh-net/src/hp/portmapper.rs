@@ -82,7 +82,9 @@ impl Client {
                 if let Some((old_gateway_addr, _last_seen)) = old_gateway {
                     if old_gateway_addr != gateway_addr {
                         debug!("upnp gateway changed from {old_gateway_addr} to {gateway_addr}");
-                        // TODO(@divagant-martian): tailscale does not invalidate the mappings here. Why?
+                        // TODO(@divagant-martian): tailscale does not clear the mappings here.
+                        // This means the gateway has changed but we believe `self.current_mapping`
+                        // is still valid.
                     }
                 }
                 true
