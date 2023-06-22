@@ -137,6 +137,99 @@ macro_rules! newtype_future {
     };
 }
 
+mod box_dyn {
+    use futures::{future::LocalBoxFuture, FutureExt};
+
+    use super::*;
+
+    pub trait BoxedAsyncSliceReader: 'static {
+        fn len(&mut self) -> LocalBoxFuture<'_, io::Result<u64>>;
+        fn read_at(&mut self, offset: u64, len: usize) -> LocalBoxFuture<'_, io::Result<Bytes>>;
+    }
+
+    pub trait BoxedAsyncSliceWriter: 'static {
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn write_bytes_at(
+            &mut self,
+            offset: u64,
+            data: Bytes,
+        ) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn set_len(&mut self, len: u64) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
+    }
+
+    #[derive(Debug)]
+    pub struct Boxable<R>(R);
+
+    impl<R: AsyncSliceReader + 'static> BoxedAsyncSliceReader for Boxable<R> {
+        fn len(&mut self) -> LocalBoxFuture<'_, io::Result<u64>> {
+            AsyncSliceReader::len(self).boxed_local()
+        }
+
+        fn read_at(&mut self, offset: u64, len: usize) -> LocalBoxFuture<'_, io::Result<Bytes>> {
+            AsyncSliceReader::read_at(self, offset, len).boxed_local()
+        }
+    }
+
+    impl<R: AsyncSliceWriter + 'static> BoxedAsyncSliceWriter for Boxable<R> {
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::write_at(self, offset, data).boxed_local()
+        }
+
+        fn write_bytes_at(
+            &mut self,
+            offset: u64,
+            data: Bytes,
+        ) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::write_bytes_at(self, offset, data).boxed_local()
+        }
+
+        fn set_len(&mut self, len: u64) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::set_len(self, len).boxed_local()
+        }
+
+        fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::sync(self).boxed_local()
+        }
+    }
+
+    impl<T: BoxedAsyncSliceWriter> AsyncSliceWriter for T {
+        type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type SetLenFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type SyncFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+            BoxedAsyncSliceWriter::write_at(self, offset, data)
+        }
+
+        fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+            BoxedAsyncSliceWriter::write_bytes_at(self, offset, data)
+        }
+
+        fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+            BoxedAsyncSliceWriter::set_len(self, len)
+        }
+
+        fn sync(&mut self) -> Self::SyncFuture<'_> {
+            BoxedAsyncSliceWriter::sync(self)
+        }
+    }
+
+    impl<T: BoxedAsyncSliceReader> AsyncSliceReader for T {
+        type ReadAtFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>;
+        type LenFuture<'a> = LocalBoxFuture<'a, io::Result<u64>>;
+
+        fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+            BoxedAsyncSliceReader::read_at(self, offset, len)
+        }
+
+        fn len(&mut self) -> Self::LenFuture<'_> {
+            BoxedAsyncSliceReader::len(self)
+        }
+    }
+}
+
 #[cfg(feature = "tokio-io")]
 mod tokio_io;
 #[cfg(feature = "tokio-io")]
