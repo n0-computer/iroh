@@ -10,7 +10,7 @@ use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
-use iroh_io::FileAdapter;
+use iroh_io::{AsyncSliceReaderExt, FileAdapter};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, debug_span, warn};
@@ -20,7 +20,6 @@ use walkdir::WalkDir;
 use crate::blobs::Collection;
 use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
 use crate::provider::database::AbstractDatabaseEntry;
-use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 use crate::IROH_BLOCK_SIZE;
 
@@ -322,13 +321,13 @@ pub async fn transfer_collection<D: AbstractDatabase, E: EventSender>(
     mut data: D::DataReader,
 ) -> Result<SentStatus> {
     let hash = request.hash;
-    let outboard = read_as_bytes(&mut outboard).await?;
+    let outboard = outboard.read_to_end().await?;
     let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, &outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
     let c = if !just_root {
-        let bytes = read_as_bytes(&mut data).await?;
+        let bytes = data.read_to_end().await?;
         let c: Collection = postcard::from_bytes(&bytes)?;
         let _ = writer.events.send(Event::TransferCollectionStarted {
             connection_id: writer.connection_id(),
@@ -585,7 +584,8 @@ pub async fn send_blob<D: AbstractDatabase, W: AsyncWrite + Unpin + Send + 'stat
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
         Some(entry) => {
-            let outboard = read_as_bytes(&mut entry.outboard_reader().await?).await?;
+            let mut outboard = entry.outboard_reader().await?;
+            let outboard = outboard.read_to_end().await?;
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
             let mut file_reader = entry.data_reader().await?;
             let res = bao_tree::io::fsm::encode_ranges_validated(

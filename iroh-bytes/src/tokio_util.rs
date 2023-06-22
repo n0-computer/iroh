@@ -2,11 +2,8 @@
 use std::{io, pin::Pin, task::Poll};
 
 use bytes::Bytes;
-use futures::{
-    future::{Either, LocalBoxFuture},
-    FutureExt,
-};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter, FileAdapter};
+use futures::{future::LocalBoxFuture, FutureExt};
+use iroh_io::AsyncSliceWriter;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
@@ -238,8 +235,4 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {
     ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
-}
-
-pub(crate) async fn read_as_bytes(mut reader: &mut impl AsyncSliceReader) -> io::Result<Bytes> {
-    reader.read_at(0, usize::MAX).await
 }

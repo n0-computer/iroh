@@ -69,6 +69,15 @@ pub trait AsyncSliceReader {
     fn len(&mut self) -> Self::LenFuture<'_>;
 }
 
+pub trait AsyncSliceReaderExt: AsyncSliceReader {
+    /// Read the entire resource into a [bytes::Bytes] buffer, if possible.
+    fn read_to_end(&mut self) -> Self::ReadAtFuture<'_> {
+        self.read_at(0, usize::MAX)
+    }
+}
+
+impl<T: AsyncSliceReader> AsyncSliceReaderExt for T {}
+
 /// A trait to abstract async writing to different resources.
 ///
 /// This trait does not require the notion of a current position, but instead
