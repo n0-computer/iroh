@@ -4,8 +4,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use iroh_bytes::protocol::RequestToken;
-use iroh_bytes::{cid::Blake3Cid, provider::Ticket, runtime};
+use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
 use iroh_net::{client::create_quinn_client, tls::PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;

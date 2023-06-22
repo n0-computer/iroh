@@ -22,7 +22,7 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 /// Protocol version
 pub const VERSION: u64 = 3;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, MaxSize, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
     pub version: u64,
 }
@@ -99,7 +99,8 @@ impl Request {
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 /// A get request that allows the receiver to create a collection
-/// Custom request handlers will receive a destructured version of this
+/// Custom request handlers will receive this struct destructured into
+/// handler arguments
 pub struct CustomGetRequest {
     pub token: Option<RequestToken>,
     pub data: Bytes,

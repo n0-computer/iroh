@@ -78,12 +78,12 @@ impl Ticket {
     /// The addresses on which the provider can be reached.
     ///
     /// This is guaranteed to be non-empty.
-    pub fn addrs(&self) -> &Vec<SocketAddr> {
+    pub fn addrs(&self) -> &[SocketAddr] {
         &self.addrs
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn destructure(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>) {
+    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>) {
         let Ticket {
             hash,
             peer,
