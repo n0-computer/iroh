@@ -22,36 +22,35 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 /// Protocol version
 pub const VERSION: u64 = 3;
 
-/// Connection tokens are 32 byte values used to authorize connections.
-//
-/// These are currently unused, but exist to distinguish connection authorization
-/// from request authorization.
-pub type ConnectionToken = [u8; 32];
-
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, MaxSize, Clone)]
 pub(crate) struct Handshake {
     pub version: u64,
-    pub conn_token: Option<ConnectionToken>,
 }
 
 impl Handshake {
     pub fn new() -> Self {
-        Self {
-            version: VERSION,
-            conn_token: None,
-        }
+        Self { version: VERSION }
     }
 }
 
+/// Maximum size of a request token, matches a browser cookie max size:
+/// https://datatracker.ietf.org/doc/html/rfc2109#section-6.3
+const MAX_REQUEST_TOKEN_SIZE: usize = 4096;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
-/// Authorization tokens are opaque byte sequences used to authorize requests.
-pub struct RequestAuthToken {
+/// A Request token is an opaque byte sequence associated with a single request.
+/// Applications can use request tokens to implement request authorization,
+/// user association, etc.
+pub struct RequestToken {
     bytes: Vec<u8>,
 }
 
-impl RequestAuthToken {
+impl RequestToken {
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
-        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        ensure!(
+            bytes.len() < MAX_REQUEST_TOKEN_SIZE,
+            "auth token is too large"
+        );
         Ok(Self { bytes })
     }
 
@@ -61,18 +60,18 @@ impl RequestAuthToken {
     }
 }
 
-impl FromStr for RequestAuthToken {
+impl FromStr for RequestToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
         ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
-        Ok(RequestAuthToken { bytes })
+        Ok(RequestToken { bytes })
     }
 }
 
 /// Serializes to base32.
-impl Display for RequestAuthToken {
+impl Display for RequestToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
         text.make_ascii_lowercase();
@@ -90,10 +89,10 @@ pub enum Request {
 }
 
 impl Request {
-    pub fn auth_token(&self) -> Option<&RequestAuthToken> {
+    pub fn token(&self) -> Option<&RequestToken> {
         match self {
-            Request::Get(get) => get.auth_token(),
-            Request::CustomGet(get) => get.auth_token.as_ref(),
+            Request::Get(get) => get.token(),
+            Request::CustomGet(get) => get.token.as_ref(),
         }
     }
 }
@@ -102,7 +101,7 @@ impl Request {
 /// A get request that allows the receiver to create a collection
 /// Custom request handlers will receive a destructured version of this
 pub struct CustomGetRequest {
-    pub auth_token: Option<RequestAuthToken>,
+    pub token: Option<RequestToken>,
     pub data: Bytes,
 }
 
@@ -120,8 +119,8 @@ pub struct GetRequest {
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
-    /// Optional Authorization token
-    auth_token: Option<RequestAuthToken>,
+    /// Optional Request token
+    token: Option<RequestToken>,
 }
 
 impl GetRequest {
@@ -130,7 +129,7 @@ impl GetRequest {
         Self {
             hash,
             ranges,
-            auth_token: None,
+            token: None,
         }
     }
 
@@ -138,7 +137,7 @@ impl GetRequest {
     pub fn all(hash: Hash) -> Self {
         Self {
             hash,
-            auth_token: None,
+            token: None,
             ranges: RangeSpecSeq::all(),
         }
     }
@@ -147,17 +146,17 @@ impl GetRequest {
     pub fn single(hash: Hash) -> Self {
         Self {
             hash,
-            auth_token: None,
+            token: None,
             ranges: RangeSpecSeq::new([RangeSet2::all()]),
         }
     }
 
-    pub fn with_auth_token(self, auth_token: Option<RequestAuthToken>) -> Self {
-        Self { auth_token, ..self }
+    pub fn with_token(self, token: Option<RequestToken>) -> Self {
+        Self { token, ..self }
     }
 
-    pub fn auth_token(&self) -> Option<&RequestAuthToken> {
-        self.auth_token.as_ref()
+    pub fn token(&self) -> Option<&RequestToken> {
+        self.token.as_ref()
     }
 }
 

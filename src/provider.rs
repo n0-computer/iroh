@@ -40,7 +40,7 @@ use crate::blobs::Collection;
 use crate::hp::cfg::Endpoint;
 use crate::hp::derp::DerpMap;
 use crate::protocol::{
-    read_lp, write_lp, AuthToken, Closed, ConnectionToken, CustomGetRequest, GetRequest, Handshake,
+    read_lp, write_lp, RequestToken, Closed, ConnectionToken, CustomGetRequest, GetRequest, Handshake,
     RangeSpec, Request, VERSION,
 };
 use crate::rpc_protocol::{
@@ -101,7 +101,7 @@ where
 struct ProviderHandlers<C, A>
 where
     C: CustomGetHandler,
-    A: AuthorizationHandler,
+    A: RequestAuthorizationHandler,
 {
     rpc: RpcHandler,
     custom_get: C,
@@ -130,25 +130,30 @@ impl CustomGetHandler for () {
     }
 }
 
-pub trait AuthorizationHandler: Send + Sync + Clone + 'static {
+pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
     /// Handle the authorization request, given an opaque data blob from the requester.
     fn authorize(
         &self,
         db: Database,
-        token: Option<AuthToken>,
+        token: Option<RequestToken>,
         request: Request,
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
-/// Define AuthorizationHandler for () so we can use it as a no-op default.
-impl AuthorizationHandler for () {
+/// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
+impl RequestAuthorizationHandler for () {
     fn authorize(
         &self,
         _db: Database,
-        _token: Option<AuthToken>,
+        token: Option<RequestToken>,
         _request: Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
-        async move { Ok(()) }.boxed()
+        async move { 
+            if let Some(token) = token {
+                bail!("no authorization handler defined, but token was provided: {:?}", token);
+            }
+            Ok(())
+        }.boxed()
     }
 }
 
@@ -244,7 +249,7 @@ impl<E, C, A> Builder<E, C, A>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
-    A: AuthorizationHandler,
+    A: RequestAuthorizationHandler,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
@@ -288,7 +293,7 @@ where
     }
 
     /// Configure the custom authorization handler, changing the type of the builder to the new handler type.
-    pub fn authorization_handler<A2: AuthorizationHandler>(
+    pub fn authorization_handler<A2: RequestAuthorizationHandler>(
         self,
         authorization_handler: A2,
     ) -> Builder<E, C, A2> {
@@ -558,8 +563,8 @@ pub enum Event {
         request_id: u64,
         /// The hash for which the client wants to receive data.
         hash: Hash,
-        /// Authorization token, if any
-        auth_token: Option<AuthToken>,
+        /// Request token, if any
+        token: Option<RequestToken>,
     },
     /// A request was received from a client.
     CustomGetRequestReceived {
@@ -569,8 +574,8 @@ pub enum Event {
         request_id: u64,
         /// The size of the custom get request.
         len: usize,
-        /// Authorization token, if any
-        auth_token: Option<AuthToken>,
+        /// Request token, if any
+        token: Option<RequestToken>,
     },
     /// A collection has been found and is being transferred.
     TransferCollectionStarted {
@@ -910,7 +915,7 @@ fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     });
 }
 
-async fn handle_connection<C: CustomGetHandler, A: AuthorizationHandler>(
+async fn handle_connection<C: CustomGetHandler, A: RequestAuthorizationHandler>(
     connecting: quinn::Connecting,
     db: Database,
     events: broadcast::Sender<Event>,
@@ -1103,7 +1108,7 @@ async fn handle_stream(
     mut reader: quinn::RecvStream,
     writer: ResponseWriter,
     custom_get_handler: impl CustomGetHandler,
-    authorization_handler: impl AuthorizationHandler,
+    authorization_handler: impl RequestAuthorizationHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -1129,7 +1134,7 @@ async fn handle_stream(
 
     // does this need the request as value?
     authorization_handler
-        .authorize(db.clone(), request.auth_token().cloned(), request.clone())
+        .authorize(db.clone(), request.token().cloned(), request.clone())
         .await?;
 
     match request {
@@ -1150,7 +1155,7 @@ async fn handle_custom_get(
         len: request.data.len(),
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
-        auth_token: request.auth_token,
+        token: request.token,
     });
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler.handle(request.data, db.clone()).await?;
@@ -1168,7 +1173,7 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
         hash,
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
-        auth_token: request.auth_token().cloned(),
+        token: request.token().cloned(),
     });
 
     // 4. Attempt to find hash

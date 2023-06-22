@@ -17,7 +17,7 @@ use iroh::get::get_response_machine::{ConnectedNext, EndBlobNext};
 use iroh::get::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh::hp::derp::DerpMap;
 use iroh::pathbuf_from_name;
-use iroh::protocol::{AuthToken, GetRequest, RangeSpecSeq};
+use iroh::protocol::{RequestToken, GetRequest, RangeSpecSeq};
 use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::*;
 use iroh::rpc_protocol::{
@@ -173,7 +173,7 @@ enum Commands {
         hash: Blake3Cid,
         /// Optional Authorization Token
         #[clap(long)]
-        auth: Option<AuthToken>,
+        auth: Option<RequestToken>,
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
@@ -557,7 +557,7 @@ async fn main_impl() -> Result<()> {
             };
             let get = GetInteractive::Hash {
                 hash: *hash.as_hash(),
-                auth_token: auth,
+                token: auth,
                 opts,
                 single,
             };
@@ -870,7 +870,7 @@ enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
-        auth_token: Option<AuthToken>,
+        token: Option<RequestToken>,
         single: bool,
     },
 }
@@ -883,10 +883,10 @@ impl GetInteractive {
         }
     }
 
-    fn auth_token(&self) -> Option<&AuthToken> {
+    fn token(&self) -> Option<&RequestToken> {
         match self {
-            GetInteractive::Ticket { ticket, .. } => ticket.auth_token(),
-            GetInteractive::Hash { auth_token, .. } => auth_token.as_ref(),
+            GetInteractive::Ticket { ticket, .. } => ticket.token(),
+            GetInteractive::Hash { token, .. } => token.as_ref(),
         }
     }
 
@@ -961,9 +961,9 @@ async fn get_to_file_single(
             keylog,
             derp_map,
         } => {
-            let (hash, peer_id, addresses, auth_token) = ticket.destructure();
+            let (hash, peer_id, addresses, token) = ticket.destructure();
             let request = GetRequest::new(hash, query)
-                .with_auth_token(auth_token)
+                .with_token(token)
                 .into();
 
             // let response = get::run_ticket(&ticket, request, keylog, derp_map).await?;
@@ -981,11 +981,11 @@ async fn get_to_file_single(
         GetInteractive::Hash {
             hash,
             opts,
-            auth_token,
+            token,
             single: _,
         } => {
             let request = GetRequest::new(hash, query)
-                .with_auth_token(auth_token)
+                .with_token(token)
                 .into();
             get::run(request, opts).await?
         }
@@ -1072,7 +1072,7 @@ async fn get_to_dir_multi(get: GetInteractive, out_dir: PathBuf, temp_dir: PathB
 
     // Same here as above.
     let request = GetRequest::new(get.hash(), query)
-        .with_auth_token(get.auth_token().cloned())
+        .with_token(get.token().cloned())
         .into();
     let response = match get {
         GetInteractive::Ticket {
@@ -1311,7 +1311,7 @@ async fn get_to_stdout(get: GetInteractive) -> Result<()> {
     let pb = make_download_pb();
     // same as above
     let request = GetRequest::new(get.hash(), query)
-        .with_auth_token(get.auth_token().cloned())
+        .with_token(get.token().cloned())
         .into();
     let response = match get {
         GetInteractive::Ticket {

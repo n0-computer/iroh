@@ -648,7 +648,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_token_passthrough() {
+    async fn test_token_passthrough() {
         let rt = test_runtime();
         let readme = readme_path();
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
@@ -666,15 +666,15 @@ mod tests {
             }
         };
 
-        let auth_token = Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6]));
+        let token = Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6]));
         let mut events = provider.subscribe();
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let mut token = None;
             while let Ok(msg) = events.recv().await {
-                if let Event::GetRequestReceived { auth_token, .. } = msg {
-                    // println!("auth_token: {:?}", auth_token);
-                    token = auth_token;
+                if let Event::GetRequestReceived { token, .. } = msg {
+                    // println!("token: {:?}", token);
+                    token = token;
                     break;
                 }
             }
@@ -691,7 +691,7 @@ mod tests {
                 derp_map: None,
             })
             .await?;
-            let request = GetRequest::all(hash).with_auth_token(auth_token).into();
+            let request = GetRequest::all(hash).with_token(token).into();
             let stream = get::run_connection(connection, request);
             aggregate_get_response(stream).await?;
             anyhow::Ok(())
@@ -705,7 +705,7 @@ mod tests {
                 assert!(Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6])) == token);
             }
             Err(e) => {
-                panic!("error receiving auth_token: {:?}", e);
+                panic!("error receiving token: {:?}", e);
             }
         }
     }
@@ -777,7 +777,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = protocol::CustomGetRequest {
                 data: Bytes::from(&b"hello"[..]),
-                auth_token: None,
+                token: None,
             }
             .into();
             let response = get::run(
@@ -819,7 +819,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             let request: AnyGetRequest = protocol::CustomGetRequest {
                 data: Bytes::from(&b"hello"[..]),
-                auth_token: None,
+                token: None,
             }
             .into();
             let response = get::run(
