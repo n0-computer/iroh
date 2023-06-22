@@ -43,10 +43,8 @@ impl Client {
 
     /// UPnP: searchs for an upnp internet gateway device (a router).
     pub async fn probe(&mut self) -> Result<ProbeResult, Error> {
-        info!("running upnp probe");
         let upnp = self.upnp_available_from_cache() || self.probe_upnp_available().await;
 
-        info!("upnp probe result {upnp}");
         Ok(ProbeResult {
             pcp: false,
             pmp: false,
@@ -84,7 +82,6 @@ impl Client {
                 true
             }
             Err(e) => {
-                info!("upnp probe failed {e}");
                 // invalidate last seen gateway and time
                 self.last_upnp_gateway_addr = None;
                 false
@@ -132,9 +129,7 @@ impl Client {
             .await
             {
                 Ok(mapping) => {
-                    // TODO(@divagant-martian): too high? seems relevant to the user
-                    info!("upnp port mapping created {mapping}");
-                    // TODO(@divagant-martian): tailscale does not release the old mapping
+                    debug!("upnp port mapping created {mapping}");
                     let external = mapping.external().into();
                     self.current_mapping = Some(mapping);
                     Some(external)
