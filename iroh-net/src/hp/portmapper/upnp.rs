@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Error;
+use anyhow::Result;
 use igd::aio as aigd;
 
 /// Seconds we ask the router to maintain the port mapping. 0 means infinite.
@@ -29,7 +29,7 @@ pub struct Mapping {
 }
 
 impl Mapping {
-    pub(crate) async fn new(local_addr: Ipv4Addr, port: NonZeroU16) -> Result<Self, Error> {
+    pub(crate) async fn new(local_addr: Ipv4Addr, port: NonZeroU16) -> Result<Self> {
         let local_addr = SocketAddrV4::new(local_addr, port.into());
         let gateway = aigd::search_gateway(igd::SearchOptions {
             timeout: Some(SEARCH_TIMEOUT),
@@ -54,7 +54,7 @@ impl Mapping {
     }
 
     /// Releases the mapping.
-    pub(crate) async fn release(self) -> Result<(), Error> {
+    pub(crate) async fn release(self) -> Result<()> {
         let Mapping {
             gateway,
             external_addr,
@@ -67,7 +67,7 @@ impl Mapping {
     }
 
     /// Renews the mapping and updates the external address (external ip could change).
-    pub(crate) async fn renew(&mut self) -> Result<(), Error> {
+    pub(crate) async fn renew(&mut self) -> Result<()> {
         self.gateway
             .add_port(
                 igd::PortMappingProtocol::UDP,
@@ -101,7 +101,7 @@ impl Mapping {
 }
 
 /// Searchs for upnp gateways, returns the [`SocketAddrV4`] if any was found.
-pub async fn probe_available() -> Result<SocketAddrV4, Error> {
+pub async fn probe_available() -> Result<SocketAddrV4> {
     let gateway = aigd::search_gateway(igd::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
