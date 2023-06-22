@@ -1,6 +1,7 @@
 use std::{
     fmt::Display,
-    net::SocketAddrV4,
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
     time::{Duration, Instant},
 };
 
@@ -28,7 +29,8 @@ pub struct Mapping {
 }
 
 impl Mapping {
-    pub(crate) async fn new(local_addr: SocketAddrV4) -> Result<Self, Error> {
+    pub(crate) async fn new(local_addr: Ipv4Addr, port: NonZeroU16) -> Result<Self, Error> {
+        let local_addr = SocketAddrV4::new(local_addr, port.into());
         let gateway = aigd::search_gateway(igd::SearchOptions {
             timeout: Some(SEARCH_TIMEOUT),
             ..Default::default()

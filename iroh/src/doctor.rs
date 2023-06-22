@@ -192,7 +192,7 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::new();
+    let port_mapper = hp::portmapper::Client::default();
     let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = stun_host

@@ -254,7 +254,7 @@ impl Conn {
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
-        let mut port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
+        let mut port_mapper = portmapper::Client::default(); // TODO: pass self.on_port_map_changed
 
         let Options {
             port,
@@ -268,7 +268,14 @@ impl Conn {
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
-        port_mapper.set_local_port(port).await;
+
+        match port.try_into() {
+            Ok(non_zero_port) => port_mapper.set_local_port(non_zero_port).await,
+            Err(_zero_port_err) => {
+                // This can happen if std::net::UdpSocket::socket_addr fails.
+                debug!("No valid port to map")
+            }
+        }
 
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
@@ -1739,8 +1746,13 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port_v4();
-        self.port_mapper.set_local_port(port).await;
+        match self.local_port_v4().try_into() {
+            Ok(non_zero_port) => self.port_mapper.set_local_port(non_zero_port).await,
+            Err(_zero_port_err) => {
+                // This can happen if std::net::UdpSocket::socket_addr fails.
+                debug!("No valid port to map on rebind")
+            }
+        }
         let ipv4_addr = self.pconn4.local_addr()?;
 
         *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);

@@ -1,10 +1,11 @@
 use std::{
     net::{SocketAddr, SocketAddrV4},
+    num::NonZeroU16,
     time::{Duration, Instant},
 };
 
 use anyhow::Error;
-use tracing::{debug, info};
+use tracing::debug;
 
 mod upnp;
 
@@ -22,15 +23,22 @@ pub struct ProbeResult {
 /// A port mapping client.
 #[derive(Default, Debug, Clone)]
 pub struct Client {
-    local_port: u16,
+    /// Local port to map.
+    // TODO(@divagant-martian): This is an option to allow keeping the Default implementation over
+    // this type for now.
+    local_port: Option<NonZeroU16>,
 
     last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
     current_mapping: Option<upnp::Mapping>,
 }
 
 impl Client {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(local_port: Option<NonZeroU16>) -> Self {
+        Client {
+            local_port,
+            last_upnp_gateway_addr: None,
+            current_mapping: None,
+        }
     }
 
     /// Releases the current mapping and clears it from the cache.
@@ -91,8 +99,8 @@ impl Client {
 
     /// Updates the local port number to which we want to port map UDP traffic.
     /// Invalidates the current mapping if any.
-    pub async fn set_local_port(&mut self, local_port: u16) {
-        // TODO(@divagant-martian): this should never be 0
+    pub async fn set_local_port(&mut self, local_port: NonZeroU16) {
+        let local_port = Some(local_port);
         if self.local_port != local_port {
             self.local_port = local_port;
             let _ = self.invalidate_mapping().await;
@@ -121,13 +129,8 @@ impl Client {
                 // TODO(@divagant-martian): tailscale returns nil without clearing the mapping
                 None
             }
-        } else {
-            match upnp::Mapping::new(SocketAddrV4::new(
-                std::net::Ipv4Addr::UNSPECIFIED,
-                self.local_port,
-            ))
-            .await
-            {
+        } else if let Some(local_port) = self.local_port {
+            match upnp::Mapping::new(std::net::Ipv4Addr::UNSPECIFIED, local_port).await {
                 Ok(mapping) => {
                     debug!("upnp port mapping created {mapping}");
                     let external = mapping.external().into();
@@ -139,6 +142,9 @@ impl Client {
                     None
                 }
             }
+        } else {
+            debug!("No valid local port provided to create a mapping");
+            None
         }
     }
 
