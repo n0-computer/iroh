@@ -6,6 +6,7 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 
+use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -306,12 +307,7 @@ where
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            let handler: Box<dyn std::any::Any> = Box::new(handler.clone());
-                            if let Some(handler) = handler.downcast_ref::<RpcHandler<Database>>() {
-                                handle_rpc_request(msg, chan, handler, &rt);
-                            } else {
-                                tracing::error!("invalid handler type");
-                            }
+                            handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -322,12 +318,7 @@ where
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            let handler: Box<dyn std::any::Any> = Box::new(handler.clone());
-                            if let Some(handler) = handler.downcast_ref::<RpcHandler<Database>>() {
-                                handle_rpc_request(msg, chan, handler, &rt);
-                            } else {
-                                tracing::error!("invalid handler type");
-                            }
+                            handle_rpc_request(msg, chan, &handler, &rt);
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -530,20 +521,27 @@ struct RpcHandler<D> {
     inner: Arc<NodeInner<D>>,
 }
 
-impl RpcHandler<Database> {
+impl<D: AbstractDatabase> RpcHandler<D> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
+    }
+
+    fn concrete_db(&self) -> Option<Database> {
+        let db: Box<dyn Any> = Box::new(self.inner.db.clone());
+        db.downcast_ref::<Database>().cloned()
     }
 
     fn list_blobs(
         self,
         _msg: ListBlobsRequest,
     ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
-        let items = self
-            .inner
-            .db
-            .external()
-            .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
+        let items = if let Some(db) = self.concrete_db() {
+            db.external()
+                .map(|(hash, path, size)| ListBlobsResponse { hash, path, size })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         futures::stream::iter(items)
     }
 
@@ -553,15 +551,21 @@ impl RpcHandler<Database> {
     ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
         // collections are always stored internally, so we take everything that is stored internally
         // and try to parse it as a collection
-        let items = self.inner.db.internal().filter_map(|(hash, collection)| {
-            Collection::from_bytes(&collection)
-                .ok()
-                .map(|collection| ListCollectionsResponse {
-                    hash,
-                    total_blobs_count: collection.blobs().len(),
-                    total_blobs_size: collection.total_blobs_size(),
+        let items = if let Some(db) = self.concrete_db() {
+            db.internal()
+                .filter_map(|(hash, collection)| {
+                    Collection::from_bytes(&collection).ok().map(|collection| {
+                        ListCollectionsResponse {
+                            hash,
+                            total_blobs_count: collection.blobs().len(),
+                            total_blobs_size: collection.total_blobs_size(),
+                        }
+                    })
                 })
-        });
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         futures::stream::iter(items)
     }
 
@@ -572,11 +576,13 @@ impl RpcHandler<Database> {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        self.rt().main().spawn(async move {
-            if let Err(e) = self.inner.db.validate(tx).await {
-                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
-            }
-        });
+        if let Some(db) = self.concrete_db() {
+            self.rt().main().spawn(async move {
+                if let Err(e) = db.validate(tx).await {
+                    tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+                }
+            });
+        }
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
@@ -609,7 +615,9 @@ impl RpcHandler<Database> {
             Progress::new(progress),
         )
         .await?;
-        self.inner.db.union_with(db);
+        if let Some(current) = self.concrete_db() {
+            current.union_with(db);
+        }
 
         Ok(())
     }
@@ -661,10 +669,10 @@ impl RpcHandler<Database> {
     }
 }
 
-fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<D: AbstractDatabase, C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler<Database>,
+    handler: &RpcHandler<D>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
