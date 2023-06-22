@@ -4,6 +4,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::{cid::Blake3Cid, provider::Ticket, runtime};
 use iroh_net::{client::create_quinn_client, tls::PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
@@ -60,6 +61,7 @@ impl Cli {
                 hash,
                 peer,
                 addrs,
+                token,
                 out,
                 single,
             } => {
@@ -71,6 +73,7 @@ impl Cli {
                         keylog: self.keylog,
                         derp_map: config.derp_map(),
                     },
+                    token,
                     single,
                 };
                 tokio::select! {
@@ -188,16 +191,19 @@ pub enum Commands {
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
-    /// Fetch the data identified by HASH from a provider.
+    /// Fetch the data identified by HASH from a provider
     Get {
         /// The hash to retrieve, as a Blake3 CID
         hash: Blake3Cid,
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
-        /// Addresses of the provider.
+        /// Addresses of the provider
         #[clap(long, short)]
         addrs: Vec<SocketAddr>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long)]
+        token: Option<RequestToken>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,

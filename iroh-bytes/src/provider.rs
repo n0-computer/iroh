@@ -142,6 +142,40 @@ pub enum ProvideProgress {
     Abort(RpcError),
 }
 
+/// hook into the request handling to process authorization by examining
+/// the request and any given token. Any error returned will abort the request,
+/// and the error will be sent to the requester.
+pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
+    /// Handle the authorization request, given an opaque data blob from the requester.
+    fn authorize(
+        &self,
+        db: Database,
+        token: Option<RequestToken>,
+        request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>>;
+}
+
+/// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
+impl RequestAuthorizationHandler for () {
+    fn authorize(
+        &self,
+        _db: Database,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move {
+            if let Some(token) = token {
+                anyhow::bail!(
+                    "no authorization handler defined, but token was provided: {:?}",
+                    token
+                );
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
 pub trait CustomGetHandler: Send + Sync + Clone + 'static {
@@ -400,11 +434,16 @@ pub trait EventSender: Clone + Send + 'static {
     fn send(&self, event: Event) -> Option<Event>;
 }
 
-pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
+pub async fn handle_connection<
+    C: CustomGetHandler,
+    E: EventSender,
+    A: RequestAuthorizationHandler,
+>(
     connecting: quinn::Connecting,
     db: Database,
     events: E,
     custom_get_handler: C,
+    authorization_handler: A,
     rt: crate::runtime::Handle,
 ) {
     // let _x = NonSend::default();
@@ -432,9 +471,18 @@ pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
             events.send(Event::ClientConnected { connection_id });
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
+            let authorization_handler = authorization_handler.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
+                    if let Err(err) = handle_stream(
+                        db,
+                        reader,
+                        writer,
+                        custom_get_handler,
+                        authorization_handler,
+                    )
+                    .await
+                    {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -451,6 +499,7 @@ async fn handle_stream<E: EventSender>(
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
+    authorization_handler: impl RequestAuthorizationHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -470,6 +519,10 @@ async fn handle_stream<E: EventSender>(
             return Err(e);
         }
     };
+
+    authorization_handler
+        .authorize(db.clone(), request.token().cloned(), &request)
+        .await?;
 
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,

@@ -12,7 +12,7 @@ use iroh_bytes::{
         self,
         get_response_machine::{ConnectedNext, EndBlobNext},
     },
-    protocol::{GetRequest, RangeSpecSeq},
+    protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
     provider::Ticket,
     tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter},
     util::pathbuf_from_name,
@@ -33,6 +33,7 @@ pub enum GetInteractive {
     Hash {
         hash: Hash,
         opts: get::Options,
+        token: Option<RequestToken>,
         single: bool,
     },
 }
@@ -50,11 +51,24 @@ impl GetInteractive {
         }
     }
 
+    fn token(&self) -> Option<&RequestToken> {
+        match self {
+            GetInteractive::Ticket { ticket, .. } => ticket.token(),
+            GetInteractive::Hash { token, .. } => token.as_ref(),
+        }
+    }
+
     pub fn single(&self) -> bool {
         match self {
             GetInteractive::Ticket { .. } => false,
             GetInteractive::Hash { single, .. } => *single,
         }
+    }
+
+    fn new_request(&self, query: RangeSpecSeq) -> Request {
+        GetRequest::new(self.hash(), query)
+            .with_token(self.token().cloned())
+            .into()
     }
 
     /// Get a single file.
@@ -80,7 +94,7 @@ impl GetInteractive {
         // collection info, in case we won't get a callback with is_root
         let collection_info = Some((1, 0));
 
-        let request = GetRequest::new(self.hash(), query).into();
+        let request = self.new_request(query);
         let response = match self {
             GetInteractive::Ticket {
                 ticket,
@@ -174,7 +188,7 @@ impl GetInteractive {
             Some((collection.len() as u64, 0))
         };
 
-        let request = GetRequest::new(self.hash(), query).into();
+        let request = self.new_request(query);
         let response = match self {
             GetInteractive::Ticket {
                 ticket,
@@ -350,7 +364,7 @@ impl GetInteractive {
         };
 
         let pb = make_download_pb();
-        let request = GetRequest::new(self.hash(), query).into();
+        let request = self.new_request(query);
         let response = match self {
             GetInteractive::Ticket {
                 ticket,
