@@ -53,6 +53,7 @@ test = []
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
 blake3 = "1.3.3"
+bytes = "1"
 duct = "0.13.6"
 nix = "0.26.2"
 rand = "0.8"
