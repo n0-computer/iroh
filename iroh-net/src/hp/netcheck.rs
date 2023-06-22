@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use futures::{
-    stream::{FusedStream, FuturesUnordered, StreamExt},
+    stream::{FuturesUnordered, StreamExt},
     Future, FutureExt,
 };
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
@@ -485,6 +485,7 @@ struct ReportState {
     /// Doing a lite, follow-up netcheck
     incremental: bool,
     stop_probe: Arc<sync::Notify>,
+    wait_port_map: wg::AsyncWaitGroup,
     /// The report which will be returned.
     report: Arc<RwLock<Report>>,
     got_ep4: Option<SocketAddr>,
@@ -512,6 +513,7 @@ impl ReportState {
         debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
+        let do_port_map = !skip_external_network && port_mapper.is_some();
         let mut port_mapping = MaybeFuture::default();
         if !skip_external_network {
             if let Some(port_mapper) = port_mapper {
@@ -613,22 +615,13 @@ impl ReportState {
         tokio::pin!(stun_timer);
         let probes_aborted = self.stop_probe.clone();
 
-        // Probe completion variables. The probe is completed when all parts have finished.
-
-        // portmap probe is considered done if it's not necessary.
-        let mut portmap_done = !port_mapping.inner.is_some();
-        // captive check is considered done if it's not necessary.
-        let mut captive_task_done = !captive_task.inner.is_some();
-        // probes are always done.
-        let mut probes_done = false;
-
-        while !probes_done || !captive_task_done || !portmap_done {
+        loop {
             tokio::select! {
                 _ = &mut stun_timer => {
                     debug!("STUN timer expired");
                     break;
                 },
-                pm = &mut port_mapping, if port_mapping.inner.is_some() => {
+                pm = &mut port_mapping => {
                     let mut report = self.report.write().await;
                     match pm {
                         Some(portmapper::ProbeResult{upnp, pmp, pcp}) => {
@@ -643,9 +636,8 @@ impl ReportState {
                         }
                     }
                     port_mapping.inner = None;
-                    portmap_done = true;
                 }
-                probe_report = probes.next(), if !probes.is_terminated() => {
+                probe_report = probes.next() => {
                     match probe_report {
                         Some(Ok(probe_report)) => {
                             debug!("finished probe: {:?}", probe_report);
@@ -680,15 +672,14 @@ impl ReportState {
                             if self.any_udp().await {
                                 captive_task.inner = None;
                             }
-                            probes_done = true;
+                            break;
                         }
                     }
                 }
-                found = &mut captive_task, if captive_task.inner.is_some() => {
+                found = &mut captive_task => {
                     let mut report = self.report.write().await;
                     report.captive_portal = found;
                     captive_task.inner = None;
-                    captive_task_done = true;
                 }
                 _ = probes_aborted.notified() => {
                     // Saw enough regions.
@@ -696,7 +687,7 @@ impl ReportState {
                     // We can stop the captive portal check since we know that we
                     // got a bunch of STUN responses.
                     captive_task.inner = None;
-                    captive_task_done = true;
+                    break;
                 }
             }
         }
@@ -709,6 +700,11 @@ impl ReportState {
 
         if let Some(hair_pin) = self.wait_hair_check().await {
             self.report.write().await.hair_pinning = Some(hair_pin);
+        }
+
+        if do_port_map {
+            self.wait_port_map.wait().await;
+            debug!("port_map done");
         }
 
         self.stop_timers();
@@ -1408,6 +1404,7 @@ impl Actor {
             pc4_hair: Arc::new(pc4_hair),
             hair_timeout: None,
             stop_probe: Arc::new(sync::Notify::new()),
+            wait_port_map: wg::AsyncWaitGroup::new(),
             report: Default::default(),
             got_ep4: None,
             timers: Default::default(),
