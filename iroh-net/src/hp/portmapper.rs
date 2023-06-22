@@ -49,7 +49,7 @@ impl Client {
         Ok(())
     }
 
-    /// UPnP: searchs for an upnp internet gateway device (a router).
+    /// UPnP: searches for an upnp internet gateway device (a router).
     pub async fn probe(&mut self) -> Result<ProbeResult, Error> {
         let upnp = self.upnp_available_from_cache() || self.probe_upnp_available().await;
 
