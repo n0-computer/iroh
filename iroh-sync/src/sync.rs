@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ranger::{AsFingerprint, Fingerprint, Peer, Range, RangeKey};
 
-#[derive(Debug, Serialize, Deserialize)]
+pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Author {
     priv_key: SigningKey,
     id: AuthorId,
@@ -56,7 +58,7 @@ impl Author {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct AuthorId(VerifyingKey);
 
 impl Debug for AuthorId {
@@ -130,7 +132,7 @@ impl Namespace {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct NamespaceId(VerifyingKey);
 
 impl Display for NamespaceId {
@@ -152,6 +154,39 @@ impl NamespaceId {
 
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+}
+
+/// Manages the replicas and authors for an instance.
+#[derive(Debug, Clone, Default)]
+pub struct ReplicaStore {
+    replicas: Arc<RwLock<HashMap<NamespaceId, Replica>>>,
+    authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
+}
+
+impl ReplicaStore {
+    pub fn get_replica(&self, namespace: &NamespaceId) -> Option<Replica> {
+        let replicas = &*self.replicas.read();
+        replicas.get(namespace).cloned()
+    }
+
+    pub fn get_author(&self, author: &AuthorId) -> Option<Author> {
+        let authors = &*self.authors.read();
+        authors.get(author).cloned()
+    }
+
+    pub fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Author {
+        let author = Author::new(rng);
+        self.authors.write().insert(*author.id(), author.clone());
+        author
+    }
+
+    pub fn new_replica(&self, namespace: Namespace) -> Replica {
+        let replica = Replica::new(namespace);
+        self.replicas
+            .write()
+            .insert(replica.namespace(), replica.clone());
+        replica
     }
 }
 

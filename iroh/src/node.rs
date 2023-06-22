@@ -329,7 +329,8 @@ where
         };
         println!("Author: {}", author);
         println!("Namespace: {}", namespace);
-        let replica = iroh_sync::sync::Replica::new(namespace);
+        let replica_store = iroh_sync::sync::ReplicaStore::default();
+        let replica = replica_store.new_replica(namespace);
         // insert some dummy data
 
         replica.insert("iroh-is-cool", &author, "hello world");
@@ -387,10 +388,10 @@ where
                         let rt2 = rt.clone();
                         rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
                     } else if alpn.as_bytes() == crate::sync::SYNC_ALPN {
-                        let replica = replica.clone();
+                        let replica_store = replica_store.clone();
                         rt.main().spawn(async move {
                             println!("Sync request received");
-                            if let Err(err) = crate::sync::handle_connection(connecting, replica).await {
+                            if let Err(err) = crate::sync::handle_connection(connecting, replica_store).await {
                                 tracing::error!("sync error: {:?}", err);
                             }
                         });
