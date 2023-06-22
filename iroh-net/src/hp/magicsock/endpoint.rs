@@ -704,8 +704,11 @@ impl Endpoint {
         // Send heartbeat ping to keep the current addr going as long as we need it.
         if let Some(udp_addr) = udp_addr {
             let elapsed = self.last_ping(&udp_addr).map(|l| now - l);
-            // Send a ping if the last ping is either older than 2 seconds or we don't have one.
-            let needs_ping = elapsed.map(|e| e >= Duration::from_secs(2)).unwrap_or(true);
+            // Send a ping if the last ping is either than 2 seconds.
+            let needs_ping = match elapsed {
+                Some(e) => e >= Duration::from_secs(2),
+                None => false,
+            };
 
             if needs_ping {
                 debug!(
