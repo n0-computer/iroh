@@ -76,6 +76,7 @@ impl Client {
     async fn probe_upnp_available(&mut self) -> bool {
         match upnp::probe_available().await {
             Ok(gateway_addr) => {
+                debug!("found upnp gateway {gateway_addr}");
                 let old_gateway = self
                     .last_upnp_gateway_addr
                     .replace((gateway_addr, Instant::now()));
@@ -118,6 +119,7 @@ impl Client {
         if let Some(mapping) = &mut self.current_mapping {
             let now = Instant::now();
             if now <= mapping.good_until() {
+                debug!("renewing mapping {mapping}");
                 // TODO(@divagant-martian): this would go in a goroutine
                 if now >= mapping.renew_after() {
                     if let Err(e) = mapping.renew().await {
@@ -131,7 +133,7 @@ impl Client {
                 None
             }
         } else if let Some(local_port) = self.local_port {
-            match upnp::Mapping::new(std::net::Ipv4Addr::UNSPECIFIED, local_port).await {
+            match upnp::Mapping::new(std::net::Ipv4Addr::LOCALHOST, local_port).await {
                 Ok(mapping) => {
                     debug!("upnp port mapping created {mapping}");
                     let external = mapping.external().into();
