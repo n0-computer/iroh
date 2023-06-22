@@ -8,9 +8,10 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
+use iroh_net::tls::PeerId;
 use serde::{Deserialize, Serialize};
 
-use crate::{Hash, PeerId};
+use crate::Hash;
 
 /// A token containing everything to get a file from the provider.
 

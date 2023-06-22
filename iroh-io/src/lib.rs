@@ -395,6 +395,76 @@ mod tests {
     #[cfg(feature = "tokio-io")]
     use std::io::Write;
 
+    /// A test server that serves data on a random port, supporting head, get, and range requests
+    #[cfg(feature = "http")]
+    mod test_server {
+        use super::*;
+        use axum::{routing::get, Extension, Router};
+        use hyper::{Body, Request, Response, StatusCode};
+        use std::{net::SocketAddr, ops::Range, sync::Arc};
+
+        pub fn serve(data: Vec<u8>) -> (SocketAddr, impl Future<Output = hyper::Result<()>>) {
+            // Create an Axum router
+            let app = Router::new()
+                .route("/", get(handler))
+                .layer(Extension(Arc::new(data)));
+
+            // Create the server
+            let addr: SocketAddr = SocketAddr::from(([0, 0, 0, 0], 0));
+            let fut = axum::Server::bind(&addr).serve(app.into_make_service());
+
+            // Return the server address and a future that completes when the server is shut down
+            (fut.local_addr(), fut)
+        }
+
+        async fn handler(state: Extension<Arc<Vec<u8>>>, req: Request<Body>) -> Response<Body> {
+            let data = state.0.as_ref();
+            // Check if the request contains a "Range" header
+            if let Some(range_header) = req.headers().get("Range") {
+                if let Ok(range) = parse_range_header(range_header.to_str().unwrap()) {
+                    // Extract the requested range from the data
+                    let start = range.start;
+                    let end = range.end.min(data.len());
+                    let sliced_data = &data[start..end];
+
+                    // Create a partial response with the sliced data
+                    return Response::builder()
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header("Content-Type", "application/octet-stream")
+                        .header("Content-Length", sliced_data.len())
+                        .header(
+                            "Content-Range",
+                            format!("bytes {}-{}/{}", start, end - 1, data.len()),
+                        )
+                        .body(Body::from(sliced_data.to_vec()))
+                        .unwrap();
+                }
+            }
+
+            // Return the full data if no range header was found
+            Response::new(data.to_owned().into())
+        }
+
+        fn parse_range_header(
+            header_value: &str,
+        ) -> std::result::Result<Range<usize>, &'static str> {
+            let prefix = "bytes=";
+            if header_value.starts_with(prefix) {
+                let range_str = header_value.strip_prefix(prefix).unwrap();
+                if let Some(index) = range_str.find('-') {
+                    let start = range_str[..index]
+                        .parse()
+                        .map_err(|_| "Failed to parse range start")?;
+                    let end: usize = range_str[index + 1..]
+                        .parse()
+                        .map_err(|_| "Failed to parse range end")?;
+                    return Ok(start..end + 1);
+                }
+            }
+            Err("Invalid Range header format")
+        }
+    }
+
     /// mutable style read smoke test, expects a resource containing 0..100u8
     async fn read_mut_smoke(mut file: impl AsyncSliceReader) -> io::Result<()> {
         let expected = (0..100u8).collect::<Vec<_>>();
@@ -623,8 +693,8 @@ mod tests {
             match op {
                 ReadOp::ReadAt(offset, len) => {
                     let data = AsyncSliceReader::read_at(&mut file, offset, len).await?;
-                    current = offset.checked_add(len as u64).unwrap();
                     assert_eq!(&data, &actual[limited_range(offset, len, actual.len())]);
+                    current = offset.checked_add(len as u64).unwrap();
                 }
                 ReadOp::ReadSequential(offset, len) => {
                     let offset = if offset >= 0 {
@@ -633,8 +703,8 @@ mod tests {
                         current.saturating_sub((-offset) as u64)
                     };
                     let data = AsyncSliceReader::read_at(&mut file, offset, len).await?;
-                    current = offset.checked_add(len as u64).unwrap();
                     assert_eq!(&data, &actual[limited_range(offset, len, actual.len())]);
+                    current = offset.checked_add(len as u64).unwrap();
                 }
                 ReadOp::Len => {
                     let len = AsyncSliceReader::len(&mut file).await?;
@@ -659,14 +729,9 @@ mod tests {
 
     #[cfg(feature = "http")]
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore)]
     async fn http_smoke() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.txt");
-        let mut file = std::fs::File::create(&path).unwrap();
-        file.write_all(b"hello world").unwrap();
-        let filter = warp::fs::file(path);
-        let server = warp::serve(filter);
-        let (addr, server) = server.bind_ephemeral(([127, 0, 0, 1], 0));
+        let (addr, server) = test_server::serve(b"hello world".to_vec());
         let url = format!("http://{}", addr);
         println!("serving from {}", url);
         let url = reqwest::Url::parse(&url).unwrap();
@@ -714,18 +779,12 @@ mod tests {
         }
 
         #[cfg(feature = "http")]
+        #[cfg_attr(target_os = "windows", ignore)]
         #[test]
         fn http_read(data in proptest::collection::vec(any::<u8>(), 0..10), ops in random_read_ops(10, 10, 2)) {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("test.txt");
-            let mut file = std::fs::File::create(&path).unwrap();
-            file.write_all(&data).unwrap();
-            let filter = warp::fs::file(path);
             async_test(async move {
                 // create a test server. this has to happen in a tokio runtime
-                let server = warp::serve(filter);
-                // bind to a random port
-                let (addr, server) = server.bind_ephemeral(([127, 0, 0, 1], 0));
+                let (addr, server) = test_server::serve(data.clone());
                 // spawn the server in a background task
                 let server = tokio::spawn(server);
                 // create a resource from the server
