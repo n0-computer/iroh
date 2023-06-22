@@ -240,12 +240,6 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {
     }
 }
 
-pub(crate) async fn read_as_bytes(reader: &mut Either<Bytes, FileAdapter>) -> io::Result<Bytes> {
-    match reader {
-        Either::Left(cursor) => Ok(cursor.clone()),
-        Either::Right(file) => {
-            let len = file.len().await?;
-            file.read_at(0, len as usize).await
-        }
-    }
+pub(crate) async fn read_as_bytes(mut reader: &mut impl AsyncSliceReader) -> io::Result<Bytes> {
+    reader.read_at(0, usize::MAX).await
 }

@@ -6,7 +6,11 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{
+    future::{BoxFuture, Either},
+    FutureExt, StreamExt,
+};
+use iroh_io::{AsyncSliceReader, FileAdapter};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -30,6 +34,37 @@ pub const FNAME_PATHS: &str = "paths.bin";
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
+
+pub trait AbstractDatabaseEntry<D: AbstractDatabase> {
+    fn outboard_reader(&self) -> BoxFuture<'static, io::Result<D::OutboardReader>>;
+    fn data_reader(&self) -> BoxFuture<'static, io::Result<D::DataReader>>;
+}
+
+impl AbstractDatabaseEntry<Database> for DbEntry {
+    fn outboard_reader(&self) -> BoxFuture<'static, io::Result<Bytes>> {
+        self.outboard_reader().boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'static, io::Result<Either<Bytes, FileAdapter>>> {
+        self.data_reader().boxed()
+    }
+}
+
+pub trait AbstractDatabase: Clone + Send + Sync + 'static {
+    type OutboardReader: AsyncSliceReader;
+    type DataReader: AsyncSliceReader;
+    type Entry: AbstractDatabaseEntry<Self>;
+    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+}
+
+impl AbstractDatabase for Database {
+    type Entry = DbEntry;
+    type OutboardReader = Bytes;
+    type DataReader = Either<Bytes, FileAdapter>;
+    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+        self.get(hash)
+    }
+}
 
 impl From<HashMap<Hash, DbEntry>> for Database {
     fn from(map: HashMap<Hash, DbEntry>) -> Self {
@@ -321,10 +356,10 @@ impl Database {
                 } else {
                     None
                 };
-                let size = boc.size();
                 let entry_tx = tx.clone();
                 let done_tx = tx.clone();
                 async move {
+                    let size = boc.size().await;
                     entry_tx
                         .send(ValidateProgress::Entry {
                             id,

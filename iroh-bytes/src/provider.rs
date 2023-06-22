@@ -9,7 +9,7 @@ use bao_tree::io::fsm::encode_ranges_validated;
 use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
-use futures::FutureExt;
+use futures::{Future, FutureExt};
 use iroh_io::FileAdapter;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -19,6 +19,7 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
+use crate::provider::database::AbstractDatabaseEntry;
 use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 use crate::IROH_BLOCK_SIZE;
@@ -30,6 +31,8 @@ mod ticket;
 pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
+
+use self::database::AbstractDatabase;
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -136,22 +139,14 @@ pub enum ProvideProgress {
 
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
-pub trait CustomGetHandler: Send + Sync + Clone + 'static {
+pub trait CustomGetHandler<D>: Send + Sync + Clone + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
-    fn handle(
-        &self,
-        request: Bytes,
-        db: Database,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
+    fn handle(&self, request: Bytes, db: D) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
 }
 
 /// Define CustomGetHandler for () so we can use it as a no-op default.
-impl CustomGetHandler for () {
-    fn handle(
-        &self,
-        _request: Bytes,
-        _db: Database,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+impl<D> CustomGetHandler<D> for () {
+    fn handle(&self, _request: Bytes, _db: D) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
         async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
     }
 }
@@ -200,26 +195,31 @@ impl DbEntry {
         }
     }
 
-    pub fn outboard(&self) -> &Bytes {
-        match self {
-            DbEntry::External { outboard, .. } => outboard,
-            DbEntry::Internal { outboard, .. } => outboard,
-        }
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
+        futures::future::ok(match self {
+            DbEntry::External { outboard, .. } => outboard.clone(),
+            DbEntry::Internal { outboard, .. } => outboard.clone(),
+        })
     }
 
     /// A reader for the data.
-    pub async fn data_reader(&self) -> io::Result<Either<Bytes, FileAdapter>> {
-        Ok(match self {
-            DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path.clone()).await?),
-            DbEntry::Internal { data, .. } => Either::Left(data.clone()),
-        })
+    pub fn data_reader(
+        &self,
+    ) -> impl Future<Output = io::Result<Either<Bytes, FileAdapter>>> + 'static {
+        let this = self.clone();
+        async move {
+            Ok(match this {
+                DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path).await?),
+                DbEntry::Internal { data, .. } => Either::Left(data),
+            })
+        }
     }
 
     /// Returns the size of the blob or collection.
     ///
     /// For collections this is the size of the serialized collection.
     /// For blobs it is the blob size.
-    pub fn size(&self) -> u64 {
+    pub async fn size(&self) -> u64 {
         match self {
             DbEntry::External { size, .. } => *size,
             DbEntry::Internal { data, .. } => data.len() as u64,
@@ -311,18 +311,19 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<E: EventSender>(
+pub async fn transfer_collection<D: AbstractDatabase, E: EventSender>(
     request: GetRequest,
     // Database from which to fetch blobs.
-    db: &Database,
+    db: &D,
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    outboard: &Bytes,
-    mut data: Either<Bytes, FileAdapter>,
+    mut outboard: D::OutboardReader,
+    mut data: D::DataReader,
 ) -> Result<SentStatus> {
     let hash = request.hash;
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
+    let outboard = read_as_bytes(&mut outboard).await?;
+    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, &outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
@@ -390,14 +391,13 @@ pub trait EventSender: Clone + Send + 'static {
     fn send(&self, event: Event) -> Option<Event>;
 }
 
-pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
+pub async fn handle_connection<D: AbstractDatabase, C: CustomGetHandler<D>, E: EventSender>(
     connecting: quinn::Connecting,
-    db: Database,
+    db: D,
     events: E,
     custom_get_handler: C,
     rt: crate::runtime::Handle,
 ) {
-    // let _x = NonSend::default();
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
         Ok(conn) => conn,
@@ -436,11 +436,11 @@ pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
     .await
 }
 
-async fn handle_stream<E: EventSender>(
-    db: Database,
+async fn handle_stream<D: AbstractDatabase, E: EventSender>(
+    db: D,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler,
+    custom_get_handler: impl CustomGetHandler<D>,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -468,11 +468,11 @@ async fn handle_stream<E: EventSender>(
         }
     }
 }
-async fn handle_custom_get<E: EventSender>(
-    db: Database,
+async fn handle_custom_get<D: AbstractDatabase, E: EventSender>(
+    db: D,
     request: Bytes,
     mut writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler,
+    custom_get_handler: impl CustomGetHandler<D>,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
         len: request.len(),
@@ -488,8 +488,8 @@ async fn handle_custom_get<E: EventSender>(
     handle_get(db, request, writer).await
 }
 
-pub async fn handle_get<E: EventSender>(
-    db: Database,
+pub async fn handle_get<D: AbstractDatabase, E: EventSender>(
+    db: D,
     request: GetRequest,
     mut writer: ResponseWriter<E>,
 ) -> Result<()> {
@@ -510,7 +510,7 @@ pub async fn handle_get<E: EventSender>(
                 request,
                 &db,
                 &mut writer,
-                entry.outboard(),
+                entry.outboard_reader().await?,
                 entry.data_reader().await?,
             )
             .await
@@ -577,20 +577,17 @@ pub enum SentStatus {
     NotFound,
 }
 
-pub async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
-    db: &Database,
+pub async fn send_blob<D: AbstractDatabase, W: AsyncWrite + Unpin + Send + 'static>(
+    db: &D,
     name: Hash,
     ranges: &RangeSpec,
     writer: &mut W,
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
-        Some(DbEntry::External {
-            outboard,
-            path,
-            size,
-        }) => {
+        Some(entry) => {
+            let outboard = read_as_bytes(&mut entry.outboard_reader().await?).await?;
             let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
-            let mut file_reader = FileAdapter::open(path.clone()).await?;
+            let mut file_reader = entry.data_reader().await?;
             let res = bao_tree::io::fsm::encode_ranges_validated(
                 &mut file_reader,
                 outboard,
@@ -601,7 +598,7 @@ pub async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             debug!("done sending blob {} {:?}", name, res);
             res?;
 
-            Ok((SentStatus::Sent, size))
+            Ok((SentStatus::Sent, 0))
         }
         _ => {
             debug!("blob not found {}", name);

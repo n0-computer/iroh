@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
+use iroh_bytes::provider::database::AbstractDatabase;
 use iroh_bytes::{
     blobs::Collection,
     protocol::Closed,
@@ -62,15 +63,16 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = ()>
+pub struct Builder<D, E = DummyServerEndpoint, C = ()>
 where
+    D: AbstractDatabase,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
+    C: CustomGetHandler<D>,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
     rpc_endpoint: E,
-    db: Database,
+    db: D,
     keylog: bool,
     custom_get_handler: C,
     derp_map: Option<DerpMap>,
@@ -79,9 +81,9 @@ where
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
 
-impl Builder {
+impl<D: AbstractDatabase> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
-    pub fn with_db(db: Database) -> Self {
+    pub fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -95,13 +97,17 @@ impl Builder {
     }
 }
 
-impl<E, C> Builder<E, C>
+impl<D, E, C> Builder<D, E, C>
 where
+    D: AbstractDatabase,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
+    C: CustomGetHandler<D>,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
+        self,
+        value: E2,
+    ) -> Builder<D, E2, C> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -122,7 +128,10 @@ where
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+    pub fn custom_get_handler<C2: CustomGetHandler<D>>(
+        self,
+        custom_handler: C2,
+    ) -> Builder<D, E, C2> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -173,7 +182,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node> {
+    pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
         let tls_server_config = tls::make_server_config(
@@ -276,7 +285,7 @@ where
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
-        handler: RpcHandler,
+        handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
@@ -297,7 +306,12 @@ where
                 request = rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            let handler: Box<dyn std::any::Any> = Box::new(handler.clone());
+                            if let Some(handler) = handler.downcast_ref::<RpcHandler<Database>>() {
+                                handle_rpc_request(msg, chan, handler, &rt);
+                            } else {
+                                tracing::error!("invalid handler type");
+                            }
                         }
                         Err(e) => {
                             tracing::info!("rpc request error: {:?}", e);
@@ -308,7 +322,12 @@ where
                 request = internal_rpc.accept() => {
                     match request {
                         Ok((msg, chan)) => {
-                            handle_rpc_request(msg, chan, &handler, &rt);
+                            let handler: Box<dyn std::any::Any> = Box::new(handler.clone());
+                            if let Some(handler) = handler.downcast_ref::<RpcHandler<Database>>() {
+                                handle_rpc_request(msg, chan, handler, &rt);
+                            } else {
+                                tracing::error!("invalid handler type");
+                            }
                         }
                         Err(_) => {
                             tracing::info!("last controller dropped, shutting down");
@@ -384,14 +403,14 @@ impl iroh_bytes::provider::EventSender for MappedSender {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node {
-    inner: Arc<NodeInner>,
+pub struct Node<D: AbstractDatabase> {
+    inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
 #[derive(Debug)]
-struct NodeInner {
-    db: Database,
+struct NodeInner<D> {
+    db: D,
     conn: iroh_net::hp::magicsock::Conn,
     keypair: Keypair,
     events: broadcast::Sender<Event>,
@@ -406,11 +425,11 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl Node {
+impl<D: AbstractDatabase> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder(db: Database) -> Builder {
+    pub fn builder(db: D) -> Builder<D> {
         Builder::with_db(db)
     }
 
@@ -477,7 +496,7 @@ impl Node {
     }
 }
 
-impl NodeInner {
+impl<D: AbstractDatabase> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.conn.local_endpoints().await
     }
@@ -498,7 +517,7 @@ impl NodeInner {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl Future for Node {
+impl<D: AbstractDatabase> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -507,11 +526,11 @@ impl Future for Node {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler {
-    inner: Arc<NodeInner>,
+struct RpcHandler<D> {
+    inner: Arc<NodeInner<D>>,
 }
 
-impl RpcHandler {
+impl RpcHandler<Database> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -645,7 +664,7 @@ impl RpcHandler {
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler,
+    handler: &RpcHandler<Database>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();

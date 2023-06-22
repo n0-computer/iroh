@@ -781,7 +781,7 @@ async fn provide(
     rpc_port: Option<u16>,
     dm: Option<DerpMap>,
     rt: &iroh::bytes::runtime::Handle,
-) -> Result<Node> {
+) -> Result<Node<Database>> {
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db).keylog(keylog);
