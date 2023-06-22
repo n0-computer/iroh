@@ -81,15 +81,14 @@ impl Client {
                     .replace((gateway_addr, Instant::now()));
                 if let Some((old_gateway_addr, _last_seen)) = old_gateway {
                     if old_gateway_addr != gateway_addr {
-                        tracing::debug!(
-                            "upnp gateway changed from {old_gateway_addr} to {gateway_addr}"
-                        );
+                        debug!("upnp gateway changed from {old_gateway_addr} to {gateway_addr}");
                         // TODO(@divagant-martian): tailscale does not invalidate the mappings here. Why?
                     }
                 }
                 true
             }
             Err(e) => {
+                debug!("upnp probe failed {e}");
                 // invalidate last seen gateway and time
                 self.last_upnp_gateway_addr = None;
                 false
