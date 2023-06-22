@@ -456,8 +456,11 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        let (rpc_handler, custom_get_handler, authorization_handler) =
-            (handlers.rpc, handlers.custom_get, handlers.authorization);
+        let ProviderHandlers {
+            rpc: rpc_handler,
+            custom_get: custom_get_handler,
+            authorization: authorization_handler,
+        } = handlers;
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
@@ -1124,8 +1127,9 @@ async fn handle_stream(
         }
     };
 
+    // does this need the request as value?
     authorization_handler
-        .authorize(db.clone(), request.auth_token(), request.clone())
+        .authorize(db.clone(), request.auth_token().cloned(), request.clone())
         .await?;
 
     match request {
@@ -1164,7 +1168,7 @@ async fn handle_get(db: Database, request: GetRequest, mut writer: ResponseWrite
         hash,
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
-        auth_token: request.auth_token(),
+        auth_token: request.auth_token().cloned(),
     });
 
     // 4. Attempt to find hash

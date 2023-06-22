@@ -71,15 +71,26 @@ impl Ticket {
     }
 
     /// The [`AuthToken`] for this ticket.
-    pub fn auth_token(&self) -> Option<AuthToken> {
-        self.auth_token.clone()
+    pub fn auth_token(&self) -> Option<&AuthToken> {
+        self.auth_token.as_ref()
     }
 
     /// The addresses on which the provider can be reached.
     ///
     /// This is guaranteed to be non-empty.
-    pub fn addrs(&self) -> &[SocketAddr] {
+    pub fn addrs(&self) -> &Vec<SocketAddr> {
         &self.addrs
+    }
+
+    /// Get the contents of the ticket, consuming it.
+    pub fn destructure(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<AuthToken>) {
+        let Ticket {
+            hash,
+            peer,
+            auth_token,
+            addrs,
+        } = self;
+        (hash, peer, addrs, auth_token)
     }
 }
 
