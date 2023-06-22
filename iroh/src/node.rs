@@ -457,7 +457,7 @@ impl Node {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
+        Ticket::new(hash, self.peer_id(), addrs, None)
     }
 
     /// Aborts the node.

@@ -11,8 +11,8 @@ use anyhow::{ensure, Result};
 use iroh_net::tls::PeerId;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::AuthToken;
-use crate::{Hash, PeerId};
+use crate::protocol::RequestAuthToken;
+use crate::Hash;
 
 /// A token containing everything to get a file from the provider.
 ///
@@ -25,7 +25,7 @@ pub struct Ticket {
     /// The peer ID identifying the provider.
     peer: PeerId,
     /// Optional Authorization token.
-    auth_token: Option<AuthToken>,
+    auth_token: Option<RequestAuthToken>,
     /// The socket addresses the provider is listening on.
     ///
     /// This will never be empty.
@@ -33,11 +33,11 @@ pub struct Ticket {
 }
 
 impl Ticket {
-    pub(super) fn new(
+    pub fn new(
         hash: Hash,
         peer: PeerId,
         addrs: Vec<SocketAddr>,
-        auth_token: Option<AuthToken>,
+        auth_token: Option<RequestAuthToken>,
     ) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
         Ok(Self {
@@ -71,7 +71,7 @@ impl Ticket {
     }
 
     /// The [`AuthToken`] for this ticket.
-    pub fn auth_token(&self) -> Option<&AuthToken> {
+    pub fn auth_token(&self) -> Option<&RequestAuthToken> {
         self.auth_token.as_ref()
     }
 
@@ -83,7 +83,7 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn destructure(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<AuthToken>) {
+    pub fn destructure(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestAuthToken>) {
         let Ticket {
             hash,
             peer,
@@ -127,7 +127,7 @@ mod tests {
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let auth_token = AuthToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
+        let auth_token = RequestAuthToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
         let ticket = Ticket {
             hash,
             peer,

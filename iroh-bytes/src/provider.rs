@@ -18,7 +18,10 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
-use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec, Request,
+    RequestAuthToken, VERSION,
+};
 use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 use crate::IROH_BLOCK_SIZE;
@@ -145,6 +148,7 @@ pub trait CustomGetHandler: Send + Sync + Clone + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
     fn handle(
         &self,
+        auth_token: Option<RequestAuthToken>,
         request: Bytes,
         db: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
@@ -154,6 +158,7 @@ pub trait CustomGetHandler: Send + Sync + Clone + 'static {
 impl CustomGetHandler for () {
     fn handle(
         &self,
+        _auth_token: Option<RequestAuthToken>,
         _request: Bytes,
         _db: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
@@ -475,17 +480,19 @@ async fn handle_stream<E: EventSender>(
 }
 async fn handle_custom_get<E: EventSender>(
     db: Database,
-    request: Bytes,
+    request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
-        len: request.len(),
+        len: request.data.len(),
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
     });
     // try to make a GetRequest from the custom bytes
-    let request = custom_get_handler.handle(request, db.clone()).await?;
+    let request = custom_get_handler
+        .handle(request.auth_token, request.data, db.clone())
+        .await?;
     // write it to the requester as the first thing
     let data = postcard::to_stdvec(&request)?;
     write_lp(&mut writer.inner, &data).await?;

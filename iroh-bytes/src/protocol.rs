@@ -45,11 +45,11 @@ impl Handshake {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
 /// Authorization tokens are opaque byte sequences used to authorize requests.
-pub struct AuthToken {
+pub struct RequestAuthToken {
     bytes: Vec<u8>,
 }
 
-impl AuthToken {
+impl RequestAuthToken {
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
         ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
         Ok(Self { bytes })
@@ -61,18 +61,18 @@ impl AuthToken {
     }
 }
 
-impl FromStr for AuthToken {
+impl FromStr for RequestAuthToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
         ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
-        Ok(AuthToken { bytes })
+        Ok(RequestAuthToken { bytes })
     }
 }
 
 /// Serializes to base32.
-impl Display for AuthToken {
+impl Display for RequestAuthToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
         text.make_ascii_lowercase();
@@ -90,7 +90,7 @@ pub enum Request {
 }
 
 impl Request {
-    pub fn auth_token(&self) -> Option<&AuthToken> {
+    pub fn auth_token(&self) -> Option<&RequestAuthToken> {
         match self {
             Request::Get(get) => get.auth_token(),
             Request::CustomGet(get) => get.auth_token.as_ref(),
@@ -100,8 +100,9 @@ impl Request {
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 /// A get request that allows the receiver to create a collection
+/// Custom request handlers will receive a destructured version of this
 pub struct CustomGetRequest {
-    pub auth_token: Option<AuthToken>,
+    pub auth_token: Option<RequestAuthToken>,
     pub data: Bytes,
 }
 
@@ -120,7 +121,7 @@ pub struct GetRequest {
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
     /// Optional Authorization token
-    auth_token: Option<AuthToken>,
+    auth_token: Option<RequestAuthToken>,
 }
 
 impl GetRequest {
@@ -151,11 +152,11 @@ impl GetRequest {
         }
     }
 
-    pub fn with_auth_token(self, auth_token: Option<AuthToken>) -> Self {
+    pub fn with_auth_token(self, auth_token: Option<RequestAuthToken>) -> Self {
         Self { auth_token, ..self }
     }
 
-    pub fn auth_token(&self) -> Option<&AuthToken> {
+    pub fn auth_token(&self) -> Option<&RequestAuthToken> {
         self.auth_token.as_ref()
     }
 }
