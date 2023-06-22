@@ -2,8 +2,11 @@
 use std::{io, pin::Pin, task::Poll};
 
 use bytes::Bytes;
-use futures::{future::LocalBoxFuture, FutureExt};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter, Either, FileAdapter};
+use futures::{
+    future::{Either, LocalBoxFuture},
+    FutureExt,
+};
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter, FileAdapter};
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::mpsc,

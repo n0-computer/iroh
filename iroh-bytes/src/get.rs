@@ -857,7 +857,7 @@ fn get_missing_range_impl(
                 // Otherwise, we would have to rehash the file.
                 //
                 // Do a quick check of the outboard in case something went wrong when writing.
-                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                let mut valid = bao_tree::io::sync::valid_ranges(&outboard)?;
                 let valid_from_file =
                     RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
                 tracing::debug!("valid_from_file: {:?}", valid_from_file);

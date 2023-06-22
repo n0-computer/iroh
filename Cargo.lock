@@ -222,9 +222,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.4.1"
+version = "0.5.0-beta1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "583ea88dc27232897e10ab0ac40977c64005a52d68814f4ae1838ec8472da84e"
+checksum = "5f514c8bdc33a7dc7afd121a8c5ad4615731e8a63256abeb9374664698ab7bea"
 dependencies = [
  "blake3",
  "bytes",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.1.0"
+version = "0.2.0-beta1"
 dependencies = [
  "bytes",
  "futures",
@@ -1634,6 +1634,7 @@ dependencies = [
  "smallvec",
  "tempfile",
  "tokio",
+ "tokio-util",
  "warp",
 ]
 
