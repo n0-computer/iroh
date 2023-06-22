@@ -18,7 +18,6 @@ pub(crate) mod test_utils;
 
 pub use crate::util::Hash;
 pub use iroh_net as net;
-pub use iroh_net::tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 
 use bao_tree::BlockSize;
 
