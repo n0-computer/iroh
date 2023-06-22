@@ -7,6 +7,8 @@ use std::{
 use anyhow::Error;
 use tracing::debug;
 
+use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
+
 mod upnp;
 
 /// If a port mapping service has been seen during the last [`AVAILABILITY_TRUST_DURATION`] it
@@ -74,6 +76,7 @@ impl Client {
 
     /// Probes for UPnP gateways.
     async fn probe_upnp_available(&mut self) -> bool {
+        inc!(Metrics::UpnpProbes);
         match upnp::probe_available().await {
             Ok(gateway_addr) => {
                 debug!("found upnp gateway {gateway_addr}");
@@ -82,6 +85,7 @@ impl Client {
                     .replace((gateway_addr, Instant::now()));
                 if let Some((old_gateway_addr, _last_seen)) = old_gateway {
                     if old_gateway_addr != gateway_addr {
+                        inc!(Metrics::UpnpGatewayUpdated);
                         debug!("upnp gateway changed from {old_gateway_addr} to {gateway_addr}");
                         // TODO(@divagant-martian): tailscale does not clear the mappings here.
                         // This means the gateway has changed but we believe `self.current_mapping`
@@ -91,6 +95,7 @@ impl Client {
                 true
             }
             Err(e) => {
+                inc!(Metrics::UpnpProbesFailed);
                 debug!("upnp probe failed {e}");
                 // invalidate last seen gateway and time
                 self.last_upnp_gateway_addr = None;
@@ -122,7 +127,9 @@ impl Client {
                 debug!("renewing mapping {mapping}");
                 // TODO(@divagant-martian): this would go in a goroutine
                 if now >= mapping.renew_after() {
+                    inc!(Metrics::UpnpPortmapAttempts);
                     if let Err(e) = mapping.renew().await {
+                        inc!(Metrics::UpnpPortmapFailed);
                         debug!("failed to renew port mapping {mapping}: {e}");
                     }
                 }
@@ -133,6 +140,7 @@ impl Client {
                 None
             }
         } else if let Some(local_port) = self.local_port {
+            inc!(Metrics::UpnpPortmapAttempts);
             match upnp::Mapping::new(std::net::Ipv4Addr::LOCALHOST, local_port).await {
                 Ok(mapping) => {
                     debug!("upnp port mapping created {mapping}");
@@ -141,6 +149,7 @@ impl Client {
                     Some(external)
                 }
                 Err(e) => {
+                    inc!(Metrics::UpnpPortmapFailed);
                     debug!("Failed to create upnp port mapping: {e}");
                     None
                 }
