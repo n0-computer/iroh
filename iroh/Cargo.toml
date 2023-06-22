@@ -21,7 +21,7 @@ futures = "0.3.25"
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-io = { path = "../iroh-io" }
-iroh-sync = { path = "../../iroh-sync" }
+iroh-sync = { path = "../iroh-sync" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
