@@ -86,9 +86,11 @@ impl UdpActor {
         ip_sender: mpsc::Sender<IpPacket>,
     ) {
         loop {
+            trace!("tick");
             tokio::select! {
                 biased;
                 Some(msg) = msg_receiver.recv() => {
+                    trace!("tick: msg receiver");
                     match msg {
                         UdpActorMessage::Shutdown => {
                             debug!("shutting down");
@@ -107,11 +109,11 @@ impl UdpActor {
 
                                     // Stun?
                                     if stun::is(&packet) {
+                                        trace!("tick: stun packet");
                                         net_checker.receive_stun_packet(packet, meta.addr);
-                                        continue;
-                                    }
-                                    // Disco?
-                                    if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
+                                    } else if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
+                                        // Disco?
+                                        trace!("tick: disco packet");
                                         if ip_sender
                                             .send(
                                                 IpPacket::Disco {
@@ -125,26 +127,26 @@ impl UdpActor {
                                             warn!("ip_sender gone");
                                             break;
                                         };
-                                        continue;
-                                    }
+                                    } else {
+                                        // Foward
+                                        trace!("tick: udp forward packet");
+                                        let forward = match network {
+                                            Network::Ipv4 => NetworkReadResult::Ok {
+                                                source: NetworkSource::Ipv4,
+                                                bytes: packet,
+                                                meta,
+                                            },
+                                            Network::Ipv6 => NetworkReadResult::Ok {
+                                                source: NetworkSource::Ipv6,
+                                                bytes: packet,
+                                                meta,
+                                            },
+                                        };
 
-                                    // Foward
-                                    let forward = match network {
-                                        Network::Ipv4 => NetworkReadResult::Ok {
-                                            source: NetworkSource::Ipv4,
-                                            bytes: packet,
-                                            meta,
-                                        },
-                                        Network::Ipv6 => NetworkReadResult::Ok {
-                                            source: NetworkSource::Ipv6,
-                                            bytes: packet,
-                                            meta,
-                                        },
-                                    };
-
-                                    if ip_sender.send(IpPacket::Forward(forward)).await.is_err() {
-                                        warn!("ip_sender gone");
-                                        break;
+                                        if ip_sender.send(IpPacket::Forward(forward)).await.is_err() {
+                                            warn!("ip_sender gone");
+                                            break;
+                                        }
                                     }
                                 }
                                 Err(err) => {
@@ -163,6 +165,8 @@ impl UdpActor {
                 }
             }
         }
+
+        warn!("exiting run loop");
     }
 
     fn handle_packet(&mut self, packet: Bytes, network: Network, meta: quinn_udp::RecvMeta) {
@@ -178,6 +182,7 @@ impl Stream for UdpActor {
             return Poll::Ready(None);
         }
         if let Some(res) = self.out_buffer.pop_front() {
+            trace!("out_buffer pop");
             return Poll::Ready(Some(Ok(res)));
         }
 
@@ -196,9 +201,11 @@ impl Stream for UdpActor {
         let mut iovs = unsafe { iovs.assume_init() };
 
         if let Some(ref pconn6) = self.pconn6 {
+            trace!("ipv6: poll_recv");
             match pconn6.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Pending => {}
                 Poll::Ready(Ok(msgs)) => {
+                    trace!("ipv6: recv {} msgs", msgs);
                     for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         let stride = meta.stride;
@@ -220,9 +227,11 @@ impl Stream for UdpActor {
             }
         }
 
+        trace!("ipv4: poll_recv");
         match self.pconn4.poll_recv(cx, &mut iovs, &mut metas) {
             Poll::Pending => {}
             Poll::Ready(Ok(msgs)) => {
+                trace!("ipv4: recv {} msgs", msgs);
                 for (mut meta, buf) in metas.into_iter().zip(iovs.iter()).take(msgs) {
                     let mut data: BytesMut = buf[0..meta.len].into();
                     let stride = meta.stride;

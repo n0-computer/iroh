@@ -1036,20 +1036,11 @@ impl Actor {
     async fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<NetworkReadResult> {
         debug!("process_derp_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
+            warn!("received empty derp packet");
             return Vec::new();
         }
         let region_id = dm.region_id;
-
         let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
-
-        if self
-            .handle_derp_disco_message(&dm.buf, ipp, dm.src.clone())
-            .await
-        {
-            // Message was internal, do not bubble up.
-            debug!("processed internal disco message from {:?}", dm.src);
-            return Vec::new();
-        }
 
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
@@ -1061,7 +1052,7 @@ impl Actor {
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
-                    public_key: Some(dm.src),
+                    public_key: Some(dm.src.clone()),
                     derp_addr: Some(ipp),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
@@ -1076,9 +1067,20 @@ impl Actor {
         let parts = PacketSplitIter::new(dm.buf);
         // Normalize local_ip
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        parts
-            .map(|part| match part {
+
+        let mut out = Vec::new();
+        for part in parts {
+            match part {
                 Ok(part) => {
+                    if self
+                        .handle_derp_disco_message(&part, ipp, dm.src.clone())
+                        .await
+                    {
+                        // Message was internal, do not bubble up.
+                        debug!("processed internal disco message from {:?}", dm.src);
+                        continue;
+                    }
+
                     let meta = quinn_udp::RecvMeta {
                         len: part.len(),
                         stride: part.len(),
@@ -1086,15 +1088,19 @@ impl Actor {
                         dst_ip,
                         ecn: None,
                     };
-                    NetworkReadResult::Ok {
+                    out.push(NetworkReadResult::Ok {
                         source: NetworkSource::Derp,
                         bytes: part,
                         meta,
-                    }
+                    });
                 }
-                Err(e) => NetworkReadResult::Error(e),
-            })
-            .collect::<Vec<_>>()
+                Err(e) => {
+                    out.push(NetworkReadResult::Error(e));
+                }
+            }
+        }
+
+        out
     }
 
     async fn send_network(&mut self, transmits: Vec<quinn_udp::Transmit>) {
@@ -1867,14 +1873,13 @@ impl Actor {
         src: SocketAddr,
         derp_node_src: key::node::PublicKey,
     ) -> bool {
-        let source = disco::source_and_box(msg);
-        if source.is_none() {
-            return false;
+        match disco::source_and_box(msg) {
+            Some((source, sealed_box)) => {
+                self.handle_disco_message(source, sealed_box, src, Some(derp_node_src))
+                    .await
+            }
+            None => false,
         }
-
-        let (source, sealed_box) = source.unwrap();
-        self.handle_disco_message(source, sealed_box, src, Some(derp_node_src))
-            .await
     }
 
     /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.

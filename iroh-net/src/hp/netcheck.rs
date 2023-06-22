@@ -224,7 +224,8 @@ impl Client {
             })
         {
             inc!(NetcheckMetrics::StunPacketsDropped);
-        };
+            warn!("dropping stun packet from {}", src);
+        }
     }
 
     /// Runs a netcheck, returning the report.
