@@ -65,7 +65,7 @@ impl FromStr for RequestToken {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "auth token is too large");
+        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "request token is too large");
         Ok(RequestToken { bytes })
     }
 }

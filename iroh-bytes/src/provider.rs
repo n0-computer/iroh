@@ -53,6 +53,8 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// Token requester gve for this request, if any
+        token: Option<RequestToken>,
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
@@ -62,6 +64,8 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// Token requester gve for this request, if any
+        token: Option<RequestToken>,
         /// The size of the custom get request.
         len: usize,
     },
@@ -541,6 +545,7 @@ async fn handle_custom_get<E: EventSender>(
         len: request.data.len(),
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        token: request.token.clone(),
     });
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler
@@ -564,6 +569,7 @@ pub async fn handle_get<E: EventSender>(
         hash,
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        token: request.token().cloned(),
     });
 
     // 4. Attempt to find hash
