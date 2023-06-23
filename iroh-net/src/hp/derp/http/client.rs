@@ -306,7 +306,8 @@ impl Client {
         if let Some(get_region) = &self.inner.get_region {
             let region = get_region()
                 .await
-                .expect("Cannot connection client: DERP region is unknown");
+                .ok_or_else(|| ClientError::DerpRegionNotAvail)?;
+
             return Ok(region);
         }
         Err(ClientError::DerpRegionNotAvail)
@@ -361,21 +362,18 @@ impl Client {
 
     async fn connect_0(&self) -> Result<DerpClient, ClientError> {
         debug!("connect_0");
-        let region = self.current_region().await?;
         let url = self.url();
         let is_test_url = url
             .as_ref()
             .map(|url| url.as_str().ends_with(".invalid"))
             .unwrap_or_default();
 
-        debug!(
-            "connect_0 region: {:?}, url: {:?}, is_test_url: {}",
-            region, url, is_test_url
-        );
+        debug!("connect_0 url: {:?}, is_test_url: {}", url, is_test_url);
 
         let (tcp_stream, derp_node) = if url.is_some() && !is_test_url {
             (self.dial_url().await?, None)
         } else {
+            let region = self.current_region().await?;
             let (tcp_stream, derp_node) = self.dial_region(region).await?;
             (tcp_stream, Some(derp_node))
         };
