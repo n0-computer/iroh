@@ -34,6 +34,11 @@ pub use ticket::Ticket;
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// A new collection has been added via an RPC call
+    CollectionAdded {
+        /// The hash of the added collection
+        hash: Hash,
+    },
     /// A new client connected to the node.
     ClientConnected {
         /// An unique connection id.
