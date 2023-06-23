@@ -277,6 +277,23 @@ impl Endpoint {
             }
         }
 
+        let txid = stun::TransactionId::default();
+        debug!("disco: sent ping [{}]", txid);
+
+        self.sent_ping.insert(
+            txid,
+            SentPing {
+                to: ep,
+                at: now,
+                purpose,
+            },
+        );
+        let public_key = self.public_key.clone();
+        self.send_disco_ping(ep, public_key, txid).await;
+    }
+
+    /// Cleanup pings that are potentially expired.
+    fn check_pings(&mut self, now: Instant) {
         // Cleanup expired pings
         let mut to_remove = Vec::new();
         for (id, ping) in self.sent_ping.iter() {
@@ -293,20 +310,6 @@ impl Endpoint {
         for id in to_remove {
             self.ping_timeout(id);
         }
-
-        let txid = stun::TransactionId::default();
-        debug!("disco: sent ping [{}]", txid);
-
-        self.sent_ping.insert(
-            txid,
-            SentPing {
-                to: ep,
-                at: now,
-                purpose,
-            },
-        );
-        let public_key = self.public_key.clone();
-        self.send_disco_ping(ep, public_key, txid).await;
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
@@ -503,8 +506,8 @@ impl Endpoint {
                 latency: Duration::from_secs(1), // assume bad latency for now
             });
 
-            // Update paths
-            self.trust_best_addr_until = None;
+            // Trust this addr for a little while
+            self.trust_best_addr_until = Some(Instant::now() + Duration::from_secs(10));
         }
     }
 
@@ -708,12 +711,13 @@ impl Endpoint {
             return;
         }
 
+        self.check_pings(now);
         let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
         if let Some(udp_addr) = udp_addr {
             let elapsed = self.last_ping(&udp_addr).map(|l| now - l);
-            // Send a ping if the last ping is either than 2 seconds.
+            // Send a ping if the last ping is older than 2 seconds.
             let needs_ping = match elapsed {
                 Some(e) => e >= Duration::from_secs(2),
                 None => false,
