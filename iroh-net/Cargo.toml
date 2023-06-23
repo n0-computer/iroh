@@ -52,6 +52,7 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-rustls = { version = "0.24" }
 tokio-rustls-acme = { version = "0.1" }
+url = { version = "2.4", features = ["serde"] }
 webpki = { version = "0.22", features = ["std"] }
 webpki-roots = "0.23.0"
 wg = "0.3.1"

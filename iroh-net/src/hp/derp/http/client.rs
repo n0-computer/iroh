@@ -11,12 +11,12 @@ use futures::future::BoxFuture;
 use hyper::upgrade::Upgraded;
 use hyper::{header::UPGRADE, Body, Request};
 use rand::Rng;
-use reqwest::Url;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tracing::{debug, instrument, warn};
+use url::Url;
 
 use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
@@ -70,8 +70,8 @@ pub enum ClientError {
     PingTimeout,
     #[error("cannot acknowledge pings")]
     CannotAckPings,
-    #[error("invalid url")]
-    InvalidUrl,
+    #[error("invalid url: {0}")]
+    InvalidUrl(String),
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
@@ -157,7 +157,7 @@ impl ClientBuilder {
         self
     }
 
-    /// S returns if we should prefer ipv6
+    /// Returns if we should prefer ipv6
     /// it replaces the derphttp.AddressFamilySelector we pass
     /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
     /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
@@ -323,7 +323,9 @@ impl Client {
                 .and_then(|s| rustls::ServerName::try_from(s).ok());
         }
         if let Some(node) = node {
-            return rustls::ServerName::try_from(node.host_name.as_str()).ok();
+            if let Some(host) = node.host_name.host_str() {
+                return rustls::ServerName::try_from(host).ok();
+            }
         }
 
         None
@@ -344,10 +346,15 @@ impl Client {
         None
     }
 
-    fn use_https(&self) -> bool {
+    fn use_https(&self, node: Option<&DerpNode>) -> bool {
         // only disable https if we are explicitly dialing a http url
         if let Some(true) = self.inner.url.as_ref().map(|url| url.scheme() == "http") {
             return false;
+        }
+        if let Some(node) = node {
+            if node.host_name.scheme() == "http" {
+                return false;
+            }
         }
         true
     }
@@ -355,9 +362,18 @@ impl Client {
     async fn connect_0(&self) -> Result<DerpClient, ClientError> {
         debug!("connect_0");
         let region = self.current_region().await?;
-        debug!("connect_0 region: {:?}", region);
+        let url = self.url();
+        let is_test_url = url
+            .as_ref()
+            .map(|url| url.as_str().ends_with(".invalid"))
+            .unwrap_or_default();
 
-        let (tcp_stream, derp_node) = if self.url().is_some() {
+        debug!(
+            "connect_0 region: {:?}, url: {:?}, is_test_url: {}",
+            region, url, is_test_url
+        );
+
+        let (tcp_stream, derp_node) = if url.is_some() && !is_test_url {
             (self.dial_url().await?, None)
         } else {
             let (tcp_stream, derp_node) = self.dial_region(region).await?;
@@ -374,7 +390,7 @@ impl Client {
             .body(Body::empty())
             .unwrap();
 
-        let res = if self.use_https() {
+        let res = if self.use_https(derp_node.as_ref()) {
             debug!("Starting TLS handshake");
             // TODO: review TLS config
             let mut roots = rustls::RootCertStore::empty();
@@ -398,7 +414,7 @@ impl Client {
             let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
             let hostname = self
                 .tls_servername(derp_node.as_ref())
-                .ok_or_else(|| ClientError::InvalidUrl)?;
+                .ok_or_else(|| ClientError::InvalidUrl("no tls servername".into()))?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
@@ -494,27 +510,29 @@ impl Client {
     }
 
     async fn dial_url(&self) -> Result<TcpStream, ClientError> {
-        let host = if let Some(host_str) = self.url().and_then(|url| url.host_str()) {
-            host_str
-        } else {
-            return Err(ClientError::InvalidUrl);
-        };
+        let host = self.url().and_then(|url| url.host()).ok_or_else(|| {
+            ClientError::InvalidUrl(format!("missing host from {:?}", self.url()))
+        })?;
+
         debug!("dial url: {}", host);
-        let dst_ip: IpAddr = if let Ok(ip) = host.parse() {
-            // Already a valid IP address
-            ip
-        } else {
-            // Need to do a DNS lookup
-            let addr = DNS_RESOLVER
-                .lookup_ip(host)
-                .await
-                .map_err(|e| ClientError::Dns(Some(e)))?
-                .iter()
-                .next();
-            addr.ok_or_else(|| ClientError::Dns(None))?
+        let dst_ip = match host {
+            url::Host::Domain(hostname) => {
+                // Need to do a DNS lookup
+                let addr = DNS_RESOLVER
+                    .lookup_ip(hostname)
+                    .await
+                    .map_err(|e| ClientError::Dns(Some(e)))?
+                    .iter()
+                    .next();
+                addr.ok_or_else(|| ClientError::Dns(None))?
+            }
+            url::Host::Ipv4(ip) => IpAddr::V4(ip),
+            url::Host::Ipv6(ip) => IpAddr::V6(ip),
         };
 
-        let port = self.url_port().ok_or_else(|| ClientError::InvalidUrl)?;
+        let port = self
+            .url_port()
+            .ok_or_else(|| ClientError::InvalidUrl("missing url port".into()))?;
         let addr = SocketAddr::new(dst_ip, port);
 
         tracing::error!("connecting to {}", addr);
@@ -620,18 +638,23 @@ impl Client {
             UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
             UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
             _ => {
-                if let Ok(ip) = node.host_name.parse() {
-                    // Already a valid IP address
-                    ip
-                } else {
-                    // Need to do a DNS lookup
-                    let addr = DNS_RESOLVER
-                        .lookup_ip(&node.host_name)
-                        .await
-                        .map_err(|e| ClientError::Dns(Some(e)))?
-                        .iter()
-                        .next();
-                    addr.ok_or_else(|| ClientError::Dns(None))?
+                let host = node
+                    .host_name
+                    .host()
+                    .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+                match host {
+                    url::Host::Domain(domain) => {
+                        // Need to do a DNS lookup
+                        let addr = DNS_RESOLVER
+                            .lookup_ip(domain)
+                            .await
+                            .map_err(|e| ClientError::Dns(Some(e)))?
+                            .iter()
+                            .next();
+                        addr.ok_or_else(|| ClientError::Dns(None))?
+                    }
+                    url::Host::Ipv4(ip) => IpAddr::V4(ip),
+                    url::Host::Ipv6(ip) => IpAddr::V6(ip),
                 }
             }
         };
@@ -900,7 +923,7 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "bad.url".into(),
+                host_name: "http://bad.url".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
