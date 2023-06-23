@@ -176,9 +176,7 @@ where
     /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
     /// [`Server`].
     pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<P> {
-        PacketForwarderHandler {
-            server_channel: self.server_channel.clone(),
-        }
+        PacketForwarderHandler::new(self.server_channel.clone())
     }
 
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
@@ -220,6 +218,12 @@ impl<P> PacketForwarderHandler<P>
 where
     P: PacketForwarder,
 {
+    pub(crate) fn new(channel: mpsc::Sender<ServerMessage<P>>) -> Self {
+        Self {
+            server_channel: channel,
+        }
+    }
+
     pub fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::AddPacketForwarder {

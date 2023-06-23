@@ -71,10 +71,10 @@ where
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    pub(crate) server: Option<crate::hp::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
-    mesh_clients: MeshClients,
+    mesh_clients: Option<MeshClients>,
 }
 
 impl Server {
@@ -84,8 +84,8 @@ impl Server {
             server.close().await;
         }
 
-        if let Err(e) = self.mesh_clients.shutdown().await {
-            warn!("Error shutting down mesh clients: {e:?}");
+        if let Some(mesh_clients) = self.mesh_clients {
+            mesh_clients.shutdown().await;
         }
 
         self.cancel_server_loop.cancel();
@@ -237,21 +237,41 @@ impl ServerBuilder {
     /// Build and spawn an HTTP(S) derp Server
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
-        let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
-            let server = crate::hp::derp::server::Server::new(secret_key, self.mesh_key);
-            println!("headers: {:?}", self.headers);
+        let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
+            let server = crate::hp::derp::server::Server::new(secret_key.clone(), self.mesh_key);
             let header_map: HeaderMap = HeaderMap::from_iter(
                 self.headers
                     .iter()
                     .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
             );
+            let mut mesh_clients = None;
+
+            let packet_fwd = server.packet_forwarder_handler();
+
+            if let Some(derp_map) = self.mesh_derp_map {
+                ensure!(self.mesh_key.is_some(), "Must provide a `MeshKey` when trying using a `DerpMap` to join a mesh network.");
+
+                let mesh_key = self.mesh_key.expect("checked");
+                mesh_clients = Some(MeshClients::new(
+                    mesh_key,
+                    secret_key,
+                    derp_map,
+                    packet_fwd,
+                    self.tls_config.is_some(),
+                ));
+            }
 
             (
                 DerpHandler::ConnHandler(server.client_conn_handler(header_map)),
                 Some(server),
+                mesh_clients,
             )
         } else {
-            (DerpHandler::Override(self.derp_override.unwrap()), None)
+            (
+                DerpHandler::Override(self.derp_override.unwrap()),
+                None,
+                None,
+            )
         };
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
@@ -276,8 +296,6 @@ impl ServerBuilder {
             self.headers,
         );
 
-        let mesh_clients = MeshClients::new();
-
         let server_state = ServerState {
             addr: self.addr,
             tls_config: self.tls_config,
@@ -296,13 +314,13 @@ pub struct ServerState {
     tls_config: Option<TlsConfig>,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     service: DerpService,
-    mesh_clients: MeshClients,
+    mesh_clients: Option<MeshClients>,
 }
 
 impl ServerState {
     // Binds a TCP listener on `addr` and handles content using HTTPS.
     // Returns the local `SocketAddr` on which the server is listening.
-    async fn serve(mut self) -> Result<Server> {
+    async fn serve(self) -> Result<Server> {
         let listener = TcpListener::bind(&self.addr)
             .await
             .context("failed to bind https")?;
@@ -346,14 +364,19 @@ impl ServerState {
         }.instrument(debug_span!("serve")));
 
         // start meshing
-        self.mesh_clients.mesh().await?;
+        let mesh_clients = if let Some(mut mesh_clients) = self.mesh_clients {
+            mesh_clients.mesh().await;
+            Some(mesh_clients)
+        } else {
+            None
+        };
 
         Ok(Server {
             addr,
             server: self.server,
             http_server_task: task,
             cancel_server_loop,
-            mesh_clients: self.mesh_clients,
+            mesh_clients,
         })
     }
 }
