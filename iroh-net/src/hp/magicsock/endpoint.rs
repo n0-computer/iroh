@@ -507,7 +507,7 @@ impl Endpoint {
             });
 
             // Trust this addr for a little while
-            self.trust_best_addr_until = Some(Instant::now() + Duration::from_secs(10));
+            self.trust_best_addr_until = Some(Instant::now() + Duration::from_secs(1));
         }
     }
 

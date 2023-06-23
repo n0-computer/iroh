@@ -113,7 +113,7 @@ impl UdpActor {
                                         net_checker.receive_stun_packet(packet, meta.addr);
                                     } else if let Some((source, sealed_box)) = disco::source_and_box(&packet) {
                                         // Disco?
-                                        trace!("tick: disco packet");
+                                        trace!("tick: disco packet: {:?}", meta);
                                         if ip_sender
                                             .send(
                                                 IpPacket::Disco {
