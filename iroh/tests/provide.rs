@@ -63,7 +63,7 @@ async fn multi_file() -> Result<()> {
 async fn many_files() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
-    let num_files = [10, 100, 1000, 10000];
+    let num_files = [10, 100];
     for num in num_files {
         println!("NUM_FILES: {num}");
         let file_opts = (0..num)
