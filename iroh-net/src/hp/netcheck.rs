@@ -353,13 +353,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
-    let challenge = format!("ts_{}", node.host_name);
 
+    let host_name = node.host_name.host_str().unwrap_or_default();
+    let challenge = format!("ts_{}", host_name);
+    let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
-        .request(
-            reqwest::Method::GET,
-            format!("http://{}/generate_204", node.host_name),
-        )
+        .request(reqwest::Method::GET, portal_url)
         .header("X-Tailscale-Challenge", &challenge)
         .send()
         .await?;
