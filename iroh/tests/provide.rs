@@ -139,7 +139,6 @@ async fn multiple_clients() -> Result<()> {
 
     let mut tasks = Vec::new();
     for _i in 0..3 {
-        let hash = hash.clone();
         let file_hash: Hash = expect_hash.into();
         let name = expect_name.clone();
         let addrs = node.local_address().unwrap();
