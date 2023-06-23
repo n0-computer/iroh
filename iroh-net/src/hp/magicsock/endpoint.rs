@@ -506,8 +506,7 @@ impl Endpoint {
                 latency: Duration::from_secs(1), // assume bad latency for now
             });
 
-            // Trust this addr for a little while
-            self.trust_best_addr_until = Some(Instant::now() + Duration::from_secs(1));
+            self.trust_best_addr_until = None;
         }
     }
 
