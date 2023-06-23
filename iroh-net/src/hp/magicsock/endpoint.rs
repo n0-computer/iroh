@@ -75,6 +75,9 @@ pub(super) struct Endpoint {
     expired: bool,
 
     sent_ping: HashMap<stun::TransactionId, SentPing>,
+
+    /// Last time this endpoint was used.
+    last_active: Instant,
 }
 
 #[derive(derive_more::Debug)]
@@ -112,6 +115,7 @@ impl Endpoint {
             is_call_me_maybe_ep: HashMap::new(),
             pending_cli_pings: Vec::new(),
             expired: false,
+            last_active: Instant::now(),
         }
     }
 
@@ -699,6 +703,11 @@ impl Endpoint {
     /// if necessary.
     pub(super) async fn stayin_alive(&mut self) {
         let now = Instant::now();
+        if now.duration_since(self.last_active) > SESSION_ACTIVE_TIMEOUT {
+            debug!("skipping stayin alive: session is in active");
+            return;
+        }
+
         let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
@@ -736,6 +745,7 @@ impl Endpoint {
         }
 
         let now = Instant::now();
+        self.last_active = now;
         let (udp_addr, derp_addr) = self.addr_for_send(&now);
 
         // Trigger a round of pings if we haven't had any full pings yet.
