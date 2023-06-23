@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::encode_ranges_validated;
-use bao_tree::outboard::PreOrderMemOutboardRef;
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
@@ -19,9 +18,8 @@ use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
-use crate::provider::database::AbstractDatabaseEntry;
+use crate::provider::database::BaoCollectionEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
-use crate::IROH_BLOCK_SIZE;
 
 pub mod collection;
 pub mod database;
@@ -31,7 +29,7 @@ pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
-use self::database::AbstractDatabase;
+use self::database::BaoCollection;
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -310,19 +308,17 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: AbstractDatabase, E: EventSender>(
+pub async fn transfer_collection<D: BaoCollection, E: EventSender>(
     request: GetRequest,
     // Database from which to fetch blobs.
     db: &D,
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    mut outboard: D::OutboardReader,
+    outboard: D::Outboard,
     mut data: D::DataReader,
 ) -> Result<SentStatus> {
     let hash = request.hash;
-    let outboard = outboard.read_to_end().await?;
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, &outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
@@ -346,7 +342,7 @@ pub async fn transfer_collection<D: AbstractDatabase, E: EventSender>(
             // send the root
             encode_ranges_validated(
                 &mut data,
-                outboard,
+                &outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer.inner,
             )
@@ -390,7 +386,7 @@ pub trait EventSender: Clone + Send + 'static {
     fn send(&self, event: Event) -> Option<Event>;
 }
 
-pub async fn handle_connection<D: AbstractDatabase, C: CustomGetHandler<D>, E: EventSender>(
+pub async fn handle_connection<D: BaoCollection, C: CustomGetHandler<D>, E: EventSender>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
@@ -435,7 +431,7 @@ pub async fn handle_connection<D: AbstractDatabase, C: CustomGetHandler<D>, E: E
     .await
 }
 
-async fn handle_stream<D: AbstractDatabase, E: EventSender>(
+async fn handle_stream<D: BaoCollection, E: EventSender>(
     db: D,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
@@ -467,7 +463,7 @@ async fn handle_stream<D: AbstractDatabase, E: EventSender>(
         }
     }
 }
-async fn handle_custom_get<D: AbstractDatabase, E: EventSender>(
+async fn handle_custom_get<D: BaoCollection, E: EventSender>(
     db: D,
     request: Bytes,
     mut writer: ResponseWriter<E>,
@@ -487,7 +483,7 @@ async fn handle_custom_get<D: AbstractDatabase, E: EventSender>(
     handle_get(db, request, writer).await
 }
 
-pub async fn handle_get<D: AbstractDatabase, E: EventSender>(
+pub async fn handle_get<D: BaoCollection, E: EventSender>(
     db: D,
     request: GetRequest,
     mut writer: ResponseWriter<E>,
@@ -509,7 +505,7 @@ pub async fn handle_get<D: AbstractDatabase, E: EventSender>(
                 request,
                 &db,
                 &mut writer,
-                entry.outboard_reader().await?,
+                entry.outboard().await?,
                 entry.data_reader().await?,
             )
             .await
@@ -576,7 +572,7 @@ pub enum SentStatus {
     NotFound,
 }
 
-pub async fn send_blob<D: AbstractDatabase, W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<D: BaoCollection, W: AsyncWrite + Unpin + Send + 'static>(
     db: &D,
     name: Hash,
     ranges: &RangeSpec,
@@ -584,9 +580,7 @@ pub async fn send_blob<D: AbstractDatabase, W: AsyncWrite + Unpin + Send + 'stat
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
         Some(entry) => {
-            let mut outboard = entry.outboard_reader().await?;
-            let outboard = outboard.read_to_end().await?;
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
+            let outboard = entry.outboard().await?;
             let mut file_reader = entry.data_reader().await?;
             let res = bao_tree::io::fsm::encode_ranges_validated(
                 &mut file_reader,
@@ -705,7 +699,7 @@ mod tests {
             for blob in blobs {
                 let size = blob.len() as u64;
                 total_blobs_size += size;
-                let (outboard, hash) = bao_tree::outboard(&blob, IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::outboard(&blob, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 let path = PathBuf::from_str(&hash.to_string()).unwrap();
@@ -726,7 +720,7 @@ mod tests {
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::outboard(&data, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 map.insert(hash, DbEntry::Internal { outboard, data });

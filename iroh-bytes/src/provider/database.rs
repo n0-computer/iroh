@@ -2,15 +2,16 @@ use super::DbEntry;
 use crate::{
     provider::ValidateProgress,
     util::{validate_bao, BaoValidationError},
-    Hash,
+    Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};
+use bao_tree::outboard::PreOrderMemOutboard;
 use bytes::Bytes;
 use futures::{
     future::{BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, FileAdapter};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, io,
@@ -35,34 +36,71 @@ pub const FNAME_PATHS: &str = "paths.bin";
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
 
-pub trait AbstractDatabaseEntry<D: AbstractDatabase> {
-    fn outboard_reader(&self) -> BoxFuture<'static, io::Result<D::OutboardReader>>;
-    fn data_reader(&self) -> BoxFuture<'static, io::Result<D::DataReader>>;
+/// An entry for one hash in a bao collection
+///
+/// The entry has the ability to provide you with an (outboard, data)
+/// reader pair. Creating the reader is async and may fail. The futures that
+/// create the readers must be `Send`, but the readers themselves
+pub trait BaoCollectionEntry<D: BaoCollection>: Clone + Send + Sync + 'static {
+    fn hash(&self) -> &blake3::Hash;
+    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
 }
 
-impl AbstractDatabaseEntry<Database> for DbEntry {
-    fn outboard_reader(&self) -> BoxFuture<'static, io::Result<Bytes>> {
-        self.outboard_reader().boxed()
+#[derive(Debug, Clone)]
+pub struct DbPair {
+    hash: blake3::Hash,
+    entry: DbEntry,
+}
+
+impl BaoCollectionEntry<Database> for DbPair {
+    fn hash(&self) -> &blake3::Hash {
+        &self.hash
     }
 
-    fn data_reader(&self) -> BoxFuture<'static, io::Result<Either<Bytes, FileAdapter>>> {
-        self.data_reader().boxed()
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
+        async move {
+            let mut reader = self.entry.outboard_reader().await?;
+            let bytes = reader.read_to_end().await?;
+            let hash = self.hash;
+            PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, bytes)
+        }
+        .boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, FileAdapter>>> {
+        self.entry.data_reader().boxed()
     }
 }
 
-pub trait AbstractDatabase: Clone + Send + Sync + 'static {
-    type OutboardReader: AsyncSliceReader;
+/// A generic collection of blobs with precomputed outboards
+pub trait BaoCollection: Clone + Send + Sync + 'static {
+    /// The outboard type. This can be an in memory outboard or an outboard that
+    /// retrieves the data asynchronously from a remote database.
+    type Outboard: bao_tree::io::fsm::Outboard;
+    /// The reader type.
     type DataReader: AsyncSliceReader;
-    type Entry: AbstractDatabaseEntry<Self>;
+    /// The entry type. An entry is a cheaply cloneable handle that can be used
+    /// to open readers for both the data and the outboard
+    type Entry: BaoCollectionEntry<Self>;
+    /// Get an entry for a hash.
+    ///
+    /// This can also be used for a membership test by just checking if there
+    /// is an entry. Creating an entry should be cheap, any expensive ops should
+    /// be deferred to the creation of the actual readers.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
-impl AbstractDatabase for Database {
-    type Entry = DbEntry;
-    type OutboardReader = Bytes;
+impl BaoCollection for Database {
+    type Entry = DbPair;
+    type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Either<Bytes, FileAdapter>;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        self.get(hash)
+        let entry = self.get(hash)?;
+        Some(DbPair {
+            hash: blake3::Hash::from(*hash),
+            entry,
+        })
     }
 }
 

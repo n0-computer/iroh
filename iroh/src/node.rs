@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
-use iroh_bytes::provider::database::AbstractDatabase;
+use iroh_bytes::provider::database::BaoCollection;
 use iroh_bytes::{
     blobs::Collection,
     protocol::Closed,
@@ -66,7 +66,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct Builder<D, E = DummyServerEndpoint, C = ()>
 where
-    D: AbstractDatabase,
+    D: BaoCollection,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
 {
@@ -82,7 +82,7 @@ where
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
 
-impl<D: AbstractDatabase> Builder<D> {
+impl<D: BaoCollection> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
     pub fn with_db(db: D) -> Self {
         Self {
@@ -100,7 +100,7 @@ impl<D: AbstractDatabase> Builder<D> {
 
 impl<D, E, C> Builder<D, E, C>
 where
-    D: AbstractDatabase,
+    D: BaoCollection,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
 {
@@ -394,7 +394,7 @@ impl iroh_bytes::provider::EventSender for MappedSender {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: AbstractDatabase> {
+pub struct Node<D: BaoCollection> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -416,7 +416,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: AbstractDatabase> Node<D> {
+impl<D: BaoCollection> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
@@ -487,7 +487,7 @@ impl<D: AbstractDatabase> Node<D> {
     }
 }
 
-impl<D: AbstractDatabase> NodeInner<D> {
+impl<D: BaoCollection> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.conn.local_endpoints().await
     }
@@ -508,7 +508,7 @@ impl<D: AbstractDatabase> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: AbstractDatabase> Future for Node<D> {
+impl<D: BaoCollection> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -521,7 +521,7 @@ struct RpcHandler<D> {
     inner: Arc<NodeInner<D>>,
 }
 
-impl<D: AbstractDatabase> RpcHandler<D> {
+impl<D: BaoCollection> RpcHandler<D> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -669,7 +669,7 @@ impl<D: AbstractDatabase> RpcHandler<D> {
     }
 }
 
-fn handle_rpc_request<D: AbstractDatabase, C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<D: BaoCollection, C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
     handler: &RpcHandler<D>,

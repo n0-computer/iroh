@@ -735,7 +735,7 @@ fn get_missing_range_impl(
         tracing::debug!("Found incomplete file: {:?}", paths.temp);
         // we got incomplete data
         let outboard = std::fs::read(&paths.outboard)?;
-        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard, false);
+        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard);
         match outboard {
             Ok(outboard) => {
                 // compute set of valid ranges from the outboard and the file
