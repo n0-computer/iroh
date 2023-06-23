@@ -17,7 +17,7 @@ incremental = false
 
 [patch.crates-io]
 iroh-io = { path = "./iroh-io" }
-bao-tree = { path = "../bao-tree" }
+bao-tree = { git = "https://github.com/n0-computer/bao-tree" }
 
 [patch.crates-io.ed25519-dalek]
 git = "https://github.com/dalek-cryptography/ed25519-dalek"

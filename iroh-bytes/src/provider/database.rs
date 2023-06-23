@@ -5,7 +5,7 @@ use crate::{
     Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};
-use bao_tree::outboard::PreOrderMemOutboard;
+use bao_tree::{io::fsm::Outboard, outboard::PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::{
     future::{BoxFuture, Either},
@@ -13,7 +13,7 @@ use futures::{
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt, io,
     path::{Path, PathBuf},
     result,
@@ -36,13 +36,95 @@ pub const FNAME_PATHS: &str = "paths.bin";
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
 
+#[derive(Debug, Clone, Default)]
+pub struct InMemDatabase(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
+
+impl InMemDatabase {
+    pub fn new(
+        entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
+    ) -> (Self, BTreeMap<String, blake3::Hash>) {
+        let mut names = BTreeMap::new();
+        let mut res = HashMap::new();
+        for (name, data) in entries.into_iter() {
+            let name = name.into();
+            let data: &[u8] = data.as_ref();
+            // compute the outboard
+            let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+            // add the name, this assumes that names are unique
+            names.insert(name, hash);
+            // wrap into the right types
+            let outboard =
+                PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
+            let data = Bytes::from(data.to_vec());
+            let hash = Hash::from(hash);
+            res.insert(hash, (outboard, data));
+        }
+        (Self(Arc::new(res)), names)
+    }
+
+    pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
+        let inner = Arc::make_mut(&mut self.0);
+        let data: &[u8] = data.as_ref();
+        // compute the outboard
+        let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+        // wrap into the right types
+        let outboard =
+            PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
+        let data = Bytes::from(data.to_vec());
+        let hash = Hash::from(hash);
+        inner.insert(hash, (outboard, data));
+        hash
+    }
+
+    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
+        let entry = self.0.get(hash)?;
+        Some(entry.1.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InMemDatabaseEntry {
+    outboard: PreOrderMemOutboard<Bytes>,
+    data: Bytes,
+}
+
+impl BaoCollectionEntry<InMemDatabase> for InMemDatabaseEntry {
+    fn hash(&self) -> blake3::Hash {
+        self.outboard.root()
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+        futures::future::ok(self.outboard.clone()).boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+        futures::future::ok(self.data.clone()).boxed()
+    }
+}
+
+impl BaoCollection for InMemDatabase {
+    type Outboard = PreOrderMemOutboard<Bytes>;
+    type DataReader = Bytes;
+    type Entry = InMemDatabaseEntry;
+
+    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+        println!("getting entry for {:?}", hash);
+        let (o, d) = self.0.get(hash)?;
+        println!("got entry for {:?}", hash);
+        Some(InMemDatabaseEntry {
+            outboard: o.clone(),
+            data: d.clone(),
+        })
+    }
+}
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves
 pub trait BaoCollectionEntry<D: BaoCollection>: Clone + Send + Sync + 'static {
-    fn hash(&self) -> &blake3::Hash;
+    fn hash(&self) -> blake3::Hash;
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
 }
@@ -54,8 +136,8 @@ pub struct DbPair {
 }
 
 impl BaoCollectionEntry<Database> for DbPair {
-    fn hash(&self) -> &blake3::Hash {
-        &self.hash
+    fn hash(&self) -> blake3::Hash {
+        self.hash
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {

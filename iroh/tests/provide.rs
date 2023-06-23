@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node};
+use iroh_io::AsyncSliceReaderExt;
 use iroh_net::client::dial_peer;
 use rand::RngCore;
 use testdir::testdir;
@@ -19,7 +20,9 @@ use iroh_bytes::{
     blobs::Collection,
     get::{self, get_response_machine, get_response_machine::ConnectedNext, Stats},
     protocol::{AnyGetRequest, GetRequest},
-    provider::{self, create_collection, CustomGetHandler, DataSource, Database},
+    provider::{
+        self, create_collection, database::InMemDatabase, CustomGetHandler, DataSource, Database,
+    },
     runtime,
     util::Hash,
 };
@@ -178,7 +181,7 @@ async fn transfer_random_data<S>(
     rt: &crate::runtime::Handle,
 ) -> Result<()>
 where
-    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
+    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
     let file_opts = file_opts
         .into_iter()
@@ -194,7 +197,7 @@ where
 // Run the test for a vec of filenames and blob data
 async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &crate::runtime::Handle) -> Result<()>
 where
-    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
+    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
     let dir: PathBuf = testdir!();
 
@@ -202,6 +205,8 @@ where
     let mut files = Vec::new();
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
+
+    let (mut mdb, lookup) = InMemDatabase::new(file_opts.clone());
 
     for opt in file_opts.into_iter() {
         let (name, data) = opt;
@@ -223,9 +228,23 @@ where
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
     let (db, collection_hash) = provider::create_collection(files).await?;
+    for (_, path, _) in &expects {
+        tokio::fs::remove_file(path).await?;
+    }
+    // copy the collection itself from db
+    let entry = db.get(&collection_hash).unwrap();
+    let data = entry
+        .data_reader()
+        .await
+        .unwrap()
+        .read_to_end()
+        .await
+        .unwrap();
+    mdb.insert(data);
+    drop(db);
 
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(db)
+    let node = Node::builder(mdb.clone())
         .runtime(rt)
         .bind_addr(addr)
         .spawn()
@@ -267,9 +286,10 @@ where
     let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
     let (collection, children, _stats) = aggregate_get_response(response).await?;
     assert_eq!(num_blobs, collection.blobs().len());
-    for (i, (name, path, hash)) in expects.into_iter().enumerate() {
+    for (i, (name, hash)) in lookup.into_iter().enumerate() {
+        let hash = Hash::from(hash);
         let blob = &collection.blobs()[i];
-        let expect = tokio::fs::read(&path).await?;
+        let expect = mdb.get(&hash).unwrap();
         let got = &children[&(i as u64)];
         assert_eq!(name, blob.name);
         assert_eq!(hash, blob.hash);

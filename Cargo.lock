@@ -272,6 +272,7 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.5.0-beta1"
+source = "git+https://github.com/n0-computer/bao-tree#3b605393ed7207c506ac17b4be4b94c11e753a83"
 dependencies = [
  "blake3",
  "bytes",
