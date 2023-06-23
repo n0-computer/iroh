@@ -1980,9 +1980,6 @@ impl Actor {
             }
             disco::Message::Pong(pong) => {
                 inc!(MagicsockMetrics::RecvDiscoPong);
-                // There might be multiple nodes for the sender's DiscoKey.
-                // Ask each to handle it, stopping once one reports that
-                // the Pong's TxID was theirs.
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
                     let (_, insert) = ep
                         .handle_pong_conn(&self.conn.public_key, &pong, di, src)
@@ -2045,90 +2042,51 @@ impl Actor {
         di.last_ping_time.replace(Instant::now());
         let is_derp = src.ip() == DERP_MAGIC_IP;
 
-        // If we can figure out with certainty which node key this disco
-        // message is for, eagerly update our IP<>node and disco<>node
-        // mappings to make p2p path discovery faster in simple
-        // cases. Without this, disco would still work, but would be
-        // reliant on DERP call-me-maybe to establish the disco<>node
-        // mapping, and on subsequent disco handlePongLocked to establish the IP<>disco mapping.
-        let mut unambigous_node_key = None;
-        {
-            // Attempt to look up an unambiguous mapping from a DiscoKey `dk` (which sent ping dm) to a NodeKey.
-            // `None` if not unamabigous.
-            if let Some(ref src) = derp_node_src {
-                if self.peer_map.endpoint_for_node_key(src).is_some() {
-                    unambigous_node_key = Some(src.clone());
-                }
-            } else if let Some(_ep) = self.peer_map.endpoint_for_node_key(&dm.node_key) {
-                unambigous_node_key = Some(dm.node_key.clone());
-            }
-        }
-
-        if let Some(nk) = unambigous_node_key {
-            if !is_derp {
-                self.peer_map.set_node_key_for_ip_port(&src, &nk);
-            }
-        }
-
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
         // But if the ping was over UDP (ip_dst is not a DERP address), then dst_key
         // will be zero here, but that's fine: send_disco_message only requires
         // a dstKey if the dst ip:port is DERP.
+
         if is_derp {
             assert!(derp_node_src.is_some());
         } else {
             assert!(derp_node_src.is_none());
         }
-        let mut dst_key = derp_node_src.clone();
 
-        // Remember this route if not present.
-        let mut num_nodes = 0;
-        let mut dup = false;
-        if let Some(ref dst_key) = dst_key {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(dst_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id) {
-                    debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                    return;
-                }
-                num_nodes = 1;
-            }
-        } else {
-            if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
-                if ep.add_candidate_endpoint(src, dm.tx_id) {
-                    dup = true;
-                } else {
-                    num_nodes += 1;
-                    if num_nodes == 1 && dst_key.is_none() {
-                        dst_key.replace(di.node_key.clone());
+        let (dst_key, insert) = match derp_node_src {
+            Some(dst_key) => {
+                // From Derp
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&dst_key) {
+                    if ep.add_candidate_endpoint(src, dm.tx_id) {
+                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                        return;
                     }
+                    (dst_key.clone(), true)
+                } else {
+                    (dst_key.clone(), false)
                 }
             }
-            if dup {
-                debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
-                return;
+            None => {
+                if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&di.node_key) {
+                    if ep.add_candidate_endpoint(src, dm.tx_id) {
+                        debug!("disco: ping got duplicate endpoint {} - {}", src, dm.tx_id);
+                        return;
+                    }
+                    (di.node_key.clone(), true)
+                } else {
+                    (di.node_key.clone(), false)
+                }
             }
-            if num_nodes > 1 {
-                // Zero it out if it's ambiguous, so send_disco_message logging isn't confusing.
-                dst_key = None;
-            }
-        }
+        };
 
-        if num_nodes == 0 {
-            warn!(
-                "[unexpected] got disco ping from {src:?}/{derp_node_src:?} for node not in peers",
-            );
-            return;
+        if insert {
+            self.peer_map.set_node_key_for_ip_port(&src, &dst_key);
         }
 
         if !likely_heart_beat {
-            let ping_node_src_str = if num_nodes > 1 {
-                "[one-of-multi]".to_string()
-            } else {
-                format!("{dst_key:?}")
-            };
             info!(
-                "disco: {:?}<-{:?} ({ping_node_src_str:?}, {src:?})  got ping tx={:?}",
+                "disco: {:?}<-{:?} ({dst_key:?}, {src:?})  got ping tx={:?}",
                 self.conn.public_key, di.node_key, dm.tx_id
             );
         }
@@ -2138,9 +2096,8 @@ impl Actor {
             tx_id: dm.tx_id,
             src,
         });
-        let dst_key = dst_key.unwrap_or_else(|| di.node_key.clone());
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
-            warn!("failed to send disco message to {ip_dst}: {err:?}");
+            warn!("disco: failed to send message to {ip_dst}: {err:?}");
         }
     }
 
