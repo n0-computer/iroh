@@ -128,7 +128,7 @@ impl UdpActor {
                                             break;
                                         };
                                     } else {
-                                        // Foward
+                                        // Forward
                                         trace!("tick: udp forward packet");
                                         let forward = match network {
                                             Network::Ipv4 => NetworkReadResult::Ok {
