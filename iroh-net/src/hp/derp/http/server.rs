@@ -28,8 +28,12 @@ use tracing::{debug, debug_span, error, info, warn, Instrument};
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::{
     derp::{
-        http::client::Client as HttpClient, http::mesh_clients::MeshClients,
-        server::ClientConnHandler, server::MaybeTlsStream, types::MeshKey, types::PacketForwarder,
+        http::client::Client as HttpClient,
+        http::mesh_clients::{MeshAddrs, MeshClients},
+        server::ClientConnHandler,
+        server::MaybeTlsStream,
+        types::MeshKey,
+        types::PacketForwarder,
         DerpMap, MaybeTlsStreamServer,
     },
     key::node::SecretKey,
@@ -97,6 +101,31 @@ impl Server {
     /// Get the local address of this server.
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Mesh the server to a new `derp_map`
+    pub async fn re_mesh(&mut self, mesh_addrs: MeshAddrs) -> Result<()> {
+        let (mesh_key, server_key, packet_fwd) = if let Some(server) = &self.server {
+            let mesh_key = if let Some(key) = server.mesh_key() {
+                key
+            } else {
+                bail!("no mesh key, unable to mesh with other derp servers");
+            };
+            let server_key = server.private_key();
+            let packet_fwd = server.packet_forwarder_handler();
+            (mesh_key, server_key, packet_fwd)
+        } else {
+            bail!("no derp server, unable to mesh with other derp servers");
+        };
+        if let Some(mesh_clients) = self.mesh_clients.take() {
+            mesh_clients.shutdown().await;
+        }
+
+        let mut mesh_clients = MeshClients::new(mesh_key, server_key, mesh_addrs, packet_fwd);
+
+        mesh_clients.mesh().await;
+        self.mesh_clients = Some(mesh_clients);
+        Ok(())
     }
 }
 
@@ -255,9 +284,8 @@ impl ServerBuilder {
                 mesh_clients = Some(MeshClients::new(
                     mesh_key,
                     secret_key,
-                    derp_map,
+                    MeshAddrs::DerpMap(derp_map),
                     packet_fwd,
-                    self.tls_config.is_some(),
                 ));
             }
 

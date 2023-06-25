@@ -18,10 +18,9 @@ use super::Client;
 #[derive(Debug)]
 pub(crate) struct MeshClients {
     tasks: JoinSet<()>,
-    use_https: bool,
     mesh_key: MeshKey,
     server_key: SecretKey,
-    derp_map: DerpMap,
+    mesh_addrs: MeshAddrs,
     packet_fwd: PacketForwarderHandler<Client>,
     cancel: CancellationToken,
 }
@@ -30,34 +29,43 @@ impl MeshClients {
     pub(crate) fn new(
         mesh_key: MeshKey,
         server_key: SecretKey,
-        derp_map: DerpMap,
+        mesh_addrs: MeshAddrs,
         packet_fwd: PacketForwarderHandler<Client>,
-        use_https: bool,
     ) -> Self {
         Self {
             tasks: JoinSet::new(),
             cancel: CancellationToken::new(),
             mesh_key,
             server_key,
-            derp_map,
+            mesh_addrs,
             packet_fwd,
-            use_https,
         }
     }
 
     pub(crate) async fn mesh(&mut self) {
-        let mut hosts = Vec::new();
-        for (_, region) in self.derp_map.regions.iter() {
-            for node in region.nodes.iter() {
-                hosts.push(node.host_name.clone());
+        let addrs = match &self.mesh_addrs {
+            MeshAddrs::Addr(urls) => urls.to_owned(),
+            MeshAddrs::DerpMap(derp_map) => {
+                let mut urls = Vec::new();
+                for (_, region) in derp_map.regions.iter() {
+                    for node in region.nodes.iter() {
+                        let host = node.host_name.clone();
+                        let scheme = if node.derp_port == 443 {
+                            "https"
+                        } else {
+                            "http"
+                        };
+                        let url: Url = format!("{scheme}://{host}/derp").parse().unwrap();
+                        urls.push(url);
+                    }
+                }
+                urls
             }
-        }
-        let scheme = if self.use_https { "https" } else { "http" };
-        for host in hosts {
-            let url: Url = format!("{scheme}://{host}/derp").parse().unwrap();
+        };
+        for addr in addrs {
             let client = ClientBuilder::new()
                 .mesh_key(Some(self.mesh_key))
-                .build_with_server_url(self.server_key.clone(), url);
+                .build_with_server_url(self.server_key.clone(), addr);
 
             let packet_forwarder_handler = self.packet_fwd.clone();
             let cancel = self.cancel.clone();
@@ -76,5 +84,88 @@ impl MeshClients {
     pub(crate) async fn shutdown(mut self) {
         self.cancel.cancel();
         self.tasks.shutdown().await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum MeshAddrs {
+    DerpMap(DerpMap),
+    Addr(Vec<Url>),
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::hp::derp::{http::ServerBuilder, ReceivedMessage};
+    use anyhow::{bail, Result};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mesh_network() -> Result<()> {
+        let mesh_key: MeshKey = [1; 32];
+        let a_key = SecretKey::generate();
+        let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(a_key))
+            .mesh_key(Some(mesh_key))
+            .spawn()
+            .await?;
+
+        let b_key = SecretKey::generate();
+        let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            .secret_key(Some(b_key))
+            .mesh_key(Some(mesh_key))
+            .spawn()
+            .await?;
+
+        let a_url: Url = format!("http://{}/derp", derp_server_a.addr())
+            .parse()
+            .unwrap();
+        let b_url: Url = format!("http://{}/derp", derp_server_b.addr())
+            .parse()
+            .unwrap();
+
+        derp_server_a
+            .re_mesh(MeshAddrs::Addr(vec![b_url.clone()]))
+            .await?;
+        derp_server_b
+            .re_mesh(MeshAddrs::Addr(vec![a_url.clone()]))
+            .await?;
+
+        let alice_key = SecretKey::generate();
+        let alice = ClientBuilder::new().build_with_server_url(alice_key.clone(), a_url);
+        let _ = alice.connect().await?;
+
+        let bob_key = SecretKey::generate();
+        let bob = ClientBuilder::new().build_with_server_url(bob_key.clone(), b_url);
+        let _ = bob.connect().await?;
+
+        // send bob a message from alice
+        let msg = "howdy, bob!";
+        alice.send(bob_key.public_key(), msg.into()).await?;
+
+        let (recv, _) = bob.recv_detail().await?;
+        if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+            assert_eq!(alice_key.public_key(), source);
+            assert_eq!(msg, data);
+        } else {
+            bail!("unexpected ReceivedMessage {recv:?}");
+        }
+
+        // send alice a message from bob
+        let msg = "why hello, alice!";
+        bob.send(alice_key.public_key(), msg.into()).await?;
+
+        let (recv, _) = alice.recv_detail().await?;
+        if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+            assert_eq!(bob_key.public_key(), source);
+            assert_eq!(msg, data);
+        } else {
+            bail!("unexpected ReceivedMessage {recv:?}");
+        }
+
+        // shutdown the servers
+        derp_server_a.shutdown().await;
+        derp_server_b.shutdown().await;
+        Ok(())
     }
 }

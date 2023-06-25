@@ -891,7 +891,7 @@ impl Client {
         packet_forwarder_handler: PacketForwarderHandler<Client>,
         cancel_logging: CancellationToken,
     ) -> anyhow::Result<()> {
-        let retry_interval = Duration::from_secs(5);
+        let redial_delay = Duration::from_secs(5);
         let peers_present = PeersPresent::new();
 
         let mut last_conn_gen = 0;
@@ -903,7 +903,7 @@ impl Client {
                 Err(e) => {
                     peers_present.clear().await;
                     tracing::warn!("error connecting to derp server {e}");
-                    tokio::time::sleep(retry_interval).await;
+                    tokio::time::sleep(redial_delay).await;
                     continue;
                 }
             };
@@ -942,7 +942,7 @@ impl Client {
                     Err(e) => {
                         peers_present.clear().await;
                         tracing::warn!("recv error: {e:?}");
-                        tokio::time::sleep(retry_interval).await;
+                        tokio::time::sleep(redial_delay).await;
                         break;
                     }
                 };
@@ -1206,17 +1206,4 @@ mod tests {
         http_server.shutdown().await;
         Ok(())
     }
-
-    //// todo move to http.rs
-    //async fn test_mesh_network() -> Result<()> {
-    //    todo!();
-    //    // start up 3 derpers A, B, C w/ C is connected to A & B & A & B are connected to C
-    //    // start up 2 clients, alice and bob, connected to A & B respectfully
-    //    //
-    //    // send message from aprime to bprime
-    //    // send message from bprime to aprime
-    //    //
-    //    // close alice
-    //    // try to send message to alice from bob, fail
-    //}
 }
