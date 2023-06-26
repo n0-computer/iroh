@@ -813,7 +813,6 @@ impl Endpoint {
                 );
                 self.start_ping(udp_addr, now, DiscoPingPurpose::StayinAlive)
                     .await;
-                return;
             }
         }
     }
