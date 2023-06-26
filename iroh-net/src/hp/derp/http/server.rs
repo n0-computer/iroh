@@ -34,7 +34,7 @@ use crate::hp::{
         server::MaybeTlsStream,
         types::MeshKey,
         types::PacketForwarder,
-        DerpMap, MaybeTlsStreamServer,
+        MaybeTlsStreamServer,
     },
     key::node::SecretKey,
 };
@@ -157,11 +157,11 @@ pub struct ServerBuilder {
     /// Optional MeshKey for this server. When it exists it will ensure that This
     /// server will only mesh with other servers with the same key.
     mesh_key: Option<MeshKey>,
-    /// Optional DerpMap that details the other derp servers this server should
+    /// Optional MeshAddrs that details the other derp servers this server should
     /// attempt to mesh with.
-    /// Having a `mesh_derp_map` but no `mesh_key` when attempting to `spawn` a
+    /// Having a `mesh_depers` but no `mesh_key` when attempting to `spawn` a
     /// `Server` results in an error.
-    mesh_derp_map: Option<DerpMap>,
+    mesh_derpers: Option<MeshAddrs>,
     /// Optional tls configuration/TlsAcceptor combination.
     ///
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
@@ -190,7 +190,7 @@ impl ServerBuilder {
             secret_key: None,
             addr,
             mesh_key: None,
-            mesh_derp_map: None,
+            mesh_derpers: None,
             tls_config: None,
             handlers: Default::default(),
             derp_endpoint: "/derp",
@@ -213,11 +213,11 @@ impl ServerBuilder {
         self
     }
 
-    /// The `DerpMap` describing the different derpers this server should
-    /// attempt to mesh with. If a `DerpMap` exists on the `ServerBuilder`,
+    /// The `MessAddrs` describing the different derpers this server should
+    /// attempt to mesh with. If `MeshAddrs` exists on the `ServerBuilder`,
     /// but no `MeshKey`, `ServerBuilder::spawn` will error.
-    pub fn mesh_derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
-        self.mesh_derp_map = derp_map;
+    pub fn mesh_derpers(mut self, mesh_addrs: Option<MeshAddrs>) -> Self {
+        self.mesh_derpers = mesh_addrs;
         self
     }
 
@@ -277,15 +277,12 @@ impl ServerBuilder {
 
             let packet_fwd = server.packet_forwarder_handler();
 
-            if let Some(derp_map) = self.mesh_derp_map {
+            if let Some(mesh_addrs) = self.mesh_derpers {
                 ensure!(self.mesh_key.is_some(), "Must provide a `MeshKey` when trying using a `DerpMap` to join a mesh network.");
 
                 let mesh_key = self.mesh_key.expect("checked");
                 mesh_clients = Some(MeshClients::new(
-                    mesh_key,
-                    secret_key,
-                    MeshAddrs::DerpMap(derp_map),
-                    packet_fwd,
+                    mesh_key, secret_key, mesh_addrs, packet_fwd,
                 ));
             }
 

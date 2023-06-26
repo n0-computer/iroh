@@ -44,7 +44,7 @@ impl MeshClients {
 
     pub(crate) async fn mesh(&mut self) {
         let addrs = match &self.mesh_addrs {
-            MeshAddrs::Addr(urls) => urls.to_owned(),
+            MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
                 let mut urls = Vec::new();
                 for (_, region) in derp_map.regions.iter() {
@@ -90,7 +90,7 @@ impl MeshClients {
 #[derive(Debug, Clone)]
 pub enum MeshAddrs {
     DerpMap(DerpMap),
-    Addr(Vec<Url>),
+    Addrs(Vec<Url>),
 }
 
 #[cfg(test)]
@@ -125,10 +125,10 @@ mod tests {
             .unwrap();
 
         derp_server_a
-            .re_mesh(MeshAddrs::Addr(vec![b_url.clone()]))
+            .re_mesh(MeshAddrs::Addrs(vec![b_url.clone()]))
             .await?;
         derp_server_b
-            .re_mesh(MeshAddrs::Addr(vec![a_url.clone()]))
+            .re_mesh(MeshAddrs::Addrs(vec![a_url.clone()]))
             .await?;
 
         let alice_key = SecretKey::generate();

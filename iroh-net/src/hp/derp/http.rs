@@ -3,6 +3,7 @@ mod mesh_clients;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};
+pub use self::mesh_clients::MeshAddrs;
 pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";

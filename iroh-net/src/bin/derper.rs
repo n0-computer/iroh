@@ -19,10 +19,11 @@ use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
 use iroh_net::hp::{
     derp::{
         self,
-        http::{ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},
+        http::{MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},
     },
     key, stun,
 };
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -207,12 +208,15 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 #[derive(Serialize, Deserialize)]
 struct Config {
     private_key: key::node::SecretKey,
+    /// List of
+    mesh_derpers: Vec<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             private_key: key::node::SecretKey::generate(),
+            mesh_derpers: Vec::new(),
         }
     }
 }
@@ -285,13 +289,13 @@ async fn main() -> Result<()> {
     let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
 
     if serve_tls && cli.tls_contact.is_none() {
-        bail!("Must supply an email address for the `tls_contact` flag when running the derper with TLS enabled.");
+        bail!("Must supply an email address for the `tls_contact` flag when running the derper with TLS enabled.\nIf you do not mean to run the derper with tls enabled, pass in a custom address using the `--addr` flag, or run the derper in `--dev` mode.");
     }
 
-    let (secret_key, mesh_key) = match cli.run_derp {
+    let (secret_key, mesh_key, mesh_derpers) = match cli.run_derp {
         true => {
             let cfg = Config::load(&cli).await?;
-            let mesh_key = if let Some(file) = cli.mesh_psk_file {
+            let (mesh_key, mesh_derpers) = if let Some(file) = cli.mesh_psk_file {
                 let raw = tokio::fs::read_to_string(file)
                     .await
                     .context("reading mesh-pks file")?;
@@ -299,13 +303,18 @@ async fn main() -> Result<()> {
                 hex::decode_to_slice(raw.trim(), &mut mesh_key)
                     .context("invalid mesh-pks content")?;
                 info!("DERP mesh key configured");
-                Some(mesh_key)
+                let mut mesh_derpers = Vec::new();
+                for url_s in cfg.mesh_derpers.iter() {
+                    let url: Url = url_s.parse()?;
+                    mesh_derpers.push(url);
+                }
+                (Some(mesh_key), mesh_derpers)
             } else {
-                None
+                (None, Vec::new())
             };
-            (Some(cfg.private_key), mesh_key)
+            (Some(cfg.private_key), mesh_key, mesh_derpers)
         }
-        false => (None, None),
+        false => (None, None, Vec::new()),
     };
 
     let stun_task = if cli.run_stun {
@@ -346,6 +355,7 @@ async fn main() -> Result<()> {
         .headers(headers)
         .tls_config(tls_config)
         .derp_override(Box::new(derp_disabled_handler))
+        .mesh_derpers(Some(MeshAddrs::Addrs(mesh_derpers)))
         .request_handler(Method::GET, "/", Box::new(root_handler))
         .request_handler(Method::GET, "/index.html", Box::new(root_handler))
         .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
