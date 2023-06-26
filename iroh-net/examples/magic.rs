@@ -1,10 +1,11 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::default_derp_map,
     endpoint::{accept_conn, MagicEndpoint},
+    hp::derp::{DerpMap, UseIpv4, UseIpv6},
     tls::{Keypair, PeerId},
 };
 
@@ -16,6 +17,8 @@ struct Cli {
     secret: Option<String>,
     #[clap(short, long, default_value = "0.0.0.0:0")]
     bind_address: SocketAddr,
+    #[clap(short, long)]
+    derp_addr: Option<String>,
     #[clap(subcommand)]
     command: Command,
 }
@@ -42,12 +45,25 @@ async fn main() -> anyhow::Result<()> {
         Some(key) => parse_secret(&key)?,
     };
 
+    let derp_map = match args.derp_addr {
+        None => default_derp_map(),
+        Some(url) => {
+            let mut addrs = url.to_socket_addrs()?;
+            let addr = addrs.next().expect("Failed to parse DERP address");
+            let (ip4, ip6) = match addr.ip() {
+                IpAddr::V4(addr) => (UseIpv4::Some(addr), UseIpv6::None),
+                IpAddr::V6(addr) => (UseIpv4::None, UseIpv6::Some(addr)),
+            };
+            DerpMap::default_from_node(url, 3478, addr.port(), ip4, ip6)
+        }
+    };
+
     let endpoint = MagicEndpoint::bind(
         keypair,
         args.bind_address,
         vec![EXAMPLE_ALPN.to_vec()],
         None,
-        Some(default_derp_map()),
+        Some(derp_map),
         false,
     )
     .await?;
@@ -65,12 +81,20 @@ async fn main() -> anyhow::Result<()> {
                 );
                 tokio::spawn(async move {
                     let (mut send, mut recv) = conn.accept_bi().await?;
-                    let message = format!("hi! you connected to {me}. bye bye");
-                    send.write_all(message.as_bytes()).await?;
-                    send.finish().await?;
-                    let message = recv.read_to_end(100).await?;
+                    println!("> accepted bi stream");
+
+                    println!("> waiting to recv...");
+                    let message = recv.read_to_end(1000).await?;
                     let message = String::from_utf8(message)?;
                     println!("received: {message}");
+
+                    eprintln!("> start to send");
+                    let message = format!("hi! you connected to {me}. bye bye");
+                    send.write_all(message.as_bytes()).await?;
+                    eprintln!("> all data sent! now calling finish");
+                    send.finish().await?;
+                    eprintln!("> sent and finished!");
+
                     Ok::<_, anyhow::Error>(())
                 });
             }
@@ -79,10 +103,14 @@ async fn main() -> anyhow::Result<()> {
             let peer_id: PeerId = peer_id.parse()?;
             let addrs = addrs.unwrap_or_default();
             let conn = endpoint.connect(peer_id, EXAMPLE_ALPN, &addrs).await?;
+
             let (mut send, mut recv) = conn.open_bi().await?;
+
             let message = format!("hello here's {me}");
             send.write_all(message.as_bytes()).await?;
             send.finish().await?;
+            eprintln!("> send finished");
+
             let message = recv.read_to_end(100).await?;
             let message = String::from_utf8(message)?;
             println!("received: {message}");
