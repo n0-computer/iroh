@@ -1,4 +1,4 @@
-use std::{net::SocketAddr};
+use std::net::SocketAddr;
 
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
