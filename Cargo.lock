@@ -1670,6 +1670,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-gossipswarm"
+version = "0.4.1"
+dependencies = [
+ "blake3",
+ "bytes",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "indexmap",
+ "iroh-net",
+ "rand",
+ "rand_core",
+ "serde",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "iroh-io"
 version = "0.1.0"
 dependencies = [

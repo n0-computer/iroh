@@ -4,6 +4,7 @@ members = [
   "iroh-io",
   "iroh-net",
   "iroh-bytes",
+  "iroh-gossipswarm",
   "iroh-metrics",
 ]
 
