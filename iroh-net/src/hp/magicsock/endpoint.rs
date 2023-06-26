@@ -508,9 +508,9 @@ impl Endpoint {
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
         if let Some(st) = self.endpoint_state.get_mut(&ep) {
-            let duplicate_ping = for_rx_ping_tx_id == st.last_got_ping_tx_id;
+            let duplicate_ping = Some(for_rx_ping_tx_id) == st.last_got_ping_tx_id;
             if !duplicate_ping {
-                st.last_got_ping_tx_id = for_rx_ping_tx_id;
+                st.last_got_ping_tx_id.replace(for_rx_ping_tx_id);
             }
             if st.last_got_ping.is_none() {
                 // Already-known endpoint from the network map.
@@ -529,7 +529,7 @@ impl Endpoint {
             ep,
             EndpointState {
                 last_got_ping: Some(Instant::now()),
-                last_got_ping_tx_id: for_rx_ping_tx_id,
+                last_got_ping_tx_id: Some(for_rx_ping_tx_id),
                 ..Default::default()
             },
         );
@@ -555,6 +555,21 @@ impl Endpoint {
         }
 
         false
+    }
+
+    /// Insert an endpoint candidate that we received a UDP message from.
+    pub(super) fn add_candidate_endpoint_raw(&mut self, ep: SocketAddr) {
+        info!(
+            "disco: adding {:?} as candidate endpoint for {:?}",
+            ep, self.public_key
+        );
+        self.endpoint_state.insert(
+            ep,
+            EndpointState {
+                last_got_ping: Some(Instant::now()),
+                ..Default::default()
+            },
+        );
     }
 
     /// Called when connectivity changes enough that we should question our earlier
@@ -810,11 +825,7 @@ impl Endpoint {
             self.stayin_alive().await;
         }
 
-        debug!(
-            "sending UDP: {}, DERP: {}",
-            udp_addr.is_some(),
-            derp_addr.is_some()
-        );
+        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr,);
 
         Ok((udp_addr, derp_addr))
     }
@@ -957,11 +968,13 @@ impl PeerMap {
             self.by_ip_port.remove(ipp);
         }
         if let Some(id) = self.by_node_key.get(nk) {
+            trace!("insert ip -> id: {:?} -> {}", ipp, id);
             self.by_ip_port.insert(*ipp, *id);
         }
     }
 
     pub(super) fn set_endpoint_for_ip_port(&mut self, ipp: &SocketAddr, id: usize) {
+        trace!("insert ip -> id: {:?} -> {}", ipp, id);
         self.by_ip_port.insert(*ipp, id);
     }
 
@@ -996,7 +1009,7 @@ struct EndpointState {
     /// used to de-dup incoming pings that we may see on both the raw disco
     /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
     /// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
-    last_got_ping_tx_id: stun::TransactionId,
+    last_got_ping_tx_id: Option<stun::TransactionId>,
 
     /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
     call_me_maybe_time: Option<Instant>,

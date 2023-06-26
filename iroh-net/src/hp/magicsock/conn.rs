@@ -981,8 +981,10 @@ impl Actor {
         debug!("received data {} from {}", meta.len, meta.addr);
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
-                info!("no peer_map state found for {}", meta.addr);
-
+                info!(
+                    "no peer_map state found for {:?} in: {:#?}",
+                    meta.addr, self.peer_map
+                );
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
@@ -992,6 +994,10 @@ impl Actor {
                 self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
+                // Mark this addr as a candidate endpoint, as we know at
+                // least the receiving direction worked.
+                ep.add_candidate_endpoint_raw(meta.addr);
+
                 meta.addr = ep.quic_mapped_addr.0;
             }
             Some(ep) => {
@@ -1134,6 +1140,12 @@ impl Actor {
         {
             Some(ep) => {
                 let public_key = ep.public_key();
+                trace!(
+                    "Sending to endpoint for {:?} ({:?})",
+                    current_destination,
+                    public_key
+                );
+
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = if let Some(public_key) = public_key {
