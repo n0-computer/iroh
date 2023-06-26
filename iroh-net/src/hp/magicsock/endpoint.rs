@@ -131,27 +131,34 @@ impl Endpoint {
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<SocketAddr>, bool) {
-        let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
-        let mut derp_addr = None;
-        if !self.is_best_addr_valid(*now) {
-            debug!(
-                "no good udp addr {:?} {:?} - {:?}",
-                now, udp_addr, self.trust_best_addr_until
-            );
-            // We had a best_addr but it expired so send both to it and DERP.
-            derp_addr = self.derp_addr;
-        }
+        match self.best_addr {
+            Some(ref best_addr) => {
+                if !self.is_best_addr_valid(*now) {
+                    // We had a best_addr but it expired so send both to it and DERP.
+                    debug!(
+                        "best addr is outdated {:?} {:?} - {:?}",
+                        now, best_addr, self.trust_best_addr_until
+                    );
 
-        if udp_addr.is_none() {
-            let (addr, should_ping) = self.get_candidate_udp_addr(now);
-            // provide backup derp addr if no known latency or no addr
-            if should_ping || addr.is_none() {
-                derp_addr = self.derp_addr;
+                    (Some(best_addr.addr), self.derp_addr, true)
+                } else {
+                    // Address is current and can be used
+                    (Some(best_addr.addr), None, false)
+                }
             }
-            return (addr, derp_addr, should_ping);
-        }
+            None => {
+                let (addr, should_ping) = self.get_candidate_udp_addr(now);
 
-        (udp_addr, derp_addr, false)
+                // provide backup derp addr if no known latency or no addr
+                let derp_addr = if should_ping || addr.is_none() {
+                    self.derp_addr
+                } else {
+                    None
+                };
+
+                (addr, derp_addr, should_ping)
+            }
+        }
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
@@ -195,15 +202,8 @@ impl Endpoint {
                 addr,
                 latency: None,
             });
-            if self.endpoint_state.len() == 1 {
-                // if we only have one address that we can send data too,
-                // we should trust it for a longer period of time.
-                self.trust_best_addr_until
-                    .replace(*now + Duration::from_secs(60 * 60));
-            } else {
-                self.trust_best_addr_until
-                    .replace(*now + Duration::from_secs(15));
-            }
+            // No trust until a ping confirmed this address.
+            self.trust_best_addr_until = None;
         }
 
         (udp_addr, udp_addr.is_some())
