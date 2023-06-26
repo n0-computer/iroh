@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
-
 pub fn default_derp_map() -> DerpMap {
     DerpMap {
         regions: HashMap::from_iter([(1, default_derp_region())].into_iter()),
