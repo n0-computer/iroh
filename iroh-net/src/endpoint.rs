@@ -115,21 +115,36 @@ impl MagicEndpoint {
         })
     }
 
+    /// Accept a connection on the socket.
     pub fn accept(&self) -> quinn::Accept<'_> {
         self.endpoint.accept()
     }
 
+    /// Get the peer id of this endpoint.
     pub fn peer_id(&self) -> PeerId {
         self.keypair.public().into()
     }
 
+    /// Get the local addresses on which the underlying magic socket is bound.
+    ///
+    /// Returns a tuple of the IPv4 and the optional IPv6 address.
+    pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
+        self.conn.local_addr()
+    }
+
+    /// Connect to a remote endpoint.
+    ///
+    /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
+    /// the remote endpoint, they can be specified and will be added to the endpoint's peer map.
+    /// If no addresses are specified, the endpoint will try to dial the peer through the
+    /// configured DERP servers.
     pub async fn connect(
         &self,
         peer_id: PeerId,
         alpn: &[u8],
-        addrs: &[SocketAddr],
+        known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, addrs).await?;
+        self.add_known_addrs(peer_id, known_addrs).await?;
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
         let addr = self
@@ -149,7 +164,10 @@ impl MagicEndpoint {
             client_config
         };
 
-        debug!("connecting to {}: (via {} - {:?})", peer_id, addr, addrs);
+        debug!(
+            "connecting to {}: (via {} - {:?})",
+            peer_id, addr, known_addrs
+        );
         let connect = self
             .endpoint
             .connect_with(client_config, addr, "localhost")?;
