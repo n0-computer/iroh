@@ -219,7 +219,7 @@ impl MagicEndpoint {
     }
 }
 
-/// Fully accept an incoming connection and extract the client-provided [`PeerId`] and ALPN protocol.
+/// Accept an incoming connection and extract the client-provided [`PeerId`] and ALPN protocol.
 pub async fn accept_conn(
     mut conn: quinn::Connecting,
 ) -> anyhow::Result<(PeerId, String, quinn::Connection)> {
@@ -259,5 +259,109 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
             }
             Err(_) => anyhow::bail!("invalid peer certificate"),
         },
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::net::SocketAddr;
+
+    use crate::{
+        endpoint::{accept_conn, MagicEndpoint},
+        hp::magicsock::conn_tests::{run_derp_and_stun, setup_logging},
+        tls::Keypair,
+    };
+
+    const TEST_ALPN: &[u8] = b"n0/iroh/test";
+
+    #[tokio::test]
+    async fn magic_endpoint_bidi_simple() {
+        setup_logging();
+        let (derp_map, cleanup) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
+
+        let ep1 = MagicEndpoint::bind(
+            Keypair::generate(),
+            SocketAddr::new([127, 0, 0, 1].into(), 0),
+            vec![TEST_ALPN.to_vec()],
+            None,
+            Some(derp_map.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let ep2 = MagicEndpoint::bind(
+            Keypair::generate(),
+            SocketAddr::new([127, 0, 0, 1].into(), 0),
+            vec![TEST_ALPN.to_vec()],
+            None,
+            Some(derp_map.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let peer_id_1 = ep1.peer_id();
+        eprintln!("peer id 1 {peer_id_1}");
+        let peer_id_2 = ep2.peer_id();
+        eprintln!("peer id 2 {peer_id_2}");
+
+        let endpoint = ep2.clone();
+        let p2_connect = tokio::spawn(async move {
+            let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"hello").await.unwrap();
+            send.finish().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(&m, b"world");
+        });
+
+        let endpoint = ep1.clone();
+        let p1_accept = tokio::spawn(async move {
+            let conn = endpoint.accept().await.unwrap();
+            let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
+            assert_eq!(peer_id, peer_id_2);
+            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"hello");
+
+            send.write_all(b"world").await.unwrap();
+            send.finish().await.unwrap();
+        });
+
+        let endpoint = ep1;
+        let p1_connect = tokio::spawn(async move {
+            let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"ola").await.unwrap();
+            send.finish().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(&m, b"mundo");
+        });
+
+        let endpoint = ep2;
+        let p2_accept = tokio::spawn(async move {
+            let conn = endpoint.accept().await.unwrap();
+            let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
+            assert_eq!(peer_id, peer_id_1);
+            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"ola");
+
+            send.write_all(b"mundo").await.unwrap();
+            send.finish().await.unwrap();
+        });
+
+        p1_accept.await.unwrap();
+        p2_connect.await.unwrap();
+
+        p2_accept.await.unwrap();
+        p1_connect.await.unwrap();
+
+        cleanup().await;
     }
 }
