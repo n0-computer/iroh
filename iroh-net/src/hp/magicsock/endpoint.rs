@@ -385,7 +385,6 @@ impl Endpoint {
             }
         }
 
-        self.expired = n.expired;
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {

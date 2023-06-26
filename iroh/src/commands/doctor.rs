@@ -531,12 +531,6 @@ async fn connect(
             endpoints,
             addresses,
             derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-            created: Instant::now(),
-            hostinfo: iroh_net::hp::hostinfo::Hostinfo::default(),
-            keep_alive: false,
-            expired: false,
-            online: None,
-            last_seen: None,
         }],
     })
     .await?;

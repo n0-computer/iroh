@@ -2443,7 +2443,6 @@ mod tests {
     use crate::{
         hp::{
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
-            hostinfo::Hostinfo,
             stun,
         },
         tls,
@@ -2722,12 +2721,6 @@ mod tests {
                     key: peer.key.public_key(),
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
                     derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
-                    created: Instant::now(),
-                    hostinfo: Hostinfo::default(),
-                    keep_alive: false,
-                    expired: false,
-                    online: None,
-                    last_seen: None,
                 });
             }
 

@@ -4,10 +4,9 @@ use std::{
     collections::HashMap,
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    time::Instant,
 };
 
-use super::{hostinfo::Hostinfo, key};
+use super::key;
 
 /// Fake WireGuard endpoint IP address that means to
 /// use DERP. When used (in the Node.DERP field), the port number of
@@ -169,20 +168,4 @@ pub struct Node {
     ///
     /// If this nodes expected to be reachable via DERP relaying.
     pub derp: Option<SocketAddr>,
-    pub hostinfo: Hostinfo,
-    pub created: Instant,
-
-    /// When the node was last online. It is not
-    /// updated when Online is true. It is nil if the current
-    /// node doesn't have permission to know, or the node has never been online.
-    pub last_seen: Option<Instant>,
-
-    /// Whether the node is currently connected to the
-    /// coordination server. A value of None means unknown, or the current node doesn't have permission to know.
-    pub online: Option<bool>,
-
-    /// Open and keep open a connection to this peer
-    pub keep_alive: bool,
-
-    pub expired: bool,
 }
