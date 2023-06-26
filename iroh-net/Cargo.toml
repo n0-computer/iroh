@@ -80,6 +80,7 @@ rtnetlink = "0.12.0"
 wmi = "0.13"
 
 [dev-dependencies]
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
