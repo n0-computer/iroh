@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, net::SocketAddr};
+use std::{net::SocketAddr};
 
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         vec![EXAMPLE_ALPN.to_vec()],
         None,
         Some(default_derp_map()),
-        false
+        false,
     )
     .await?;
 
