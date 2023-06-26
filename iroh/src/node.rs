@@ -222,7 +222,7 @@ where
         // the size of this channel must be large because the producer can be on
         // a different thread than the consumer, and can produce a lot of events
         // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(256);
+        let (events_sender, _events_receiver) = broadcast::channel(512);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
