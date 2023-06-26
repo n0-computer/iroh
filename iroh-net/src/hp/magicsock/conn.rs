@@ -843,7 +843,9 @@ impl Actor {
                         }
                         IpPacket::Forward(mut forward) => {
                             if let NetworkReadResult::Ok { meta, bytes, .. } = &mut forward {
-                                self.receive_ip(bytes, meta);
+                                if !self.receive_ip(bytes, meta) {
+                                    continue;
+                                }
                             }
 
                             let _ = self.derp_recv_sender.send_async(forward).await;
@@ -892,7 +894,7 @@ impl Actor {
                 let eps: Vec<_> = self
                     .peer_map
                     .endpoints()
-                    .filter_map(|(_, ep)| ep.public_key.clone())
+                    .map(|(_, ep)| ep.public_key.clone())
                     .collect();
                 let _ = s.send(eps);
             }
@@ -981,32 +983,17 @@ impl Actor {
     /// This modifies the [`quinn_udp::RecvMeta`] for the packet to set the addresses
     /// to those that the QUIC layer should see.  E.g. the remote address will be set to the
     /// [`QuicMappedAddr`] instead of the actual remote.
-    fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) {
+    ///
+    /// Returns `true` if the message should be processed.
+    fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
         match self.peer_map.endpoint_for_ip_port(&meta.addr) {
             None => {
-                info!(
-                    "no peer_map state found for {:?} in: {:#?}",
-                    meta.addr, self.peer_map
-                );
-                let id = self.peer_map.insert_endpoint(EndpointOptions {
-                    conn_sender: self.conn.actor_sender.clone(),
-                    conn_public_key: self.conn.public_key.clone(),
-                    public_key: None,
-                    derp_addr: None,
-                });
-                self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
-
-                let ep = self.peer_map.by_id_mut(&id).expect("inserted");
-                // Mark this addr as a candidate endpoint, as we know at
-                // least the receiving direction worked.
-                ep.add_candidate_endpoint_raw(meta.addr);
-
-                meta.addr = ep.quic_mapped_addr.0;
+                warn!("no peer_map state found for {:?}, skipping", meta.addr);
+                return false;
             }
             Some(ep) => {
                 debug!("peer_map state found for {}", meta.addr);
-
                 meta.addr = ep.quic_mapped_addr.0;
             }
         }
@@ -1020,6 +1007,7 @@ impl Actor {
         // }
 
         debug!("received passthrough message {}", bytes.len());
+        true
     }
 
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
@@ -1061,7 +1049,7 @@ impl Actor {
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
-                    public_key: Some(dm.src.clone()),
+                    public_key: dm.src.clone(),
                     derp_addr: Some(ipp),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
@@ -1143,7 +1131,7 @@ impl Actor {
             .endpoint_for_quic_mapped_addr_mut(&current_destination)
         {
             Some(ep) => {
-                let public_key = ep.public_key();
+                let public_key = ep.public_key().clone();
                 trace!(
                     "Sending to endpoint for {:?} ({:?})",
                     current_destination,
@@ -1152,31 +1140,23 @@ impl Actor {
 
                 match ep.get_send_addrs().await {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
-                        let res = if let Some(public_key) = public_key {
-                            let res = self.send_raw(udp_addr, transmits.clone()).await;
-                            self.send_derp(
-                                derp_addr.port(),
-                                public_key,
-                                transmits.into_iter().map(|t| t.contents).collect(),
-                            );
-                            res
-                        } else {
-                            self.send_raw(udp_addr, transmits).await
-                        };
+                        let res = self.send_raw(udp_addr, transmits.clone()).await;
+                        self.send_derp(
+                            derp_addr.port(),
+                            public_key,
+                            transmits.into_iter().map(|t| t.contents).collect(),
+                        );
+
                         if let Err(err) = res {
                             warn!("failed to send UDP: {:?}", err);
                         }
                     }
                     Ok((None, Some(derp_addr))) => {
-                        if let Some(public_key) = ep.public_key() {
-                            self.send_derp(
-                                derp_addr.port(),
-                                public_key,
-                                transmits.into_iter().map(|t| t.contents).collect(),
-                            );
-                        } else {
-                            warn!("no public key for endpoint available, and only DERP address");
-                        }
+                        self.send_derp(
+                            derp_addr.port(),
+                            public_key.clone(),
+                            transmits.into_iter().map(|t| t.contents).collect(),
+                        );
                     }
                     Ok((Some(udp_addr), None)) => {
                         if let Err(err) = self.send_raw(udp_addr, transmits).await {
@@ -1691,7 +1671,8 @@ impl Actor {
                 .send(ActorMessage::ReStun("refresh-for-peering"))
                 .await
                 .unwrap();
-        } else if let Some(public_key) = endpoint.public_key() {
+        } else {
+            let public_key = endpoint.public_key().clone();
             let eps: Vec<_> = self.last_endpoints.iter().map(|ep| ep.addr).collect();
             let msg = disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps });
 
@@ -1916,21 +1897,13 @@ impl Actor {
 
         let sender = key::node::PublicKey::from(source);
         let mut unknown_sender = false;
-        if self.peer_map.endpoint_for_node_key(&sender).is_none() {
-            // Disco Ping from seen endpoint without node key
-            if let Some(ep) = self.peer_map.endpoint_for_ip_port_mut(&src) {
-                if ep.public_key().is_none() {
-                    debug!("disco: inserting {:?} - {}", sender, src);
-                    ep.set_public_key(sender.clone());
-                    let id = ep.id;
-                    self.peer_map.store_node_key_mapping(id, sender.clone());
-                }
-            } else {
-                // Disco Ping from unseen endpoint. We will have to add the
-                // endpoint later if the message is a ping
-                tracing::info!("disco: unknown sender {:?} - {}", sender, src);
-                unknown_sender = true;
-            }
+        if self.peer_map.endpoint_for_node_key(&sender).is_none()
+            && self.peer_map.endpoint_for_ip_port_mut(&src).is_none()
+        {
+            // Disco Ping from unseen endpoint. We will have to add the
+            // endpoint later if the message is a ping
+            tracing::info!("disco: unknown sender {:?} - {}", sender, src);
+            unknown_sender = true;
         }
 
         // We're now reasonably sure we're expecting communication from
@@ -1986,7 +1959,7 @@ impl Actor {
                     self.peer_map.insert_endpoint(EndpointOptions {
                         conn_sender: self.conn.actor_sender.clone(),
                         conn_public_key: self.conn.public_key.clone(),
-                        public_key: Some(sender.clone()),
+                        public_key: sender.clone(),
                         derp_addr: if is_derp { Some(src) } else { None },
                     });
                 }
@@ -2157,7 +2130,7 @@ impl Actor {
                 self.peer_map.insert_endpoint(EndpointOptions {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
-                    public_key: Some(n.key.clone()),
+                    public_key: n.key.clone(),
                     derp_addr: n.derp,
                 });
             }
@@ -2188,10 +2161,8 @@ impl Actor {
 
             let mut to_delete = Vec::new();
             for (id, ep) in self.peer_map.endpoints() {
-                if let Some(ref public_key) = ep.public_key() {
-                    if !keep.contains(public_key) {
-                        to_delete.push(*id);
-                    }
+                if !keep.contains(ep.public_key()) {
+                    to_delete.push(*id);
                 }
             }
 

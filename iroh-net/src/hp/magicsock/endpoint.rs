@@ -52,10 +52,10 @@ pub(super) struct Endpoint {
     conn_sender: mpsc::Sender<ActorMessage>,
     /// The UDP address used on the QUIC-layer to address this peer.
     pub(super) quic_mapped_addr: QuicMappedAddr,
-    /// Public key for this node/conection.
+    /// Public key for this node/connection.
     conn_public_key: key::node::PublicKey,
-    /// Peer public key (for WireGuard + DERP)
-    pub(super) public_key: Option<key::node::PublicKey>,
+    /// Peer public key (for UDP + DERP)
+    pub(super) public_key: key::node::PublicKey,
     /// Last time we pinged all endpoints
     last_full_ping: Option<Instant>,
     /// fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
@@ -92,7 +92,7 @@ pub struct PendingCliPing {
 pub(super) struct Options {
     pub(super) conn_sender: mpsc::Sender<ActorMessage>,
     pub(super) conn_public_key: key::node::PublicKey,
-    pub(super) public_key: Option<key::node::PublicKey>,
+    pub(super) public_key: key::node::PublicKey,
     pub(super) derp_addr: Option<SocketAddr>,
 }
 
@@ -120,12 +120,8 @@ impl Endpoint {
         }
     }
 
-    pub fn public_key(&self) -> Option<key::node::PublicKey> {
-        self.public_key.clone()
-    }
-
-    pub fn set_public_key(&mut self, key: key::node::PublicKey) {
-        self.public_key.replace(key);
+    pub fn public_key(&self) -> &key::node::PublicKey {
+        &self.public_key
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
@@ -147,7 +143,7 @@ impl Endpoint {
                 }
             }
             None => {
-                let (addr, should_ping) = self.get_candidate_udp_addr();
+                let (addr, should_ping) = self.get_candidate_udp_addr(now);
 
                 // provide backup derp addr if no known latency or no addr
                 let derp_addr = if should_ping || addr.is_none() {
@@ -162,7 +158,7 @@ impl Endpoint {
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
-    fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
+    fn get_candidate_udp_addr(&mut self, now: &Instant) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
         for (ipp, state) in self.endpoint_state.iter() {
@@ -190,10 +186,7 @@ impl Endpoint {
             return (Some(pong.from), false);
         }
 
-        // Randomly select an address to use until we retrieve latency information
-        // and give it a short trust_best_addr_until time so we avoid flapping between
-        // addresses while waiting on latency information to be populated.
-
+        // Randomly select an address to use until we retrieve latency information.
         let udp_addr = self
             .endpoint_state
             .keys()
@@ -204,8 +197,8 @@ impl Endpoint {
                 addr,
                 latency: None,
             });
-            // No trust until a ping confirmed this address.
-            self.trust_best_addr_until = None;
+
+            self.trust_best_addr_until = Some(*now + Duration::from_secs(15));
         }
 
         (udp_addr, udp_addr.is_some())
@@ -374,7 +367,7 @@ impl Endpoint {
             },
         );
         let public_key = self.public_key.clone();
-        self.send_disco_ping(ep, public_key, txid).await;
+        self.send_disco_ping(ep, Some(public_key), txid).await;
     }
 
     /// Cleanup pings that are potentially expired.
@@ -567,21 +560,6 @@ impl Endpoint {
         false
     }
 
-    /// Insert an endpoint candidate that we received a UDP message from.
-    pub(super) fn add_candidate_endpoint_raw(&mut self, ep: SocketAddr) {
-        info!(
-            "disco: adding {:?} as candidate endpoint for {:?}",
-            ep, self.public_key
-        );
-        self.endpoint_state.insert(
-            ep,
-            EndpointState {
-                last_got_ping: Some(Instant::now()),
-                ..Default::default()
-            },
-        );
-    }
-
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
     pub(super) fn note_connectivity_change(&mut self) {
@@ -596,7 +574,7 @@ impl Endpoint {
         &mut self,
         conn_disco_public: &key::node::PublicKey,
         m: &disco::Pong,
-        di: &mut DiscoInfo,
+        _di: &mut DiscoInfo,
         src: SocketAddr,
     ) -> (bool, Option<(SocketAddr, key::node::PublicKey)>) {
         let is_derp = src.ip() == DERP_MAGIC_IP;
@@ -622,10 +600,7 @@ impl Endpoint {
                 let latency = now - sp.at;
 
                 if !is_derp {
-                    let key = self
-                        .public_key
-                        .clone()
-                        .unwrap_or_else(|| di.node_key.clone());
+                    let key = self.public_key.clone();
                     match self.endpoint_state.get_mut(&sp.to) {
                         None => {
                             info!("disco: ignoring pong: {}", sp.to);
@@ -828,6 +803,11 @@ impl Endpoint {
         }
 
         self.check_pings(now);
+
+        if self.want_full_ping(&now) {
+            return self.send_pings(now, true).await;
+        }
+
         if let Some(ref addr) = self.best_addr {
             self.start_ping(addr.addr, now, DiscoPingPurpose::Discovery)
                 .await;
@@ -956,14 +936,6 @@ impl PeerMap {
         self.by_id.iter_mut()
     }
 
-    /// Sets the node key for a peer if it wasn't known yet.
-    ///
-    /// Since a peer can initially be created before the node key is known, this allows
-    /// setting the node key once it is known.
-    pub(super) fn store_node_key_mapping(&mut self, id: usize, node_key: key::node::PublicKey) {
-        self.by_node_key.entry(node_key).or_insert(id);
-    }
-
     /// Inserts a new endpoint into the [`PeerMap`].
     pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;
@@ -972,9 +944,7 @@ impl PeerMap {
 
         // update indices
         self.by_quic_mapped_addr.insert(ep.quic_mapped_addr, id);
-        if let Some(public_key) = ep.public_key.clone() {
-            self.by_node_key.insert(public_key, id);
-        }
+        self.by_node_key.insert(ep.public_key.clone(), id);
 
         self.by_id.insert(id, ep);
         id
@@ -1007,10 +977,7 @@ impl PeerMap {
     pub(super) fn delete_endpoint(&mut self, id: usize) {
         if let Some(mut ep) = self.by_id.remove(&id) {
             ep.stop_and_reset();
-
-            if let Some(public_key) = ep.public_key() {
-                self.by_node_key.remove(&public_key);
-            }
+            self.by_node_key.remove(ep.public_key());
         }
 
         self.by_ip_port.retain(|_, v| *v != id);
