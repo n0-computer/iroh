@@ -7,6 +7,7 @@ use std::{
 };
 
 use futures::future::BoxFuture;
+use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
@@ -129,10 +130,10 @@ impl Endpoint {
 
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    fn addr_for_send(&self, now: &Instant) -> (Option<SocketAddr>, Option<SocketAddr>) {
+    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<SocketAddr>, bool) {
         let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
         let mut derp_addr = None;
-        if udp_addr.is_none() || !self.is_best_addr_valid(*now) {
+        if !self.is_best_addr_valid(*now) {
             debug!(
                 "no good udp addr {:?} {:?} - {:?}",
                 now, udp_addr, self.trust_best_addr_until
@@ -141,7 +142,67 @@ impl Endpoint {
             derp_addr = self.derp_addr;
         }
 
-        (udp_addr, derp_addr)
+        if udp_addr.is_none() {
+            let (addr, should_ping) = self.get_candidate_udp_addr(now);
+            return (addr, derp_addr, should_ping);
+        }
+
+        (udp_addr, derp_addr, false)
+    }
+
+    /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
+    fn get_candidate_udp_addr(&mut self, now: &Instant) -> (Option<SocketAddr>, bool) {
+        let mut udp_addr = None;
+        let mut lowest_latency = Duration::from_secs(60 * 60);
+        for (ipp, state) in self.endpoint_state.iter() {
+            if let Some(latency) = state.latency() {
+                // Lower latency, or when equal, prever IPv6.
+                if latency < lowest_latency || (latency == lowest_latency && ipp.is_ipv6()) {
+                    lowest_latency = latency;
+                    udp_addr.replace(*ipp);
+                }
+            }
+        }
+
+        // If we found a candidate, set to best addr
+        if let Some(addr) = udp_addr {
+            self.best_addr = Some(AddrLatency {
+                addr,
+                latency: Some(lowest_latency),
+            });
+            self.trust_best_addr_until
+                .replace(*now + Duration::from_secs(60 * 60));
+
+            // No need to ping, we already have a latency.
+            return (Some(addr), false);
+        }
+
+        // Randomly select an address to use until we retrieve latency information
+        // and give it a short trust_best_addr_until time so we avoid flapping between
+        // addresses while waiting on latency information to be populated.
+
+        let udp_addr = self
+            .endpoint_state
+            .keys()
+            .choose_stable(&mut rand::thread_rng())
+            .copied();
+        if let Some(addr) = udp_addr {
+            self.best_addr = Some(AddrLatency {
+                addr,
+                latency: None,
+            });
+            if self.endpoint_state.len() == 1 {
+                // if we only have one address that we can send data too,
+                // we should trust it for a longer period of time.
+                self.trust_best_addr_until
+                    .replace(*now + Duration::from_secs(60 * 60));
+            } else {
+                self.trust_best_addr_until
+                    .replace(*now + Duration::from_secs(15));
+            }
+        }
+
+        (udp_addr, udp_addr.is_some())
     }
 
     /// Reports whether we should ping to all our peers looking for a better path.
@@ -156,12 +217,22 @@ impl Endpoint {
             return true;
         }
 
-        if self.best_addr.as_ref().unwrap().latency > GOOD_ENOUGH_LATENCY
+        if self
+            .best_addr
+            .as_ref()
+            .and_then(|addr| addr.latency)
+            .map(|l| l > GOOD_ENOUGH_LATENCY)
+            .unwrap_or(true)
             && *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL
         {
             info!(
                 "full ping: full ping interval expired and latency is only {}ms",
-                self.best_addr.as_ref().unwrap().latency.as_millis()
+                self.best_addr
+                    .as_ref()
+                    .unwrap()
+                    .latency
+                    .map(|l| l.as_millis())
+                    .unwrap_or_default()
             );
             return true;
         }
@@ -188,7 +259,7 @@ impl Endpoint {
         });
 
         let now = Instant::now();
-        let (udp_addr, derp_addr) = self.addr_for_send(&now);
+        let (udp_addr, derp_addr, _should_ping) = self.addr_for_send(&now);
         if let Some(derp_addr) = derp_addr {
             self.start_ping(derp_addr, now, DiscoPingPurpose::Cli).await;
         }
@@ -378,13 +449,6 @@ impl Endpoint {
     }
 
     pub fn update_from_node(&mut self, n: &cfg::Node) {
-        // Try first addr as potential best
-        if let Some(addr) = n.endpoints.first() {
-            if addr.ip() != DERP_MAGIC_IP {
-                self.maybe_add_best_addr(*addr);
-            }
-        }
-
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {
@@ -496,19 +560,6 @@ impl Endpoint {
         self.trust_best_addr_until = None;
     }
 
-    /// Note that we have a potential best addr.
-    pub(super) fn maybe_add_best_addr(&mut self, addr: SocketAddr) {
-        if self.best_addr.is_none() {
-            trace!("maybe best addr {}", addr);
-            self.best_addr = Some(AddrLatency {
-                addr,
-                latency: Duration::from_secs(1), // assume bad latency for now
-            });
-
-            self.trust_best_addr_until = None;
-        }
-    }
-
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports whether m.tx_id corresponds to a ping that this endpoint sent.
@@ -604,7 +655,7 @@ impl Endpoint {
                 if !is_derp {
                     let this_pong = AddrLatency {
                         addr: sp.to,
-                        latency,
+                        latency: Some(latency),
                     };
                     let is_better = self.best_addr.is_none()
                         || this_pong.is_better_than(self.best_addr.as_ref().unwrap());
@@ -616,7 +667,7 @@ impl Endpoint {
                     let best_addr = self.best_addr.as_mut().expect("just set");
                     if best_addr.addr == this_pong.addr {
                         trace!("updating best addr trust {}", best_addr.addr);
-                        best_addr.latency = latency;
+                        best_addr.latency.replace(latency);
                         self.best_addr_at.replace(now);
                         self.trust_best_addr_until
                             .replace(now + TRUST_UDP_ADDR_DURATION);
@@ -748,10 +799,10 @@ impl Endpoint {
 
         let now = Instant::now();
         self.last_active = now;
-        let (udp_addr, derp_addr) = self.addr_for_send(&now);
+        let (udp_addr, derp_addr, should_ping) = self.addr_for_send(&now);
 
         // Trigger a round of pings if we haven't had any full pings yet.
-        if self.last_full_ping.is_none() {
+        if self.last_full_ping.is_none() || should_ping {
             self.stayin_alive().await;
         }
 
@@ -779,7 +830,7 @@ impl Endpoint {
 #[derive(Debug, Clone)]
 pub struct AddrLatency {
     pub addr: SocketAddr,
-    pub latency: Duration,
+    pub latency: Option<Duration>,
 }
 
 /// Map of the [`Endpoint`] information for all the known peers.
@@ -991,6 +1042,11 @@ impl EndpointState {
         // This was an endpoint discovered at runtime.
         self.last_got_ping.as_ref().unwrap().elapsed() > SESSION_ACTIVE_TIMEOUT
     }
+
+    /// Returns the most recent latency measurement, if one is available.
+    fn latency(&self) -> Option<Duration> {
+        self.recent_pongs.get(self.recent_pong).map(|p| p.latency)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1031,8 +1087,17 @@ impl AddrLatency {
         if self.addr.is_ipv6() && other.addr.is_ipv4() {
             // Prefer IPv6 for being a bit more robust, as long as
             // the latencies are roughly equivalent.
-            if self.latency / 10 * 9 < other.latency {
-                return true;
+            match (self.latency, other.latency) {
+                (Some(latency), Some(other_latency)) => {
+                    if latency / 10 * 9 < other_latency {
+                        return true;
+                    }
+                }
+                (Some(_), None) => {
+                    // If we have latency and the other doesn't prefer us
+                    return true;
+                }
+                _ => {}
             }
         } else if self.addr.is_ipv4() && other.addr.is_ipv6() && other.is_better_than(self) {
             return false;

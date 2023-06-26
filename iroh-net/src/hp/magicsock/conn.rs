@@ -992,7 +992,6 @@ impl Actor {
                 self.peer_map.set_endpoint_for_ip_port(&meta.addr, id);
 
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
-                ep.maybe_add_best_addr(meta.addr);
                 meta.addr = ep.quic_mapped_addr.0;
             }
             Some(ep) => {
