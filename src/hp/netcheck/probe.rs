@@ -94,6 +94,22 @@ impl Probe {
 /// A set of probes is done once either one of the probes completes, or
 /// the next probe to run wouldn't yield any new information not
 /// already discovered by any previous probe in any set.
+///
+/// Generated probe plans have the following shape:
+///
+/// - Each probe **set** is single identical probe, but multiple tries with delayed starts.
+///   When the first one succeeds, the remainder of the set is cancelled.
+///
+/// - Sets of each probe type are generated for each DERP node in the derpmap.
+///
+/// Some factors will adjust the sets generated:
+///
+/// - The protocols supported by the host, e.g. IPv4, IPv6.
+/// - The derpmap.
+/// - The previous success and failure of probes.
+///
+/// Read the code for the gory details, but this gives you enough of a feel for how they
+/// work to use a probe plan.
 #[derive(Debug, Default, Clone)]
 pub struct ProbePlan(HashMap<String, Vec<Probe>>);
 
@@ -203,6 +219,17 @@ impl ProbePlan {
         plan
     }
 
+    /// Creates an initial probe plan.
+    ///
+    /// Consisting of the following probe sets, these sets are repeated for each DERP
+    /// region:
+    ///
+    /// - A set of 3 IPv4 STUN probes, each probe having an increased delay.
+    /// - A set of 3 IPv6 STUN probes, each probe having an increased delay.
+    /// - A set of 3 HTTP probes, each probe having an increased delay.
+    ///
+    /// Some probes may be skipped, e.g. if the host has no IPv6 no IPv6 probes will be
+    /// created.
     fn new_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbePlan {
         let mut plan = ProbePlan::default();
 
