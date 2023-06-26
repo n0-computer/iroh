@@ -213,11 +213,11 @@ impl Endpoint {
     fn want_full_ping(&self, now: &Instant) -> bool {
         debug!("want full ping? {:?}", now);
         if self.last_full_ping.is_none() {
-            info!("full ping: no full ping done");
+            debug!("full ping: no full ping done");
             return true;
         }
         if !self.is_best_addr_valid(*now) {
-            info!("full ping: best addr expired");
+            debug!("full ping: best addr expired");
             return true;
         }
 
@@ -229,7 +229,7 @@ impl Endpoint {
             .unwrap_or(true)
             && *now - *self.last_full_ping.as_ref().unwrap() >= UPGRADE_INTERVAL
         {
-            info!(
+            debug!(
                 "full ping: full ping interval expired and latency is only {}ms",
                 self.best_addr
                     .as_ref()
@@ -291,6 +291,14 @@ impl Endpoint {
             );
             if let Some(ep_state) = self.endpoint_state.get_mut(&sp.to) {
                 ep_state.last_ping = None;
+            }
+
+            // If we fail to ping our current best addr, it is not that good anymore.
+            if let Some(ref addr) = self.best_addr {
+                if addr.addr == sp.to {
+                    self.best_addr = None;
+                    self.trust_best_addr_until = None;
+                }
             }
         }
     }
@@ -773,6 +781,7 @@ impl Endpoint {
     /// Send a heartbeat to the peer to keep the connection alive, or trigger a full ping
     /// if necessary.
     pub(super) async fn stayin_alive(&mut self) {
+        trace!("stayin_alive");
         let now = Instant::now();
         if now.duration_since(self.last_active) > SESSION_ACTIVE_TIMEOUT {
             debug!("skipping stayin alive: session is inactive");
@@ -780,9 +789,15 @@ impl Endpoint {
         }
 
         self.check_pings(now);
-        let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
+
+        // If we do not have an optimal addr, send pings to all known places.
+        if self.want_full_ping(&now) {
+            debug!("send pings all");
+            return self.send_pings(now, true).await;
+        }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
+        let udp_addr = self.best_addr.as_ref().map(|a| a.addr);
         if let Some(udp_addr) = udp_addr {
             let elapsed = self.last_ping(&udp_addr).map(|l| now - l);
             // Send a ping if the last ping is older than 2 seconds.
@@ -800,12 +815,6 @@ impl Endpoint {
                     .await;
                 return;
             }
-        }
-
-        // If we do not have an optimal addr, send pings to all known places.
-        if self.want_full_ping(&now) {
-            debug!("send pings all");
-            self.send_pings(now, true).await;
         }
     }
 
