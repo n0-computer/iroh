@@ -775,7 +775,7 @@ impl Endpoint {
     pub(super) async fn stayin_alive(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.last_active) > SESSION_ACTIVE_TIMEOUT {
-            debug!("skipping stayin alive: session is in active");
+            debug!("skipping stayin alive: session is inactive");
             return;
         }
 
@@ -809,6 +809,21 @@ impl Endpoint {
         }
     }
 
+    /// Ping the current best addr.
+    async fn ping_best_addr(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.last_active) > SESSION_ACTIVE_TIMEOUT {
+            debug!("skipping stayin alive: session is inactive");
+            return;
+        }
+
+        self.check_pings(now);
+        if let Some(ref addr) = self.best_addr {
+            self.start_ping(addr.addr, now, DiscoPingPurpose::Discovery)
+                .await;
+        }
+    }
+
     pub(crate) async fn get_send_addrs(
         &mut self,
     ) -> io::Result<(Option<SocketAddr>, Option<SocketAddr>)> {
@@ -822,10 +837,10 @@ impl Endpoint {
 
         // Trigger a round of pings if we haven't had any full pings yet.
         if should_ping {
-            self.stayin_alive().await;
+            self.ping_best_addr().await;
         }
 
-        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr,);
+        debug!("sending UDP: {:?}, DERP: {:?}", udp_addr, derp_addr);
 
         Ok((udp_addr, derp_addr))
     }
