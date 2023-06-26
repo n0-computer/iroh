@@ -816,7 +816,11 @@ struct Actor {
 impl Actor {
     #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
-        let mut endpoint_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
+        // Let the the hearbeat only start a couple seconds later
+        let mut endpoint_heartbeat_timer = time::interval_at(
+            time::Instant::now() + Duration::from_secs(5),
+            HEARTBEAT_INTERVAL,
+        );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
 
         loop {

@@ -821,7 +821,7 @@ impl Endpoint {
         let (udp_addr, derp_addr, should_ping) = self.addr_for_send(&now);
 
         // Trigger a round of pings if we haven't had any full pings yet.
-        if self.last_full_ping.is_none() || should_ping {
+        if should_ping {
             self.stayin_alive().await;
         }
 
