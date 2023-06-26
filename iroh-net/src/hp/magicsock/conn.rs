@@ -2480,7 +2480,7 @@ impl std::fmt::Display for QuicMappedAddr {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use anyhow::Context;
     use rand::RngCore;
     use std::net::Ipv4Addr;
@@ -2619,7 +2619,7 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    async fn run_derp_and_stun(
+    pub async fn run_derp_and_stun(
         stun_ip: IpAddr,
     ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
         // TODO: pass a mesh_key?
@@ -2826,7 +2826,7 @@ mod tests {
         })
     }
 
-    fn setup_logging() {
+    pub fn setup_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
