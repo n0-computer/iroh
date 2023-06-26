@@ -754,13 +754,10 @@ mod tests {
         tokio::spawn(async move {
             let mut got_hash = None;
             while let Ok(msg) = events.recv().await {
-                match msg {
-                    Event::ByteProvide(e) => {
-                        if let iroh_bytes::provider::Event::CollectionAdded { hash } = e {
-                            got_hash = Some(hash);
-                            break;
-                        }
-                    }
+                if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
+                    msg
+                {
+                    got_hash = Some(hash);
                 }
             }
             tx.send(got_hash.unwrap()).unwrap();
@@ -796,7 +793,6 @@ mod tests {
 
         match rx.await {
             Ok(event_hash) => {
-                // assert!(Some(AuthToken::from(vec![1, 2, 3, 4, 5, 6])) == token);
                 assert_eq!(got_hash, event_hash);
             }
             Err(e) => {
