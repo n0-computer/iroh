@@ -64,7 +64,7 @@ impl HttpAdapter {
         to: Option<u64>,
     ) -> Result<reqwest::Response, reqwest::Error> {
         // to is inclusive, commented out because warp is non spec compliant
-        // let to = to.and_then(|x| x.checked_add(1));
+        let to = to.and_then(|x| x.checked_add(1));
         let range = match to {
             Some(to) => format!("bytes={from}-{to}"),
             None => format!("bytes={from}-"),
@@ -164,6 +164,7 @@ pub mod http_adapter {
                             break;
                         }
                     }
+                    // we do not want to rely on the server sending the exact amount of bytes
                     res.truncate(len);
                     Ok(res.freeze())
                 }

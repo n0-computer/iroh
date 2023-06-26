@@ -5,8 +5,17 @@
 //! to store the received data.
 use std::error::Error;
 use std::fmt::{self, Debug};
-use std::net::SocketAddr;
+use std::io;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::blobs::Collection;
+use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
+use crate::provider::Ticket;
+use crate::tokio_util::{TrackingReader, TrackingWriter};
+use crate::util::pathbuf_from_name;
+use crate::IROH_BLOCK_SIZE;
 
 use anyhow::{Context, Result};
 use bao_tree::io::error::DecodeError;
@@ -14,7 +23,10 @@ use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
-use iroh_net::{hp::derp::DerpMap, tls::PeerId};
+use iroh_net::{
+    hp::{cfg, cfg::DERP_MAGIC_IP, derp::DerpMap, hostinfo::Hostinfo, netmap},
+    tls::{self, Keypair, PeerId},
+};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
@@ -23,12 +35,11 @@ use tracing::{debug, error};
 
 pub use crate::util::Hash;
 
-use crate::blobs::Collection;
-use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
-use crate::provider::Ticket;
-use crate::tokio_util::{TrackingReader, TrackingWriter};
-use crate::util::pathbuf_from_name;
-use crate::IROH_BLOCK_SIZE;
+/// Default provider address.
+///
+/// As [`SocketAddr::from`] is not `const fn` this still needs to be passed to this
+/// constructor.
+pub const DEFAULT_PROVIDER_ADDR: (Ipv4Addr, u16) = crate::provider::DEFAULT_BIND_ADDR;
 
 /// Options for the client
 #[derive(Clone, Debug)]
@@ -41,6 +52,123 @@ pub struct Options {
     pub keylog: bool,
     /// The configuration of the derp services.
     pub derp_map: Option<DerpMap>,
+}
+
+/// Create a quinn client endpoint
+///
+/// The *bind_addr* is the address that should be bound locally.  Even though this is an
+/// outgoing connection a socket must be bound and this is explicit.  The main choice to
+/// make here is the address family: IPv4 or IPv6.  Otherwise you normally bind to the
+/// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
+///
+/// If *peer_id* is present it will verify during the TLS connection setup that the remote
+/// connected to has the required [`PeerId`], otherwise this will connect to any peer.
+///
+/// The *alpn_protocols* are the list of Application-Layer Protocol Neotiation identifiers
+/// you are happy to accept.
+///
+/// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
+/// considered a filename to which the TLS pre-master keys are logged.  This can be useful
+/// to be able to decrypt captured traffic for debugging purposes.
+///
+/// Finally the *derp_map* specifies the DERP servers that can be used to establish this
+/// connection.
+pub async fn make_client_endpoint(
+    bind_addr: SocketAddr,
+    peer_id: PeerId,
+    alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
+    derp_map: Option<DerpMap>,
+) -> Result<(quinn::Endpoint, iroh_net::hp::magicsock::Conn)> {
+    let keypair = Keypair::generate();
+
+    let tls_client_config =
+        tls::make_client_config(&keypair, Some(peer_id), alpn_protocols, keylog)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+
+    let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
+        port: bind_addr.port(),
+        private_key: keypair.secret().clone().into(),
+        ..Default::default()
+    })
+    .await?;
+    conn.set_derp_map(derp_map).await?;
+
+    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        None,
+        conn.clone(),
+        Arc::new(quinn::TokioRuntime),
+    )?;
+
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    client_config.transport_config(Arc::new(transport_config));
+
+    endpoint.set_default_client_config(client_config);
+    Ok((endpoint, conn))
+}
+
+/// Establishes a QUIC connection to the provided peer.
+pub async fn dial_peer(opts: Options) -> Result<quinn::Connection> {
+    let bind_addr = if opts.addrs.iter().any(|addr| addr.ip().is_ipv6()) {
+        SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into()
+    } else {
+        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into()
+    };
+
+    let (endpoint, magicsock) = make_client_endpoint(
+        bind_addr,
+        opts.peer_id,
+        vec![crate::P2P_ALPN.to_vec()],
+        false,
+        opts.derp_map,
+    )
+    .await?;
+
+    // Only a single peer in our network currently.
+    let peer_id = opts.peer_id;
+    let node_key: iroh_net::hp::key::node::PublicKey = peer_id.into();
+    const DEFAULT_DERP_REGION: u16 = 1;
+
+    let mut addresses = Vec::new();
+    let mut endpoints = Vec::new();
+
+    // Add the provided address as a starting point.
+    for addr in &opts.addrs {
+        addresses.push(addr.ip());
+        endpoints.push(*addr);
+    }
+    magicsock
+        .set_network_map(netmap::NetworkMap {
+            peers: vec![cfg::Node {
+                name: None,
+                addresses,
+                key: node_key.clone(),
+                endpoints,
+                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                created: Instant::now(),
+                hostinfo: Hostinfo::default(),
+                keep_alive: false,
+                expired: false,
+                online: None,
+                last_seen: None,
+            }],
+        })
+        .await?;
+
+    let addr = magicsock
+        .get_mapping_addr(&node_key)
+        .await
+        .expect("just inserted");
+    debug!(
+        "connecting to {}: (via {} - {:?})",
+        peer_id, addr, opts.addrs
+    );
+    let connect = endpoint.connect(addr, "localhost")?;
+    let connection = connect.await.context("failed connecting to provider")?;
+
+    Ok(connection)
 }
 
 /// Stats about the transfer.
@@ -69,13 +197,12 @@ pub async fn run_ticket(
     keylog: bool,
     derp_map: Option<DerpMap>,
 ) -> Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        ticket.addrs(),
-        ticket.peer(),
-        &crate::P2P_ALPN,
+    let connection = dial_peer(Options {
+        addrs: ticket.addrs().to_vec(),
+        peer_id: ticket.peer(),
         keylog,
         derp_map,
-    )
+    })
     .await?;
 
     Ok(run_connection(connection, request))
@@ -95,11 +222,13 @@ pub mod get_response_machine {
     use super::*;
 
     use bao_tree::io::{
-        fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
+        fsm::{
+            AsyncSliceWriter, Handle, ResponseDecoderReading, ResponseDecoderReadingNext,
+            ResponseDecoderStart,
+        },
         Leaf, Parent,
     };
     use derive_more::From;
-    use iroh_io::AsyncSliceWriter;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -374,7 +503,7 @@ pub mod get_response_machine {
 
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtBlobContent, u64), std::io::Error> {
+        pub async fn next(self) -> Result<(AtBlobContent, u64), io::Error> {
             let (stream, size) = self.stream.next().await?;
             Ok((
                 AtBlobContent {
@@ -412,15 +541,15 @@ pub mod get_response_machine {
         ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
             let (curr, size) = self.next().await?;
             let res = Vec::with_capacity(size as usize);
-            let mut writer = ConcatenateSliceWriter::new(res);
-            let res = curr.write_all(&mut writer).await?;
-            Ok((res, writer.into_inner()))
+            let mut handle = ConcatenateSliceWriter::new(res).into();
+            let res = curr.write_all(&mut handle).await?;
+            Ok((res, handle.into_inner().into_inner()))
         }
 
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError> {
             self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
@@ -429,8 +558,8 @@ pub mod get_response_machine {
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            outboard: &mut Option<Handle<O>>,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -501,7 +630,7 @@ pub mod get_response_machine {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError> {
             self.write_all_with_outboard::<D, D>(&mut None, data).await
         }
@@ -510,8 +639,8 @@ pub mod get_response_machine {
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            outboard: &mut Option<Handle<O>>,
+            data: &mut Handle<D>,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -592,7 +721,7 @@ pub mod get_response_machine {
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> result::Result<Stats, std::io::Error> {
+        pub async fn next(self) -> result::Result<Stats, io::Error> {
             // Shut down the stream
             let (mut reader, bytes_read) = self.reader.into_parts();
             if let Some(chunk) = reader.read_chunk(8, false).await? {
@@ -624,14 +753,7 @@ pub async fn run(
     request: AnyGetRequest,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        &opts.addrs,
-        opts.peer_id,
-        &crate::P2P_ALPN,
-        opts.keylog,
-        opts.derp_map,
-    )
-    .await?;
+    let connection = dial_peer(opts).await?;
     Ok(run_connection(connection, request))
 }
 
@@ -707,12 +829,12 @@ pub fn get_missing_range(
     name: &str,
     temp_dir: &Path,
     target_dir: &Path,
-) -> std::io::Result<RangeSet2<ChunkNum>> {
+) -> io::Result<RangeSet2<ChunkNum>> {
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
         // refuse to continue
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
             "Target directory exists but does not contain temp directory",
         ));
     }
@@ -726,7 +848,7 @@ fn get_missing_range_impl(
     name: &str,
     temp_dir: &Path,
     target_dir: &Path,
-) -> std::io::Result<RangeSet2<ChunkNum>> {
+) -> io::Result<RangeSet2<ChunkNum>> {
     let paths = FilePaths::new(hash, name, temp_dir, target_dir);
     Ok(if paths.is_final() {
         tracing::debug!("Found final file: {:?}", paths.target);
@@ -792,7 +914,7 @@ pub fn get_missing_ranges(
         .blobs()
         .iter()
         .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
-        .collect::<std::io::Result<Vec<_>>>()?;
+        .collect::<io::Result<Vec<_>>>()?;
     ranges
         .iter()
         .zip(collection.blobs())

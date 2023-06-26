@@ -7,6 +7,6 @@ pub mod node;
 pub mod rpc_protocol;
 
 #[cfg(feature = "cli")]
-pub mod config;
+pub mod commands;
 #[cfg(feature = "cli")]
-pub mod doctor;
+pub mod config;
