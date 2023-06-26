@@ -147,7 +147,7 @@ impl Endpoint {
                 }
             }
             None => {
-                let (addr, should_ping) = self.get_candidate_udp_addr(now);
+                let (addr, should_ping) = self.get_candidate_udp_addr();
 
                 // provide backup derp addr if no known latency or no addr
                 let derp_addr = if should_ping || addr.is_none() {
@@ -162,30 +162,32 @@ impl Endpoint {
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
-    fn get_candidate_udp_addr(&mut self, now: &Instant) -> (Option<SocketAddr>, bool) {
-        let mut udp_addr = None;
+    fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
+        let mut last_pong = None;
         for (ipp, state) in self.endpoint_state.iter() {
-            if let Some(latency) = state.latency() {
+            if let Some(pong) = state.recent_pong() {
                 // Lower latency, or when equal, prever IPv6.
-                if latency < lowest_latency || (latency == lowest_latency && ipp.is_ipv6()) {
-                    lowest_latency = latency;
-                    udp_addr.replace(*ipp);
+                if pong.latency < lowest_latency
+                    || (pong.latency == lowest_latency && ipp.is_ipv6())
+                {
+                    lowest_latency = pong.latency;
+                    last_pong.replace(pong);
                 }
             }
         }
 
         // If we found a candidate, set to best addr
-        if let Some(addr) = udp_addr {
+        if let Some(pong) = last_pong {
             self.best_addr = Some(AddrLatency {
-                addr,
+                addr: pong.from,
                 latency: Some(lowest_latency),
             });
             self.trust_best_addr_until
-                .replace(*now + Duration::from_secs(60 * 60));
+                .replace(pong.pong_at + Duration::from_secs(60 * 60));
 
             // No need to ping, we already have a latency.
-            return (Some(addr), false);
+            return (Some(pong.from), false);
         }
 
         // Randomly select an address to use until we retrieve latency information
@@ -1083,9 +1085,9 @@ impl EndpointState {
         self.last_got_ping.as_ref().unwrap().elapsed() > SESSION_ACTIVE_TIMEOUT
     }
 
-    /// Returns the most recent latency measurement, if one is available.
-    fn latency(&self) -> Option<Duration> {
-        self.recent_pongs.get(self.recent_pong).map(|p| p.latency)
+    /// Returns the most recent pong if available.
+    fn recent_pong(&self) -> Option<&PongReply> {
+        self.recent_pongs.get(self.recent_pong)
     }
 }
 
@@ -1094,9 +1096,9 @@ struct PongReply {
     latency: Duration,
     /// When we received the pong.
     pong_at: Instant,
-    // The pong's src (usually same as endpoint map key).
+    /// The pong's src (usually same as endpoint map key).
     from: SocketAddr,
-    // What they reported they heard.
+    /// What they reported they heard.
     pong_src: SocketAddr,
 }
 
