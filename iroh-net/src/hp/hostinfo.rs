@@ -11,7 +11,7 @@ const RUST_VERSION: &str = env!("RUSTC_VERSION");
 const GIT_COMMIT: &str = env!("GIT_COMMIT");
 
 /// Contains a summary of the host we are running on.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Hostinfo {
     /// Version of this code.
     pub version: String,
