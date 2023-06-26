@@ -144,6 +144,10 @@ impl Endpoint {
 
         if udp_addr.is_none() {
             let (addr, should_ping) = self.get_candidate_udp_addr(now);
+            // provide backup derp addr if no known latency or no addr
+            if should_ping || addr.is_none() {
+                derp_addr = self.derp_addr;
+            }
             return (addr, derp_addr, should_ping);
         }
 
