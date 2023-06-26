@@ -21,7 +21,7 @@ use crate::{
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
     conn: Conn,
