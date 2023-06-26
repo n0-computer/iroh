@@ -664,7 +664,7 @@ async fn test_custom_request_blob() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
             token: None,
-            data: Bytes::from(&b"hello"[..]).into(),
+            data: Bytes::from(&b"hello"[..]),
         });
         let response = get::run(
             request,
@@ -705,7 +705,7 @@ async fn test_custom_request_collection() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
             token: None,
-            data: Bytes::from(&b"hello"[..]).into(),
+            data: Bytes::from(&b"hello"[..]),
         });
         let response = get::run(
             request,

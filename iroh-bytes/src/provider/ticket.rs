@@ -70,7 +70,7 @@ impl Ticket {
         self.peer
     }
 
-    /// The [`AuthToken`] for this ticket.
+    /// The [`RequestToken`] for this ticket.
     pub fn token(&self) -> Option<&RequestToken> {
         self.token.as_ref()
     }
