@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         Some(key) => parse_secret(&key)?,
     };
 
-    let socket = MagicEndpoint::bind(
+    let endpoint = MagicEndpoint::bind(
         keypair,
         args.bind_address,
         vec![EXAMPLE_ALPN.to_vec()],
@@ -52,12 +52,12 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    println!("socket bound! our peer id: {}", socket.peer_id());
-    let me = socket.peer_id();
+    println!("endpoint bound! our peer id: {}", endpoint.peer_id());
+    let me = endpoint.peer_id();
 
     match args.command {
         Command::Listen => {
-            while let Some(conn) = socket.accept().await {
+            while let Some(conn) = endpoint.accept().await {
                 let (peer_id, alpn, conn) = accept_conn(conn).await?;
                 println!(
                     "> new connection from {peer_id} (on {}) with ALPN {alpn}",
@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Connect { peer_id, addrs } => {
             let peer_id: PeerId = peer_id.parse()?;
             let addrs = addrs.unwrap_or_default();
-            let conn = socket.connect(peer_id, EXAMPLE_ALPN, &addrs).await?;
+            let conn = endpoint.connect(peer_id, EXAMPLE_ALPN, &addrs).await?;
             let (mut send, mut recv) = conn.open_bi().await?;
             let message = format!("hello here's {me}");
             send.write_all(message.as_bytes()).await?;
