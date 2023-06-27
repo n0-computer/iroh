@@ -18,7 +18,10 @@ use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
-use crate::protocol::{read_lp, write_lp, GetRequest, Handshake, RangeSpec, Request, VERSION};
+use crate::protocol::{
+    read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec, Request, RequestToken,
+    VERSION,
+};
 use crate::tokio_util::read_as_bytes;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 use crate::IROH_BLOCK_SIZE;
@@ -50,6 +53,8 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// Token requester gve for this request, if any
+        token: Option<RequestToken>,
         /// The hash for which the client wants to receive data.
         hash: Hash,
     },
@@ -59,6 +64,8 @@ pub enum Event {
         connection_id: u64,
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
+        /// Token requester gve for this request, if any
+        token: Option<RequestToken>,
         /// The size of the custom get request.
         len: usize,
     },
@@ -139,12 +146,47 @@ pub enum ProvideProgress {
     Abort(RpcError),
 }
 
+/// hook into the request handling to process authorization by examining
+/// the request and any given token. Any error returned will abort the request,
+/// and the error will be sent to the requester.
+pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
+    /// Handle the authorization request, given an opaque data blob from the requester.
+    fn authorize(
+        &self,
+        db: Database,
+        token: Option<RequestToken>,
+        request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>>;
+}
+
+/// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
+impl RequestAuthorizationHandler for () {
+    fn authorize(
+        &self,
+        _db: Database,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move {
+            if let Some(token) = token {
+                anyhow::bail!(
+                    "no authorization handler defined, but token was provided: {:?}",
+                    token
+                );
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
 pub trait CustomGetHandler: Send + Sync + Clone + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
     fn handle(
         &self,
+        token: Option<RequestToken>,
         request: Bytes,
         db: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
@@ -154,6 +196,7 @@ pub trait CustomGetHandler: Send + Sync + Clone + 'static {
 impl CustomGetHandler for () {
     fn handle(
         &self,
+        _token: Option<RequestToken>,
         _request: Bytes,
         _db: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
@@ -395,11 +438,16 @@ pub trait EventSender: Clone + Send + 'static {
     fn send(&self, event: Event) -> Option<Event>;
 }
 
-pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
+pub async fn handle_connection<
+    C: CustomGetHandler,
+    E: EventSender,
+    A: RequestAuthorizationHandler,
+>(
     connecting: quinn::Connecting,
     db: Database,
     events: E,
     custom_get_handler: C,
+    authorization_handler: A,
     rt: crate::runtime::Handle,
 ) {
     // let _x = NonSend::default();
@@ -427,9 +475,18 @@ pub async fn handle_connection<C: CustomGetHandler, E: EventSender>(
             events.send(Event::ClientConnected { connection_id });
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
+            let authorization_handler = authorization_handler.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(db, reader, writer, custom_get_handler).await {
+                    if let Err(err) = handle_stream(
+                        db,
+                        reader,
+                        writer,
+                        custom_get_handler,
+                        authorization_handler,
+                    )
+                    .await
+                    {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -446,6 +503,7 @@ async fn handle_stream<E: EventSender>(
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
+    authorization_handler: impl RequestAuthorizationHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -466,6 +524,10 @@ async fn handle_stream<E: EventSender>(
         }
     };
 
+    authorization_handler
+        .authorize(db.clone(), request.token().cloned(), &request)
+        .await?;
+
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,
         Request::CustomGet(request) => {
@@ -475,17 +537,20 @@ async fn handle_stream<E: EventSender>(
 }
 async fn handle_custom_get<E: EventSender>(
     db: Database,
-    request: Bytes,
+    request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
-        len: request.len(),
+        len: request.data.len(),
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        token: request.token.clone(),
     });
     // try to make a GetRequest from the custom bytes
-    let request = custom_get_handler.handle(request, db.clone()).await?;
+    let request = custom_get_handler
+        .handle(request.token, request.data, db.clone())
+        .await?;
     // write it to the requester as the first thing
     let data = postcard::to_stdvec(&request)?;
     write_lp(&mut writer.inner, &data).await?;
@@ -504,6 +569,7 @@ pub async fn handle_get<E: EventSender>(
         hash,
         connection_id: writer.connection_id(),
         request_id: writer.request_id(),
+        token: request.token().cloned(),
     });
 
     // 4. Attempt to find hash
