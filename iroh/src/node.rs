@@ -770,7 +770,7 @@ mod tests {
                 .await?;
 
             while let Some(item) = stream.next().await {
-                match item.unwrap() {
+                match item? {
                     ProvideProgress::AllDone { hash } => {
                         return Ok(hash);
                     }
@@ -786,7 +786,7 @@ mod tests {
         .context("timeout")?
         .context("get failed")?;
 
-        let event_hash = provide_handle.await?.unwrap();
+        let event_hash = provide_handle.await?.expect("missing collection event");
         assert_eq!(got_hash, event_hash);
 
         Ok(())
