@@ -175,6 +175,7 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
     }
 }
 
+/// Makes a an RPC endpoint that uses a QUIC transport
 fn make_rpc_endpoint(
     keypair: &Keypair,
     rpc_port: u16,

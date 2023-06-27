@@ -35,7 +35,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -222,7 +222,7 @@ where
         // the size of this channel must be large because the producer can be on
         // a different thread than the consumer, and can produce a lot of events
         // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(256);
+        let (events_sender, _events_receiver) = broadcast::channel(512);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
@@ -585,12 +585,18 @@ impl RpcHandler {
         let data_sources = iroh_bytes::provider::create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = iroh_bytes::provider::collection::create_collection(
+        let (db, hash) = iroh_bytes::provider::collection::create_collection(
             data_sources,
             Progress::new(progress),
         )
         .await?;
         self.inner.db.union_with(db);
+
+        if let Err(e) = self.inner.events.send(Event::ByteProvide(
+            iroh_bytes::provider::Event::CollectionAdded { hash },
+        )) {
+            warn!("failed to send CollectionAdded event: {:?}", e);
+        };
 
         Ok(())
     }
@@ -699,6 +705,9 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
+    use futures::StreamExt;
+    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -727,5 +736,59 @@ mod tests {
         let ticket = node.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_node_add_collection_event() -> Result<()> {
+        let db = Database::from(HashMap::new());
+        let node = Builder::with_db(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+
+        let mut events = node.subscribe();
+        let provide_handle = tokio::spawn(async move {
+            while let Ok(msg) = events.recv().await {
+                if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
+                    msg
+                {
+                    return Some(hash);
+                }
+            }
+            None
+        });
+
+        let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+            let mut stream = node
+                .controller()
+                .server_streaming(ProvideRequest {
+                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                })
+                .await?;
+
+            while let Some(item) = stream.next().await {
+                match item? {
+                    ProvideProgress::AllDone { hash } => {
+                        return Ok(hash);
+                    }
+                    ProvideProgress::Abort(e) => {
+                        bail!("Error while adding data: {e}");
+                    }
+                    _ => {}
+                }
+            }
+            bail!("stream ended without providing data");
+        })
+        .await
+        .context("timeout")?
+        .context("get failed")?;
+
+        let event_hash = provide_handle.await?.expect("missing collection event");
+        assert_eq!(got_hash, event_hash);
+
+        Ok(())
     }
 }
