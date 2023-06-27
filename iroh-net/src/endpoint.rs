@@ -22,6 +22,78 @@ use crate::{
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
+/// Builder for [MagicEndpoint]
+#[derive(Debug, Default)]
+pub struct MagicEndpointBuilder {
+    keypair: Option<Keypair>,
+    derp_map: Option<DerpMap>,
+    alpn_protocols: Vec<Vec<u8>>,
+    transport_config: Option<quinn::TransportConfig>,
+    keylog: bool,
+}
+
+impl MagicEndpointBuilder {
+    /// Set a keypair to authenticate with other peers.
+    ///
+    /// This keypair's public key will be the [PeerId] of this endpoint.
+    ///
+    /// If not set, a new keypair will be generated.
+    pub fn keypair(self, keypair: Keypair) -> Self {
+        Self {
+            keypair: Some(keypair),
+            ..self
+        }
+    }
+
+    /// Set the ALPN protocols that this endpoint will accept on incoming connections.
+    pub fn alpns(self, alpn_protocols: Vec<Vec<u8>>) -> Self {
+        Self {
+            alpn_protocols,
+            ..self
+        }
+    }
+
+    /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
+    /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
+    /// to be able to decrypt captured traffic for debugging purposes.
+    pub fn keylog(self, keylog: bool) -> Self {
+        Self { keylog, ..self }
+    }
+
+    /// Specify the DERP servers that are used by this endpoint.
+    pub fn derp_map(self, derp_map: DerpMap) -> Self {
+        Self {
+            derp_map: Some(derp_map),
+            ..self
+        }
+    }
+
+    /// Set a custom [quinn::TransportConfig] for this endpoint.
+    pub fn transport_config(self, transport_config: quinn::TransportConfig) -> Self {
+        Self {
+            transport_config: Some(transport_config),
+            ..self
+        }
+    }
+
+    /// Bind the magic endpoint on the specified socket address.
+    pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
+        let keypair = self.keypair.unwrap_or_else(|| Keypair::generate());
+        let tls_server_config =
+            tls::make_server_config(&keypair, self.alpn_protocols, self.keylog)?;
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+        server_config.transport_config(Arc::new(self.transport_config.unwrap_or_default()));
+        MagicEndpoint::bind(
+            keypair,
+            bind_addr,
+            server_config,
+            self.derp_map,
+            self.keylog,
+        )
+        .await
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
@@ -32,6 +104,11 @@ pub struct MagicEndpoint {
 }
 
 impl MagicEndpoint {
+    /// Build a MagicEndpoint
+    pub fn builder() -> MagicEndpointBuilder {
+        MagicEndpointBuilder::default()
+    }
+
     /// Create a quinn endpoint backed by a magicsock.
     ///
     /// The *bind_addr* is the address that should be bound locally.  Even though this is an
@@ -51,21 +128,7 @@ impl MagicEndpoint {
     ///
     /// Finally the *derp_map* specifies the DERP servers that can be used to establish this
     /// connection.
-    pub async fn bind(
-        keypair: Keypair,
-        bind_addr: SocketAddr,
-        alpn_protocols: Vec<Vec<u8>>,
-        transport_config: Option<quinn::TransportConfig>,
-        derp_map: Option<DerpMap>,
-        keylog: bool,
-    ) -> anyhow::Result<Self> {
-        let tls_server_config = tls::make_server_config(&keypair, alpn_protocols, keylog)?;
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-        server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
-        Self::bind_with_server_config(keypair, bind_addr, server_config, derp_map, keylog).await
-    }
-
-    pub async fn bind_with_server_config(
+    pub(crate) async fn bind(
         keypair: Keypair,
         bind_addr: SocketAddr,
         server_config: quinn::ServerConfig,
@@ -178,6 +241,10 @@ impl MagicEndpoint {
         Ok(connection)
     }
 
+    /// Inform the magic socket about addresses of the peer.
+    ///
+    /// The magic socket will try to connect to these addresses, and if successfull,
+    /// prefer them over talking to the peer over the DERP relay.
     pub async fn add_known_addrs(
         &self,
         peer_id: PeerId,
@@ -289,7 +356,6 @@ mod test {
     use crate::{
         endpoint::{accept_conn, MagicEndpoint},
         hp::magicsock::conn_tests::{run_derp_and_stun, setup_logging},
-        tls::Keypair,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -301,25 +367,18 @@ mod test {
     )> {
         let (derp_map, cleanup) = run_derp_and_stun([127, 0, 0, 1].into()).await?;
 
-        let ep1 = MagicEndpoint::bind(
-            Keypair::generate(),
-            SocketAddr::new([127, 0, 0, 1].into(), 0),
-            vec![TEST_ALPN.to_vec()],
-            None,
-            Some(derp_map.clone()),
-            false,
-        )
-        .await?;
+        let ep1 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_map(derp_map.clone())
+            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .await?;
 
-        let ep2 = MagicEndpoint::bind(
-            Keypair::generate(),
-            SocketAddr::new([127, 0, 0, 1].into(), 0),
-            vec![TEST_ALPN.to_vec()],
-            None,
-            Some(derp_map.clone()),
-            false,
-        )
-        .await?;
+        let ep2 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_map(derp_map.clone())
+            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .await?;
+
         Ok((ep1, ep2, cleanup))
     }
 
@@ -347,22 +406,27 @@ mod test {
         });
 
         let conn = ep2.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
-
+        // open a first stream - this does not error before we accept one stream before closing
+        // on the other peer
         let mut stream = conn.open_uni().await.unwrap();
-
-        let res = conn.open_uni().await;
+        // now the other peer closed the connection.
+        stream.write_all(b"hi").await.unwrap();
+        // now the other peer closed the connection.
         let expected_err = quinn::ConnectionError::ApplicationClosed(quinn::ApplicationClose {
             error_code: 23u8.into(),
             reason: b"badbadnotgood".to_vec().into(),
         });
-        assert_eq!(res.unwrap_err(), expected_err);
+        let err = conn.closed().await;
+        assert_eq!(err, expected_err);
 
-        stream.write_all(b"hi").await.unwrap();
         let res = stream.finish().await;
         assert_eq!(
             res.unwrap_err(),
-            quinn::WriteError::ConnectionLost(expected_err)
+            quinn::WriteError::ConnectionLost(expected_err.clone())
         );
+
+        let res = conn.open_uni().await;
+        assert_eq!(res.unwrap_err(), expected_err);
 
         accept.await.unwrap();
         cleanup().await;
