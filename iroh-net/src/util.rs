@@ -29,3 +29,43 @@ impl<T> Drop for AbortingJoinHandle<T> {
         self.0.abort();
     }
 }
+
+impl<T> std::ops::Deref for AbortingJoinHandle<T> {
+    type Target = tokio::task::JoinHandle<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Holds a handle to abort a task.
+///
+/// The task can be manually aborted, or aborted once self is dropped.
+/// See [`tokio::task::AbortHandle`].
+pub struct CancelOnDrop {
+    task_name: &'static str,
+    handle: tokio::task::AbortHandle,
+}
+
+impl CancelOnDrop {
+    pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
+        CancelOnDrop { task_name, handle }
+    }
+
+    pub fn cancel(self) {}
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.handle.abort();
+        tracing::debug!("{} completed", self.task_name);
+    }
+}
+
+impl std::fmt::Debug for CancelOnDrop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CancelOnDrop")
+            .field("task_name", &self.task_name)
+            .finish()
+    }
+}
