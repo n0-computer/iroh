@@ -60,6 +60,8 @@ quinn-proto = "0.10"
 quinn-udp = "0.4"
 x509-parser = "0.15"
 zeroize = "1.5"
+igd = { version = "0.12.1", features = ["aio"] }
+tokio-stream = { version = "0.1", features = ["sync"]}
 
 # derper
 clap = { version = "4", features = ["derive"], optional = true }
@@ -70,7 +72,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # metrics
 iroh-metrics = { path = "../iroh-metrics", optional = true }
-igd = { version = "0.12.1", features = ["aio"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-route = "0.15.0"

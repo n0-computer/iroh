@@ -254,7 +254,6 @@ impl Conn {
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
-        let mut port_mapper = portmapper::Client::default(); // TODO: pass self.on_port_map_changed
 
         let Options {
             port,
@@ -269,14 +268,9 @@ impl Conn {
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
 
-        match port.try_into() {
-            Ok(non_zero_port) => port_mapper.set_local_port(non_zero_port).await,
-            Err(_zero_port_err) => {
-                // This can happen if std::net::UdpSocket::socket_addr fails.
-                debug!("No valid port to map")
-            }
-        }
-
+        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails.
+        let maybe_non_zero_port = port.try_into().ok();
+        let port_mapper = portmapper::Client::new(maybe_non_zero_port).await;
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -327,33 +321,33 @@ impl Conn {
         });
 
         let conn = inner.clone();
-        let main_actor_task = tokio::task::spawn(async move {
-            let actor = Actor {
-                msg_receiver: actor_receiver,
-                msg_sender: actor_sender,
-                derp_actor_sender,
-                udp_actor_sender,
-                network_receiver,
-                ip_receiver,
-                conn,
-                net_map: None,
-                derp_recv_sender: network_recv_ch_sender,
-                endpoints_update_state: EndpointUpdateState::new(),
-                last_endpoints: Vec::new(),
-                last_endpoints_time: None,
-                on_endpoint_refreshed: HashMap::new(),
-                periodic_re_stun_timer: new_re_stun_timer(),
-                net_info_last: None,
-                disco_info: HashMap::new(),
-                peer_map: Default::default(),
-                port_mapper,
-                pconn4,
-                pconn6,
-                udp_state,
-                no_v4_send: false,
-                net_checker,
-            };
 
+        let actor = Actor {
+            msg_receiver: actor_receiver,
+            msg_sender: actor_sender,
+            derp_actor_sender,
+            udp_actor_sender,
+            network_receiver,
+            ip_receiver,
+            conn,
+            net_map: None,
+            derp_recv_sender: network_recv_ch_sender,
+            endpoints_update_state: EndpointUpdateState::new(),
+            last_endpoints: Vec::new(),
+            last_endpoints_time: None,
+            on_endpoint_refreshed: HashMap::new(),
+            periodic_re_stun_timer: new_re_stun_timer(),
+            net_info_last: None,
+            disco_info: HashMap::new(),
+            peer_map: Default::default(),
+            port_mapper,
+            pconn4,
+            pconn6,
+            udp_state,
+            no_v4_send: false,
+            net_checker,
+        };
+        let main_actor_task = tokio::task::spawn(async move {
             if let Err(err) = actor.run().await {
                 warn!("derp handler errored: {:?}", err);
             }
@@ -915,7 +909,6 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
-                self.port_mapper.close().await;
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
@@ -1274,10 +1267,7 @@ impl Actor {
     /// to determine its public address.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
-        let mut portmap_ext = self
-            .port_mapper
-            .get_cached_mapping_or_start_creating_one()
-            .await;
+        let portmap_watcher = self.port_mapper.watch_external_address();
         let nr = self.update_net_info().await.context("update_net_info")?;
 
         // endpoint -> how it was found
@@ -1298,14 +1288,9 @@ impl Actor {
             };
         }
 
-        // If we didn't have a portmap earlier, maybe it's done by now.
-        if portmap_ext.is_none() {
-            portmap_ext = self
-                .port_mapper
-                .get_cached_mapping_or_start_creating_one()
-                .await;
-        }
-        if let Some(portmap_ext) = portmap_ext {
+        let maybe_port_mapped = *portmap_watcher.borrow();
+
+        if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
@@ -1497,6 +1482,7 @@ impl Actor {
         );
         self.no_v4_send = !r.ipv4_can_send;
 
+        let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
         let mut ni = cfg::NetInfo {
             derp_latency: Default::default(),
             mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
@@ -1504,7 +1490,7 @@ impl Actor {
             upnp: r.upnp,
             pmp: r.pmp,
             pcp: r.pcp,
-            have_port_map: self.port_mapper.has_mapping(),
+            have_port_map,
             working_ipv6: Some(r.ipv6),
             os_has_ipv6: Some(r.os_has_ipv6),
             working_udp: Some(r.udp),
@@ -1746,13 +1732,11 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        match self.local_port_v4().try_into() {
-            Ok(non_zero_port) => self.port_mapper.set_local_port(non_zero_port).await,
-            Err(_zero_port_err) => {
-                // This can happen if std::net::UdpSocket::socket_addr fails.
-                debug!("No valid port to map on rebind")
-            }
-        }
+        // We can end up with a zero port if std::net::UdpSocket::socket_addr fails.
+        // TODO(@divma): I think if the port is zero something must have been wrong. We could opt
+        // for not updating the local port in this case.
+        let maybe_non_zero_port = self.local_port_v4().try_into().ok();
+        self.port_mapper.update_local_port(maybe_non_zero_port)?;
         let ipv4_addr = self.pconn4.local_addr()?;
 
         *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);

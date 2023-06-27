@@ -27,10 +27,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::{
-    hp::portmapper::ProbeResult,
-    net::{interfaces, ip::to_canonical},
-};
+use crate::net::{interfaces, ip::to_canonical};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
@@ -122,6 +119,22 @@ impl Report {
     /// Reports whether any of UPnP, PMP, or PCP are non-empty.
     pub fn any_port_mapping_checked(&self) -> bool {
         self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
+    }
+
+    /// Updates the portmap related values based on [`portmapper::ProbeResult`].
+    pub fn update_portmap_probe(&mut self, probe_result: Option<portmapper::ProbeResult>) {
+        match probe_result {
+            Some(portmapper::ProbeResult { upnp, pmp, pcp }) => {
+                self.upnp = Some(upnp);
+                self.pmp = Some(pmp);
+                self.pcp = Some(pcp);
+            }
+            None => {
+                self.upnp = None;
+                self.pmp = None;
+                self.pcp = None;
+            }
+        }
     }
 }
 
@@ -488,7 +501,6 @@ struct ReportState {
     /// Doing a lite, follow-up netcheck
     incremental: bool,
     stop_probe: Arc<sync::Notify>,
-    wait_port_map: wg::AsyncWaitGroup,
     /// The report which will be returned.
     report: Arc<RwLock<Report>>,
     got_ep4: Option<SocketAddr>,
@@ -516,15 +528,18 @@ impl ReportState {
         debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
-        let mut port_mapping = MaybeFuture::default();
+        let mut portmap_probe = MaybeFuture::default();
         if !skip_external_network {
-            if let Some(ref port_mapper) = port_mapper {
-                let mut port_mapper = port_mapper.clone();
-                port_mapping.inner = Some(Box::pin(async move {
+            if let Some(port_mapper) = port_mapper {
+                portmap_probe.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
-                        Ok(res) => Some(res),
-                        Err(err) => {
-                            warn!("skipping port mapping: {:?}", err);
+                        Ok(Ok(res)) => Some(res),
+                        Ok(Err(err)) => {
+                            warn!("skipping port mapping: {err:?}");
+                            None
+                        }
+                        Err(recv_err) => {
+                            warn!("skipping port mapping: {recv_err}");
                             None
                         }
                     }
@@ -631,21 +646,10 @@ impl ReportState {
                     debug!("STUN timer expired");
                     break;
                 },
-                pm = &mut port_mapping => {
+                pm = &mut portmap_probe => {
                     let mut report = self.report.write().await;
-                    match pm {
-                        Some(ProbeResult{upnp, pmp, pcp}) => {
-                            report.upnp = Some(upnp);
-                            report.pmp = Some(pmp);
-                            report.pcp = Some(pcp);
-                        }
-                        None => {
-                            report.upnp = None;
-                            report.pmp = None;
-                            report.pcp = None;
-                        }
-                    }
-                    port_mapping.inner = None;
+                    report.update_portmap_probe(pm);
+                    portmap_probe.inner = None;
                 }
                 probe_report = probes.next(), if !dummy_fuse => {
                     match probe_report {
@@ -712,8 +716,10 @@ impl ReportState {
             self.report.write().await.hair_pinning = Some(hair_pin);
         }
 
-        if !skip_external_network && port_mapper.is_some() {
-            self.wait_port_map.wait().await;
+        if portmap_probe.inner.is_some() {
+            let probe_result = portmap_probe.await;
+            let mut report = self.report.write().await;
+            report.update_portmap_probe(probe_result);
             debug!("port_map done");
         }
 
@@ -1414,7 +1420,6 @@ impl Actor {
             pc4_hair: Arc::new(pc4_hair),
             hair_timeout: None,
             stop_probe: Arc::new(sync::Notify::new()),
-            wait_port_map: wg::AsyncWaitGroup::new(),
             report: Default::default(),
             got_ep4: None,
             timers: Default::default(),

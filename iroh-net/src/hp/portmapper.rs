@@ -1,10 +1,13 @@
+#![allow(unused)]
 use std::{
     net::{SocketAddr, SocketAddrV4},
     num::NonZeroU16,
     time::{Duration, Instant},
 };
 
-use anyhow::Error;
+use anyhow::{anyhow, Result};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_stream::wrappers;
 use tracing::debug;
 
 use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
@@ -22,21 +25,90 @@ pub struct ProbeResult {
     pub upnp: bool,
 }
 
-/// A port mapping client.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug)]
+enum Message {
+    /// Request to update the local port.
+    ///
+    /// The resulting external address can be obtained subscribing using the [`Handle`].
+    /// A value of `None` will deactivate port mapping.
+    UpdateLocalPort { local_port: Option<NonZeroU16> },
+    /// Request to probe the port mapping protocols.
+    ///
+    /// The requester should wait for the result at the [`oneshot::Receiver`] counterpart of the
+    /// [`oneshot::Sender`].
+    Probe {
+        result_tx: oneshot::Sender<Result<ProbeResult>>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct Client {
+    /// A watcher over the most recent external address obtained from port mapping.
+    port_mapping: watch::Receiver<Option<SocketAddrV4>>,
+    /// Channel used to communicate with the port mapping service.
+    service_tx: mpsc::Sender<Message>,
+}
+
+impl Client {
+    /// Create a new port mapping client.
+    pub async fn new(local_port: Option<NonZeroU16>) -> Self {
+        // let service = Service::new(
+        //
+        todo!()
+    }
+
+    /// Request a probe to the port mapping protocols.
+    pub fn probe(&self) -> oneshot::Receiver<Result<ProbeResult>> {
+        let (result_tx, result_rx) = oneshot::channel();
+
+        use mpsc::error::TrySendError::*;
+        if let Err(e) = self.service_tx.try_send(Message::Probe { result_tx }) {
+            // Recover the sender and return the error there
+            let (result_tx, e) = match e {
+                Full(Message::Probe { result_tx }) => {
+                    (result_tx, anyhow!("Port mapping channel full"))
+                }
+                Closed(Message::Probe { result_tx }) => {
+                    (result_tx, anyhow!("Port mapping channel closed"))
+                }
+                Full(_) | Closed(_) => unreachable!("Sent value is a probe."),
+            };
+
+            result_tx
+                .send(Err(e))
+                .expect("receiver counterpart has not been dropped or closed.");
+        }
+        result_rx
+    }
+
+    /// Update the local port.
+    ///
+    /// A value of `None` will invalidate any active mapping and deactivate port mapping.
+    pub fn update_local_port(&self, local_port: Option<NonZeroU16>) -> Result<()> {
+        self.service_tx
+            .try_send(Message::UpdateLocalPort { local_port })
+            .map_err(Into::into)
+    }
+
+    /// Watch the external address for changes in the mappings.
+    pub fn watch_external_address(&self) -> watch::Receiver<Option<SocketAddrV4>> {
+        self.port_mapping.clone()
+    }
+}
+
+/// A port mapping client.
+#[derive(Debug, Clone)]
+pub struct Service {
     /// Local port to map.
-    // TODO(@divagant-martian): This is an option to allow keeping the Default implementation over
-    // this type for now.
     local_port: Option<NonZeroU16>,
 
     last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
     current_mapping: Option<upnp::Mapping>,
 }
 
-impl Client {
+impl Service {
     pub fn new(local_port: Option<NonZeroU16>) -> Self {
-        Client {
+        Service {
             local_port,
             last_upnp_gateway_addr: None,
             current_mapping: None,
@@ -44,7 +116,7 @@ impl Client {
     }
 
     /// Releases the current mapping and clears it from the cache.
-    async fn invalidate_mapping(&mut self) -> Result<(), Error> {
+    async fn invalidate_mapping(&mut self) -> Result<()> {
         if let Some(old_mapping) = self.current_mapping.take() {
             old_mapping.release().await?;
         }
@@ -52,7 +124,7 @@ impl Client {
     }
 
     /// UPnP: searches for an upnp internet gateway device (a router).
-    pub async fn probe(&mut self) -> Result<ProbeResult, Error> {
+    pub async fn probe(&mut self) -> Result<ProbeResult> {
         let upnp = self.upnp_available_from_cache() || self.probe_upnp_available().await;
 
         Ok(ProbeResult {
