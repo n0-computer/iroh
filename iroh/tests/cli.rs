@@ -64,7 +64,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
 }
 
 #[test]
-fn cli_provide_one_file() -> Result<()> {
+fn cli_provide_one_file_basic() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
     make_rand_file(1000, &path)?;
@@ -376,8 +376,12 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     .stderr_capture();
 
     // test get stderr output
-    let get_output = cmd.run()?;
+    let get_output = cmd.unchecked().run()?;
     drop(provider);
+
+    // checking the output first, so you can still view any logging
+    assert!(!get_output.stderr.is_empty());
+    match_get_stderr(get_output.stderr)?;
     assert!(get_output.status.success());
 
     // test output
@@ -389,9 +393,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         }
         Some(out) => compare_files(path, out)?,
     };
-
-    assert!(!get_output.stderr.is_empty());
-    match_get_stderr(get_output.stderr)
+    Ok(())
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.

@@ -143,7 +143,7 @@ impl Endpoint {
                 }
             }
             None => {
-                let (addr, should_ping) = self.get_candidate_udp_addr(now);
+                let (addr, should_ping) = self.get_candidate_udp_addr();
 
                 // provide backup derp addr if no known latency or no addr
                 let derp_addr = if should_ping || addr.is_none() {
@@ -152,13 +152,14 @@ impl Endpoint {
                     None
                 };
 
+                debug!("using candidate addr {addr:?}, derp addr: {derp_addr:?}");
                 (addr, derp_addr, should_ping)
             }
         }
     }
 
     /// Determines a potential best addr for this endpoint. And if the endpoint needs a ping.
-    fn get_candidate_udp_addr(&mut self, now: &Instant) -> (Option<SocketAddr>, bool) {
+    fn get_candidate_udp_addr(&mut self) -> (Option<SocketAddr>, bool) {
         let mut lowest_latency = Duration::from_secs(60 * 60);
         let mut last_pong = None;
         for (ipp, state) in self.endpoint_state.iter() {
@@ -192,14 +193,6 @@ impl Endpoint {
             .keys()
             .choose_stable(&mut rand::thread_rng())
             .copied();
-        if let Some(addr) = udp_addr {
-            self.best_addr = Some(AddrLatency {
-                addr,
-                latency: None,
-            });
-
-            self.trust_best_addr_until = Some(*now + Duration::from_secs(15));
-        }
 
         (udp_addr, udp_addr.is_some())
     }
