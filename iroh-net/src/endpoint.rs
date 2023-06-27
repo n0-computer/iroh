@@ -78,7 +78,7 @@ impl MagicEndpointBuilder {
 
     /// Bind the magic endpoint on the specified socket address.
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
-        let keypair = self.keypair.unwrap_or_else(|| Keypair::generate());
+        let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let tls_server_config =
             tls::make_server_config(&keypair, self.alpn_protocols, self.keylog)?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
