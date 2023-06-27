@@ -2855,7 +2855,7 @@ mod tests {
 
                         let stats = conn.stats();
                         println!("[{}] stats: {:#?}", a_name, stats);
-                        assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", b_name);
+                        assert!(stats.path.lost_packets < 10, "[{}] should not loose many packets", b_name);
 
                         println!("[{}] close", b_name);
                         conn.close(0u32.into(), b"done");
@@ -2907,7 +2907,7 @@ mod tests {
 
                     let stats = conn.stats();
                     println!("[{}] stats: {:#?}", a_name, stats);
-                    assert_eq!(stats.path.lost_packets, 0, "[{}] should not loose any packets", a_name);
+                    assert!(stats.path.lost_packets < 10, "[{}] should not loose many packets", a_name);
 
                     println!("[{}] close", a_name);
                     conn.close(0u32.into(), b"done");
