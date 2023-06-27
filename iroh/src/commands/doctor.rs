@@ -2,6 +2,7 @@
 //! and to test connectivity to specific other nodes.
 use std::{
     net::SocketAddr,
+    num::NonZeroU16,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -17,7 +18,7 @@ use iroh_net::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
-        magicsock,
+        magicsock, portmapper,
     },
     tls::{self, Keypair},
 };
@@ -96,6 +97,11 @@ pub enum Commands {
         /// Use a local derp relay
         #[clap(long)]
         local_derper: bool,
+    },
+    /// Attempt to get a port mapping to the given local port.
+    PortMap {
+        /// Local port to get a mapping.
+        local_port: NonZeroU16,
     },
 }
 
@@ -602,6 +608,16 @@ async fn accept(
     Ok(())
 }
 
+async fn port_map(local_port: NonZeroU16) -> anyhow::Result<()> {
+    let mut port_mapper = portmapper::Client::new(Some(local_port));
+    let external_address = port_mapper
+        .get_cached_mapping_or_start_creating_one()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("No port mapping found"))?;
+    println!("Port mapping ready: {external_address}");
+    Ok(())
+}
+
 fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
     Ok(match private_key {
         PrivateKey::Random => SecretKey::generate(),
@@ -663,5 +679,6 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             let config = TestConfig { size, iterations };
             accept(private_key, config, derp_map).await
         }
+        Commands::PortMap { local_port } => port_map(local_port).await,
     }
 }
