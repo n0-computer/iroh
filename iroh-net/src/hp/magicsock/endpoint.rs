@@ -14,7 +14,9 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
-        disco, key, stun,
+        disco, key,
+        magicsock::Timer,
+        stun,
     },
     net::ip::is_unicast_link_local,
 };
@@ -271,7 +273,8 @@ impl Endpoint {
         }
     }
 
-    fn ping_timeout(&mut self, txid: stun::TransactionId) {
+    /// Cleanup the expired ping for the passed in txid.
+    pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_ping.remove(&txid) {
             warn!(
                 "disco: timeout waiting for pong {:?} from {:?} ({:?})",
@@ -292,8 +295,10 @@ impl Endpoint {
     }
 
     /// Called by a timer when a ping either fails to send or has taken too long to get a pong reply.
-    fn forget_ping(&mut self, tx_id: stun::TransactionId) {
-        self.sent_ping.remove(&tx_id);
+    async fn forget_ping(&mut self, tx_id: stun::TransactionId) {
+        if let Some(ping) = self.sent_ping.remove(&tx_id) {
+            ping.timer.stop().await;
+        }
     }
 
     /// Sends a ping with the provided txid to ep using self's disco_key.
@@ -329,7 +334,7 @@ impl Endpoint {
 
         debug!("send disco ping: done: sent? {}", sent);
         if !sent {
-            self.forget_ping(tx_id);
+            self.forget_ping(tx_id).await;
         }
     }
 
@@ -351,36 +356,25 @@ impl Endpoint {
         let txid = stun::TransactionId::default();
         debug!("disco: sent ping [{}]", txid);
 
+        let id = self.id;
+        let sender = self.conn_sender.clone();
+        let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
+            sender
+                .send(ActorMessage::EndpointPingExpired(id, txid))
+                .await
+                .ok();
+        });
         self.sent_ping.insert(
             txid,
             SentPing {
                 to: ep,
                 at: now,
                 purpose,
+                timer,
             },
         );
         let public_key = self.public_key.clone();
         self.send_disco_ping(ep, Some(public_key), txid).await;
-    }
-
-    /// Cleanup pings that are potentially expired.
-    fn check_pings(&mut self, now: Instant) {
-        // Cleanup expired pings
-        let mut to_remove = Vec::new();
-        for (id, ping) in self.sent_ping.iter() {
-            if now - ping.at > PING_TIMEOUT_DURATION {
-                debug!(
-                    "disco: ping timeout [{}]: (elapsed: {:?} - started: {:?})",
-                    id,
-                    now - ping.at,
-                    ping.at
-                );
-                to_remove.push(*id);
-            }
-        }
-        for id in to_remove {
-            self.ping_timeout(id);
-        }
     }
 
     async fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) {
@@ -586,6 +580,8 @@ impl Endpoint {
                 (false, None)
             }
             Some(sp) => {
+                sp.timer.stop().await;
+
                 let known_tx_id = true;
                 let mut peer_map_insert = None;
 
@@ -758,8 +754,6 @@ impl Endpoint {
             return;
         }
 
-        self.check_pings(now);
-
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_full_ping(&now) {
             debug!("send pings all");
@@ -800,7 +794,6 @@ impl Endpoint {
 
         // Trigger a round of pings if we haven't had any full pings yet.
         if should_ping && self.want_full_ping(&now) {
-            self.check_pings(now);
             self.send_pings(now, true).await;
         }
 
@@ -1048,6 +1041,7 @@ pub struct SentPing {
     pub to: SocketAddr,
     pub at: Instant,
     pub purpose: DiscoPingPurpose,
+    pub timer: Timer,
 }
 
 /// The reason why a discovery ping message was sent.

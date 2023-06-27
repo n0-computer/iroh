@@ -27,7 +27,7 @@ use crate::{
     hp::{
         cfg::{self, DERP_MAGIC_IP},
         derp::{self, DerpMap, DerpRegion},
-        disco, key, netcheck, netmap, portmapper,
+        disco, key, netcheck, netmap, portmapper, stun,
     },
     net::ip::LocalAddresses,
     util::AbortingJoinHandle,
@@ -762,6 +762,7 @@ pub(super) enum ActorMessage {
     },
     SetNetworkMap(netmap::NetworkMap, sync::oneshot::Sender<()>),
     ReceiveDerp(DerpReadResult),
+    EndpointPingExpired(usize, stun::TransactionId),
 }
 
 struct Actor {
@@ -973,6 +974,11 @@ impl Actor {
                     if let Some(waker) = wakers.take() {
                         waker.wake();
                     }
+                }
+            }
+            ActorMessage::EndpointPingExpired(id, txid) => {
+                if let Some(ep) = self.peer_map.by_id_mut(&id) {
+                    ep.ping_timeout(txid);
                 }
             }
         }
