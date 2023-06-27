@@ -566,7 +566,13 @@ impl ReportState {
         };
 
         let pinger = if self.plan.has_https_probes() {
-            Some(Pinger::new().await.context("failed to create pinger")?)
+            match Pinger::new().await {
+                Ok(pinger) => Some(pinger),
+                Err(err) => {
+                    debug!("failed to create pinger: {err:#}");
+                    None
+                }
+            }
         } else {
             None
         };
