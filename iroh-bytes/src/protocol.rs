@@ -42,11 +42,12 @@ const MAX_REQUEST_TOKEN_SIZE: usize = 4096;
 /// Applications can use request tokens to implement request authorization,
 /// user association, etc.
 pub struct RequestToken {
-    bytes: Vec<u8>,
+    bytes: Bytes,
 }
 
 impl RequestToken {
-    pub fn new(bytes: Vec<u8>) -> Result<Self> {
+    pub fn new(bytes: impl Into<Bytes>) -> Result<Self> {
+        let bytes: Bytes = bytes.into();
         ensure!(
             bytes.len() < MAX_REQUEST_TOKEN_SIZE,
             "request token is too large"
@@ -54,9 +55,9 @@ impl RequestToken {
         Ok(Self { bytes })
     }
 
-    /// Serializes to bytes.
-    pub fn to_bytes(self) -> Vec<u8> {
-        self.bytes
+    /// Returns a reference the token bytes.
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.bytes
     }
 }
 
@@ -65,8 +66,7 @@ impl FromStr for RequestToken {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        ensure!(bytes.len() < MAX_MESSAGE_SIZE, "request token is too large");
-        Ok(RequestToken { bytes })
+        RequestToken::new(bytes)
     }
 }
 

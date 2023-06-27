@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node};
@@ -737,17 +737,17 @@ impl RequestAuthorizationHandler for CustomAuthHandler {
         _db: Database,
         token: Option<RequestToken>,
         _request: &iroh_bytes::protocol::Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
+    ) -> BoxFuture<'static, Result<()>> {
         async move {
             match token {
                 Some(token) => {
-                    if token.to_bytes() != vec![1, 2, 3, 4, 5, 6] {
-                        anyhow::bail!("bad token")
+                    if token.as_bytes() != &[1, 2, 3, 4, 5, 6][..] {
+                        bail!("bad token")
                     }
                     Ok(())
                 }
                 None => {
-                    anyhow::bail!("give token plz")
+                    bail!("give token plz")
                 }
             }
         }
@@ -756,30 +756,20 @@ impl RequestAuthorizationHandler for CustomAuthHandler {
 }
 
 #[tokio::test]
-async fn test_token_passthrough() {
+async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
     let readme = readme_path();
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-    let provider = match Node::builder(db)
-        .bind_addr("[::1]:0".parse().unwrap())
+    let provider = Node::builder(db)
+        .bind_addr("0.0.0.0:0".parse().unwrap())
         .custom_auth_handler(CustomAuthHandler)
         .runtime(&rt)
         .spawn()
-        .await
-    {
-        Ok(provider) => provider,
-        Err(_) => {
-            // We assume the problem here is IPv6 on this host.  If the problem is
-            // not IPv6 then other tests will also fail.
-            return;
-        }
-    };
+        .await?;
 
-    let token = Some(RequestToken::from(vec![1, 2, 3, 4, 5, 6]));
+    let token = Some(RequestToken::new(vec![1, 2, 3, 4, 5, 6])?);
     let mut events = provider.subscribe();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let mut token = None;
+    let event_handle = rt.main().spawn(async move {
         while let Ok(msg) = events.recv().await {
             match msg {
                 Event::ByteProvide(bp_msg) => {
@@ -787,16 +777,15 @@ async fn test_token_passthrough() {
                         bp_msg
                     {
                         // println!("token: {:?}", token);
-                        token = tok;
-                        break;
+                        return tok;
                     }
                 }
             }
         }
-        tx.send(token).unwrap();
+        None
     });
 
-    let addrs = provider.local_endpoint_addresses().await.unwrap();
+    let addrs = provider.local_endpoint_addresses().await?;
     let peer_id = provider.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         dial_peer(&addrs, peer_id, &iroh_bytes::P2P_ALPN, true, None).await?;
@@ -818,15 +807,11 @@ async fn test_token_passthrough() {
         anyhow::Ok(())
     })
     .await
-    .expect("timeout")
-    .expect("get failed");
+    .context("timeout")?
+    .context("get failed")?;
 
-    match rx.await {
-        Ok(token) => {
-            assert!(Some(RequestToken::from(vec![1, 2, 3, 4, 5, 6])) == token);
-        }
-        Err(e) => {
-            panic!("error receiving token: {:?}", e);
-        }
-    }
+    let token = event_handle.await?.expect("missing token");
+    assert_eq!(token.as_bytes(), &[1, 2, 3, 4, 5, 6][..]);
+
+    Ok(())
 }
