@@ -557,7 +557,7 @@ where
 fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
     let mut params =
         rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
-    params.serial_number = Some(PROTOCOL_VERSION as u64);
+    params.serial_number = Some((PROTOCOL_VERSION as u64).into());
     // Windows requires not_after and not_before set:
     params.not_after = time::OffsetDateTime::now_utc()
         .checked_add(30 * time::Duration::DAY)
