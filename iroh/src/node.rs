@@ -737,10 +737,7 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
     use anyhow::bail;
-=======
->>>>>>> 84621733 (feat(provider): add 'CollectionAdded' Provider event)
     use futures::StreamExt;
     use std::collections::HashMap;
     use std::net::Ipv4Addr;

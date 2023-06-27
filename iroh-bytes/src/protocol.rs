@@ -20,7 +20,7 @@ use crate::util::Hash;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// Protocol version
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 2;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
 pub(crate) struct Handshake {
@@ -49,7 +49,7 @@ impl RequestToken {
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
         ensure!(
             bytes.len() < MAX_REQUEST_TOKEN_SIZE,
-            "auth token is too large"
+            "request token is too large"
         );
         Ok(Self { bytes })
     }
