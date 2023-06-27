@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     time::{Duration, Instant},
 };
 
@@ -9,8 +10,29 @@ use serde::{Deserialize, Serialize};
 use super::gossipswarm::{self, Command};
 use super::{Config, PeerAddress};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
 pub struct TopicId([u8; 32]);
+
+impl From<blake3::Hash> for TopicId {
+    fn from(value: blake3::Hash) -> Self {
+        Self(value.into())
+    }
+}
+
+impl fmt::Display for TopicId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
+        text.make_ascii_lowercase();
+        write!(f, "{}", text)
+    }
+}
+impl fmt::Debug for TopicId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
+        text.make_ascii_lowercase();
+        write!(f, "{}…{}", &text[..5], &text[(text.len() - 2)..])
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message<PA> {
@@ -108,6 +130,12 @@ impl<PA: PeerAddress, R: Rng + Clone> TopicSwarm<PA, R> {
         self.states.get_mut(topic)
     }
 
+    pub fn has_active_peers(&self, topic: &TopicId) -> bool {
+        self.state(&topic)
+            .map(|s| s.has_active_peers())
+            .unwrap_or(false)
+    }
+
     pub fn handle(
         &mut self,
         event: InEvent<PA>,
@@ -136,6 +164,16 @@ impl<PA: PeerAddress, R: Rng + Clone> TopicSwarm<PA, R> {
                             ),
                         );
                     }
+                }
+                if !self.states.contains_key(&topic) {
+                    self.states.insert(
+                        topic,
+                        gossipswarm::State::with_rng(
+                            self.me,
+                            self.config.clone(),
+                            self.rng.clone(),
+                        ),
+                    );
                 }
 
                 // pass the event to the state handler

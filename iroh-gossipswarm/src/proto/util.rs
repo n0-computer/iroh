@@ -2,7 +2,11 @@ use rand::{
     seq::{IteratorRandom, SliceRandom},
     Rng,
 };
-use std::hash::Hash;
+use std::{
+    collections::BTreeMap,
+    hash::Hash,
+    time::{Duration, Instant},
+};
 
 /// A hash set where the iteration order of the values is independent of their
 /// hash values.
@@ -135,5 +139,35 @@ where
         let mut items = self.shuffled_without(without, rng);
         items.truncate(len);
         items
+    }
+}
+
+/// A BtreeMap with Instant as key. Allows to process expired items.
+pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
+
+impl<T> TimerMap<T> {
+    /// Create a new, empty TimerMap
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+    /// Insert a new entry at the specified instant
+    pub fn insert(&mut self, instant: Instant, item: T) {
+        let entry = self.0.entry(instant).or_default();
+        entry.push(item);
+    }
+
+    /// Remove and return all entries before and equal to `from`
+    pub fn drain_until(&mut self, from: &Instant) -> impl Iterator<Item = (Instant, T)> {
+        let split_point = *from + Duration::from_nanos(1);
+        let later_half = self.0.split_off(&split_point);
+        let expired = std::mem::replace(&mut self.0, later_half);
+        expired
+            .into_iter()
+            .flat_map(|(t, v)| v.into_iter().map(move |v| (t, v)))
+    }
+
+    /// Get a reference to the earliest entry in the TimerMap
+    pub fn first(&self) -> Option<(&Instant, &Vec<T>)> {
+        self.0.iter().next()
     }
 }

@@ -225,6 +225,10 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
     pub fn stats(&self) -> &Stats {
         &self.stats
     }
+
+    pub fn has_active_peers(&self) -> bool {
+        !self.swarm.active_view.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -247,6 +251,7 @@ mod test {
     use tracing::{debug, warn};
 
     use super::{Command, Config, Event, InEvent, OutEvent, PeerAddress, State, Timer};
+    use crate::proto::util::TimerMap;
 
     #[test]
     fn hyparview_smoke() {
@@ -487,7 +492,7 @@ mod test {
         inqueues.get_mut(peer_pos).unwrap().push_back(event);
     }
 
-    impl<PA: PeerAddress, R: Rng> Network<PA, R> {
+    impl<PA: PeerAddress + Ord, R: Rng> Network<PA, R> {
         pub fn push(&mut self, peer: State<PA, R>) {
             let idx = self.inqueues.len();
             self.inqueues.push(VecDeque::new());
@@ -788,26 +793,6 @@ mod test {
                 sum += stats.payload_messages_received;
             }
             sum
-        }
-    }
-
-    /// A BtreeMap with Instant as key. Allows to process expired items.
-    pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
-    impl<T> TimerMap<T> {
-        pub fn new() -> Self {
-            Self(Default::default())
-        }
-        pub fn insert(&mut self, instant: Instant, item: T) {
-            let entry = self.0.entry(instant).or_default();
-            entry.push(item);
-        }
-        pub fn drain_until(&mut self, from: &Instant) -> impl Iterator<Item = (Instant, T)> {
-            let split_point = *from + Duration::from_nanos(1);
-            let later_half = self.0.split_off(&split_point);
-            let expired = std::mem::replace(&mut self.0, later_half);
-            expired
-                .into_iter()
-                .flat_map(|(t, v)| v.into_iter().map(move |v| (t, v)))
         }
     }
 
