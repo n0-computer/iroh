@@ -228,7 +228,7 @@ jobs:
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=8
+      run: cross test --all --target ${{ matrix.target }} -- --test-threads=4
 
   check_fmt_and_docs:
     name: Checking fmt and docs
