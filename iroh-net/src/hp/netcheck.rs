@@ -224,7 +224,8 @@ impl Client {
             })
         {
             inc!(NetcheckMetrics::StunPacketsDropped);
-        };
+            warn!("dropping stun packet from {}", src);
+        }
     }
 
     /// Runs a netcheck, returning the report.
@@ -333,7 +334,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // Has a node, as we filtered out regions without nodes above.
     let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
-    if node.host_name.ends_with(&DOT_INVALID) {
+    if node
+        .host_name
+        .host_str()
+        .map(|s| s.ends_with(&DOT_INVALID))
+        .unwrap_or_default()
+    {
         // Don't try to connect to invalid hostnames. This occurred in tests:
         // https://github.com/tailscale/tailscale/issues/6207
         // TODO(bradfitz,andrew-d): how to actually handle this nicely?
@@ -347,13 +353,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
-    let challenge = format!("ts_{}", node.host_name);
 
+    let host_name = node.host_name.host_str().unwrap_or_default();
+    let challenge = format!("ts_{}", host_name);
+    let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
-        .request(
-            reqwest::Method::GET,
-            format!("http://{}/generate_204", node.host_name),
-        )
+        .request(reqwest::Method::GET, portal_url)
         .header("X-Tailscale-Challenge", &challenge)
         .send()
         .await?;
@@ -447,29 +452,36 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
             // TODO: original code returns None here, but that seems wrong?
         }
     }
-    async move {
-        debug!(?proto, %n.host_name, "Performing DNS lookup for derp addr");
 
-        // TODO: add singleflight+dnscache here.
-        if let Ok(addrs) = DNS_RESOLVER.lookup_ip(&n.host_name).await {
-            for addr in addrs {
-                if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                    let addr = to_canonical(addr);
-                    return Ok(SocketAddr::new(addr, port));
+    match n.host_name.host() {
+        Some(url::Host::Domain(hostname)) => {
+            async move {
+                debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
+
+                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
+                    for addr in addrs {
+                        if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
+                            let addr = to_canonical(addr);
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                        if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                        if proto == ProbeProto::Https {
+                            // For now just return the first one
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                    }
                 }
-                if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                    return Ok(SocketAddr::new(addr, port));
-                }
-                if proto == ProbeProto::Https {
-                    // For now just return the first one
-                    return Ok(SocketAddr::new(addr, port));
-                }
+                Err(anyhow!("no suitable addr found for derp config"))
             }
+            .instrument(debug_span!("dns"))
+            .await
         }
-        Err(anyhow!("no suitable addr found for derp config"))
+        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
+        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        None => Err(anyhow!("no valid hostname available")),
     }
-    .instrument(debug_span!("dns"))
-    .await
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
@@ -1776,7 +1788,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("derp.iroh.network.", 3478, 0)];
+        let stun_servers = vec![("https://derp.iroh.network.", 3478, 0)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
@@ -1789,7 +1801,7 @@ mod tests {
                     .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
                         name: format!("default-{}", i),
                         region_id: 1,
-                        host_name: host_name.into(),
+                        host_name: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
                         ipv4: UseIpv4::None,

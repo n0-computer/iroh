@@ -1,7 +1,7 @@
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -115,12 +115,6 @@ pub async fn dial_peer(
                 key: node_key.clone(),
                 endpoints,
                 derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-                created: Instant::now(),
-                hostinfo: hp::hostinfo::Hostinfo::default(),
-                keep_alive: false,
-                expired: false,
-                online: None,
-                last_seen: None,
             }],
         })
         .await?;

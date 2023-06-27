@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 /// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -24,7 +25,7 @@ impl DerpMap {
 
     /// Creates a new [`DerpMap`] with a single Derp server configured.
     pub fn default_from_node(
-        host_name: String,
+        host_name: Url,
         stun_port: u16,
         derp_port: u16,
         derp_ipv4: UseIpv4,
@@ -78,7 +79,7 @@ pub struct DerpRegion {
 pub struct DerpNode {
     pub name: String,
     pub region_id: usize,
-    pub host_name: String,
+    pub host_name: Url,
     pub stun_only: bool,
     pub stun_port: u16,
     pub stun_test_ip: Option<IpAddr>,

@@ -1731,6 +1731,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trust-dns-resolver",
+ "url",
  "webpki",
  "webpki-roots 0.23.1",
  "wg",
@@ -4150,6 +4151,7 @@ dependencies = [
  "form_urlencoded",
  "idna 0.4.0",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]
