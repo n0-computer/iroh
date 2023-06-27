@@ -23,6 +23,7 @@ use iroh_net::hp::derp::DerpMap;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum GetInteractive {
     Ticket {
