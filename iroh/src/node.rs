@@ -705,6 +705,7 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
     use futures::StreamExt;
     use std::collections::HashMap;
     use std::net::Ipv4Addr;
@@ -738,41 +739,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_node_add_collection_event() {
+    async fn test_node_add_collection_event() -> Result<()> {
         let db = Database::from(HashMap::new());
         let node = Builder::with_db(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
             .spawn()
-            .await
-            .unwrap();
+            .await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 
         let mut events = node.subscribe();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            let mut got_hash = None;
+        let provide_handle = tokio::spawn(async move {
             while let Ok(msg) = events.recv().await {
                 if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
                     msg
                 {
-                    got_hash = Some(hash);
+                    return Some(hash);
                 }
             }
-            tx.send(got_hash.unwrap()).unwrap();
+            None
         });
 
         let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
-            let stream = node
+            let mut stream = node
                 .controller()
                 .server_streaming(ProvideRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
                 })
-                .await
-                .unwrap();
-
-            let mut stream = stream;
+                .await?;
 
             while let Some(item) = stream.next().await {
                 match item.unwrap() {
@@ -780,24 +775,20 @@ mod tests {
                         return Ok(hash);
                     }
                     ProvideProgress::Abort(e) => {
-                        anyhow::bail!("Error while adding data: {e}");
+                        bail!("Error while adding data: {e}");
                     }
                     _ => {}
                 }
             }
-            anyhow::bail!("stream ended without providing data");
+            bail!("stream ended without providing data");
         })
         .await
-        .expect("timeout")
-        .expect("get failed");
+        .context("timeout")?
+        .context("get failed")?;
 
-        match rx.await {
-            Ok(event_hash) => {
-                assert_eq!(got_hash, event_hash);
-            }
-            Err(e) => {
-                panic!("error receiving token: {:?}", e);
-            }
-        }
+        let event_hash = provide_handle.await?.unwrap();
+        assert_eq!(got_hash, event_hash);
+
+        Ok(())
     }
 }
