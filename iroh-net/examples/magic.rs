@@ -15,6 +15,8 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 struct Cli {
     #[clap(short, long)]
     secret: Option<String>,
+    #[clap(short, long, default_value = "n0/iroh/examples/magic/0")]
+    alpn: String,
     #[clap(short, long, default_value = "0.0.0.0:0")]
     bind_address: SocketAddr,
     #[clap(short, long)]
@@ -58,15 +60,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let endpoint = MagicEndpoint::bind(
-        keypair,
-        args.bind_address,
-        vec![EXAMPLE_ALPN.to_vec()],
-        None,
-        Some(derp_map),
-        false,
-    )
-    .await?;
+    let endpoint = MagicEndpoint::builder()
+        .keypair(keypair)
+        .alpns(vec![args.alpn.to_string().into_bytes()])
+        .derp_map(derp_map)
+        .bind(args.bind_address)
+        .await?;
 
     println!("endpoint bound! our peer id: {}", endpoint.peer_id());
     let me = endpoint.peer_id();
