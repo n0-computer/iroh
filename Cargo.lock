@@ -1673,16 +1673,23 @@ dependencies = [
 name = "iroh-gossipswarm"
 version = "0.4.1"
 dependencies = [
+ "anyhow",
  "blake3",
  "bytes",
+ "clap",
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
+ "futures",
  "indexmap",
  "iroh-net",
+ "postcard",
+ "quinn",
  "rand",
  "rand_core",
  "serde",
+ "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
