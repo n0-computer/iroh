@@ -11,16 +11,13 @@ use tracing::{debug, trace};
 use crate::{
     hp::{
         self,
-        cfg::{self, DERP_MAGIC_IP},
+        cfg::{self, Endpoint, DERP_MAGIC_IP},
         derp::DerpMap,
-        magicsock::Conn,
+        magicsock::{Callbacks, Conn},
         netmap,
     },
     tls::{self, Keypair, PeerId},
 };
-
-/// How long we wait at most for some endpoints to be discovered.
-const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug, Default)]
@@ -29,7 +26,9 @@ pub struct MagicEndpointBuilder {
     derp_map: Option<DerpMap>,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
+    concurrent_connections: Option<u32>,
     keylog: bool,
+    callbacks: Callbacks,
 }
 
 impl MagicEndpointBuilder {
@@ -38,58 +37,85 @@ impl MagicEndpointBuilder {
     /// This keypair's public key will be the [PeerId] of this endpoint.
     ///
     /// If not set, a new keypair will be generated.
-    pub fn keypair(self, keypair: Keypair) -> Self {
-        Self {
-            keypair: Some(keypair),
-            ..self
-        }
+    pub fn keypair(mut self, keypair: Keypair) -> Self {
+        self.keypair = Some(keypair);
+        self
     }
 
     /// Set the ALPN protocols that this endpoint will accept on incoming connections.
-    pub fn alpns(self, alpn_protocols: Vec<Vec<u8>>) -> Self {
-        Self {
-            alpn_protocols,
-            ..self
-        }
+    pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
+        self.alpn_protocols = alpn_protocols;
+        self
     }
 
     /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
     /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
     /// to be able to decrypt captured traffic for debugging purposes.
-    pub fn keylog(self, keylog: bool) -> Self {
-        Self { keylog, ..self }
+    pub fn keylog(mut self, keylog: bool) -> Self {
+        self.keylog = keylog;
+        self
     }
 
     /// Specify the DERP servers that are used by this endpoint.
-    pub fn derp_map(self, derp_map: DerpMap) -> Self {
-        Self {
-            derp_map: Some(derp_map),
-            ..self
-        }
+    pub fn derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
+        self.derp_map = derp_map;
+        self
     }
 
     /// Set a custom [quinn::TransportConfig] for this endpoint.
-    pub fn transport_config(self, transport_config: quinn::TransportConfig) -> Self {
-        Self {
-            transport_config: Some(transport_config),
-            ..self
-        }
+    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
+        self.transport_config = Some(transport_config);
+        self
+    }
+
+    pub fn concurrent_connections(mut self, concurrent_connections: u32) -> Self {
+        self.concurrent_connections = Some(concurrent_connections);
+        self
+    }
+
+    /// Optionally provides a func to be called when endpoints change.
+    #[allow(clippy::type_complexity)]
+    pub fn on_endpoints(
+        mut self,
+        on_endpoints: Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>,
+    ) -> Self {
+        self.callbacks.on_endpoints = Some(on_endpoints);
+        self
+    }
+
+    /// Optionally provides a func to be called when a connection is made to a DERP server.
+    pub fn on_derp_active(mut self, on_derp_active: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
+        self.callbacks.on_derp_active = Some(on_derp_active);
+        self
+    }
+
+    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    pub fn on_net_info(
+        mut self,
+        on_net_info: Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>,
+    ) -> Self {
+        self.callbacks.on_net_info = Some(on_net_info);
+        self
     }
 
     /// Bind the magic endpoint on the specified socket address.
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
-        let server_config = make_server_config(
+        let mut server_config = make_server_config(
             &keypair,
             self.alpn_protocols,
             self.transport_config,
             self.keylog,
         )?;
+        if let Some(c) = self.concurrent_connections {
+            server_config.concurrent_connections(c);
+        }
         MagicEndpoint::bind(
             keypair,
             bind_addr,
             Some(server_config),
             self.derp_map,
+            Some(self.callbacks),
             self.keylog,
         )
         .await
@@ -147,18 +173,14 @@ impl MagicEndpoint {
         bind_addr: SocketAddr,
         server_config: Option<quinn::ServerConfig>,
         derp_map: Option<DerpMap>,
+        callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
+        // let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let conn = hp::magicsock::Conn::new(hp::magicsock::Options {
             port: bind_addr.port(),
             private_key: keypair.secret().clone().into(),
-            on_endpoints: Some(Box::new(move |eps| {
-                if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
-                    endpoints_update_s.send(()).ok();
-                }
-            })),
-            ..Default::default()
+            callbacks: callbacks.unwrap_or_default(),
         })
         .await?;
         trace!("created magicsock");
@@ -175,14 +197,6 @@ impl MagicEndpoint {
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
-
-        // Wait for a single endpoint update, to make sure
-        // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, async move {
-            endpoints_update_r.recv_async().await
-        })
-        .await
-        .context("waiting for endpoint")??;
 
         Ok(Self {
             keypair: Arc::new(keypair),
@@ -208,6 +222,14 @@ impl MagicEndpoint {
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
         self.conn.local_addr()
+    }
+
+    /// Get the local endpoints on which the underlying magic socket is listening.
+    ///
+    /// This returns information on the network state of the endpoints in addition to
+    /// their addresses.
+    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<Endpoint>> {
+        self.conn.local_endpoints().await
     }
 
     /// Connect to a remote endpoint.
@@ -377,13 +399,13 @@ mod test {
 
         let ep1 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .derp_map(derp_map.clone())
+            .derp_map(Some(derp_map.clone()))
             .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
             .await?;
 
         let ep2 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .derp_map(derp_map.clone())
+            .derp_map(Some(derp_map.clone()))
             .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
             .await?;
 

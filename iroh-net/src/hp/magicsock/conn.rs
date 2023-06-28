@@ -100,6 +100,16 @@ pub struct Options {
     /// Zero means to pick one automatically.
     pub port: u16,
 
+    /// Private key for this node.
+    pub private_key: key::node::SecretKey,
+
+    /// Callbacks to emit on various socket events
+    pub callbacks: Callbacks,
+}
+
+/// Contains options for `Conn::listen`.
+#[derive(derive_more::Debug, Default)]
+pub struct Callbacks {
     /// Optionally provides a func to be called when endpoints change.
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
@@ -112,18 +122,14 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     #[debug("on_net_info: Option<Box<..>>")]
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
-    /// Private key for this node.
-    pub private_key: key::node::SecretKey,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
-            on_endpoints: None,
-            on_derp_active: None,
-            on_net_info: None,
             private_key: key::node::SecretKey::generate(),
+            callbacks: Default::default(),
         }
     }
 }
@@ -258,10 +264,13 @@ impl Conn {
 
         let Options {
             port,
-            on_endpoints,
-            on_derp_active,
-            on_net_info,
             private_key,
+            callbacks:
+                Callbacks {
+                    on_endpoints,
+                    on_derp_active,
+                    on_net_info,
+                },
         } = opts;
 
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
@@ -2631,12 +2640,15 @@ pub(crate) mod tests {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
             let opts = Options {
-                on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
-                    let _ = ep_s.send(eps.to_vec());
-                })),
-                on_derp_active: Some(Box::new(move || {
-                    on_derp_s.try_send(()).ok();
-                })),
+                callbacks: Callbacks {
+                    on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
+                        let _ = ep_s.send(eps.to_vec());
+                    })),
+                    on_derp_active: Some(Box::new(move || {
+                        on_derp_s.try_send(()).ok();
+                    })),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             let key = opts.private_key.clone();
