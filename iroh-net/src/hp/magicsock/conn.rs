@@ -1478,11 +1478,8 @@ impl Actor {
 
         let derp_map = derp_map.unwrap();
         let net_checker = &mut self.net_checker;
-        let pconn4 = Some(self.pconn4.as_socket().try_into()?);
-        let pconn6 = self
-            .pconn6
-            .as_ref()
-            .and_then(|p| p.as_socket().try_into().expect("not an IPv6 socket"));
+        let pconn4 = Some(self.pconn4.as_socket());
+        let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
         info!("START REPORT");
         let report = time::timeout(Duration::from_secs(10), async move {

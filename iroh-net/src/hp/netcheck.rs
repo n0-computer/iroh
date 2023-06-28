@@ -245,9 +245,18 @@ impl Client {
     pub async fn get_report(
         &mut self,
         dm: DerpMap,
-        stun_conn4: Option<Udp4Socket>,
-        stun_conn6: Option<Udp6Socket>,
+        stun_conn4: Option<Arc<UdpSocket>>,
+        stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
+        let stun_conn4: Option<Udp4Socket> = stun_conn4
+            .map(|s| s.try_into())
+            .transpose()
+            .context("stun_conn4 is not an IPv4 socket")?;
+        let stun_conn6: Option<Udp6Socket> = stun_conn6
+            .map(|s| s.try_into())
+            .transpose()
+            .context("stun_conn6 is not an IPv6 socket")?;
+
         // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
@@ -2202,9 +2211,7 @@ mod tests {
             })
         };
 
-        let r = client
-            .get_report(dm, Some(sock.try_into().unwrap()), None)
-            .await?;
+        let r = client.get_report(dm, Some(sock), None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 
