@@ -23,6 +23,9 @@ mod upnp;
 /// will not be probed again.
 const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 10 minutes
 
+// alias to reduce verbosity
+type StrResult<T> = std::result::Result<T, String>;
+
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
     pub pcp: bool,
@@ -42,7 +45,7 @@ enum Message {
     /// The requester should wait for the result at the [`oneshot::Receiver`] counterpart of the
     /// [`oneshot::Sender`].
     Probe {
-        result_tx: oneshot::Sender<Result<ProbeResult>>,
+        result_tx: oneshot::Sender<StrResult<ProbeResult>>,
     },
 }
 
@@ -81,24 +84,20 @@ impl Client {
     }
 
     /// Request a probe to the port mapping protocols.
-    pub fn probe(&self) -> oneshot::Receiver<Result<ProbeResult>> {
+    pub fn probe(&self) -> oneshot::Receiver<StrResult<ProbeResult>> {
         let (result_tx, result_rx) = oneshot::channel();
 
         use mpsc::error::TrySendError::*;
         if let Err(e) = self.service_tx.try_send(Message::Probe { result_tx }) {
             // Recover the sender and return the error there
             let (result_tx, e) = match e {
-                Full(Message::Probe { result_tx }) => {
-                    (result_tx, anyhow!("Port mapping channel full"))
-                }
-                Closed(Message::Probe { result_tx }) => {
-                    (result_tx, anyhow!("Port mapping channel closed"))
-                }
+                Full(Message::Probe { result_tx }) => (result_tx, "Port mapping channel full"),
+                Closed(Message::Probe { result_tx }) => (result_tx, "Port mapping channel closed"),
                 Full(_) | Closed(_) => unreachable!("Sent value is a probe."),
             };
 
             result_tx
-                .send(Err(e))
+                .send(Err(e.into()))
                 .expect("receiver counterpart has not been dropped or closed.");
         }
         result_rx
@@ -141,7 +140,7 @@ pub struct Service {
 
     rx: mpsc::Receiver<Message>,
     last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
-    current_mapping: Option<upnp::Mapping>,
+    current_mapping: CurrentMapping,
     /// Task attempting to get a port mapping.
     ///
     /// This task will be cancelled if a request to set the local port arrives before it's
@@ -153,13 +152,19 @@ pub struct Service {
     /// result.
     probing_task: Option<(
         util::AbortingJoinHandle<FullProbe>,
-        Vec<oneshot::Sender<Result<ProbeResult>>>,
+        Vec<oneshot::Sender<StrResult<ProbeResult>>>,
     )>,
     /// A [`watch::Sender`] to inform the latest external address obtained via port mapping.
     current_external_address: watch::Sender<Option<SocketAddrV4>>,
 }
 
-/// Holds the current mapping value and ensures that any change is currently reported.
+#[derive(PartialEq, Eq, Debug)]
+enum ReleaseMapping {
+    Yes,
+    No,
+}
+
+/// Holds the current mapping value and ensures that any change is reported accordingly.
 #[derive(Debug)]
 struct CurrentMapping {
     mapping: Option<upnp::Mapping>,
@@ -177,25 +182,36 @@ impl CurrentMapping {
         (wrapper, address_rx)
     }
 
-    fn update(&mut self, mapping: Option<upnp::Mapping>) {
+    /// Updates the mapping, informing of any changes to the external address. The old mapping is
+    /// returned.
+    fn update(&mut self, mapping: Option<upnp::Mapping>) -> Option<upnp::Mapping> {
         let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
-        self.mapping = mapping;
+        let old_mapping = std::mem::replace(&mut self.mapping, mapping);
         self.address_tx.send_if_modified(|old_addr| {
             // replace the value always, as it could have different internal values
             let old_addr = std::mem::replace(old_addr, maybe_external_addr);
             // inform only if this produces a different external address
             old_addr != maybe_external_addr
         });
+        old_mapping
+    }
+
+    fn value(&self) -> Option<&upnp::Mapping> {
+        self.mapping.as_ref()
     }
 }
 
 impl Service {
-    /// Releases the current mapping and clears it from the cache.
-    async fn invalidate_mapping(&mut self) -> Result<()> {
-        if let Some(old_mapping) = self.current_external_address.take() {
-            old_mapping.release().await?;
+    /// Clears the current mapping and releases it if necessary.
+    ///
+    async fn invalidate_mapping(&mut self, release: ReleaseMapping) {
+        if let Some(old_mapping) = self.current_mapping.update(None) {
+            if release == ReleaseMapping::Yes {
+                if let Err(e) = old_mapping.release().await {
+                    debug!("Failed to release mapping {e}");
+                }
+            }
         }
-        Ok(())
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -210,14 +226,52 @@ impl Service {
                         }
                     }
                 }
+                mapping_result = self.mapping_task.as_mut().expect("is some"), if self.mapping_task.is_some() => {
+                    // regardless of outcome, the task is finished, clear it
+                    self.mapping_task = None;
+                    // there isn't really a way to react to a join error here. Flatten it to make
+                    // it easier to work with
+                    let result = match mapping_result {
+                        Ok(result) => result,
+                        Err(join_err) => Err(anyhow!("Failed to obtain a result {join_err}"))
+                    };
+                    self.on_mapping_result(result).await;
+                }
+                probe_result = &mut self.probing_task.as_mut().expect("is some").0, if self.probing_task.is_some() => {
+                    // retrieve the receivers and clear the task.
+                    let receivers = self.probing_task.take().expect("is some").1;
+                    let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
+                    self.on_probe_result(probe_result, receivers).await;
+                }
             }
         }
         Ok(())
     }
 
-    fn handle_msg(&mut self, msg: Message) {
+    async fn on_probe_result(
+        &mut self,
+        result: Result<FullProbe>,
+        receivers: Vec<oneshot::Sender<StrResult<ProbeResult>>>,
+    ) {
+        match result {
+            Err(e) => {
+                // inform the receivers about the error
+                let e: String = e.to_string();
+                for tx in receivers {
+                    // ignore the error. We don't really care if the requester has dropped the
+                    // other side of the channel.
+                    let _ = tx.send(Err(e.clone()));
+                }
+            }
+            Ok(full_probe) => todo!(),
+        }
+    }
+
+    async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {}
+
+    async fn handle_msg(&mut self, msg: Message) {
         match msg {
-            Message::UpdateLocalPort { local_port } => self.update_local_port(local_port),
+            Message::UpdateLocalPort { local_port } => self.update_local_port(local_port).await,
             Message::Probe { result_tx } => self.probe_request(result_tx),
         }
     }
@@ -226,7 +280,7 @@ impl Service {
     ///
     /// If the port changed, any port mapping task is cancelled. If the new port is some, it will
     /// start a new port mapping task.
-    fn update_local_port(&mut self, local_port: Option<NonZeroU16>) {
+    async fn update_local_port(&mut self, local_port: Option<NonZeroU16>) {
         // Ignore requests to update the local port in a way that does not produce a change.
         if local_port != self.local_port {
             let old_port = std::mem::replace(&mut self.local_port, local_port);
@@ -256,8 +310,10 @@ impl Service {
                 self.mapping_task = Some(handle.into());
             }
 
-            // Since the port has changed, the current mapping is no longer valid and needs to be
-            // invalidated.
+            // Since the port has changed, the current mapping is no longer valid and should be
+            // release.
+
+            self.invalidate_mapping(ReleaseMapping::Yes).await;
 
             // TODO(@divma): invalidating the mappings. Also, when do we inform of the new address?
             // Doing it now: will produce a None report on the other side. and later a Some() (or
@@ -270,7 +326,7 @@ impl Service {
     /// If there is a task getting a probe, the receiver will be added with any other waiting for a
     /// result. If no probe is underway, a result can be returned immediately if it's still
     /// considered valid. Otherwise, a new probe task will be started.
-    fn probe_request(&mut self, result_tx: oneshot::Sender<Result<ProbeResult>>) {
+    fn probe_request(&mut self, result_tx: oneshot::Sender<StrResult<ProbeResult>>) {
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
@@ -329,16 +385,6 @@ impl Service {
                 self.last_upnp_gateway_addr = None;
                 false
             }
-        }
-    }
-
-    /// Updates the local port number to which we want to port map UDP traffic.
-    /// Invalidates the current mapping if any.
-    pub async fn set_local_port(&mut self, local_port: NonZeroU16) {
-        let local_port = Some(local_port);
-        if self.local_port != local_port {
-            self.local_port = local_port;
-            let _ = self.invalidate_mapping().await;
         }
     }
 
@@ -410,55 +456,3 @@ impl Service {
         let _ = self.invalidate_mapping().await;
     }
 }
-
-// enum PortMapperComputation {
-//     Invalid,
-//     InProgress(JoinHandle<PortMapper>),
-//     Ready(PortMapper),
-// }
-//
-// enum ClientRequest {
-//     GetPortMapper,
-//     ChangePort(u16),
-// }
-//
-// struct Clientx {
-//     port_mapper_computation: port_mapper_computation,
-//     requests: mpsc::Receiver<ClientRequest>,
-//     port_mapper_oneshots: Vec<oneshot::Sender<PortMapper>>,
-// }
-//
-// impl Clientx {
-//     async fn run(&mut self) {
-//         tokio::select! {
-//             request = self.request.recv() => match request {
-//                 GetPortMapper => {
-//                     let (tx, rx) = oneshot::channel();
-//                     self.port_mapper_computation.push(tx);
-//                     // send rx
-//                     match self.port_mapper_computation {
-//                         InProgress(_) => {},
-//                         Invalid => self.port_mapper_computation = InProgress(task::spawn(compute_port_mapper)),
-//                         Done(port_mapper) => tx.send(port_mapper),
-//                     }
-//                 }
-//                 ChangePort(port) => {
-//                     if self.port != port {
-//                         self.port = port;
-//                         // Abort because port mapper it is not valid
-//                         if let InProgress(task) = self.port_mapper_computation {
-//                             task.abort();
-//                         }
-//                         // Spawn a new port mapper computation.
-//                         self.port_mapper_computation = InProgress(task::spawn(compute_port_mapper));
-//                     }
-//                 }
-//             },
-//             (port_mapper = &mut port_mapper_computation) => {
-//                 for tx in self.port_mapper_oneshots {
-//                     tx.send(port_mapper);
-//                 }
-//             }
-//         }
-//     }
-// }
