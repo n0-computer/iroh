@@ -301,7 +301,7 @@ impl ServerBuilder {
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
             Some(f) => f,
-            None => Box::new(move |mut res: ResponseBuilder| {
+            None => Box::new(move |_req: Request<Body>, mut res: ResponseBuilder| {
                 for (k, v) in h.iter() {
                     res = res.header(*k, *v);
                 }
@@ -491,7 +491,7 @@ impl hyper::service::Service<Request<Body>> for DerpService {
             match &self.0.derp_handler {
                 DerpHandler::Override(f) => {
                     // see if we have some override response
-                    let res = f(self.0.default_response());
+                    let res = f(req, self.0.default_response());
                     return Box::pin(async move { res });
                 }
                 DerpHandler::ConnHandler(handler) => {
@@ -502,16 +502,13 @@ impl hyper::service::Service<Request<Body>> for DerpService {
             }
         }
         // check all other possible endpoints
-        if let Some(res) = self
-            .0
-            .handlers
-            .get(&(req.method().clone(), req.uri().path()))
-        {
-            let f = res(self.0.default_response());
+        let uri = req.uri().clone();
+        if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
+            let f = res(req, self.0.default_response());
             return Box::pin(async move { f });
         }
         // otherwise return 404
-        let res = (self.0.not_found_fn)(self.0.default_response());
+        let res = (self.0.not_found_fn)(req, self.0.default_response());
         Box::pin(async move { res })
     }
 }
@@ -520,7 +517,9 @@ impl hyper::service::Service<Request<Body>> for DerpService {
 /// The hyper Service that
 struct DerpService(Arc<Inner>);
 
-type HyperFn = Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>;
+type HyperFn = Box<
+    dyn Fn(Request<Body>, ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static,
+>;
 type Headers = Vec<(&'static str, &'static str)>;
 
 #[derive(derive_more::Debug)]

@@ -909,7 +909,7 @@ impl Client {
             };
 
             if server_public_key == ignore_key {
-                bail!("deteched self-connect; closing this client");
+                bail!("detected self-connect; closing this client");
             }
 
             tracing::info!("Connected to mesh derp server {server_public_key:?}");
