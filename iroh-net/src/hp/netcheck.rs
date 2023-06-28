@@ -272,7 +272,7 @@ impl Client {
 /// wraps the [`UdpSocket`] in an [`Arc`] so it can be cloned, enabling sending from
 /// different places in the code then we receive from.
 #[derive(Debug, Clone)]
-pub(crate) struct Udp4Socket(Arc<UdpSocket>);
+pub struct Udp4Socket(Arc<UdpSocket>);
 
 impl TryFrom<UdpSocket> for Udp4Socket {
     type Error = anyhow::Error;
@@ -308,7 +308,7 @@ impl Deref for Udp4Socket {
 /// wraps the [`UdpSocket`] in an [`Arc`] so it can be cloned, enabling sending from
 /// different places in the code then we receive from.
 #[derive(Debug, Clone)]
-pub(crate) struct Udp6Socket(Arc<UdpSocket>);
+pub struct Udp6Socket(Arc<UdpSocket>);
 
 impl TryFrom<UdpSocket> for Udp6Socket {
     type Error = anyhow::Error;

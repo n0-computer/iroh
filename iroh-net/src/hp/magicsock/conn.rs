@@ -1482,7 +1482,7 @@ impl Actor {
         let pconn6 = self
             .pconn6
             .as_ref()
-            .and_then(|p| p.as_socket().try_into().ok());
+            .and_then(|p| p.as_socket().try_into().expect("not an IPv6 socket"));
 
         info!("START REPORT");
         let report = time::timeout(Duration::from_secs(10), async move {
