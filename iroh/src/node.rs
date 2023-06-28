@@ -214,6 +214,7 @@ where
             .max_concurrent_uni_streams(0u32.into());
 
         let endpoint = MagicEndpoint::builder()
+            .keypair(self.keypair.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
             .derp_map(self.derp_map)

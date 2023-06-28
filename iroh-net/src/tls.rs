@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
 /// A keypair.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Keypair {
     public: PublicKey,
     secret: SecretKey,
