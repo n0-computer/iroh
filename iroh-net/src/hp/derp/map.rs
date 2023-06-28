@@ -27,7 +27,6 @@ impl DerpMap {
     pub fn default_from_node(
         host_name: Url,
         stun_port: u16,
-        derp_port: u16,
         derp_ipv4: UseIpv4,
         derp_ipv6: UseIpv6,
     ) -> Self {
@@ -47,7 +46,6 @@ impl DerpMap {
                     stun_port,
                     ipv4: derp_ipv4,
                     ipv6: derp_ipv6,
-                    derp_port,
                     stun_test_ip: None,
                 }],
                 avoid: false,
@@ -91,7 +89,6 @@ pub struct DerpNode {
     /// If `None`, A record(s) from DNS lookups of HostName are used.
     /// If `Disabled`, IPv6 is not used;
     pub ipv6: UseIpv6,
-    pub derp_port: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]

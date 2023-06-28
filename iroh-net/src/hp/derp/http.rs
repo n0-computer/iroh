@@ -80,13 +80,12 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "http://localhost".parse().unwrap(),
+                host_name: format!("http://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
-                derp_port: port,
             }],
             region_code: "test_region".to_string(),
         };
@@ -221,13 +220,12 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "https://localhost".parse().unwrap(),
+                host_name: format!("https://localhost:{port}").parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some(addr),
                 ipv6: UseIpv6::Disabled,
-                derp_port: port,
             }],
             region_code: "test_region".to_string(),
         };

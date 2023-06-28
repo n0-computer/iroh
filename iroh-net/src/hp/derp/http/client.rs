@@ -683,10 +683,16 @@ impl Client {
                 }
             }
         };
-        let port = if node.derp_port != 0 {
-            node.derp_port
-        } else {
-            443
+        let port = match node.host_name.port() {
+            Some(port) => port,
+            None => match node.host_name.scheme() {
+                "http" => 80,
+                "https" => 443,
+                _ => return Err(ClientError::InvalidUrl(
+                    "Invalid scheme in DERP hostname, only http: and https: schemes are supported."
+                        .into(),
+                )),
+            },
         };
         let dst = format!("{host}:{port}");
         debug!("dialing {}", dst);
@@ -1123,13 +1129,12 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "http://bad.url".parse().unwrap(),
+                host_name: "https://bad.url".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
                 ipv6: UseIpv6::Disabled,
-                derp_port: 443,
             }],
             region_code: "test_region".to_string(),
         };
