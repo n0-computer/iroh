@@ -9,11 +9,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node};
+// use iroh::test_utils;
 use iroh_net::client::dial_peer;
 use rand::RngCore;
 use testdir::testdir;
 use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
-use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
     blobs::Collection,
@@ -27,6 +27,10 @@ use iroh_bytes::{
     util::Hash,
 };
 
+mod test_utils;
+
+use test_utils::setup_logging;
+
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
 fn test_runtime() -> runtime::Handle {
@@ -35,7 +39,7 @@ fn test_runtime() -> runtime::Handle {
 
 #[tokio::test]
 async fn basics() -> Result<()> {
-    setup_logging();
+    let _guard = setup_logging();
     let rt = test_runtime();
     transfer_data(
         vec![("hello_world", "hello world!".as_bytes().to_vec())],
@@ -46,7 +50,7 @@ async fn basics() -> Result<()> {
 
 #[tokio::test]
 async fn multi_file() -> Result<()> {
-    setup_logging();
+    let _guard = setup_logging();
     let rt = test_runtime();
 
     let file_opts = vec![
@@ -61,7 +65,7 @@ async fn multi_file() -> Result<()> {
 
 #[tokio::test]
 async fn many_files() -> Result<()> {
-    setup_logging();
+    let _guard = setup_logging();
     let rt = test_runtime();
     let num_files = [10, 100, 1000, 10000];
     for num in num_files {
@@ -80,7 +84,7 @@ async fn many_files() -> Result<()> {
 
 #[tokio::test]
 async fn sizes() -> Result<()> {
-    setup_logging();
+    let _guard = setup_logging();
     let rt = test_runtime();
 
     let sizes = [
@@ -327,19 +331,11 @@ fn assert_events(events: Vec<Event>, num_blobs: usize) {
     ));
 }
 
-fn setup_logging() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .ok();
-}
-
 #[tokio::test]
 async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
-    setup_logging();
+    let _guard = setup_logging();
     let dir = testdir!();
     let src = dir.join("src");
     fs::write(&src, "hello there").await.unwrap();
@@ -452,7 +448,7 @@ async fn test_blob_reader_partial() -> Result<()> {
 
 #[tokio::test]
 async fn test_ipv6() {
-    setup_logging();
+    let _guard = setup_logging();
     let rt = test_runtime();
 
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
