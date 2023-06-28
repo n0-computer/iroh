@@ -78,7 +78,7 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "localhost".to_string(),
+                host_name: "http://localhost".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
@@ -216,7 +216,7 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "localhost".to_string(),
+                host_name: "https://localhost".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,

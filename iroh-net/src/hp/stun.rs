@@ -178,7 +178,7 @@ pub mod test {
             let node = DerpNode {
                 name: format!("{region_id}a"),
                 region_id,
-                host_name: format!("{region_id}.invalid."),
+                host_name: format!("http://{region_id}.invalid").parse().unwrap(),
                 ipv4,
                 ipv6,
                 stun_port: port,

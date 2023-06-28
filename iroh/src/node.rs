@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
+use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
     blobs::Collection,
     protocol::Closed,
@@ -35,7 +36,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -62,10 +63,11 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = ()>
+pub struct Builder<E = DummyServerEndpoint, C = (), A = ()>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
+    A: RequestAuthorizationHandler,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
@@ -73,6 +75,7 @@ where
     db: Database,
     keylog: bool,
     custom_get_handler: C,
+    auth_handler: A,
     derp_map: Option<DerpMap>,
     rt: Option<runtime::Handle>,
 }
@@ -90,18 +93,23 @@ impl Builder {
             derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
+            auth_handler: Default::default(),
             rt: None,
         }
     }
 }
 
-impl<E, C> Builder<E, C>
+impl<E, C, A> Builder<E, C, A>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
+    A: RequestAuthorizationHandler,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
+        self,
+        value: E2,
+    ) -> Builder<E2, C, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -109,6 +117,7 @@ where
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
+            auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
             rt: self.rt,
@@ -122,7 +131,7 @@ where
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -131,6 +140,25 @@ where
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
+            auth_handler: self.auth_handler,
+            derp_map: self.derp_map,
+            rt: self.rt,
+        }
+    }
+
+    pub fn custom_auth_handler<A2: RequestAuthorizationHandler>(
+        self,
+        auth_handler: A2,
+    ) -> Builder<E, C, A2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: self.custom_get_handler,
+            auth_handler,
             derp_map: self.derp_map,
             rt: self.rt,
         }
@@ -222,7 +250,7 @@ where
         // the size of this channel must be large because the producer can be on
         // a different thread than the consumer, and can produce a lot of events
         // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(256);
+        let (events_sender, _events_receiver) = broadcast::channel(512);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
@@ -252,6 +280,7 @@ where
                     self.rpc_endpoint,
                     internal_rpc,
                     self.custom_get_handler,
+                    self.auth_handler,
                     rt3,
                 )
                 .await
@@ -273,6 +302,7 @@ where
         Ok(node)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
@@ -280,6 +310,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
+        auth_handler: A,
         rt: runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -330,8 +361,9 @@ where
                         let db = handler.inner.db.clone();
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
+                        let auth_handler = auth_handler.clone();
                         let rt2 = rt.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, rt2));
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
@@ -457,7 +489,7 @@ impl Node {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
+        Ticket::new(hash, self.peer_id(), addrs, None)
     }
 
     /// Aborts the node.
@@ -585,12 +617,18 @@ impl RpcHandler {
         let data_sources = iroh_bytes::provider::create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = iroh_bytes::provider::collection::create_collection(
+        let (db, hash) = iroh_bytes::provider::collection::create_collection(
             data_sources,
             Progress::new(progress),
         )
         .await?;
         self.inner.db.union_with(db);
+
+        if let Err(e) = self.inner.events.send(Event::ByteProvide(
+            iroh_bytes::provider::Event::CollectionAdded { hash },
+        )) {
+            warn!("failed to send CollectionAdded event: {:?}", e);
+        };
 
         Ok(())
     }
@@ -699,6 +737,9 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
+    use futures::StreamExt;
+    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -727,5 +768,59 @@ mod tests {
         let ticket = node.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_node_add_collection_event() -> Result<()> {
+        let db = Database::from(HashMap::new());
+        let node = Builder::with_db(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+
+        let mut events = node.subscribe();
+        let provide_handle = tokio::spawn(async move {
+            while let Ok(msg) = events.recv().await {
+                if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
+                    msg
+                {
+                    return Some(hash);
+                }
+            }
+            None
+        });
+
+        let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+            let mut stream = node
+                .controller()
+                .server_streaming(ProvideRequest {
+                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                })
+                .await?;
+
+            while let Some(item) = stream.next().await {
+                match item? {
+                    ProvideProgress::AllDone { hash } => {
+                        return Ok(hash);
+                    }
+                    ProvideProgress::Abort(e) => {
+                        bail!("Error while adding data: {e}");
+                    }
+                    _ => {}
+                }
+            }
+            bail!("stream ended without providing data");
+        })
+        .await
+        .context("timeout")?
+        .context("get failed")?;
+
+        let event_hash = provide_handle.await?.expect("missing collection event");
+        assert_eq!(got_hash, event_hash);
+
+        Ok(())
     }
 }

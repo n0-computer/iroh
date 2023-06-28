@@ -101,6 +101,7 @@ impl ProbePlan {
     pub fn has_https_probes(&self) -> bool {
         self.keys().any(|k| k.ends_with("https"))
     }
+
     /// Generates the probe plan for a `DerpMap`, given the most recent report and
     /// whether IPv6 is configured on an interface.
     pub fn new(dm: &DerpMap, if_state: &interfaces::State, last: Option<&Report>) -> ProbePlan {

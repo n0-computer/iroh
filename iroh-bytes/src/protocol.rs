@@ -1,5 +1,7 @@
 //! Protocol for communication between provider and client.
+use std::fmt::{self, Display};
 use std::io;
+use std::str::FromStr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
@@ -31,13 +33,77 @@ impl Handshake {
     }
 }
 
+/// Maximum size of a request token, matches a browser cookie max size:
+/// https://datatracker.ietf.org/doc/html/rfc2109#section-6.3
+const MAX_REQUEST_TOKEN_SIZE: usize = 4096;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
+/// A Request token is an opaque byte sequence associated with a single request.
+/// Applications can use request tokens to implement request authorization,
+/// user association, etc.
+pub struct RequestToken {
+    bytes: Bytes,
+}
+
+impl RequestToken {
+    pub fn new(bytes: impl Into<Bytes>) -> Result<Self> {
+        let bytes: Bytes = bytes.into();
+        ensure!(
+            bytes.len() < MAX_REQUEST_TOKEN_SIZE,
+            "request token is too large"
+        );
+        Ok(Self { bytes })
+    }
+
+    /// Returns a reference the token bytes.
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.bytes
+    }
+}
+
+impl FromStr for RequestToken {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        RequestToken::new(bytes)
+    }
+}
+
+/// Serializes to base32.
+impl Display for RequestToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut text = data_encoding::BASE32_NOPAD.encode(&self.bytes);
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
 /// A request to the provider
 pub enum Request {
     /// A get request for a blob or collection
     Get(GetRequest),
     /// A get request that allows the receiver to create a collection
-    CustomGet(Bytes),
+    CustomGet(CustomGetRequest),
+}
+
+impl Request {
+    pub fn token(&self) -> Option<&RequestToken> {
+        match self {
+            Request::Get(get) => get.token(),
+            Request::CustomGet(get) => get.token.as_ref(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+/// A get request that allows the receiver to create a collection
+/// Custom request handlers will receive this struct destructured into
+/// handler arguments
+pub struct CustomGetRequest {
+    pub token: Option<RequestToken>,
+    pub data: Bytes,
 }
 
 /// Currently all requests are get requests. But that won't always be the case.
@@ -54,18 +120,25 @@ pub struct GetRequest {
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
+    /// Optional Request token
+    token: Option<RequestToken>,
 }
 
 impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
-        Self { hash, ranges }
+        Self {
+            hash,
+            ranges,
+            token: None,
+        }
     }
 
     /// Request a collection and all its children
     pub fn all(hash: Hash) -> Self {
         Self {
             hash,
+            token: None,
             ranges: RangeSpecSeq::all(),
         }
     }
@@ -74,8 +147,17 @@ impl GetRequest {
     pub fn single(hash: Hash) -> Self {
         Self {
             hash,
+            token: None,
             ranges: RangeSpecSeq::new([RangeSet2::all()]),
         }
+    }
+
+    pub fn with_token(self, token: Option<RequestToken>) -> Self {
+        Self { token, ..self }
+    }
+
+    pub fn token(&self) -> Option<&RequestToken> {
+        self.token.as_ref()
     }
 }
 
