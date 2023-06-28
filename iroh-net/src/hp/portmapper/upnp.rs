@@ -12,7 +12,7 @@ use igd::aio as aigd;
 const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
 
 /// Maximum duration a UPnP search can take before timing out.
-const SEARCH_TIMEOUT: Duration = Duration::from_millis(1000);
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 

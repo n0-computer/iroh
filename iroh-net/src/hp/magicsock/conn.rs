@@ -255,6 +255,8 @@ impl Conn {
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
 
+        let port_mapper = portmapper::Client::new().await;
+
         let Options {
             port,
             on_endpoints,
@@ -269,8 +271,7 @@ impl Conn {
         let port = pconn4.port();
 
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails.
-        let maybe_non_zero_port = port.try_into().ok();
-        let port_mapper = portmapper::Client::new(maybe_non_zero_port).await;
+        // let maybe_non_zero_port = port.try_into().ok();
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 

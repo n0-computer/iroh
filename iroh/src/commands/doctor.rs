@@ -198,7 +198,7 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::new(None).await;
+    let port_mapper = hp::portmapper::Client::new().await;
     let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = stun_host
@@ -609,19 +609,26 @@ async fn accept(
 }
 
 async fn port_map(local_port: NonZeroU16) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::new(Some(local_port)).await;
+    let port_mapper = portmapper::Client::new().await;
     let mut watcher = port_mapper.watch_external_address();
-    // wait for the mapping to be ready
-    watcher.changed().await.unwrap();
-    match *watcher.borrow() {
-        Some(address) => {
-            println!("Port mapping ready: {address}");
-        }
-        None => anyhow::bail!("No port mapping found"),
+    port_mapper
+        .update_local_port(Some(local_port))
+        .expect("service is running");
+
+    // wait for the mapping to be ready, or timeout waiting for a change.
+    match tokio::time::timeout(Duration::from_secs(10), watcher.changed()).await {
+        Ok(Ok(_)) => match *watcher.borrow() {
+            Some(address) => {
+                println!("Port mapping ready: {address}");
+                // Ensure the port mapper remains alive until the end until the end
+                drop(port_mapper);
+                Ok(())
+            }
+            None => anyhow::bail!("No port mapping found"),
+        },
+        Ok(Err(_recv_err)) => anyhow::bail!("Service dropped. This is a bug"),
+        Err(_) => anyhow::bail!("Timed out waiting for a port mapping"),
     }
-    // Ensure the port mapper remains alive until the end until the end
-    drop(port_mapper);
-    Ok(())
 }
 
 fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {

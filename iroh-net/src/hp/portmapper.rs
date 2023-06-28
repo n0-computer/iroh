@@ -11,7 +11,7 @@ use tokio::{
     task,
 };
 use tokio_stream::wrappers;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
 
@@ -63,10 +63,10 @@ pub struct Client {
 
 impl Client {
     /// Create a new port mapping client.
-    pub async fn new(local_port: Option<NonZeroU16>) -> Self {
+    pub async fn new() -> Self {
         let (service_tx, service_rx) = mpsc::channel(4);
 
-        let (mut service, watcher) = Service::new(local_port, service_rx);
+        let (mut service, watcher) = Service::new(service_rx);
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
@@ -104,6 +104,7 @@ impl Client {
     /// Update the local port.
     ///
     /// A value of `None` will invalidate any active mapping and deactivate port mapping.
+    /// This can fail if communicating with the port-mapping service fails.
     pub fn update_local_port(&self, local_port: Option<NonZeroU16>) -> Result<()> {
         self.service_tx
             .try_send(Message::UpdateLocalPort { local_port })
@@ -172,6 +173,7 @@ impl CurrentMapping {
     /// Updates the mapping, informing of any changes to the external address. The old mapping is
     /// returned.
     fn update(&mut self, mapping: Option<upnp::Mapping>) -> Option<upnp::Mapping> {
+        trace!("New port mapping {mapping:?}");
         let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
         let old_mapping = std::mem::replace(&mut self.mapping, mapping);
         self.address_tx.send_if_modified(|old_addr| {
@@ -189,13 +191,10 @@ impl CurrentMapping {
 }
 
 impl Service {
-    fn new(
-        local_port: Option<NonZeroU16>,
-        rx: mpsc::Receiver<Message>,
-    ) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
+    fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new(None);
         let service = Service {
-            local_port,
+            local_port: None,
             rx,
             last_upnp_gateway_addr: None,
             current_mapping,
@@ -217,6 +216,7 @@ impl Service {
     }
 
     async fn run(mut self) -> Result<()> {
+        debug!("Portmap starting");
         loop {
             tokio::select! {
                 msg = self.rx.recv() => {
@@ -230,7 +230,7 @@ impl Service {
                         }
                     }
                 }
-                mapping_result = self.mapping_task.as_mut().expect("is some"), if self.mapping_task.is_some() => {
+                mapping_result = util::MaybeFuture{inner: self.mapping_task.as_mut()} => {
                     // regardless of outcome, the task is finished, clear it
                     self.mapping_task = None;
                     // there isn't really a way to react to a join error here. Flatten it to make
@@ -241,7 +241,7 @@ impl Service {
                     };
                     self.on_mapping_result(result).await;
                 }
-                probe_result = &mut self.probing_task.as_mut().expect("is some").0, if self.probing_task.is_some() => {
+                probe_result = util::MaybeFuture{inner: self.probing_task.as_mut().map(|(fut, _rec)| fut)} => {
                     // retrieve the receivers and clear the task.
                     let receivers = self.probing_task.take().expect("is some").1;
                     let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
@@ -265,7 +265,9 @@ impl Service {
                     let _ = tx.send(Err(e.clone()));
                 }
             }
-            Ok(_) => todo!(),
+            Ok(result) => {
+                debug!("{result:?}")
+            },
         }
     }
 
@@ -274,11 +276,12 @@ impl Service {
             Ok(mapping) => {
                 let old_mapping = self.current_mapping.update(Some(mapping));
             }
-            Err(_) => todo!(),
+            Err(e) => debug!("Failed to get a port mapping {e}"),
         }
     }
 
     async fn handle_msg(&mut self, msg: Message) {
+        debug!("received message {msg:?}");
         match msg {
             Message::UpdateLocalPort { local_port } => self.update_local_port(local_port).await,
             Message::Probe { result_tx } => self.probe_request(result_tx),
@@ -317,6 +320,7 @@ impl Service {
             // Start a new mapping task to account for the new port if necessary.
 
             if let Some(local_port) = self.local_port {
+                debug!("Getting a port mapping for port {local_port}");
                 let handle = tokio::spawn(upnp::Mapping::new(
                     std::net::Ipv4Addr::LOCALHOST,
                     local_port,
@@ -336,13 +340,27 @@ impl Service {
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
-                let probe_is_valid = todo!();
-                if probe_is_valid {
-                    // send the result based on the last stored value
-                } else {
-                    inc!(Metrics::ProbesDone);
-                    // start a probing Task
-                }
+                // let probe_is_valid = todo!();
+                // if probe_is_valid {
+                //     // send the result based on the last stored value
+                // } else {
+                //     inc!(Metrics::ProbesDone);
+                //     // start a probing Task
+                // }
+                let handle = tokio::spawn(async {
+                    let result = upnp::probe_available().await;
+                    match result {
+                        Ok(x) => {
+                            debug!("Found upnp gateway at {x}");
+                            FullProbe { f: 1 }
+                        }
+                        Err(e) => {
+                            debug!("upnp probe failed {e}");
+                            FullProbe { f: 0 }
+                        }
+                    }
+                });
+                self.probing_task = Some((handle.into(), vec![result_tx]));
             }
         }
     }
