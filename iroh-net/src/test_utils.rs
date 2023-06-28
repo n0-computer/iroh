@@ -1,7 +1,5 @@
 //! Internal utilities to support testing.
 
-use std::future::Future;
-
 use tokio::runtime::RuntimeFlavor;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -46,16 +44,30 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
     testing_subscriber().set_default()
 }
 
-/// Invoke the future with test logging configured.
+// /// Invoke the future with test logging configured.
+// ///
+// /// This can be used to execute any future which uses tracing for logging, it sets up the
+// /// logging as [`setup_logging`] does but in a way which will work for both single and
+// /// multi-threaded tokio runtimes.
+// pub(crate) async fn with_logging<F: Future>(fut: F) -> F::Output {
+//     use tracing_futures::WithSubscriber;
+//     fut.with_subscriber(testing_subscriber()).await
+// }
+
+/// Setups up a global logger.
 ///
-/// This can be used to execute any future which uses tracing for logging, it sets up the
-/// logging as [`setup_logging`] does but in a way which will work for both single and
-/// multi-threaded tokio runtimes.
-pub(crate) async fn with_logging<F: Future>(fut: F) -> F::Output {
-    use tracing_futures::WithSubscriber;
-    fut.with_subscriber(testing_subscriber()).await
-    // let _guard = testing_subscriber().set_default();
-    // fut.await
+/// This is needed if you have a multi-threaded test runtime.  It is sad however, we'd
+/// really like to have `with_logging()` above work but it doesn't.
+///
+/// As opposed to [`setup_logging`] this does not log unless the RUST_LOG environment
+/// variable is set and the log output is not captured together with the rest of the test
+/// output.
+pub(crate) fn setup_global_logging() {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(EnvFilter::from_default_env())
+        .try_init()
+        .ok();
 }
 
 /// Returns the a [`tracing::Subscriber`] configured for our tests.

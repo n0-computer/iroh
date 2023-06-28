@@ -2436,7 +2436,7 @@ mod tests {
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
             stun,
         },
-        test_utils::{setup_logging, with_logging},
+        test_utils::{setup_global_logging, setup_logging},
         tls,
     };
 
@@ -2765,35 +2765,35 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        with_logging(async move {
-            let devices = Devices {
-                stun_ip: "127.0.0.1".parse()?,
-            };
+        setup_global_logging();
+        let devices = Devices {
+            stun_ip: "127.0.0.1".parse()?,
+        };
 
-            let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+        let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
 
-            let m1 = MagicStack::new(derp_map.clone()).await?;
-            let m2 = MagicStack::new(derp_map.clone()).await?;
+        let m1 = MagicStack::new(derp_map.clone()).await?;
+        let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
-            // Wait for magicsock to be told about peers from mesh_stacks.
-            let m1t = m1.clone();
-            let m2t = m2.clone();
-            time::timeout(Duration::from_secs(10), async move {
-                loop {
-                    let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                    let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                    if ab && ba {
-                        break;
-                    }
+        // Wait for magicsock to be told about peers from mesh_stacks.
+        let m1t = m1.clone();
+        let m2t = m2.clone();
+        time::timeout(Duration::from_secs(10), async move {
+            loop {
+                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                if ab && ba {
+                    break;
                 }
-            })
-            .await
-            .context("failed to connect peers")?;
+            }
+        })
+        .await
+        .context("failed to connect peers")?;
 
-            // msg from  m2 -> m1
-            macro_rules! roundtrip {
+        // msg from  m2 -> m1
+        macro_rules! roundtrip {
             ($a:expr, $b:expr, $msg:expr) => {
                 let a = $a.clone();
                 let b = $b.clone();
@@ -2913,77 +2913,74 @@ mod tests {
             };
         }
 
-            for i in 0..10 {
-                println!("-- round {}", i + 1);
-                roundtrip!(m1, m2, b"hello m1");
-                roundtrip!(m2, m1, b"hello m2");
+        for i in 0..10 {
+            println!("-- round {}", i + 1);
+            roundtrip!(m1, m2, b"hello m1");
+            roundtrip!(m2, m1, b"hello m2");
 
-                println!("-- larger data");
-                let mut data = vec![0u8; 10 * 1024];
-                rand::thread_rng().fill_bytes(&mut data);
-                roundtrip!(m1, m2, data);
-            }
+            println!("-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m2, m1, data);
+            roundtrip!(m1, m2, data);
+        }
+        let mut data = vec![0u8; 10 * 1024];
+        rand::thread_rng().fill_bytes(&mut data);
+        roundtrip!(m2, m1, data);
 
-            println!("cleaning up");
-            cleanup().await;
-            cleanup_mesh();
-            Ok(())
-        }).await
+        println!("cleaning up");
+        cleanup().await;
+        cleanup_mesh();
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        with_logging(async move {
-            let devices = Devices {
-                stun_ip: "127.0.0.1".parse()?,
-            };
+        setup_global_logging();
+        let devices = Devices {
+            stun_ip: "127.0.0.1".parse()?,
+        };
 
-            for _ in 0..10 {
-                let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
-                println!("setting up magic stack");
-                let m1 = MagicStack::new(derp_map.clone()).await?;
-                let m2 = MagicStack::new(derp_map.clone()).await?;
+        for _ in 0..10 {
+            let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+            println!("setting up magic stack");
+            let m1 = MagicStack::new(derp_map.clone()).await?;
+            let m2 = MagicStack::new(derp_map.clone()).await?;
 
-                let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
-                // Wait for magicsock to be told about peers from mesh_stacks.
-                println!("waiting for connection");
-                let m1t = m1.clone();
-                let m2t = m2.clone();
-                time::timeout(Duration::from_secs(10), async move {
-                    loop {
-                        let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                        let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                        if ab && ba {
-                            break;
-                        }
+            // Wait for magicsock to be told about peers from mesh_stacks.
+            println!("waiting for connection");
+            let m1t = m1.clone();
+            let m2t = m2.clone();
+            time::timeout(Duration::from_secs(10), async move {
+                loop {
+                    let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                    let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                    if ab && ba {
+                        break;
                     }
-                })
-                .await
-                .context("failed to connect peers")?;
+                }
+            })
+            .await
+            .context("failed to connect peers")?;
 
-                println!("closing endpoints");
-                m1.quic_ep.close(0u32.into(), b"done");
-                m2.quic_ep.close(0u32.into(), b"done");
+            println!("closing endpoints");
+            m1.quic_ep.close(0u32.into(), b"done");
+            m2.quic_ep.close(0u32.into(), b"done");
 
-                println!("closing connection m1");
-                m1.conn.close().await?;
-                assert!(m1.conn.is_closed());
+            println!("closing connection m1");
+            m1.conn.close().await?;
+            assert!(m1.conn.is_closed());
 
-                println!("closing connection m2");
-                m2.conn.close().await?;
-                assert!(m2.conn.is_closed());
+            println!("closing connection m2");
+            m2.conn.close().await?;
+            assert!(m2.conn.is_closed());
 
-                println!("cleaning up");
-                cleanup();
-                cleanup_mesh();
-            }
-            Ok(())
-        })
-        .await
+            println!("cleaning up");
+            cleanup();
+            cleanup_mesh();
+        }
+        Ok(())
     }
 
     #[tokio::test]
