@@ -332,6 +332,15 @@ impl MagicEndpoint {
         self.conn.close().await?;
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn conn(&self) -> &Conn {
+        &self.conn
+    }
+    #[cfg(test)]
+    pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
+        &self.endpoint
+    }
 }
 
 /// Accept an incoming connection and extract the client-provided [`PeerId`] and ALPN protocol.
