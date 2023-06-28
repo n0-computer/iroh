@@ -99,13 +99,13 @@ pub struct Report {
     /// None means not checked.
     pub pcp: Option<bool>,
     /// or 0 for unknown
-    pub preferred_derp: usize,
+    pub preferred_derp: u16,
     /// keyed by DERP Region ID
-    pub region_latency: HashMap<usize, Duration>,
+    pub region_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v4_latency: HashMap<usize, Duration>,
+    pub region_v4_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v6_latency: HashMap<usize, Duration>,
+    pub region_v6_latency: HashMap<u16, Duration>,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
@@ -298,7 +298,7 @@ async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> 
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Result<bool> {
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
     let preferred_derp = if preferred_derp.is_none()
@@ -1031,7 +1031,7 @@ fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
     false
 }
 
-fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duration) {
+fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
     let prev = m.entry(region_id).or_insert(d);
     if d < *prev {
         *prev = d;
@@ -1049,7 +1049,7 @@ fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
     None
 }
 
-fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
+fn max_duration_value(m: &HashMap<u16, Duration>) -> Duration {
     m.values().max().cloned().unwrap_or_default()
 }
 
@@ -1918,7 +1918,7 @@ mod tests {
             let mut report = Report::default();
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid derp server key");
-                let region_id: usize = s[1..].parse().unwrap();
+                let region_id: u16 = s[1..].parse().unwrap();
                 report
                     .region_latency
                     .insert(region_id, Duration::from_secs(d));
@@ -1935,7 +1935,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredDERP on final step
-            want_derp: usize,
+            want_derp: u16,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

@@ -625,7 +625,7 @@ impl Endpoint {
 
                 if !self.pending_cli_pings.is_empty() {
                     let ep = sp.to;
-                    let region_id = usize::from(ep.port());
+                    let region_id = ep.port();
                     // FIXME: this creates a deadlock as it needs to interact with the run loop in the conn::Actor
                     // let region_code = self.get_derp_region(region_id).await.map(|r| r.region_code);
 

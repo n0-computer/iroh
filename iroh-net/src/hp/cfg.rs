@@ -81,7 +81,7 @@ pub struct NetInfo {
     /// connected to multiple DERP servers (to send to other nodes)
     /// but PreferredDERP is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: usize,
+    pub preferred_derp: u16,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,
@@ -116,7 +116,7 @@ impl NetInfo {
 pub enum LinkType {
     Wired,
     Wifi,
-    //LTE, 4G, 3G, etc
+    /// LTE, 4G, 3G, etc
     Mobile,
 }
 
@@ -137,7 +137,7 @@ pub struct PingResult {
     /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
     pub endpoint: Option<SocketAddr>,
     /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
-    pub derp_region_id: Option<usize>,
+    pub derp_region_id: Option<u16>,
     /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
     pub derp_region_code: Option<String>,
     /// Whether the ping request error is due to it being a ping to the local node.

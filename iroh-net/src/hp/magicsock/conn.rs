@@ -210,7 +210,7 @@ impl Inner {
     pub(super) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         match &*self.derp_map.read().await {
             None => None,
-            Some(ref derp_map) => derp_map.regions.get(&usize::from(region)).cloned(),
+            Some(ref derp_map) => derp_map.regions.get(&region).cloned(),
         }
     }
 
@@ -1524,7 +1524,7 @@ impl Actor {
             ni.preferred_derp = self.pick_derp_fallback().await;
         }
 
-        if !self.set_nearest_derp(ni.preferred_derp.try_into()?).await {
+        if !self.set_nearest_derp(ni.preferred_derp).await {
             ni.preferred_derp = 0;
         }
 
@@ -1557,7 +1557,7 @@ impl Actor {
                 .as_ref()
                 .expect("already checked")
                 .regions
-                .get(&usize::from(derp_num))
+                .get(&derp_num)
             {
                 Some(dr) => {
                     info!("home is now derp-{} ({})", derp_num, dr.region_code);
@@ -1580,7 +1580,7 @@ impl Actor {
     /// Returns a non-zero but deterministic DERP node to
     /// connect to. This is only used if netcheck couldn't find the nearest one
     /// For instance, if UDP is blocked and thus STUN latency checks aren't working
-    async fn pick_derp_fallback(&self) -> usize {
+    async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;
             if derp_map.is_none() {
@@ -1609,7 +1609,7 @@ impl Actor {
 
         let my_derp = self.conn.my_derp();
         if my_derp > 0 {
-            return my_derp.into();
+            return my_derp;
         }
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
