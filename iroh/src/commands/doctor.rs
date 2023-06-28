@@ -609,12 +609,18 @@ async fn accept(
 }
 
 async fn port_map(local_port: NonZeroU16) -> anyhow::Result<()> {
-    let mut port_mapper = portmapper::Service::new(Some(local_port));
-    let external_address = port_mapper
-        .get_cached_mapping_or_start_creating_one()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("No port mapping found"))?;
-    println!("Port mapping ready: {external_address}");
+    let port_mapper = portmapper::Client::new(Some(local_port)).await;
+    let mut watcher = port_mapper.watch_external_address();
+    // wait for the mapping to be ready
+    watcher.changed().await.unwrap();
+    match *watcher.borrow() {
+        Some(address) => {
+            println!("Port mapping ready: {address}");
+        }
+        None => anyhow::bail!("No port mapping found"),
+    }
+    // Ensure the port mapper remains alive until the end until the end
+    drop(port_mapper);
     Ok(())
 }
 

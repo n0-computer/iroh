@@ -52,6 +52,8 @@ enum Message {
 #[derive(Debug, Clone)]
 pub struct Client {
     /// A watcher over the most recent external address obtained from port mapping.
+    ///
+    /// See [`watch::Receiver`].
     port_mapping: watch::Receiver<Option<SocketAddrV4>>,
     /// Channel used to communicate with the port mapping service.
     service_tx: mpsc::Sender<Message>,
@@ -63,20 +65,16 @@ impl Client {
     /// Create a new port mapping client.
     pub async fn new(local_port: Option<NonZeroU16>) -> Self {
         let (service_tx, service_rx) = mpsc::channel(4);
-        let (current_mapping_tx, current_mapping_rx) = watch::channel(None);
 
-        let service = Service {
-            local_port,
-            last_upnp_gateway_addr: None,
-            rx: service_rx,
-            current_external_address: current_mapping_tx,
-        };
+        let (mut service, watcher) = Service::new(local_port, service_rx);
 
-        let handle =
-            util::CancelOnDrop::new("portmap_service", tokio::spawn(async {}).abort_handle());
+        let handle = util::CancelOnDrop::new(
+            "portmap_service",
+            tokio::spawn(async move { service.run().await }).abort_handle(),
+        );
 
         let client = Client {
-            port_mapping: current_mapping_rx,
+            port_mapping: watcher,
             service_tx,
             service_handle: std::sync::Arc::new(handle),
         };
@@ -118,15 +116,6 @@ impl Client {
     }
 }
 
-enum TaskState<Output> {
-    InProgress {
-        task: task::JoinHandle<Result<Output>>,
-    },
-    Ready {
-        output: Output,
-    },
-}
-
 #[derive(Debug)]
 struct FullProbe {
     f: usize,
@@ -154,8 +143,6 @@ pub struct Service {
         util::AbortingJoinHandle<FullProbe>,
         Vec<oneshot::Sender<StrResult<ProbeResult>>>,
     )>,
-    /// A [`watch::Sender`] to inform the latest external address obtained via port mapping.
-    current_external_address: watch::Sender<Option<SocketAddrV4>>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -202,8 +189,23 @@ impl CurrentMapping {
 }
 
 impl Service {
+    fn new(
+        local_port: Option<NonZeroU16>,
+        rx: mpsc::Receiver<Message>,
+    ) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
+        let (current_mapping, watcher) = CurrentMapping::new(None);
+        let service = Service {
+            local_port,
+            rx,
+            last_upnp_gateway_addr: None,
+            current_mapping,
+            mapping_task: None,
+            probing_task: None,
+        };
+
+        (service, watcher)
+    }
     /// Clears the current mapping and releases it if necessary.
-    ///
     async fn invalidate_mapping(&mut self, release: ReleaseMapping) {
         if let Some(old_mapping) = self.current_mapping.update(None) {
             if release == ReleaseMapping::Yes {
@@ -214,12 +216,14 @@ impl Service {
         }
     }
 
-    async fn run(&mut self) -> Result<()> {
+    async fn run(mut self) -> Result<()> {
         loop {
             tokio::select! {
                 msg = self.rx.recv() => {
                     match msg {
-                        Some(msg) => self.handle_msg(msg).await,
+                        Some(msg) => {
+                            self.handle_msg(msg).await;
+                        },
                         None => {
                             debug!("portmap service channel dropped. Likely shutting down.");
                             break;
@@ -258,16 +262,21 @@ impl Service {
                 // inform the receivers about the error
                 let e: String = e.to_string();
                 for tx in receivers {
-                    // ignore the error. We don't really care if the requester has dropped the
-                    // other side of the channel.
                     let _ = tx.send(Err(e.clone()));
                 }
             }
-            Ok(full_probe) => todo!(),
+            Ok(_) => todo!(),
         }
     }
 
-    async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {}
+    async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {
+        match result {
+            Ok(mapping) => {
+                let old_mapping = self.current_mapping.update(Some(mapping));
+            }
+            Err(_) => todo!(),
+        }
+    }
 
     async fn handle_msg(&mut self, msg: Message) {
         match msg {
@@ -285,7 +294,7 @@ impl Service {
         if local_port != self.local_port {
             let old_port = std::mem::replace(&mut self.local_port, local_port);
 
-            // Clear the current mapping task if any
+            // Clear the current mapping task if any.
 
             let dropped_task = self.mapping_task.take();
             // Check if the dropped task had finished to reduce log noise.
@@ -300,7 +309,12 @@ impl Service {
                 )
             }
 
-            // Start a new mapping task to account for the new port if necessary
+            // Since the port has changed, the current mapping is no longer valid and should be
+            // release.
+
+            self.invalidate_mapping(ReleaseMapping::Yes).await;
+
+            // Start a new mapping task to account for the new port if necessary.
 
             if let Some(local_port) = self.local_port {
                 let handle = tokio::spawn(upnp::Mapping::new(
@@ -309,15 +323,6 @@ impl Service {
                 ));
                 self.mapping_task = Some(handle.into());
             }
-
-            // Since the port has changed, the current mapping is no longer valid and should be
-            // release.
-
-            self.invalidate_mapping(ReleaseMapping::Yes).await;
-
-            // TODO(@divma): invalidating the mappings. Also, when do we inform of the new address?
-            // Doing it now: will produce a None report on the other side. and later a Some() (or
-            // none if it fails)
         }
     }
 
@@ -327,10 +332,17 @@ impl Service {
     /// result. If no probe is underway, a result can be returned immediately if it's still
     /// considered valid. Otherwise, a new probe task will be started.
     fn probe_request(&mut self, result_tx: oneshot::Sender<StrResult<ProbeResult>>) {
+        inc!(Metrics::ProbeRequests);
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
-                // Decide if the last probe is still valid
+                let probe_is_valid = todo!();
+                if probe_is_valid {
+                    // send the result based on the last stored value
+                } else {
+                    inc!(Metrics::ProbesDone);
+                    // start a probing Task
+                }
             }
         }
     }
@@ -388,62 +400,52 @@ impl Service {
         }
     }
 
-    /// Quickly returns with our current cached portmapping, if any.
-    /// If there's not one, it starts up a background goroutine to create one.
-    /// If the background goroutine ends up creating one, the `on_change` hook registered with the
-    /// `Client::new` constructor (if any) will fire.
-    // TODO(@divagant-martian): fix docs. Also, this will probably only ever return ipv4 addresses.
-    pub async fn get_cached_mapping_or_start_creating_one(&mut self) -> Option<SocketAddr> {
-        // TODO(@divagant-martian): this has a lock ensure just one mapping attempt is underway
-        if let Some(mapping) = &mut self.current_external_address {
-            let now = Instant::now();
-            if now <= mapping.good_until() {
-                debug!("renewing mapping {mapping}");
-                // TODO(@divagant-martian): this would go in a goroutine
-                if now >= mapping.renew_after() {
-                    inc!(Metrics::UpnpPortmapAttempts);
-                    if let Err(e) = mapping.renew().await {
-                        inc!(Metrics::UpnpPortmapFailed);
-                        debug!("failed to renew port mapping {mapping}: {e}");
+    /*
+        /// Quickly returns with our current cached portmapping, if any.
+        /// If there's not one, it starts up a background goroutine to create one.
+        /// If the background goroutine ends up creating one, the `on_change` hook registered with the
+        /// `Client::new` constructor (if any) will fire.
+        // TODO(@divagant-martian): fix docs. Also, this will probably only ever return ipv4 addresses.
+        pub async fn get_cached_mapping_or_start_creating_one(&mut self) -> Option<SocketAddr> {
+            // TODO(@divagant-martian): this has a lock ensure just one mapping attempt is underway
+            if let Some(mapping) = &mut self.current_external_address {
+                let now = Instant::now();
+                if now <= mapping.good_until() {
+                    debug!("renewing mapping {mapping}");
+                    // TODO(@divagant-martian): this would go in a goroutine
+                    if now >= mapping.renew_after() {
+                        inc!(Metrics::UpnpPortmapAttempts);
+                        if let Err(e) = mapping.renew().await {
+                            inc!(Metrics::UpnpPortmapFailed);
+                            debug!("failed to renew port mapping {mapping}: {e}");
+                        }
                     }
-                }
-                // port mapping is still good regardless of renewal
-                Some(mapping.external().into())
-            } else {
-                // TODO(@divagant-martian): tailscale returns nil without clearing the mapping
-                None
-            }
-        } else if let Some(local_port) = self.local_port {
-            inc!(Metrics::UpnpPortmapAttempts);
-            match upnp::Mapping::new(std::net::Ipv4Addr::LOCALHOST, local_port).await {
-                Ok(mapping) => {
-                    debug!("upnp port mapping created {mapping}");
-                    let external = mapping.external().into();
-                    self.current_external_address = Some(mapping);
-                    Some(external)
-                }
-                Err(e) => {
-                    inc!(Metrics::UpnpPortmapFailed);
-                    debug!("Failed to create upnp port mapping: {e}");
+                    // port mapping is still good regardless of renewal
+                    Some(mapping.external().into())
+                } else {
+                    // TODO(@divagant-martian): tailscale returns nil without clearing the mapping
                     None
                 }
+            } else if let Some(local_port) = self.local_port {
+                inc!(Metrics::UpnpPortmapAttempts);
+                match upnp::Mapping::new(std::net::Ipv4Addr::LOCALHOST, local_port).await {
+                    Ok(mapping) => {
+                        debug!("upnp port mapping created {mapping}");
+                        let external = mapping.external().into();
+                        self.current_external_address = Some(mapping);
+                        Some(external)
+                    }
+                    Err(e) => {
+                        inc!(Metrics::UpnpPortmapFailed);
+                        debug!("Failed to create upnp port mapping: {e}");
+                        None
+                    }
+                }
+            } else {
+                debug!("No valid local port provided to create a mapping");
+                None
             }
-        } else {
-            debug!("No valid local port provided to create a mapping");
-            None
         }
-    }
-
-    pub fn has_mapping(&self) -> bool {
-        self.current_external_address
-            .as_ref()
-            .filter(|mapping| Instant::now() <= mapping.good_until())
-            .is_some()
-    }
-
-    pub fn note_network_down(&mut self) {
-        self.current_external_address = None;
-    }
 
     pub async fn close(&mut self) {
         // TODO(@divagant-martian):
@@ -455,4 +457,5 @@ impl Service {
         // The only place this is ever used is to prevent closing twice...
         let _ = self.invalidate_mapping().await;
     }
+    */
 }
