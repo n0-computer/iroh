@@ -24,7 +24,6 @@ license-files = [
 [advisories]
 ignore = [
        "RUSTSEC-2020-0168", # mach is unmaintained
-       "RUSTSEC-2020-0071", # time advisory, see #1035
 ]
 
 [sources]
