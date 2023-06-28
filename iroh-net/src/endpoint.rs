@@ -128,7 +128,7 @@ fn make_server_config(
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
 ) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(&keypair, alpn_protocols, keylog)?;
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
     Ok(server_config)
