@@ -1681,7 +1681,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures",
- "indexmap",
+ "indexmap 1.9.3",
  "iroh-net",
  "postcard",
  "quinn",
