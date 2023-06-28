@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = MagicEndpoint::builder()
         .keypair(keypair)
         .alpns(vec![args.alpn.to_string().into_bytes()])
-        .derp_map(derp_map)
+        .derp_map(Some(derp_map))
         .bind(args.bind_address)
         .await?;
 

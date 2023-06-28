@@ -25,6 +25,7 @@ use iroh_bytes::{
     runtime,
     util::{Hash, Progress},
 };
+use iroh_net::endpoint::MagicEndpoint;
 use iroh_net::{
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
@@ -205,46 +206,26 @@ where
     pub async fn spawn(self) -> Result<Node> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
-        let tls_server_config = tls::make_server_config(
-            &self.keypair,
-            PROTOCOLS.iter().map(|p| p.to_vec()).collect(),
-            self.keylog,
-        )?;
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+
+        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
 
-        server_config
-            .transport_config(Arc::new(transport_config))
-            .concurrent_connections(MAX_CONNECTIONS);
-
-        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
-        let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
-            port: self.bind_addr.port(),
-            private_key: self.keypair.secret().clone().into(),
-            on_endpoints: Some(Box::new(move |eps| {
+        let endpoint = MagicEndpoint::builder()
+            .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
+            .keylog(self.keylog)
+            .derp_map(self.derp_map)
+            .transport_config(transport_config)
+            .concurrent_connections(MAX_CONNECTIONS)
+            .on_endpoints(Box::new(move |eps| {
                 if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
                     endpoints_update_s.send(()).ok();
                 }
-            })),
-            ..Default::default()
-        })
-        .await?;
-        trace!("created magicsock");
-
-        let derp_map = self.derp_map.unwrap_or_default();
-        conn.set_derp_map(Some(derp_map))
-            .await
-            .context("setting derp map")?;
-
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            Some(server_config),
-            conn.clone(),
-            Arc::new(quinn::TokioRuntime),
-        )?;
+            }))
+            .bind(self.bind_addr)
+            .await?;
 
         trace!("created quinn endpoint");
 
@@ -262,7 +243,7 @@ where
         let rt3 = rt.clone();
         let inner = Arc::new(NodeInner {
             db: self.db,
-            conn,
+            endpoint: endpoint.clone(),
             keypair: self.keypair,
             events,
             controller,
@@ -305,7 +286,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn run(
-        server: quinn::Endpoint,
+        server: MagicEndpoint,
         events: broadcast::Sender<Event>,
         handler: RpcHandler,
         rpc: E,
@@ -316,8 +297,12 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok(addr) = server.local_addr() {
-            debug!("listening at: {addr}");
+        if let Ok((ipv4, ipv6)) = server.local_addr() {
+            debug!(
+                "listening at: {}{}",
+                ipv4,
+                ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+            );
         }
         let cancel_token = handler.inner.cancel_token.clone();
         loop {
@@ -379,7 +364,10 @@ where
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
         let error_code = Closed::ProviderTerminating;
-        server.close(error_code.into(), error_code.reason());
+        server
+            .close(error_code.into(), error_code.reason())
+            .await
+            .ok();
     }
 }
 
@@ -425,7 +413,7 @@ pub struct Node {
 #[derive(Debug)]
 struct NodeInner {
     db: Database,
-    conn: iroh_net::hp::magicsock::Conn,
+    endpoint: MagicEndpoint,
     keypair: Keypair,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
@@ -512,7 +500,7 @@ impl Node {
 
 impl NodeInner {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.conn.local_endpoints().await
+        self.endpoint.local_endpoints().await
     }
 
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
@@ -521,7 +509,7 @@ impl NodeInner {
     }
 
     fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.conn.local_addr()?;
+        let (v4, v6) = self.endpoint.local_addr()?;
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
