@@ -83,6 +83,7 @@ mod tests {
         let info = Hostinfo::default();
         println!("{:#?}", info);
 
+        assert!(!info.git_commit.is_empty());
         assert!(!info.rust_version.is_empty());
     }
 }
