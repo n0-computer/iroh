@@ -80,7 +80,7 @@ impl MagicEndpointBuilder {
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let server_config = make_server_config(
-            keypair,
+            &keypair,
             self.alpn_protocols,
             self.transport_config,
             self.keylog,
@@ -97,7 +97,7 @@ impl MagicEndpointBuilder {
 }
 
 fn make_server_config(
-    keypair: Keypair,
+    keypair: &Keypair,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
