@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -84,7 +84,7 @@ impl MagicEndpointBuilder {
             self.alpn_protocols,
             self.transport_config,
             self.keylog,
-        );
+        )?;
         MagicEndpoint::bind(
             keypair,
             bind_addr,
