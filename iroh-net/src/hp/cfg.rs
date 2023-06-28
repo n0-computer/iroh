@@ -164,8 +164,8 @@ pub struct Node {
     ///
     /// These are populated from STUN results as well as local LAN addresses.
     pub endpoints: Vec<SocketAddr>,
-    /// DERP-in-IP:port ("127.3.3.40:N") endpoint.
+    /// DERP-in-IP:port ("127.3.3.40:N") endpoint. Only stores the `N`.
     ///
     /// If this nodes expected to be reachable via DERP relaying.
-    pub derp: Option<SocketAddr>,
+    pub derp: Option<u16>,
 }

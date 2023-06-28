@@ -2,7 +2,6 @@ use std::{
     collections::VecDeque,
     io::{self, IoSliceMut},
     mem::MaybeUninit,
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -17,7 +16,7 @@ use tracing::{debug, trace, warn};
 use crate::hp::{disco, netcheck, stun};
 
 use super::{
-    conn::{Inner, Network},
+    conn::{Inner, Network, SendAddr},
     rebinding_conn::RebindingUdpConn,
 };
 
@@ -46,7 +45,7 @@ pub(super) enum IpPacket {
     Disco {
         source: [u8; disco::KEY_LEN],
         sealed_box: Bytes,
-        src: SocketAddr,
+        src: SendAddr,
     },
     Forward(NetworkReadResult),
 }
@@ -119,7 +118,7 @@ impl UdpActor {
                                                 IpPacket::Disco {
                                                 source,
                                                 sealed_box: packet.slice_ref(sealed_box),
-                                                src: meta.addr,
+                                                src: SendAddr::Udp(meta.addr),
                                             })
                                             .await
                                             .is_err()

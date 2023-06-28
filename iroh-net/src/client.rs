@@ -8,12 +8,7 @@ use anyhow::{Context, Result};
 use tracing::debug;
 
 use crate::{
-    hp::{
-        self,
-        cfg::{self, DERP_MAGIC_IP},
-        derp::DerpMap,
-        netmap,
-    },
+    hp::{self, cfg, derp::DerpMap, netmap},
     tls::{self, Keypair, PeerId},
 };
 
@@ -114,7 +109,7 @@ pub async fn dial_peer(
                 addresses,
                 key: node_key.clone(),
                 endpoints,
-                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                derp: Some(DEFAULT_DERP_REGION),
             }],
         })
         .await?;

@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
@@ -539,7 +540,7 @@ pub(super) struct DiscoInfo {
     shared_key: key::node::SharedSecret,
 
     /// Tthe src of a ping for `node_key`.
-    last_ping_from: Option<SocketAddr>,
+    last_ping_from: Option<SendAddr>,
 
     /// The last time of a ping for `node_key`.
     last_ping_time: Option<Instant>,
@@ -752,11 +753,11 @@ pub(super) enum ActorMessage {
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     EnqueueCallMeMaybe {
-        derp_addr: SocketAddr,
+        derp_addr: u16,
         endpoint_id: usize,
     },
     SendDiscoMessage {
-        dst: SocketAddr,
+        dst: SendAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
     },
@@ -993,7 +994,10 @@ impl Actor {
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self.peer_map.endpoint_for_ip_port(&meta.addr) {
+        match self
+            .peer_map
+            .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
+        {
             None => {
                 warn!("no peer_map state found for {:?}, skipping", meta.addr);
                 return false;
@@ -1043,7 +1047,7 @@ impl Actor {
             return Vec::new();
         }
         let region_id = dm.region_id;
-        let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
+        let ipp = SendAddr::Derp(region_id);
 
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
@@ -1056,7 +1060,7 @@ impl Actor {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
                     public_key: dm.src.clone(),
-                    derp_addr: Some(ipp),
+                    derp_addr: Some(region_id),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
@@ -1148,7 +1152,7 @@ impl Actor {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
                         self.send_derp(
-                            derp_addr.port(),
+                            derp_addr,
                             public_key,
                             transmits.into_iter().map(|t| t.contents).collect(),
                         );
@@ -1159,7 +1163,7 @@ impl Actor {
                     }
                     Ok((None, Some(derp_addr))) => {
                         self.send_derp(
-                            derp_addr.port(),
+                            derp_addr,
                             public_key.clone(),
                             transmits.into_iter().map(|t| t.contents).collect(),
                         );
@@ -1636,7 +1640,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint_id: usize) {
+    async fn enqueue_call_me_maybe(&mut self, derp_addr: u16, endpoint_id: usize) {
         let endpoint = self.peer_map.by_id(&endpoint_id);
         if endpoint.is_none() {
             warn!(
@@ -1686,7 +1690,7 @@ impl Actor {
             tokio::task::spawn(async move {
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
-                        dst: derp_addr,
+                        dst: SendAddr::Derp(derp_addr),
                         dst_key: public_key,
                         msg,
                     })
@@ -1785,7 +1789,7 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_disco_message(
         &mut self,
-        dst: SocketAddr,
+        dst: SendAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
@@ -1796,7 +1800,7 @@ impl Actor {
         let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, &dst_key);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
-        let is_derp = dst.ip() == DERP_MAGIC_IP;
+        let is_derp = dst.is_derp();
         if is_derp {
             inc!(MagicsockMetrics::SendDiscoDerp);
         } else {
@@ -1842,37 +1846,38 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_addr(
         &mut self,
-        addr: SocketAddr,
+        addr: SendAddr,
         pub_key: Option<&key::node::PublicKey>,
         pkt: Bytes,
     ) -> io::Result<usize> {
-        if addr.ip() != DERP_MAGIC_IP {
-            let transmits = vec![quinn_udp::Transmit {
-                destination: addr,
-                contents: pkt,
-                ecn: None,
-                segment_size: None,
-                src_ip: None, // TODO
-            }];
-            return self.send_raw(addr, transmits).await;
-        }
-
-        match pub_key {
-            None => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "missing pub key for derp route",
-            )),
-            Some(pub_key) => {
-                self.send_derp(addr.port(), pub_key.clone(), vec![pkt]);
-                Ok(1)
+        match addr {
+            SendAddr::Udp(addr) => {
+                let transmits = vec![quinn_udp::Transmit {
+                    destination: addr,
+                    contents: pkt,
+                    ecn: None,
+                    segment_size: None,
+                    src_ip: None, // TODO
+                }];
+                self.send_raw(addr, transmits).await
             }
+            SendAddr::Derp(region) => match pub_key {
+                None => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "missing pub key for derp route",
+                )),
+                Some(pub_key) => {
+                    self.send_derp(region, pub_key.clone(), vec![pkt]);
+                    Ok(1)
+                }
+            },
         }
     }
 
     async fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: key::node::PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -1893,7 +1898,7 @@ impl Actor {
         &mut self,
         source: [u8; disco::KEY_LEN],
         sealed_box: &[u8],
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
@@ -1948,7 +1953,7 @@ impl Actor {
         }
 
         let dm = dm.unwrap();
-        let is_derp = src.ip() == DERP_MAGIC_IP;
+        let is_derp = src.is_derp();
         if is_derp {
             inc!(MagicsockMetrics::RecvDiscoDerp);
         } else {
@@ -1966,7 +1971,7 @@ impl Actor {
                         conn_sender: self.conn.actor_sender.clone(),
                         conn_public_key: self.conn.public_key.clone(),
                         public_key: sender.clone(),
-                        derp_addr: if is_derp { Some(src) } else { None },
+                        derp_addr: src.derp_region(),
                     });
                 }
                 self.handle_ping(ping, &sender, src, derp_node_src).await;
@@ -2023,7 +2028,7 @@ impl Actor {
         &mut self,
         dm: disco::Ping,
         sender: &key::node::PublicKey,
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) {
         let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, sender);
@@ -2034,7 +2039,7 @@ impl Actor {
                 .unwrap_or_default();
         di.last_ping_from.replace(src);
         di.last_ping_time.replace(Instant::now());
-        let is_derp = src.ip() == DERP_MAGIC_IP;
+        let is_derp = src.is_derp();
 
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
@@ -2088,7 +2093,7 @@ impl Actor {
         let ip_dst = src;
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
-            src,
+            src: src.as_socket_addr(),
         });
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
             warn!("disco: failed to send message to {ip_dst}: {err:?}");
@@ -2145,7 +2150,8 @@ impl Actor {
                 ep.update_from_node(n);
                 let id = ep.id;
                 for endpoint in &n.endpoints {
-                    self.peer_map.set_endpoint_for_ip_port(endpoint, id);
+                    self.peer_map
+                        .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
                 }
             }
         }
@@ -2291,6 +2297,61 @@ fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
         }
         s
     });
+}
+
+/// Addresses to which to which we can send. This is either a UDP or a derp address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SendAddr {
+    /// UDP, the ip addr.
+    Udp(SocketAddr),
+    /// Derp, region id.
+    Derp(u16),
+}
+
+impl SendAddr {
+    pub fn is_derp(&self) -> bool {
+        matches!(self, Self::Derp(_))
+    }
+
+    pub fn as_udp(&self) -> Option<&SocketAddr> {
+        match self {
+            Self::Derp(_) => None,
+            Self::Udp(addr) => Some(addr),
+        }
+    }
+
+    pub fn derp_region(&self) -> Option<u16> {
+        match self {
+            Self::Derp(region) => Some(*region),
+            Self::Udp(_) => None,
+        }
+    }
+
+    /// Returns the mapped version or the actual `SocketAddr`.
+    pub fn as_socket_addr(&self) -> SocketAddr {
+        match self {
+            Self::Derp(region) => SocketAddr::new(DERP_MAGIC_IP, *region),
+            Self::Udp(addr) => *addr,
+        }
+    }
+}
+
+impl PartialEq<SocketAddr> for SendAddr {
+    fn eq(&self, other: &SocketAddr) -> bool {
+        match self {
+            Self::Derp(_) => false,
+            Self::Udp(addr) => addr.eq(other),
+        }
+    }
+}
+
+impl Display for SendAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendAddr::Derp(id) => write!(f, "Derp({})", id),
+            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+        }
+    }
 }
 
 /// A simple iterator to group [`Transmit`]s by destination.
@@ -2712,7 +2773,7 @@ mod tests {
                     name: Some(format!("node{}", i + 1)),
                     key: peer.key.public_key(),
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
-                    derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
+                    derp: Some(1),
                 });
             }
 
