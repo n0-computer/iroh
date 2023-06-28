@@ -96,7 +96,8 @@ fn cli_provide_one_file_single() -> Result<()> {
 
 #[test]
 fn cli_provide_folder() -> Result<()> {
-    let dir = testdir!();
+    let dir = testdir!().join("src");
+    std::fs::create_dir(&dir)?;
     let foo_path = dir.join("foo");
     let bar_path = dir.join("bar");
     make_rand_file(1000, &foo_path)?;
@@ -107,7 +108,8 @@ fn cli_provide_folder() -> Result<()> {
 
 #[test]
 fn cli_provide_tree() -> Result<()> {
-    let dir = testdir!();
+    let dir = testdir!().join("src");
+    std::fs::create_dir(&dir)?;
     let foo_path = dir.join("foo");
     let bar_path = dir.join("bar");
     let file1 = foo_path.join("file1");
@@ -124,7 +126,8 @@ fn cli_provide_tree() -> Result<()> {
 
 #[test]
 fn cli_provide_tree_resume() -> Result<()> {
-    let dir = testdir!();
+    let dir = testdir!().join("src");
+    std::fs::create_dir(&dir)?;
     let foo_path = dir.join("foo");
     let bar_path = dir.join("bar");
     let file1 = foo_path.join("file1");
@@ -197,7 +200,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     let provide = |path| {
         let mut child = iroh_provide(path)?;
         // wait for the provider to start
-        let _ticket = match_provide_output(&mut child, 1, Input::Path)?;
+        let _ticket = match_provide_output(&mut child, 1)?;
         println!("got ticket, stopping provider {}", _ticket);
         // kill the provider via Control-C
         for pid in child.pids() {
@@ -230,15 +233,14 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
 
 #[test]
 fn cli_provide_addresses() -> Result<()> {
-    let home = testdir!();
     let dir = testdir!();
     let path = dir.join("foo");
     make_rand_file(1000, &path)?;
     let input = Input::Path;
 
-    let mut provider = make_provider(&path, &input, home, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
+    let mut provider = make_provider(&path, &input, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
     // wait for the provider to start
-    let _all_in_one = match_provide_output(&mut provider, 1, input)?;
+    let _all_in_one = match_provide_output(&mut provider, 1)?;
 
     // test output
     let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
@@ -292,14 +294,15 @@ fn iroh_bin() -> &'static str {
     env!("CARGO_BIN_EXE_iroh")
 }
 
+/// Makes a provider process with it's home directory in `testdir!()`.
 fn make_provider(
     path: &Path,
     input: &Input,
-    home: impl AsRef<Path>,
     addr: Option<&str>,
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
     // spawn a provider & optionally provide from stdin
+    let home = testdir!();
     let res = cmd(
         iroh_bin(),
         [
@@ -314,7 +317,7 @@ fn make_provider(
     .stderr_null()
     // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
     .env("RUST_LOG", "debug")
-    .env("IROH_DATA_DIR", home.as_ref().join("iroh_data_dir"));
+    .env("IROH_DATA_DIR", home.join("iroh_data_dir"));
 
     let provider = match input {
         Input::Stdin => res.stdin_path(path),
@@ -328,11 +331,13 @@ fn make_provider(
 
 /// Test the provide and get loop for success, stderr output, and file contents.
 ///
-/// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
+/// Can optionally pipe the given `path` content to the provider from stdin & can optionally
+/// save the output to an `out` path.
 ///
-/// Runs the provider as a child process that stays alive until the getter has completed. Then
-/// checks the output of the "provide" and "get" processes against expected regex output. Finally,
-/// test the content fetched from the "get" process is the same as the "provided" content.
+/// Runs the provider as a child process that stays alive until the getter has
+/// completed. Then checks the output of the "provide" and "get" processes against expected
+/// regex output. Finally, test the content fetched from the "get" process is the same as
+/// the "provided" content.
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
     let out = match output {
         Output::Stdout => None,
@@ -343,13 +348,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         Output::Custom(out) => Some(out),
     };
 
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures");
-
-    let path = src.join(path);
     let num_blobs = if path.is_dir() {
-        WalkDir::new(&path)
+        WalkDir::new(path)
             .into_iter()
             .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
             .count()
@@ -357,11 +357,10 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         1
     };
 
-    let home = testdir!();
-    let mut provider = make_provider(&path, &input, home, None, None)?;
+    let mut provider = make_provider(path, &input, None, None)?;
 
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
+    let all_in_one = match_provide_output(&mut provider, num_blobs)?;
 
     // create a `get-ticket` cmd & optionally provide out path
     let cmd = if let Some(ref out) = out {
@@ -418,13 +417,8 @@ fn test_provide_get_loop_single(
         Output::Custom(out) => Some(out),
     };
 
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures");
-
-    let path = src.join(path);
     let num_blobs = if path.is_dir() {
-        WalkDir::new(&path)
+        WalkDir::new(path)
             .into_iter()
             .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
             .count()
@@ -432,11 +426,9 @@ fn test_provide_get_loop_single(
         1
     };
 
-    let home = testdir!();
-    let mut provider = make_provider(&path, &input, home, None, None)?;
-
+    let mut provider = make_provider(path, &input, None, None)?;
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(&mut provider, num_blobs, input)?;
+    let all_in_one = match_provide_output(&mut provider, num_blobs)?;
     let ticket = Ticket::from_str(&all_in_one).unwrap();
     let addrs = ticket
         .addrs()
@@ -467,7 +459,7 @@ fn test_provide_get_loop_single(
     let get_output = cmd.run()?;
     // println!("{}", std::str::from_utf8(&get_output.stdout).unwrap());
     // println!("{}", std::str::from_utf8(&get_output.stderr).unwrap());
-    drop(provider);
+    provider.kill().expect("failed to kill provider");
     assert!(get_output.status.success());
 
     // test output
@@ -544,18 +536,15 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// Looks for regex matches on each line of output for the provider, returning the "all in one ticket"
-/// that can be used to 'get' from another process.
+/// Asserts provider output, returning the all-in-one ticket.
 ///
-/// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
-fn match_provide_output<T: Read>(reader: T, num_blobs: usize, input: Input) -> Result<String> {
+/// The provider output is asserted to check if it matches expected output.  The all-in-one
+/// ticket is parsed out and returned as a string.
+///
+/// Returns an error on the first regex mismatch or if the stderr output has fewer lines
+/// than expected.
+fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> {
     let reader = BufReader::new(reader);
-    // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
-    // about "Reading"
-    let _reading_line_num = match input {
-        Input::Stdin => 0,
-        Input::Path => 1,
-    };
 
     let mut caps = assert_matches_line(
         reader,
@@ -612,22 +601,28 @@ where
                 break;
             }
 
-            if let Some(Ok(line)) = lines.peek() {
-                println!("|{}", line);
+            match lines.peek() {
+                Some(Ok(line)) => {
+                    println!("|{}", line);
 
-                if let Some(cap) = rx.captures(line) {
-                    for i in 0..cap.len() {
-                        if let Some(capture_group) = cap.get(i) {
-                            caps.push(capture_group.as_str().to_string());
+                    if let Some(cap) = rx.captures(line) {
+                        for i in 0..cap.len() {
+                            if let Some(capture_group) = cap.get(i) {
+                                caps.push(capture_group.as_str().to_string());
+                            }
                         }
-                    }
 
-                    matches += 1;
-                } else {
-                    break;
+                        matches += 1;
+                    } else {
+                        break;
+                    }
                 }
-            } else {
-                panic!("Unexpected end of reader");
+                Some(Err(err)) => {
+                    panic!("Error from reader: {err:#}");
+                }
+                None => {
+                    panic!("All lines read but no match found for /{rx}/");
+                }
             }
 
             let _ = lines.next();
