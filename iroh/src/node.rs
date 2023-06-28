@@ -50,7 +50,8 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
+/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -166,7 +167,7 @@ where
 
     /// Binds the node service to a different socket.
     ///
-    /// By default it binds to `127.0.0.1:4433`.
+    /// By default it binds to `127.0.0.1:11204`.
     pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
         self.bind_addr = addr;
         self
