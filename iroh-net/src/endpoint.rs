@@ -1,7 +1,7 @@
 use std::{
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -79,19 +79,33 @@ impl MagicEndpointBuilder {
     /// Bind the magic endpoint on the specified socket address.
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
-        let tls_server_config =
-            tls::make_server_config(&keypair, self.alpn_protocols, self.keylog)?;
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-        server_config.transport_config(Arc::new(self.transport_config.unwrap_or_default()));
+        let server_config = make_server_config(
+            keypair,
+            self.alpn_protocols,
+            self.transport_config,
+            self.keylog,
+        );
         MagicEndpoint::bind(
             keypair,
             bind_addr,
-            server_config,
+            Some(server_config),
             self.derp_map,
             self.keylog,
         )
         .await
     }
+}
+
+fn make_server_config(
+    keypair: Keypair,
+    alpn_protocols: Vec<Vec<u8>>,
+    transport_config: Option<quinn::TransportConfig>,
+    keylog: bool,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(&keypair, alpn_protocols, keylog)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+    Ok(server_config)
 }
 
 #[derive(Clone, Debug)]
@@ -131,7 +145,7 @@ impl MagicEndpoint {
     pub(crate) async fn bind(
         keypair: Keypair,
         bind_addr: SocketAddr,
-        server_config: quinn::ServerConfig,
+        server_config: Option<quinn::ServerConfig>,
         derp_map: Option<DerpMap>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
@@ -156,7 +170,7 @@ impl MagicEndpoint {
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
-            Some(server_config),
+            server_config,
             conn.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
@@ -268,12 +282,6 @@ impl MagicEndpoint {
                 key: node_key.clone(),
                 endpoints,
                 derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-                created: Instant::now(),
-                hostinfo: hp::hostinfo::Hostinfo::default(),
-                keep_alive: false,
-                expired: false,
-                online: None,
-                last_seen: None,
             }
         };
 
