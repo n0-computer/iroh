@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use iroh_bytes::{
     provider::{Database, FNAME_PATHS},
     runtime,
@@ -32,6 +32,14 @@ pub async fn run(
     rpc_port: ProviderRpcPort,
     keylog: bool,
 ) -> Result<()> {
+    if let Some(ref path) = path {
+        ensure!(
+            path.exists(),
+            "Cannot provide nonexistent path: {}",
+            path.display()
+        );
+    }
+
     let iroh_data_root = iroh_data_root()?;
     let marker = iroh_data_root.join(FNAME_PATHS);
     let db = {
