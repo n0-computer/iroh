@@ -8,6 +8,8 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use iroh_metrics::inc;
+use iroh_metrics::netcheck::NetcheckMetrics;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
@@ -331,7 +333,7 @@ async fn run_probe(
         return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
     }
 
-    let addr = super::get_derp_node_addr(&resolver, &node, probe.proto())
+    let addr = super::get_node_addr(&resolver, &node, probe.proto())
         .await
         .context("no derp node addr")
         .map_err(|e| ProbeError::Transient(e, probe.clone()))?;
