@@ -249,13 +249,22 @@ mod test {
     use rand::Rng;
     use rand_core::SeedableRng;
     use tracing::{debug, warn};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::{Command, Config, Event, InEvent, OutEvent, PeerAddress, State, Timer};
     use crate::proto::util::TimerMap;
 
+    fn setup_logging() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+    }
+
     #[test]
     fn hyparview_smoke() {
-        // tracing_subscriber::fmt::init();
+        setup_logging();
         // Create a network with 4 nodes and active_view_capacity 2
         let mut config = Config::default();
         config.membership.active_view_capacity = 2;
@@ -319,7 +328,7 @@ mod test {
 
     #[test]
     fn plumtree_smoke() {
-        tracing_subscriber::fmt::init();
+        setup_logging();
         let config = Config::default();
         let mut network = Network::new(Instant::now());
         let broadcast_ticks = 12;
@@ -377,7 +386,7 @@ mod test {
 
     #[test]
     fn big_multiple_sender() {
-        // tracing_subscriber::fmt::init();
+        setup_logging();
         let mut gossipswarm_config = Config::default();
         gossipswarm_config.broadcast.optimization_threshold = (read_var("OPTIM", 7) as u16).into();
         let mut config = SimulatorConfig::default();
@@ -396,7 +405,7 @@ mod test {
 
     #[test]
     fn big_single_sender() {
-        // tracing_subscriber::fmt::init();
+        setup_logging();
         let mut gossipswarm_config = Config::default();
         gossipswarm_config.broadcast.optimization_threshold = (read_var("OPTIM", 7) as u16).into();
         let mut config = SimulatorConfig::default();

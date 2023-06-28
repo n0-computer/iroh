@@ -53,7 +53,7 @@ pub type ProtoMessage = topicswarm::Message<PeerId>;
 ///
 /// Each topic is a separate broadcast tree with separate memberships.
 ///
-/// A topic has to be joined before you can publish or subscribe on the topic. 
+/// A topic has to be joined before you can publish or subscribe on the topic.
 /// To join the swarm for a topic, you have to know the [PeerId] of at least one peer that also joined the topic.
 ///
 /// Messages published on the swarm will be delivered to all peers that joined the swarm for that
@@ -175,7 +175,6 @@ impl GossipHandle {
             .map_err(|_| anyhow!("gossip actor dropped"))
     }
 }
-
 
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
@@ -395,7 +394,6 @@ impl GossipActor {
         Ok(())
     }
 
-
     fn subscribe_all(&mut self) -> broadcast::Receiver<(TopicId, Event)> {
         if let Some(tx) = self.subscribers_all.as_mut() {
             tx.subscribe()
@@ -484,7 +482,7 @@ async fn run_conn_loop(
 mod test {
     use std::net::SocketAddr;
 
-    use iroh_net::{endpoint::MagicEndpoint, hp::derp::DerpMap, tls::Keypair};
+    use iroh_net::{endpoint::MagicEndpoint, hp::derp::DerpMap};
     use tokio::spawn;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
@@ -492,15 +490,11 @@ mod test {
     use super::*;
 
     async fn create_endpoint(derp_map: DerpMap) -> anyhow::Result<MagicEndpoint> {
-        MagicEndpoint::bind(
-            Keypair::generate(),
-            SocketAddr::new([127, 0, 0, 1].into(), 0),
-            vec![GOSSIP_ALPN.to_vec()],
-            None,
-            Some(derp_map),
-            false,
-        )
-        .await
+        MagicEndpoint::builder()
+            .alpns(vec![GOSSIP_ALPN.to_vec()])
+            .derp_map(Some(derp_map))
+            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .await
     }
 
     async fn endpoint_loop(
@@ -662,7 +656,7 @@ mod test {
                         nodes: vec![DerpNode {
                             name: "t1".into(),
                             region_id: 1,
-                            host_name: "test-node.invalid".into(),
+                            host_name: "http://test-node.invalid".parse().unwrap(),
                             stun_only: false,
                             stun_port: stun_addr.port(),
                             ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
