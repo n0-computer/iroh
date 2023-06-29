@@ -98,7 +98,7 @@ impl From<SecretKey> for Keypair {
 ///
 /// The [`PeerId`] implements both `Display` and `FromStr` which can be used to
 /// (de)serialise to human-readable and relatively safely transferrable strings.
-#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize, Hash)]
 pub struct PeerId(PublicKey);
 
 impl From<PublicKey> for PeerId {
