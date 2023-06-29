@@ -1717,6 +1717,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-gossip"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "bytes",
+ "clap",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "futures",
+ "indexmap 1.9.3",
+ "iroh-net",
+ "postcard",
+ "quinn",
+ "rand",
+ "rand_core",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "iroh-io"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

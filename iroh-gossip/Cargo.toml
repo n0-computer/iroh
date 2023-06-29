@@ -1,0 +1,40 @@
+[package]
+name = "iroh-gossip"
+version = "0.4.1"
+edition = "2021"
+readme = "README.md"
+description = "gossip messages over broadcast trees"
+license = "MIT/Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh-sync"
+
+[dependencies]
+# proto dependencies (required)
+anyhow = { version = "1", features = ["backtrace"] }
+blake3 = "1.3.3"
+bytes = { version = "1.4.0", features = ["serde"] }
+data-encoding = "2.4.0"
+derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into", "add"] }
+ed25519-dalek = { version = "=2.0.0-rc.2", features = ["serde", "rand_core"] }
+indexmap = "1.9.3"
+rand = { version = "0.8.5", features = ["std_rng"] }
+rand_core = "0.6.4"
+serde = { version = "1.0.164", features = ["derive"] }
+tracing = "0.1.37"
+
+# net dependencies (optional)
+futures = { version = "0.3.25", optional = true }
+iroh-net = { path = "../iroh-net", optional = true }
+quinn = { version = "0.10", optional = true }
+tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
+postcard = { version = "1", optional = true, default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+url = "2.4.0"
+
+[features]
+default = ["net"]
+net = ["futures", "iroh-net", "quinn", "tokio", "postcard", "tokio-util"]
