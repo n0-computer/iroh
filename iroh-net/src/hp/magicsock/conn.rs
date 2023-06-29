@@ -272,7 +272,12 @@ impl Conn {
         let port = pconn4.port();
 
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails.
-        // let maybe_non_zero_port = port.try_into().ok();
+        match port.try_into() {
+            Ok(non_zero_port) => {
+                let _ = port_mapper.update_local_port(Some(non_zero_port));
+            }
+            Err(_zero_port) => debug!("Skipping port mapping with zero port"),
+        }
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -323,33 +328,33 @@ impl Conn {
         });
 
         let conn = inner.clone();
-
-        let actor = Actor {
-            msg_receiver: actor_receiver,
-            msg_sender: actor_sender,
-            derp_actor_sender,
-            udp_actor_sender,
-            network_receiver,
-            ip_receiver,
-            conn,
-            net_map: None,
-            derp_recv_sender: network_recv_ch_sender,
-            endpoints_update_state: EndpointUpdateState::new(),
-            last_endpoints: Vec::new(),
-            last_endpoints_time: None,
-            on_endpoint_refreshed: HashMap::new(),
-            periodic_re_stun_timer: new_re_stun_timer(),
-            net_info_last: None,
-            disco_info: HashMap::new(),
-            peer_map: Default::default(),
-            port_mapper,
-            pconn4,
-            pconn6,
-            udp_state,
-            no_v4_send: false,
-            net_checker,
-        };
         let main_actor_task = tokio::task::spawn(async move {
+            let actor = Actor {
+                msg_receiver: actor_receiver,
+                msg_sender: actor_sender,
+                derp_actor_sender,
+                udp_actor_sender,
+                network_receiver,
+                ip_receiver,
+                conn,
+                net_map: None,
+                derp_recv_sender: network_recv_ch_sender,
+                endpoints_update_state: EndpointUpdateState::new(),
+                last_endpoints: Vec::new(),
+                last_endpoints_time: None,
+                on_endpoint_refreshed: HashMap::new(),
+                periodic_re_stun_timer: new_re_stun_timer(),
+                net_info_last: None,
+                disco_info: HashMap::new(),
+                peer_map: Default::default(),
+                port_mapper,
+                pconn4,
+                pconn6,
+                udp_state,
+                no_v4_send: false,
+                net_checker,
+            };
+
             if let Err(err) = actor.run().await {
                 warn!("derp handler errored: {:?}", err);
             }
@@ -508,11 +513,6 @@ impl Conn {
         }
 
         Ok(())
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn on_port_map_changed(&self) {
-        self.re_stun("portmap-changed").await;
     }
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
@@ -826,6 +826,7 @@ impl Actor {
             HEARTBEAT_INTERVAL,
         );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
+        let mut portmap_watcher = self.port_mapper.watch_external_address();
 
         loop {
             tokio::select! {
@@ -864,6 +865,13 @@ impl Actor {
                     trace!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
                 }
+                Ok(()) = portmap_watcher.changed() => {
+                    trace!("tick: portmap changed");
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun("portmap_updated").await;
+
+                },
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
@@ -918,6 +926,7 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
+                self.port_mapper.update_local_port(None).ok();
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
@@ -1746,10 +1755,9 @@ impl Actor {
 
         // reread, as it might have changed
         // We can end up with a zero port if std::net::UdpSocket::socket_addr fails.
-        // TODO(@divma): I think if the port is zero something must have been wrong. We could opt
-        // for not updating the local port in this case.
-        let maybe_non_zero_port = self.local_port_v4().try_into().ok();
-        self.port_mapper.update_local_port(maybe_non_zero_port)?;
+        if let Ok(non_zero_port) = self.local_port_v4().try_into() {
+            self.port_mapper.update_local_port(Some(non_zero_port))?;
+        }
         let ipv4_addr = self.pconn4.local_addr()?;
 
         *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);

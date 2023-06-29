@@ -102,6 +102,8 @@ impl Client {
     ///
     /// A value of `None` will invalidate any active mapping and deactivate port mapping.
     /// This can fail if communicating with the port-mapping service fails.
+    // TODO(@divma): there is nothing that can be done when receiving this error. Maybe it's best
+    // to log it and move on.
     pub fn update_local_port(&self, local_port: Option<NonZeroU16>) -> Result<()> {
         self.service_tx
             .try_send(Message::UpdateLocalPort { local_port })
