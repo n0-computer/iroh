@@ -102,6 +102,9 @@ pub enum Commands {
     PortMap {
         /// Local port to get a mapping.
         local_port: NonZeroU16,
+        /// How long to wait for an external port to be ready.
+        #[clap(long, default_value_t = 10)]
+        timeout_secs: u64,
     },
 }
 
@@ -605,7 +608,7 @@ async fn accept(
     Ok(())
 }
 
-async fn port_map(local_port: NonZeroU16) -> anyhow::Result<()> {
+async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::new().await;
     let mut watcher = port_mapper.watch_external_address();
     port_mapper
@@ -613,11 +616,11 @@ async fn port_map(local_port: NonZeroU16) -> anyhow::Result<()> {
         .expect("service is running");
 
     // wait for the mapping to be ready, or timeout waiting for a change.
-    match tokio::time::timeout(Duration::from_secs(10), watcher.changed()).await {
+    match tokio::time::timeout(timeout, watcher.changed()).await {
         Ok(Ok(_)) => match *watcher.borrow() {
             Some(address) => {
                 println!("Port mapping ready: {address}");
-                // Ensure the port mapper remains alive until the end until the end
+                // Ensure the port mapper remains alive until the end.
                 drop(port_mapper);
                 Ok(())
             }
@@ -689,6 +692,9 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             let config = TestConfig { size, iterations };
             accept(private_key, config, derp_map).await
         }
-        Commands::PortMap { local_port } => port_map(local_port).await,
+        Commands::PortMap {
+            local_port,
+            timeout_secs,
+        } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
     }
 }
