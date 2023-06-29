@@ -5,14 +5,15 @@ use bytes::{Bytes, BytesMut};
 use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
+use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{broadcast, mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
 };
 use tracing::{debug, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, TopicId};
+use crate::proto::{self, PeerData, TopicId};
 
 mod util;
 
@@ -56,9 +57,10 @@ pub type ProtoMessage = proto::Message<PeerId>;
 /// gossip actor through [Self::handle_connection].
 ///
 /// The gossip actor will, however, initiate new connections to other peers by itself.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GossipHandle {
     to_actor_tx: mpsc::Sender<ToActor>,
+    aboutme_tx: Arc<watch::Sender<PeerData>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -66,20 +68,25 @@ impl GossipHandle {
     /// Spawn a gossip actor and get a handle for it
     pub fn from_endpoint(endpoint: MagicEndpoint, config: proto::Config) -> Self {
         let peer_id = endpoint.peer_id();
-        let dialer = Dialer::new(endpoint);
-        Self::new(dialer, peer_id, config)
-    }
-
-    fn new(dialer: Dialer, peer_id: PeerId, config: proto::Config) -> Self {
-        let state = proto::State::new(peer_id, config, rand::rngs::StdRng::from_entropy());
+        let dialer = Dialer::new(endpoint.clone());
+        let peer_data = Default::default();
+        let state = proto::State::new(
+            peer_id,
+            peer_data,
+            config,
+            rand::rngs::StdRng::from_entropy(),
+        );
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
+        let (aboutme_tx, aboutme_rx) = watch::channel(Default::default());
         let actor = GossipActor {
+            endpoint,
             state,
             dialer,
             to_actor_rx,
             in_event_rx,
             in_event_tx,
+            aboutme_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -96,8 +103,9 @@ impl GossipHandle {
             }
         });
         Self {
-            _actor_handle: Arc::new(actor_handle),
             to_actor_tx,
+            aboutme_tx: Arc::new(aboutme_tx),
+            _actor_handle: Arc::new(actor_handle),
         }
     }
 
@@ -153,12 +161,30 @@ impl GossipHandle {
         Ok(())
     }
 
+    pub fn update_endpoints(
+        &self,
+        endpoints: &[iroh_net::hp::cfg::Endpoint],
+    ) -> anyhow::Result<()> {
+        let info = IrohInfo {
+            endpoints: endpoints.to_vec(),
+        };
+        let peer_data = postcard::to_stdvec(&info)?;
+        self.aboutme_tx
+            .send(peer_data.into())
+            .map_err(|_| anyhow!("gossip actor dropped"))
+    }
+
     async fn send(&self, event: ToActor) -> anyhow::Result<()> {
         self.to_actor_tx
             .send(event)
             .await
             .map_err(|_| anyhow!("gossip actor dropped"))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct IrohInfo {
+    endpoints: Vec<iroh_net::hp::cfg::Endpoint>,
 }
 
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
@@ -200,6 +226,7 @@ impl fmt::Debug for ToActor {
 struct GossipActor {
     /// Protocol state
     state: proto::State<PeerId, StdRng>,
+    endpoint: MagicEndpoint,
     /// Dial machine to connect to peers
     dialer: Dialer,
     /// Input messages to the actor
@@ -208,6 +235,8 @@ struct GossipActor {
     in_event_tx: mpsc::Sender<InEvent>,
     /// Sender for the state input (cloned into the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
+    /// Watcher for updated [PeerData] about ourselves
+    aboutme_rx: watch::Receiver<PeerData>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn conections to peers
@@ -237,6 +266,10 @@ impl GossipActor {
                         }
                     }
                 },
+                _ = self.aboutme_rx.changed() => {
+                    let peer_data = self.aboutme_rx.borrow().clone();
+                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                }
                 (peer_id, res) = self.dialer.next() => {
                     match res {
                         Ok(conn) => {
@@ -383,6 +416,16 @@ impl GossipActor {
                     self.conn_send_tx.remove(&peer);
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
+                }
+                OutEvent::PeerData(peer, data) => {
+                    match postcard::from_bytes::<IrohInfo>(&data) {
+                        Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
+                        Ok(info) => {
+                            let addrs = info.endpoints.iter().map(|ep| ep.addr).collect::<Vec<_>>();
+                            self.endpoint.add_known_addrs(peer, &addrs).await?;
+                        }
+                    }
+                    // self.
                 }
             }
         }
