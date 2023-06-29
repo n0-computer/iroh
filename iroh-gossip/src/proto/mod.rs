@@ -6,7 +6,7 @@ pub mod hyparview;
 pub mod plumtree;
 pub mod state;
 pub mod topic;
-pub(crate) mod util;
+pub mod util;
 
 pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
 pub use topic::{Command, Config, Event, IO};
