@@ -416,7 +416,6 @@ impl Endpoint {
             .collect();
         debug!("sending pings to {:?}", pings);
 
-        let sent_any = !pings.is_empty();
         for (i, ep) in pings.into_iter().enumerate() {
             if i == 0 && send_call_me_maybe {
                 debug!("disco: send, starting discovery for {:?}", self.public_key);
@@ -426,7 +425,11 @@ impl Endpoint {
         }
 
         let derp_addr = self.derp_addr;
-        if sent_any && send_call_me_maybe {
+        if send_call_me_maybe {
+            // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
+            // of potential UDP addresses.
+            //
+            // Otherwise it is used for hole punching, as described below.
             if let Some(derp_addr) = derp_addr {
                 // Have our magicsock.Conn figure out its STUN endpoint (if
                 // it doesn't know already) and then send a CallMeMaybe
