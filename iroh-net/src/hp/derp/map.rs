@@ -7,16 +7,17 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 /// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
-    pub regions: HashMap<usize, DerpRegion>,
+    pub regions: HashMap<u16, DerpRegion>,
 }
 
 impl DerpMap {
     /// Returns the sorted region IDs.
-    pub fn region_ids(&self) -> Vec<usize> {
+    pub fn region_ids(&self) -> Vec<u16> {
         let mut ids: Vec<_> = self.regions.keys().copied().collect();
         ids.sort();
         ids
@@ -24,7 +25,7 @@ impl DerpMap {
 
     /// Creates a new [`DerpMap`] with a single Derp server configured.
     pub fn default_from_node(
-        host_name: String,
+        host_name: Url,
         stun_port: u16,
         derp_port: u16,
         derp_ipv4: UseIpv4,
@@ -68,7 +69,7 @@ impl fmt::Display for DerpMap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpRegion {
     /// A unique integer for a geographic region.
-    pub region_id: usize,
+    pub region_id: u16,
     pub nodes: Vec<DerpNode>,
     pub avoid: bool,
     pub region_code: String,
@@ -77,8 +78,8 @@ pub struct DerpRegion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpNode {
     pub name: String,
-    pub region_id: usize,
-    pub host_name: String,
+    pub region_id: u16,
+    pub host_name: Url,
     pub stun_only: bool,
     pub stun_port: u16,
     pub stun_test_ip: Option<IpAddr>,

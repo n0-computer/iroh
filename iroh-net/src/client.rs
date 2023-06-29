@@ -1,19 +1,14 @@
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
 use tracing::debug;
 
 use crate::{
-    hp::{
-        self,
-        cfg::{self, DERP_MAGIC_IP},
-        derp::DerpMap,
-        netmap,
-    },
+    hp::{self, cfg, derp::DerpMap, netmap},
     tls::{self, Keypair, PeerId},
 };
 
@@ -114,13 +109,7 @@ pub async fn dial_peer(
                 addresses,
                 key: node_key.clone(),
                 endpoints,
-                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-                created: Instant::now(),
-                hostinfo: hp::hostinfo::Hostinfo::default(),
-                keep_alive: false,
-                expired: false,
-                online: None,
-                last_seen: None,
+                derp: Some(DEFAULT_DERP_REGION),
             }],
         })
         .await?;

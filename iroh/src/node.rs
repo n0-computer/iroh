@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
+use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
     blobs::Collection,
     protocol::Closed,
@@ -49,7 +50,8 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
+/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -62,10 +64,11 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = ()>
+pub struct Builder<E = DummyServerEndpoint, C = (), A = ()>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
+    A: RequestAuthorizationHandler,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
@@ -73,6 +76,7 @@ where
     db: Database,
     keylog: bool,
     custom_get_handler: C,
+    auth_handler: A,
     derp_map: Option<DerpMap>,
     rt: Option<runtime::Handle>,
 }
@@ -90,18 +94,23 @@ impl Builder {
             derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
+            auth_handler: Default::default(),
             rt: None,
         }
     }
 }
 
-impl<E, C> Builder<E, C>
+impl<E, C, A> Builder<E, C, A>
 where
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler,
+    A: RequestAuthorizationHandler,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2, C> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
+        self,
+        value: E2,
+    ) -> Builder<E2, C, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -109,6 +118,7 @@ where
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
+            auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
             rt: self.rt,
@@ -122,7 +132,7 @@ where
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2> {
+    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -131,6 +141,25 @@ where
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
+            auth_handler: self.auth_handler,
+            derp_map: self.derp_map,
+            rt: self.rt,
+        }
+    }
+
+    pub fn custom_auth_handler<A2: RequestAuthorizationHandler>(
+        self,
+        auth_handler: A2,
+    ) -> Builder<E, C, A2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: self.custom_get_handler,
+            auth_handler,
             derp_map: self.derp_map,
             rt: self.rt,
         }
@@ -138,7 +167,7 @@ where
 
     /// Binds the node service to a different socket.
     ///
-    /// By default it binds to `127.0.0.1:4433`.
+    /// By default it binds to `127.0.0.1:11204`.
     pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
         self.bind_addr = addr;
         self
@@ -252,6 +281,7 @@ where
                     self.rpc_endpoint,
                     internal_rpc,
                     self.custom_get_handler,
+                    self.auth_handler,
                     rt3,
                 )
                 .await
@@ -273,6 +303,7 @@ where
         Ok(node)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
@@ -280,6 +311,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
+        auth_handler: A,
         rt: runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -330,8 +362,9 @@ where
                         let db = handler.inner.db.clone();
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
+                        let auth_handler = auth_handler.clone();
                         let rt2 = rt.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, rt2));
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
@@ -457,7 +490,7 @@ impl Node {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
+        Ticket::new(hash, self.peer_id(), addrs, None)
     }
 
     /// Aborts the node.
