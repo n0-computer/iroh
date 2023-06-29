@@ -530,7 +530,7 @@ async fn connect(
             key: key.clone(),
             endpoints,
             addresses,
-            derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+            derp: Some(DEFAULT_DERP_REGION),
         }],
     })
     .await?;
