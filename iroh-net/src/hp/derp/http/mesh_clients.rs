@@ -49,13 +49,8 @@ impl MeshClients {
                 let mut urls = Vec::new();
                 for (_, region) in derp_map.regions.iter() {
                     for node in region.nodes.iter() {
-                        let host = node.host_name.clone();
-                        let scheme = if node.derp_port == 443 {
-                            "https"
-                        } else {
-                            "http"
-                        };
-                        let url: Url = format!("{scheme}://{host}/derp").parse().unwrap();
+                        // note: `node.host_name` is expected to include the scheme
+                        let url: Url = format!("{}/derp", node.host_name).parse().unwrap();
                         urls.push(url);
                     }
                 }
@@ -68,13 +63,8 @@ impl MeshClients {
                 .build_with_server_url(self.server_key.clone(), addr);
 
             let packet_forwarder_handler = self.packet_fwd.clone();
-            let cancel = self.cancel.clone();
-            let server_public_key = self.server_key.public_key();
             self.tasks.spawn(async move {
-                if let Err(e) = client
-                    .run_mesh_client(server_public_key, packet_forwarder_handler, cancel)
-                    .await
-                {
+                if let Err(e) = client.run_mesh_client(packet_forwarder_handler).await {
                     tracing::warn!("{e:?}");
                 }
             });

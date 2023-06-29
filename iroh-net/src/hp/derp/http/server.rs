@@ -278,7 +278,10 @@ impl ServerBuilder {
             let packet_fwd = server.packet_forwarder_handler();
 
             if let Some(mesh_addrs) = self.mesh_derpers {
-                ensure!(self.mesh_key.is_some(), "Must provide a `MeshKey` when trying using a `DerpMap` to join a mesh network.");
+                ensure!(
+                    self.mesh_key.is_some(),
+                    "Must provide a `MeshKey` when trying to join a mesh network."
+                );
 
                 let mesh_key = self.mesh_key.expect("checked");
                 mesh_clients = Some(MeshClients::new(

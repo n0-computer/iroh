@@ -14,9 +14,8 @@ use rand::Rng;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::{oneshot, RwLock};
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, warn};
 use url::Url;
 
@@ -247,6 +246,11 @@ impl ClientBuilder {
 }
 
 impl Client {
+    /// The public key for this client
+    pub fn public_key(&self) -> key::node::PublicKey {
+        self.inner.secret_key.public_key()
+    }
+
     /// Let the server know that this client is the preferred client
     pub async fn note_preferred(&self, is_preferred: bool) {
         {
@@ -461,7 +465,7 @@ impl Client {
                 .await
                 .map_err(ClientError::Hyper)?
         } else {
-            tracing::error!("Starting handshake");
+            tracing::debug!("Starting handshake");
             let (mut request_sender, connection) = hyper::client::conn::Builder::new()
                 .handshake(tcp_stream)
                 .await
@@ -559,7 +563,7 @@ impl Client {
             .ok_or_else(|| ClientError::InvalidUrl("missing url port".into()))?;
         let addr = SocketAddr::new(dst_ip, port);
 
-        tracing::error!("connecting to {}", addr);
+        tracing::debug!("connecting to {}", addr);
         let tcp_stream = TcpStream::connect(addr).await?;
         Ok(tcp_stream)
     }
@@ -835,14 +839,16 @@ impl Client {
     ///
     /// If there is an error sending the message, it closes the underlying derp connection before
     /// returning.
-    pub async fn watch_connection_changes(&self) -> Result<key::node::PublicKey, ClientError> {
+    pub async fn watch_connection_changes(
+        &self,
+    ) -> Result<(key::node::PublicKey, usize), ClientError> {
         debug!("watch_connection_changes");
-        let (client, _) = self.connect().await?;
+        let (client, conn_gen) = self.connect().await?;
         if client.watch_connection_changes().await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
         }
-        Ok(client.server_public_key())
+        Ok((client.server_public_key(), conn_gen))
     }
 
     /// Send a "close peer" request to the server.
@@ -869,39 +875,16 @@ impl Client {
     ///
     pub async fn run_mesh_client(
         self,
-        ignore_key: key::node::PublicKey,
         packet_forwarder_handler: PacketForwarderHandler<Client>,
-        cancel: CancellationToken,
-    ) -> anyhow::Result<()> {
-        let cancel_logging = cancel.clone();
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                tracing::debug!("run_mesh_client loop cancelled");
-                Ok(())
-            },
-            res = self.run_mesh_client_0(ignore_key, packet_forwarder_handler, cancel_logging) => {
-                res
-            }
-        }
-    }
-
-    pub async fn run_mesh_client_0(
-        self,
-        ignore_key: key::node::PublicKey,
-        packet_forwarder_handler: PacketForwarderHandler<Client>,
-        cancel_logging: CancellationToken,
     ) -> anyhow::Result<()> {
         let redial_delay = Duration::from_secs(5);
-        let peers_present = PeersPresent::new();
-
-        let mut last_conn_gen = 0;
 
         // connect to the remote server & request to watching the remote's state changes
+        let ignore_key = self.public_key();
         loop {
-            let server_public_key = match self.watch_connection_changes().await {
+            let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
                 Ok(key) => key,
                 Err(e) => {
-                    peers_present.clear().await;
                     tracing::warn!("error connecting to derp server {e}");
                     tokio::time::sleep(redial_delay).await;
                     continue;
@@ -912,43 +895,28 @@ impl Client {
                 bail!("detected self-connect; closing this client");
             }
 
+            let peers_present = PeersPresent::new(server_public_key.clone());
             tracing::info!("Connected to mesh derp server {server_public_key:?}");
-
-            let peers_logger = peers_present.clone();
-            let cancel = cancel_logging.clone();
-            tokio::spawn(async move {
-                let start = Instant::now() + PEERS_PRESENT_LOGGING_DELAY;
-                let mut status_logging_interval =
-                    tokio::time::interval_at(start, PEERS_PRESENT_LOGGING_INTERVAL);
-
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => {
-                            tracing::debug!("mesh update logging loop cancelled");
-                            break;
-                        },
-                        _ = status_logging_interval.tick() => {
-                        peers_logger.log_info().await;
-                        }
-                    }
-                }
-            });
 
             // receive detail loop
             loop {
                 let (msg, conn_gen) = match self.recv_detail().await {
                     Ok(res) => res,
                     Err(e) => {
-                        peers_present.clear().await;
                         tracing::warn!("recv error: {e:?}");
                         tokio::time::sleep(redial_delay).await;
                         break;
                     }
                 };
                 if conn_gen != last_conn_gen {
-                    last_conn_gen = conn_gen;
-                    peers_present.clear().await;
+                    // TODO: In the current set up, once we know that this current
+                    // connection is a new connection, we must re-establish to the
+                    // server that we want to watch connection changes.
+                    // In the future, depending on how we handle multiple connections
+                    // for the same peer key in the derp server in the future, we may
+                    // be okay to just listen for future peer present
+                    // messages without re establishing this connection as a "watcher"
+                    break;
                 }
                 match msg {
                     ReceivedMessage::PeerPresent(key) => {
@@ -973,21 +941,34 @@ impl Client {
 const PEERS_PRESENT_LOGGING_DELAY: Duration = Duration::from_secs(5);
 const PEERS_PRESENT_LOGGING_INTERVAL: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+/// A struct to track and log the peers available on the remote server
 struct PeersPresent {
+    /// map of keys of the peers that can be contacted on the given remote server
     map: Arc<RwLock<HashSet<key::node::PublicKey>>>,
+    /// periodic logging task
+    logging_task: JoinHandle<()>,
 }
 
 impl PeersPresent {
-    fn new() -> Self {
-        Self {
-            map: Arc::new(RwLock::new(HashSet::new())),
-        }
-    }
+    fn new(remote_server_key: key::node::PublicKey) -> Self {
+        let map = Arc::new(RwLock::new(HashSet::default()));
+        let log_map = Arc::clone(&map);
+        let logging_task = tokio::spawn(async move {
+            let start = Instant::now() + PEERS_PRESENT_LOGGING_DELAY;
+            let mut status_logging_interval =
+                tokio::time::interval_at(start, PEERS_PRESENT_LOGGING_INTERVAL);
 
-    async fn clear(&self) {
-        let mut map = self.map.write().await;
-        map.clear();
+            loop {
+                status_logging_interval.tick().await;
+                let map = log_map.read().await;
+                tracing::info!(
+                    "Peers present on Derp Server {:?}:\n{map:?}",
+                    remote_server_key
+                );
+            }
+        });
+        Self { map, logging_task }
     }
 
     async fn insert(&self, key: key::node::PublicKey) {
@@ -999,10 +980,11 @@ impl PeersPresent {
         let mut map = self.map.write().await;
         map.remove(key);
     }
+}
 
-    async fn log_info(&self) {
-        let map = self.map.read().await;
-        tracing::info!("{map:?}");
+impl Drop for PeersPresent {
+    fn drop(&mut self) {
+        self.logging_task.abort();
     }
 }
 
@@ -1128,14 +1110,8 @@ mod tests {
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
-        // set up http derp server, w/ derp server that we can force messages on
-        //
-        // set up test client to connect to derper
-        // set up mock packet forwarder
-        //
-        // send PeerPresent & PeerGone messages, ensure those are added to the peers &
-        // packet forwarder
-        // set up http derp server
+
+        // set up http server w/ mesh key
         let server_key = SecretKey::generate();
         let mesh_key: MeshKey = [0; 32];
         let http_server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -1160,25 +1136,27 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = tokio::sync::mpsc::channel(10);
         let packet_forwarder_handler = PacketForwarderHandler::new(server_channel_s);
 
+        let mesh_client_key = mesh_client.public_key();
+        tracing::info!("mesh client public key: {mesh_client_key:?}");
+
         // spawn a task to run the mesh client
-        let ignore_key = mesh_client_secret_key.public_key();
-        let cancel = CancellationToken::new();
-        let mesh_task_cancel = cancel.clone();
-        let mesh_task = tokio::spawn(async move {
-            mesh_client
-                .run_mesh_client(ignore_key, packet_forwarder_handler, mesh_task_cancel)
-                .await
-        });
+        let mesh_task =
+            tokio::spawn(
+                async move { mesh_client.run_mesh_client(packet_forwarder_handler).await },
+            );
 
         // create another client that will become a normal peer for the derp server
         let normal_client = ClientBuilder::new().build_with_server_url(SecretKey::generate(), url);
+        let normal_client_key = normal_client.public_key();
+        tracing::info!("normal client public key: {normal_client:?}");
         let _ = normal_client.connect().await?;
 
         // wait for "add packet forwarder" message
         match server_channel_r.recv().await {
             Some(msg) => match msg {
-                ServerMessage::AddPacketForwarder { .. } => {
-                    tracing::info!("received `ServerMessage::RemovePacketForwarder`");
+                ServerMessage::AddPacketForwarder { key, .. } => {
+                    tracing::info!("received `ServerMessage::AddPacketForwarder` for {key:?}");
+                    assert!(key == mesh_client_key || key == normal_client_key);
                 }
                 _ => bail!("expected `ServerMessage::AddPacketForwarder`, got {msg:?}"),
             },
@@ -1189,20 +1167,31 @@ mod tests {
         drop(normal_client);
 
         // wait for "remove packet forwarder" message
-        match server_channel_r.recv().await {
-            Some(msg) => match msg {
-                ServerMessage::RemovePacketForwarder { .. } => {
-                    tracing::info!("received `ServerMessage::RemovePacketForwarder`");
-                }
-                _ => bail!("expected `ServerMessage::RemovePacketForwarder`, got {msg:?}"),
-            },
-            None => bail!("no messages received off of the server_channel"),
+        // potentially may get another `PeerPresent` message about ourselves, this is
+        // non deterministic
+        loop {
+            match server_channel_r.recv().await {
+                Some(msg) => match msg {
+                    ServerMessage::RemovePacketForwarder(key) => {
+                        tracing::info!(
+                            "received `ServerMessage::RemovePacketForwarder` for {key:?}"
+                        );
+                        break;
+                    }
+                    ServerMessage::AddPacketForwarder { key, .. } => {
+                        tracing::info!(
+                            "received `ServerMessage::RemovePacketForwarder` for {key:?}"
+                        );
+                        assert!(key == mesh_client_key || key == normal_client_key);
+                    }
+                    _ => bail!("expected `ServerMessage::RemovePacketForwarder`, got {msg:?}"),
+                },
+                None => bail!("no messages received off of the server_channel"),
+            }
         }
 
         // clean up `run_mesh_client`
-        cancel.cancel();
-        mesh_task.await??;
-
+        mesh_task.abort();
         http_server.shutdown().await;
         Ok(())
     }

@@ -204,10 +204,6 @@ struct Config {
     ///
     /// If there is no `mesh_psk_file` with a valid `MeshKey`, this field is ignored.
     mesh_with: Vec<Url>,
-    /// Optional comma-separated list of hostnames to make available at /bootstrap-dns.
-    bootstrap_dns_names: Option<Vec<Url>>,
-    /// Optional comma-separated list of hostnames to make available at /bootstrap-dns and not publish in the list
-    unpublished_dns_names: Option<Vec<Url>>,
     /// Rate limit for accepting new connection. Unlimited if not set.
     accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connection. Unlimited if not set.
@@ -230,8 +226,6 @@ impl Default for Config {
             run_derp: true,
             mesh_psk_file: None,
             mesh_with: Vec::new(),
-            bootstrap_dns_names: None,
-            unpublished_dns_names: None,
             accept_conn_limit: None,
             accept_conn_burst: None,
         }
