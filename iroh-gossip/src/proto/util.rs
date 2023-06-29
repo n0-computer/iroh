@@ -14,7 +14,7 @@ use std::{
 /// This is wrapper around [indexmap::IndexSet] that limits the removal API to
 /// always do shift_remove (preserving the order of other elements) and adds a
 /// couple of utility methods to randomly select elements from the set.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
 }
