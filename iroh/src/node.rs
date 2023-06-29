@@ -25,8 +25,8 @@ use iroh_bytes::{
     runtime,
     util::{Hash, Progress},
 };
-use iroh_net::endpoint::MagicEndpoint;
 use iroh_net::{
+    MagicEndpoint,
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
 };

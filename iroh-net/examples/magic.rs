@@ -4,9 +4,10 @@ use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::default_derp_map,
-    endpoint::{accept_conn, MagicEndpoint},
     hp::derp::{DerpMap, UseIpv4, UseIpv6},
+    magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
+    MagicEndpoint,
 };
 use tracing::{debug, info};
 use url::Url;

@@ -12,7 +12,7 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh_bytes::tokio_util::ProgressWriter;
 use iroh_net::{
-    endpoint::MagicEndpoint,
+    MagicEndpoint,
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},

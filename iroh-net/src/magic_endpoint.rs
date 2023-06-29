@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -73,7 +73,7 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Optionally provides a func to be called when endpoints change.
+    /// Optionally set a callback function to be called when endpoints change.
     #[allow(clippy::type_complexity)]
     pub fn on_endpoints(
         mut self,
@@ -83,13 +83,13 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Optionally provides a func to be called when a connection is made to a DERP server.
+    /// Optionally set a callback funcion to be called when a connection is made to a DERP server.
     pub fn on_derp_active(mut self, on_derp_active: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
         self.callbacks.on_derp_active = Some(on_derp_active);
         self
     }
 
-    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    /// Optionally set a callback function that provides a [cfg::NetInfo] when discovered network conditions change.
     pub fn on_net_info(
         mut self,
         on_net_info: Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>,
@@ -99,6 +99,11 @@ impl MagicEndpointBuilder {
     }
 
     /// Bind the magic endpoint on the specified socket address.
+    ///
+    /// The *bind_addr* is the address that should be bound locally.  Even though this is an
+    /// outgoing connection a socket must be bound and this is explicit.  The main choice to
+    /// make here is the address family: IPv4 or IPv6.  Otherwise you normally bind to the
+    /// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let mut server_config = make_server_config(
@@ -149,26 +154,38 @@ impl MagicEndpoint {
         MagicEndpointBuilder::default()
     }
 
+    /// Connect to a remote endpoint, creating an endpoint on the fly.
+    ///
+    /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
+    /// the remote endpoint, they can be specified and will be added to the endpoint's peer map.
+    /// If no addresses are specified, the endpoint will try to dial the peer through the
+    /// configured DERP servers.
+    pub async fn dial_peer(
+        peer_id: PeerId,
+        alpn_protocol: &[u8],
+        known_addrs: &[SocketAddr],
+        derp_map: Option<DerpMap>,
+        keylog: bool,
+    ) -> anyhow::Result<quinn::Connection> {
+        let bind_addr = if known_addrs.iter().any(|addr| addr.ip().is_ipv6()) {
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into()
+        } else {
+            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into()
+        };
+        let endpoint =
+            MagicEndpoint::bind(Keypair::generate(), bind_addr, None, derp_map, None, keylog)
+                .await?;
+        endpoint
+            .connect(peer_id, alpn_protocol, known_addrs)
+            .await
+            .context("failed to connect to provider")
+    }
+
     /// Create a quinn endpoint backed by a magicsock.
     ///
-    /// The *bind_addr* is the address that should be bound locally.  Even though this is an
-    /// outgoing connection a socket must be bound and this is explicit.  The main choice to
-    /// make here is the address family: IPv4 or IPv6.  Otherwise you normally bind to the
-    /// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
-    ///
-    /// If *peer_id* is present it will verify during the TLS connection setup that the remote
-    /// connected to has the required [`PeerId`], otherwise this will connect to any peer.
-    ///
-    /// The *alpn_protocols* are the list of Application-Layer Protocol Neotiation identifiers
-    /// you are happy to accept.
-    ///
-    /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
-    /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
-    /// to be able to decrypt captured traffic for debugging purposes.
-    ///
-    /// Finally the *derp_map* specifies the DERP servers that can be used to establish this
-    /// connection.
-    pub(crate) async fn bind(
+    /// This is for internal use, the public interface is the [MagicEndpointBuilder] obtained from
+    /// [Self::builder]. See the methods on the builder for documentation of the parameters.
+    async fn bind(
         keypair: Keypair,
         bind_addr: SocketAddr,
         server_config: Option<quinn::ServerConfig>,
@@ -217,6 +234,11 @@ impl MagicEndpoint {
         self.keypair.public().into()
     }
 
+    /// Get the keypair of this endpoint.
+    pub fn keypair(&self) -> &Keypair {
+        &self.keypair
+    }
+
     /// Get the local addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
@@ -244,7 +266,9 @@ impl MagicEndpoint {
         alpn: &[u8],
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, known_addrs).await?;
+        if !known_addrs.is_empty() {
+            self.add_known_addrs(peer_id, known_addrs).await?;
+        }
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
         let addr = self
@@ -268,13 +292,13 @@ impl MagicEndpoint {
             "connecting to {}: (via {} - {:?})",
             peer_id, addr, known_addrs
         );
+
+        // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self
             .endpoint
             .connect_with(client_config, addr, "localhost")?;
 
-        let connection = connect.await.context("failed connecting to provider")?;
-
-        Ok(connection)
+        connect.await.context("failed connecting to provider")
     }
 
     /// Inform the magic socket about addresses of the peer.
@@ -392,10 +416,8 @@ mod test {
 
     use futures::future::BoxFuture;
 
-    use crate::{
-        endpoint::{accept_conn, MagicEndpoint},
-        hp::magicsock::conn_tests::{run_derp_and_stun, setup_logging},
-    };
+    use super::{accept_conn, MagicEndpoint};
+    use crate::hp::magicsock::conn_tests::{run_derp_and_stun, setup_logging};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 

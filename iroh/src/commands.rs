@@ -1,11 +1,12 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
-use iroh_net::{client::create_quinn_client, tls::PeerId};
+use iroh_net::tls::PeerId;
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -235,7 +236,7 @@ async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint = create_quinn_client(bind_addr, None, vec![RPC_ALPN.to_vec()], false)?;
+    let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
@@ -245,6 +246,22 @@ async fn make_rpc_client(
         .await
         .context("iroh server is not running")??;
     Ok(client)
+}
+
+pub fn create_quinn_client(
+    bind_addr: SocketAddr,
+    alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
+) -> Result<quinn::Endpoint> {
+    let keypair = iroh_net::tls::Keypair::generate();
+    let tls_client_config = iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    client_config.transport_config(Arc::new(transport_config));
+    endpoint.set_default_client_config(client_config);
+    Ok(endpoint)
 }
 
 #[cfg(feature = "metrics")]

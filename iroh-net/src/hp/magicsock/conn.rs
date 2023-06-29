@@ -2499,7 +2499,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        endpoint::MagicEndpoint,
+        MagicEndpoint,
         hp::{
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
             stun,
