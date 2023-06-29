@@ -2,6 +2,7 @@
 use std::{
     net::{SocketAddr, SocketAddrV4},
     num::NonZeroU16,
+    result,
     time::{Duration, Instant},
 };
 
@@ -165,10 +166,11 @@ impl Probe {
         valid_probe
     }
 
-    /// Returns a positive probe result if all services have seen recently enough.
+    /// Returns a positive probe result if all services have been seen recently enough.
     ///
     /// If at least one protocol needs to be probed, returns a [`Probe`] with any invalid value
     /// removed.
+    // TODO(@divma): This name is lame.
     fn result(&self) -> Result<ProbeOutput, Probe> {
         let now = Instant::now();
 
@@ -195,11 +197,22 @@ impl Probe {
                 last_pmp: last_valid_pmp,
             })
         } else {
+            // TODO(@divma): note that if we are here then all services are ready (should all be
+            // `true`). But since pcp and pmp are not being probed, get hardcoded to `false`.
             Ok(ProbeOutput {
                 upnp: true,
-                pcp: true,
-                pmp: true,
+                pcp: false,
+                pmp: false,
             })
+        }
+    }
+
+    /// Produces a [`ProbeOutput`] without checking if the services can stll be considered valid.
+    fn output(&self) -> ProbeOutput {
+        ProbeOutput {
+            upnp: self.last_upnp_gateway_addr.is_some(),
+            pcp: false,
+            pmp: false,
         }
     }
 }
@@ -342,17 +355,16 @@ impl Service {
         result: Result<Probe>,
         receivers: Vec<oneshot::Sender<ProbeResult>>,
     ) {
-        match result {
-            Err(e) => {
-                // inform the receivers about the error
-                let e: String = e.to_string();
-                for tx in receivers {
-                    let _ = tx.send(Err(e.clone()));
-                }
+        let result = match result {
+            Err(e) => Err(e.to_string()),
+            Ok(probe) => {
+                self.full_probe = probe;
+                Ok(self.full_probe.output())
             }
-            Ok(result) => {
-                debug!("{result:?}")
-            }
+        };
+        for tx in receivers {
+            // Ignore the error. If the receiver is no longer there we don't really care.
+            let _ = tx.send(result.clone());
         }
     }
 
