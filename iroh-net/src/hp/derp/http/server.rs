@@ -58,8 +58,7 @@ where
     let (io, read_buf) = downcast_upgrade(upgraded)?;
     ensure!(
         read_buf.is_empty(),
-        "can not deal with buffered data yet: {:?}",
-        read_buf
+        "can not deal with buffered data yet: {read_buf:?}",
     );
 
     conn_handler.accept(io).await
@@ -307,12 +306,12 @@ impl ServerState {
                                     .handle_connection(stream, tls_config)
                                     .await
                                 {
-                                    error!("[{http_str}] derp: failed to handle connection: {:?}", e);
+                                    error!("[{http_str}] derp: failed to handle connection: {e}");
                                 }
                             }.instrument(debug_span!("handle_connection")));
                         }
                         Err(err) => {
-                            error!("[{http_str}] derp: failed to accept connection: {:#?}", err);
+                            error!("[{http_str}] derp: failed to accept connection: {err}");
                         }
                     }
                 }
@@ -373,14 +372,13 @@ where
                                     derp_connection_handler(&closure_conn_handler, upgraded).await
                                 {
                                     tracing::warn!(
-                                        "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
-                                        e
+                                        "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {e}",
                                     );
                                 } else {
                                     tracing::info!("server \"{HTTP_UPGRADE_PROTOCOL}\" success");
                                 };
                             }
-                            Err(e) => tracing::warn!("upgrade error: {:?}", e),
+                            Err(e) => tracing::warn!("upgrade error: {e}"),
                         }
                     }
                     .instrument(tracing::debug_span!("derp_connection_handler")),

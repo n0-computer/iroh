@@ -136,8 +136,8 @@ impl CertMode {
                 tokio::spawn(async move {
                     loop {
                         match state.next().await.unwrap() {
-                            Ok(ok) => debug!("acme event: {:?}", ok),
-                            Err(err) => error!("error: {:?}", err),
+                            Ok(ok) => debug!("acme event: {ok:?}"),
+                            Err(err) => error!("error: {err:?}"),
                         }
                     }
                 });
@@ -407,12 +407,12 @@ async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
                             .with_upgrades()
                             .await
                         {
-                            error!("[HTTP] Failed to serve connection: {:?}", err);
+                            error!("[HTTP] Failed to serve connection: {err}");
                         }
                     });
                 }
                 Err(err) => {
-                    error!("[HTTP] failed to accept connection: {:#?}", err);
+                    error!("[HTTP] failed to accept connection: {err}");
                 }
             }
         }
@@ -567,18 +567,18 @@ async fn server_stun_listener(sock: UdpSocket) {
                                     trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
                                 }
                                 Err(err) => {
-                                    warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
+                                    warn!(%src_addr, %txid, "STUN: failed to write response: {err}");
                                 }
                             }
                         }
                         Err(err) => {
-                            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                            warn!(%src_addr, "STUN: invalid binding request: {err}");
                         }
                     }
                 });
             }
             Err(err) => {
-                warn!("STUN: failed to recv: {:?}", err);
+                warn!("STUN: failed to recv: {err}");
             }
         }
     }
