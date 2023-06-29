@@ -142,7 +142,7 @@ impl<T> Timers<T> {
     pub fn new() -> Self {
         Self {
             next: None,
-            map: TimerMap::new(),
+            map: TimerMap::default(),
         }
     }
     /// Insert a new entry at the specified instant
