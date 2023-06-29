@@ -254,7 +254,8 @@ pub fn create_quinn_client(
     keylog: bool,
 ) -> Result<quinn::Endpoint> {
     let keypair = iroh_net::tls::Keypair::generate();
-    let tls_client_config = iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
+    let tls_client_config =
+        iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();

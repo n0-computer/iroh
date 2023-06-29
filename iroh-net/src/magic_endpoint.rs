@@ -266,9 +266,7 @@ impl MagicEndpoint {
         alpn: &[u8],
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        if !known_addrs.is_empty() {
-            self.add_known_addrs(peer_id, known_addrs).await?;
-        }
+        self.add_known_addrs(peer_id, known_addrs).await?;
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
         let addr = self
@@ -336,6 +334,7 @@ impl MagicEndpoint {
             netmap.peers.push(peer);
             netmap.clone()
         };
+
         self.conn.set_network_map(netmap).await?;
         Ok(())
     }

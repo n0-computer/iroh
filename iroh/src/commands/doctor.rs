@@ -12,13 +12,13 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh_bytes::tokio_util::ProgressWriter;
 use iroh_net::{
-    MagicEndpoint,
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
     },
     tls::{Keypair, PeerId, PublicKey},
+    MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};

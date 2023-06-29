@@ -2499,12 +2499,11 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        MagicEndpoint,
         hp::{
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
             stun,
         },
-        tls,
+        tls, MagicEndpoint,
     };
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {

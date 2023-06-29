@@ -26,9 +26,9 @@ use iroh_bytes::{
     util::{Hash, Progress},
 };
 use iroh_net::{
-    MagicEndpoint,
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
+    MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
