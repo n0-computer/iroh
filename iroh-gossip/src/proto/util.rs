@@ -171,3 +171,9 @@ impl<T> TimerMap<T> {
         self.0.iter().next()
     }
 }
+
+impl<T> Default for TimerMap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
