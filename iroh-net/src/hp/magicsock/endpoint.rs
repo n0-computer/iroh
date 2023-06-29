@@ -416,6 +416,9 @@ impl Endpoint {
             .collect();
         debug!("sending pings to {:?}", pings);
 
+        let sent_any = !pings.is_empty();
+        let have_endpoints = !self.endpoint_state.is_empty();
+
         for (i, ep) in pings.into_iter().enumerate() {
             if i == 0 && send_call_me_maybe {
                 debug!("disco: send, starting discovery for {:?}", self.public_key);
@@ -425,7 +428,8 @@ impl Endpoint {
         }
 
         let derp_addr = self.derp_addr;
-        if send_call_me_maybe {
+
+        if send_call_me_maybe && (sent_any || !have_endpoints) {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
