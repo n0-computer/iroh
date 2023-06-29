@@ -7,7 +7,7 @@
 //! one other peer's peer id.
 //!
 //! By default a new peer id is created when starting the example. To reuse your identity,
-//! set the `--secret-key` CLI flag with the secret printed on a previous invocation.
+//! set the `--private-key` CLI flag with the private key printed on a previous invocation.
 //!
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
@@ -34,8 +34,8 @@ use url::Url;
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[clap(short, long)]
-    secret_key: Option<String>,
+    #[clap(long)]
+    private_key: Option<String>,
     #[clap(short, long)]
     topic: String,
     #[clap(short, long)]
@@ -51,11 +51,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
-    let keypair = match args.secret_key {
+    let keypair = match args.private_key {
         None => Keypair::generate(),
-        Some(key) => parse_secret(&key)?,
+        Some(key) => parse_keypair(&key)?,
     };
-    println!("our secret key: {}", fmt_secret(&keypair));
+    println!("> our private key: {}", fmt_secret(&keypair));
 
     // configure our derp map
     // TODO: this should be a one-liner
@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .derp_map(Some(derp_map))
         .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
         .await?;
-    println!("> listening as {}", endpoint.peer_id());
+    println!("> our peer id: {}", endpoint.peer_id());
 
     // create the gossip protocol
     let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
 
     // join the topic with the peers provided
     let topic: TopicId = blake3::hash(args.topic.as_bytes()).into();
-    println!("> joining topic {topic} on peers {:?}", args.peers);
+    println!("> joining topic {topic} with peers {:?}", args.peers);
     gossip.join(topic, args.peers).await?;
     println!("> joined! now send some gossip...");
 
@@ -219,7 +219,7 @@ fn fmt_secret(keypair: &Keypair) -> String {
     text.make_ascii_lowercase();
     text
 }
-fn parse_secret(secret: &str) -> anyhow::Result<Keypair> {
+fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
     let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
         .decode(secret.to_ascii_uppercase().as_bytes())?
         .try_into()
