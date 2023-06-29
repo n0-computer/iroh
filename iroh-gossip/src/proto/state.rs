@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map, HashMap, HashSet},
     fmt,
     time::{Duration, Instant},
 };
@@ -8,6 +8,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::proto::{topic, Config, PeerAddress};
+
+use super::PeerData;
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
 pub struct TopicId([u8; 32]);
@@ -56,6 +58,8 @@ pub enum InEvent<PA> {
     TimerExpired(Timer<PA>),
     /// Peer disconnected on the network level.
     PeerDisconnected(PA),
+    /// Update the opaque peer data about yourself.
+    UpdatePeerData(PeerData),
 }
 
 #[derive(Debug, Clone)]
@@ -69,13 +73,15 @@ pub enum OutEvent<PA> {
     ScheduleTimer(Duration, Timer<PA>),
     /// Close the connection to a peer on the network level.
     DisconnectPeer(PA),
+    /// Updated peer data
+    PeerData(PA, PeerData),
 }
 
 type ConnsMap<PA> = HashMap<PA, HashSet<TopicId>>;
 type Outbox<PA> = Vec<OutEvent<PA>>;
 
 enum InEventMapped<PA> {
-    PeerDisconnected(PA),
+    All(topic::InEvent<PA>),
     TopicEvent(TopicId, topic::InEvent<PA>),
 }
 
@@ -91,13 +97,15 @@ impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
             InEvent::TimerExpired(Timer { topic, timer }) => {
                 Self::TopicEvent(topic, topic::InEvent::TimerExpired(timer))
             }
-            InEvent::PeerDisconnected(peer) => Self::PeerDisconnected(peer),
+            InEvent::PeerDisconnected(peer) => Self::All(topic::InEvent::PeerDisconnected(peer)),
+            InEvent::UpdatePeerData(data) => Self::All(topic::InEvent::UpdatePeerData(data)),
         }
     }
 }
 
 pub struct State<PA, R> {
     me: PA,
+    me_data: PeerData,
     config: Config,
     rng: R,
     states: HashMap<TopicId, topic::State<PA, R>>,
@@ -106,9 +114,10 @@ pub struct State<PA, R> {
 }
 
 impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
-    pub fn new(me: PA, config: Config, rng: R) -> Self {
+    pub fn new(me: PA, me_data: PeerData, config: Config, rng: R) -> Self {
         Self {
             me,
+            me_data,
             config,
             rng,
             states: Default::default(),
@@ -152,18 +161,20 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                     self.conns.entry(*from).or_default().insert(topic);
                 }
                 // when receiving a join command, initialize state if it doesn't exist
-                if let topic::InEvent::Command(topic::Command::Join(_peer)) = event {
-                    if let std::collections::hash_map::Entry::Vacant(e) = self.states.entry(topic) {
+                if let topic::InEvent::Command(topic::Command::Join(_peer)) = &event {
+                    if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
                         e.insert(topic::State::with_rng(
                             self.me,
+                            self.me_data.clone(),
                             self.config.clone(),
                             self.rng.clone(),
                         ));
                     }
                 }
-                if let std::collections::hash_map::Entry::Vacant(e) = self.states.entry(topic) {
+                if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
                     e.insert(topic::State::with_rng(
                         self.me,
+                        self.me_data.clone(),
                         self.config.clone(),
                         self.rng.clone(),
                     ));
@@ -178,9 +189,12 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                 }
             }
             // when a peer disconnected on the network level, forward event to all states
-            InEventMapped::PeerDisconnected(peer) => {
+            InEventMapped::All(event) => {
+                if let topic::InEvent::UpdatePeerData(data) = &event {
+                    self.me_data = data.clone();
+                }
                 for (topic, state) in self.states.iter_mut() {
-                    let out = state.handle(topic::InEvent::PeerDisconnected(peer), now);
+                    let out = state.handle(event.clone(), now);
                     for event in out {
                         handle_out_event(*topic, event, &mut self.conns, &mut self.outbox);
                     }
@@ -216,5 +230,6 @@ fn handle_out_event<PA: PeerAddress>(
                 outbox.push(OutEvent::DisconnectPeer(peer));
             }
         }
+        topic::OutEvent::PeerData(peer, data) => outbox.push(OutEvent::PeerData(peer, data)),
     }
 }

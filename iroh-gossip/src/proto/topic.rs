@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::hyparview::{self, InEvent as SwarmIn};
 use super::plumtree::{self, InEvent as GossipIn};
-use super::PeerAddress;
+use super::{PeerAddress, PeerData};
 
 /// Input event to the state handler.
 #[derive(Clone, Debug)]
@@ -24,6 +24,8 @@ pub enum InEvent<PA> {
     TimerExpired(Timer<PA>),
     /// Peer disconnected on the network level.
     PeerDisconnected(PA),
+    /// Update the opaque peer data about yourself.
+    UpdatePeerData(PeerData),
 }
 
 /// An output event from the state handler.
@@ -38,6 +40,7 @@ pub enum OutEvent<PA> {
     ScheduleTimer(Duration, Timer<PA>),
     /// Close the connection to a peer on the network level.
     DisconnectPeer(PA),
+    PeerData(PA, PeerData),
 }
 
 impl<PA> From<hyparview::OutEvent<PA>> for OutEvent<PA> {
@@ -48,6 +51,7 @@ impl<PA> From<hyparview::OutEvent<PA>> for OutEvent<PA> {
             ScheduleTimer(delay, timer) => Self::ScheduleTimer(delay, timer.into()),
             DisconnectPeer(peer) => Self::DisconnectPeer(peer),
             EmitEvent(event) => Self::EmitEvent(event.into()),
+            PeerData(peer, data) => Self::PeerData(peer, data),
         }
     }
 }
@@ -133,8 +137,8 @@ pub struct State<PA, R> {
 
 impl<PA: PeerAddress> State<PA, rand::rngs::StdRng> {
     /// Initialize the local state with the default random number generator.
-    pub fn new(me: PA, config: Config) -> Self {
-        Self::with_rng(me, config, rand::rngs::StdRng::from_entropy())
+    pub fn new(me: PA, me_data: PeerData, config: Config) -> Self {
+        Self::with_rng(me, me_data, config, rand::rngs::StdRng::from_entropy())
     }
 }
 
@@ -147,9 +151,9 @@ impl<PA, R> State<PA, R> {
 
 impl<PA: PeerAddress, R: Rng> State<PA, R> {
     /// Initialize the local state with a custom random number generator.
-    pub fn with_rng(me: PA, config: Config, rng: R) -> Self {
+    pub fn with_rng(me: PA, me_data: PeerData, config: Config, rng: R) -> Self {
         Self {
-            swarm: hyparview::State::new(me, config.membership, rng),
+            swarm: hyparview::State::new(me, me_data, config.membership, rng),
             gossip: plumtree::State::new(me, config.broadcast),
             me,
             outbox: VecDeque::new(),
@@ -191,6 +195,9 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
             InEvent::PeerDisconnected(peer) => {
                 self.swarm.handle(SwarmIn::PeerDisconnected(peer), now, io);
                 self.gossip.handle(GossipIn::PeerDisconnected(peer), io);
+            }
+            InEvent::UpdatePeerData(data) => {
+                self.swarm.handle(SwarmIn::UpdatePeerData(data), now, io)
             }
         }
 
@@ -269,7 +276,7 @@ mod test {
         config.membership.active_view_capacity = 2;
         let mut network = Network::new(Instant::now());
         for i in 0..4 {
-            network.push(State::new(i, config.clone()));
+            network.push(State::new(i, Default::default(), config.clone()));
         }
 
         // Do some joins between nodes 0,1,2
@@ -334,7 +341,7 @@ mod test {
         let join_ticks = 12;
         // build a network with 6 nodes
         for i in 0..6 {
-            network.push(State::new(i, config.clone()));
+            network.push(State::new(i, Default::default(), config.clone()));
         }
 
         // connect nodes 1 and 2 to node 0
@@ -589,6 +596,7 @@ mod test {
                                 debug!(peer = ?peer, "emit   {event:?}");
                                 self.events.push_back((peer, event));
                             }
+                            OutEvent::PeerData(_peer, _data) => {}
                         }
                     }
                 }
@@ -680,8 +688,12 @@ mod test {
         pub fn init(&mut self) {
             for i in 0..self.config.peers_count {
                 let rng = rand::rngs::StdRng::seed_from_u64(i as u64);
-                self.network
-                    .push(State::with_rng(i, self.gossip_config.clone(), rng.clone()));
+                self.network.push(State::with_rng(
+                    i,
+                    Default::default(),
+                    self.gossip_config.clone(),
+                    rng.clone(),
+                ));
             }
         }
         pub fn bootstrap(&mut self) {

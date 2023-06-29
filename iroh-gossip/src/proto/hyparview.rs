@@ -7,8 +7,7 @@
 //! [impl]: https://gist.github.com/Horusiath/84fac596101b197da0546d1697580d99
 
 use std::{
-    collections::HashSet,
-    hash::Hash,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -18,7 +17,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::{util::IndexSet, PeerAddress, IO};
+use super::{util::IndexSet, PeerAddress, PeerData, PeerInfo, IO};
 
 #[derive(Debug)]
 pub enum InEvent<PA> {
@@ -26,6 +25,7 @@ pub enum InEvent<PA> {
     TimerExpired(Timer<PA>),
     PeerDisconnected(PA),
     RequestJoin(PA),
+    UpdatePeerData(PeerData),
 }
 
 pub enum OutEvent<PA> {
@@ -33,6 +33,7 @@ pub enum OutEvent<PA> {
     ScheduleTimer(Duration, Timer<PA>),
     DisconnectPeer(PA),
     EmitEvent(Event<PA>),
+    PeerData(PA, PeerData),
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +51,7 @@ pub enum Timer<PA> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message<PA> {
     /// Sent to a peer if you want to join the swarm
-    Join,
+    Join(PeerData),
     /// When receiving Join, ForwardJoin is forwarded to the peer's ActiveView to introduce the
     /// new member.
     ForwardJoin(ForwardJoin<PA>),
@@ -83,20 +84,20 @@ impl Ttl {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ForwardJoin<PA> {
-    peer: PA,
+    peer: PeerInfo<PA>,
     ttl: Ttl,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Shuffle<PA> {
     origin: PA,
-    nodes: Vec<PA>,
+    nodes: Vec<PeerInfo<PA>>,
     ttl: Ttl,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShuffleReply<PA> {
-    nodes: Vec<PA>,
+    nodes: Vec<PeerInfo<PA>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -105,19 +106,10 @@ pub enum Priority {
     Low,
 }
 
-impl<PA: Hash + Eq> FromIterator<PA> for ShuffleReply<PA> {
-    fn from_iter<I: IntoIterator<Item = PA>>(nodes: I) -> Self {
-        Self {
-            nodes: HashSet::<PA>::from_iter(nodes.into_iter())
-                .into_iter()
-                .collect(),
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Neighbor {
     priority: Priority,
+    data: PeerData,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -167,6 +159,7 @@ pub struct Stats {
 #[derive(Debug)]
 pub struct State<PA, RG = ThreadRng> {
     me: PA,
+    me_data: PeerData,
     pub(crate) active_view: IndexSet<PA>,
     pub(crate) passive_view: IndexSet<PA>,
     config: Config,
@@ -174,6 +167,7 @@ pub struct State<PA, RG = ThreadRng> {
     rng: RG,
     stats: Stats,
     pending_neighbor_requests: HashSet<PA>,
+    peer_data: HashMap<PA, PeerData>,
 }
 
 impl<PA, RG> State<PA, RG>
@@ -181,9 +175,10 @@ where
     PA: PeerAddress,
     RG: Rng,
 {
-    pub fn new(me: PA, config: Config, rng: RG) -> Self {
+    pub fn new(me: PA, me_data: PeerData, config: Config, rng: RG) -> Self {
         Self {
             me,
+            me_data,
             active_view: IndexSet::new(),
             passive_view: IndexSet::new(),
             config,
@@ -191,6 +186,7 @@ where
             rng,
             stats: Stats::default(),
             pending_neighbor_requests: Default::default(),
+            peer_data: Default::default(),
         }
     }
 
@@ -203,6 +199,9 @@ where
             },
             InEvent::PeerDisconnected(peer) => self.handle_disconnect(peer, io),
             InEvent::RequestJoin(peer) => self.handle_join(peer, io),
+            InEvent::UpdatePeerData(data) => {
+                self.me_data = data;
+            }
         }
 
         // this will only happen on the first call
@@ -235,10 +234,10 @@ where
             self.stats.total_connections += 1;
         }
         match message {
-            Message::Join => self.on_join(from, now, io),
+            Message::Join(data) => self.on_join(from, data, now, io),
             Message::ForwardJoin(details) => self.on_forward_join(from, details, now, io),
             Message::Shuffle(details) => self.on_shuffle(from, details, io),
-            Message::ShuffleReply(details) => self.on_shuffle_reply(details),
+            Message::ShuffleReply(details) => self.on_shuffle_reply(details, io),
             Message::Neighbor(details) => self.on_neighbor(from, details, now, io),
             Message::Disconnect(details) => self.on_disconnect(from, details, io),
         }
@@ -250,7 +249,10 @@ where
     }
 
     fn handle_join(&mut self, peer: PA, io: &mut impl IO<PA>) {
-        io.push(OutEvent::SendMessage(peer, Message::Join));
+        io.push(OutEvent::SendMessage(
+            peer,
+            Message::Join(self.me_data.clone()),
+        ));
     }
 
     fn handle_disconnect(&mut self, peer: PA, io: &mut impl IO<PA>) {
@@ -264,10 +266,10 @@ where
         );
     }
 
-    fn on_join(&mut self, peer: PA, now: Instant, io: &mut impl IO<PA>) {
+    fn on_join(&mut self, peer: PA, data: PeerData, now: Instant, io: &mut impl IO<PA>) {
         // "A node that receives a join request will start by adding the new
         // node to its active view, even if it has to drop a random node from it. (6)"
-        self.add_active(peer, Priority::High, now, io);
+        self.add_active(peer, data.clone(), Priority::High, now, io);
         // "The contact node c will then send to all other nodes in its active view a ForwardJoin
         // request containing the new node identifier. Associated to the join procedure,
         // there are two configuration parameters, named Active Random Walk Length (ARWL),
@@ -276,8 +278,12 @@ where
         // is inserted in a passive view. To use these parameters, the ForwardJoin request carries
         // a “time to live” field that is initially set to ARWL and decreased at every hop. (7)"
         let ttl = self.config.active_random_walk_length;
+        let peer_info = PeerInfo { id: peer, data };
         for node in self.active_view.iter_without(&peer) {
-            let message = Message::ForwardJoin(ForwardJoin { peer, ttl });
+            let message = Message::ForwardJoin(ForwardJoin {
+                peer: peer_info.clone(),
+                ttl,
+            });
             io.push(OutEvent::SendMessage(*node, message));
         }
     }
@@ -292,17 +298,23 @@ where
         // "i) If the time to live is equal to zero or if the number of nodes in p’s active view is equal to one,
         // it will add the new node to its active view (7)"
         if message.ttl.expired() || self.active_view.len() <= 1 {
-            self.add_active(message.peer, Priority::High, now, io);
+            self.add_active(
+                message.peer.id,
+                message.peer.data.clone(),
+                Priority::High,
+                now,
+                io,
+            );
         }
         // "ii) If the time to live is equal to PRWL, p will insert the new node into its passive view"
         else if message.ttl == self.config.passive_random_walk_length {
-            self.add_passive(message.peer);
+            self.add_passive(message.peer.id, message.peer.data.clone(), io);
         }
         // "iii) The time to live field is decremented."
         // "iv) If, at this point, n has not been inserted
         // in p’s active view, p will forward the request to a random node in its active view
         // (different from the one from which the request was received)."
-        if !self.active_view.contains(&message.peer) {
+        if !self.active_view.contains(&message.peer.id) {
             match self
                 .active_view
                 .pick_random_without(&[&sender], &mut self.rng)
@@ -331,23 +343,46 @@ where
         // only accept the request if it has a free slot in its active view, otherwise it will refuse the request."
         match details.priority {
             Priority::High => {
-                self.add_active(from, Priority::High, now, io);
+                self.add_active(from, details.data, Priority::High, now, io);
             }
             Priority::Low if !self.active_is_full() => {
-                self.add_active(from, Priority::Low, now, io);
+                self.add_active(from, details.data, Priority::Low, now, io);
             }
             _ => {}
         }
+    }
+
+    fn peer_info(&self, id: &PA) -> Option<PeerInfo<PA>> {
+        self.peer_data.get(id).map(|data| PeerInfo {
+            id: *id,
+            data: data.clone(),
+        })
+    }
+
+    fn insert_peer_info(&mut self, peer_info: PeerInfo<PA>, io: &mut impl IO<PA>) {
+        let old = self.peer_data.remove(&peer_info.id);
+        if let Some(old) = old {
+            if old != peer_info.data {
+                io.push(OutEvent::PeerData(peer_info.id, peer_info.data.clone()));
+            }
+        }
+        self.peer_data.insert(peer_info.id, peer_info.data);
     }
 
     fn on_shuffle(&mut self, from: PA, shuffle: Shuffle<PA>, io: &mut impl IO<PA>) {
         if shuffle.ttl.expired() {
             let len = shuffle.nodes.len();
             for node in shuffle.nodes {
-                self.add_passive(node);
+                self.add_passive(node.id, node.data, io);
             }
-            let nodes = self.passive_view.shuffled_max(len, &mut self.rng);
-            let message = Message::ShuffleReply(ShuffleReply::from_iter(nodes));
+            let nodes = self
+                .passive_view
+                .shuffled_max(len, &mut self.rng)
+                .into_iter()
+                .map(|id| self.peer_info(&id).unwrap());
+            let message = Message::ShuffleReply(ShuffleReply {
+                nodes: nodes.collect(),
+            });
             io.push(OutEvent::SendMessage(shuffle.origin, message));
         } else if let Some(node) = self
             .active_view
@@ -362,9 +397,9 @@ where
         }
     }
 
-    fn on_shuffle_reply(&mut self, message: ShuffleReply<PA>) {
+    fn on_shuffle_reply(&mut self, message: ShuffleReply<PA>, io: &mut impl IO<PA>) {
         for node in message.nodes {
-            self.add_passive(node);
+            self.add_passive(node.id, node.data, io);
         }
     }
 
@@ -372,7 +407,9 @@ where
         self.pending_neighbor_requests.remove(&peer);
         self.remove_active(&peer, details.respond, io);
         if details.alive {
-            self.add_passive(peer);
+            if let Some(data) = self.peer_data.remove(&peer) {
+                self.add_passive(peer, data, io);
+            }
         } else {
             self.passive_view.remove(&peer);
         }
@@ -390,12 +427,13 @@ where
                 self.config.shuffle_passive_view_count,
                 &mut self.rng,
             );
-            let mut nodes = Vec::new();
-            nodes.extend(active);
-            nodes.extend(passive);
+            let nodes = active
+                .iter()
+                .chain(passive.iter())
+                .map(|id| self.peer_info(id).unwrap());
             let message = Shuffle {
                 origin: self.me,
-                nodes,
+                nodes: nodes.collect(),
                 ttl: self.config.shuffle_random_walk_length,
             };
             io.push(OutEvent::SendMessage(*node, Message::Shuffle(message)));
@@ -418,7 +456,8 @@ where
     ///
     /// If the passive view is full, it will first remove a random peer and then insert the new peer.
     /// If a peer is currently in the active view it will not be added.
-    fn add_passive(&mut self, peer: PA) {
+    fn add_passive(&mut self, peer: PA, data: PeerData, io: &mut impl IO<PA>) {
+        self.insert_peer_info((peer, data).into(), io);
         if self.active_view.contains(&peer) || self.passive_view.contains(&peer) || peer == self.me
         {
             return;
@@ -467,7 +506,10 @@ where
                 true => Priority::High,
                 false => Priority::Low,
             };
-            let message = Message::Neighbor(Neighbor { priority });
+            let message = Message::Neighbor(Neighbor {
+                priority,
+                data: self.me_data.clone(),
+            });
             io.push(OutEvent::SendMessage(*node, message));
             // schedule a timer that checks if the node replied with a neighbor message,
             // otherwise try again with another passive node.
@@ -503,7 +545,8 @@ where
             }
             io.push(OutEvent::DisconnectPeer(peer));
             io.push(OutEvent::EmitEvent(Event::NeighborDown(peer)));
-            self.add_passive(peer);
+            let data = self.peer_data.remove(&peer).unwrap();
+            self.add_passive(peer, data, io);
             debug!(peer = ?self.me, other = ?peer, "removed from active view, reason: {reason:?}");
             Some(peer)
         } else {
@@ -526,10 +569,12 @@ where
     fn add_active(
         &mut self,
         peer: PA,
+        data: PeerData,
         priority: Priority,
         _now: Instant,
         io: &mut impl IO<PA>,
     ) -> bool {
+        self.insert_peer_info((peer, data).into(), io);
         if self.active_view.contains(&peer) || peer == self.me {
             return true;
         }
@@ -554,7 +599,10 @@ where
         self.active_view.insert(peer);
         debug!(peer = ?self.me, other = ?peer, "add to active view");
 
-        let message = Message::Neighbor(Neighbor { priority });
+        let message = Message::Neighbor(Neighbor {
+            priority,
+            data: self.me_data.clone(),
+        });
         io.push(OutEvent::SendMessage(peer, message));
         io.push(OutEvent::EmitEvent(Event::NeighborUp(peer)));
     }
