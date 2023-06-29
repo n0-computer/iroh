@@ -10,8 +10,7 @@ use tracing::{debug, trace};
 
 use crate::{
     hp::{
-        self,
-        cfg::{self, Endpoint, DERP_MAGIC_IP},
+        self, cfg,
         derp::DerpMap,
         magicsock::{Callbacks, Conn},
         netmap,
@@ -250,7 +249,7 @@ impl MagicEndpoint {
     ///
     /// This returns information on the network state of the endpoints in addition to
     /// their addresses.
-    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<Endpoint>> {
+    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<cfg::Endpoint>> {
         self.conn.local_endpoints().await
     }
 
@@ -325,7 +324,7 @@ impl MagicEndpoint {
                 addresses,
                 key: node_key.clone(),
                 endpoints,
-                derp: Some(SocketAddr::new(DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
+                derp: Some(DEFAULT_DERP_REGION),
             }
         };
 
