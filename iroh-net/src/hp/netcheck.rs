@@ -122,9 +122,9 @@ impl Report {
     }
 
     /// Updates the portmap related values based on [`portmapper::ProbeResult`].
-    pub fn update_portmap_probe(&mut self, probe_result: Option<portmapper::ProbeResult>) {
+    pub fn update_portmap_probe(&mut self, probe_result: Option<portmapper::ProbeOutput>) {
         match probe_result {
-            Some(portmapper::ProbeResult { upnp, pmp, pcp }) => {
+            Some(portmapper::ProbeOutput { upnp, pmp, pcp }) => {
                 self.upnp = Some(upnp);
                 self.pmp = Some(pmp);
                 self.pcp = Some(pcp);

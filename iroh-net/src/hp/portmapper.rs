@@ -23,14 +23,11 @@ mod upnp;
 /// will not be probed again.
 const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 10 minutes
 
-// alias to reduce verbosity
-type StrResult<T> = std::result::Result<T, String>;
-
 #[derive(Debug, Clone)]
-pub struct ProbeResult {
+pub struct ProbeOutput {
+    pub upnp: bool,
     pub pcp: bool,
     pub pmp: bool,
-    pub upnp: bool,
 }
 
 #[derive(Debug)]
@@ -45,7 +42,7 @@ enum Message {
     /// The requester should wait for the result at the [`oneshot::Receiver`] counterpart of the
     /// [`oneshot::Sender`].
     Probe {
-        result_tx: oneshot::Sender<StrResult<ProbeResult>>,
+        result_tx: oneshot::Sender<Result<ProbeOutput, String>>,
     },
 }
 
@@ -73,16 +70,15 @@ impl Client {
             tokio::spawn(async move { service.run().await }).abort_handle(),
         );
 
-        let client = Client {
+        Client {
             port_mapping: watcher,
             service_tx,
             service_handle: std::sync::Arc::new(handle),
-        };
-        client
+        }
     }
 
     /// Request a probe to the port mapping protocols.
-    pub fn probe(&self) -> oneshot::Receiver<StrResult<ProbeResult>> {
+    pub fn probe(&self) -> oneshot::Receiver<Result<ProbeOutput, String>> {
         let (result_tx, result_rx) = oneshot::channel();
 
         use mpsc::error::TrySendError::*;
@@ -117,10 +113,99 @@ impl Client {
     }
 }
 
-#[derive(Debug)]
-struct FullProbe {
-    f: usize,
+#[derive(Debug, Default)]
+struct Probe {
+    last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
+    last_pcp: Option<Instant>,
+    last_pmp: Option<Instant>,
 }
+
+impl Probe {
+    /// Creates a new probe that is considered valid.
+    ///
+    /// For any protocol, if the passed result is `None` a probe will be done.
+    async fn new_from_valid_probe(mut valid_probe: Probe) -> Probe {
+        let mut upnp_probing_task = util::MaybeFuture {
+            inner: valid_probe.last_upnp_gateway_addr.is_none().then(|| {
+                Box::pin(async {
+                    upnp::probe_available()
+                        .await
+                        .map(|addr| (addr, Instant::now()))
+                })
+            }),
+        };
+
+        let pcp_probing_task = async { None };
+        let pmp_probing_task = async { None };
+
+        let mut upnp_done = upnp_probing_task.inner.is_none();
+        let mut pcp_done = true;
+        let mut pmp_done = true;
+
+        tokio::pin!(pmp_probing_task);
+        tokio::pin!(pcp_probing_task);
+
+        while !upnp_done || !pcp_done || !pmp_done {
+            tokio::select! {
+                last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
+                    valid_probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
+                    upnp_done = true;
+                },
+                last_pmp = &mut pmp_probing_task, if !pmp_done => {
+                    valid_probe.last_pmp = last_pmp;
+                    pmp_done = true;
+                },
+                last_pcp = &mut pcp_probing_task, if !pcp_done => {
+                    valid_probe.last_pcp = last_pcp;
+                    pcp_done = true;
+                },
+            }
+        }
+
+        valid_probe
+    }
+
+    /// Returns a positive probe result if all services have seen recently enough.
+    ///
+    /// If at least one protocol needs to be probed, returns a [`Probe`] with any invalid value
+    /// removed.
+    fn result(&self) -> Result<ProbeOutput, Probe> {
+        let now = Instant::now();
+
+        // Get the last upnp gateway if it's valid.
+        let last_valid_upnp_gateway =
+            self.last_upnp_gateway_addr
+                .as_ref()
+                .filter(|(_gateway_addr, last_probed)| {
+                    *last_probed + AVAILABILITY_TRUST_DURATION > now
+                });
+
+        // Not probing for now.
+        let last_valid_pcp = Some(now);
+
+        // Not probing for now.
+        let last_valid_pmp = Some(now);
+
+        // Decide if a new probe is necessary
+        if last_valid_upnp_gateway.is_none() || last_valid_pmp.is_none() || last_valid_pcp.is_none()
+        {
+            Err(Probe {
+                last_upnp_gateway_addr: last_valid_upnp_gateway.cloned(),
+                last_pcp: last_valid_pcp,
+                last_pmp: last_valid_pmp,
+            })
+        } else {
+            Ok(ProbeOutput {
+                upnp: true,
+                pcp: true,
+                pmp: true,
+            })
+        }
+    }
+}
+
+// mainly to make clippy happy
+type ProbeResult = Result<ProbeOutput, String>;
 
 /// A port mapping client.
 #[derive(Debug)]
@@ -129,8 +214,8 @@ pub struct Service {
     local_port: Option<NonZeroU16>,
 
     rx: mpsc::Receiver<Message>,
-    last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
     current_mapping: CurrentMapping,
+    full_probe: Probe,
     /// Task attempting to get a port mapping.
     ///
     /// This task will be cancelled if a request to set the local port arrives before it's
@@ -141,8 +226,8 @@ pub struct Service {
     /// Requests for a probe that arrive while this task is still in progress will receive the same
     /// result.
     probing_task: Option<(
-        util::AbortingJoinHandle<FullProbe>,
-        Vec<oneshot::Sender<StrResult<ProbeResult>>>,
+        util::AbortingJoinHandle<Probe>,
+        Vec<oneshot::Sender<ProbeResult>>,
     )>,
 }
 
@@ -196,8 +281,8 @@ impl Service {
         let service = Service {
             local_port: None,
             rx,
-            last_upnp_gateway_addr: None,
             current_mapping,
+            full_probe: Default::default(),
             mapping_task: None,
             probing_task: None,
         };
@@ -254,8 +339,8 @@ impl Service {
 
     async fn on_probe_result(
         &mut self,
-        result: Result<FullProbe>,
-        receivers: Vec<oneshot::Sender<StrResult<ProbeResult>>>,
+        result: Result<Probe>,
+        receivers: Vec<oneshot::Sender<ProbeResult>>,
     ) {
         match result {
             Err(e) => {
@@ -267,7 +352,7 @@ impl Service {
             }
             Ok(result) => {
                 debug!("{result:?}")
-            },
+            }
         }
     }
 
@@ -335,145 +420,26 @@ impl Service {
     /// If there is a task getting a probe, the receiver will be added with any other waiting for a
     /// result. If no probe is underway, a result can be returned immediately if it's still
     /// considered valid. Otherwise, a new probe task will be started.
-    fn probe_request(&mut self, result_tx: oneshot::Sender<StrResult<ProbeResult>>) {
+    fn probe_request(&mut self, result_tx: oneshot::Sender<Result<ProbeOutput, String>>) {
         inc!(Metrics::ProbeRequests);
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
-                // let probe_is_valid = todo!();
-                // if probe_is_valid {
-                //     // send the result based on the last stored value
-                // } else {
-                //     inc!(Metrics::ProbesDone);
-                //     // start a probing Task
-                // }
-                let handle = tokio::spawn(async {
-                    let result = upnp::probe_available().await;
-                    match result {
-                        Ok(x) => {
-                            debug!("Found upnp gateway at {x}");
-                            FullProbe { f: 1 }
-                        }
-                        Err(e) => {
-                            debug!("upnp probe failed {e}");
-                            FullProbe { f: 0 }
-                        }
+                match self.full_probe.result() {
+                    Ok(probe_result) => {
+                        // We don't care if the requester is no longer there.
+                        let _ = result_tx.send(Ok(probe_result));
                     }
-                });
-                self.probing_task = Some((handle.into(), vec![result_tx]));
+                    Err(base_probe) => {
+                        let receivers = vec![result_tx];
+                        let handle =
+                            tokio::spawn(
+                                async move { Probe::new_from_valid_probe(base_probe).await },
+                            );
+                        self.probing_task = Some((handle.into(), receivers));
+                    }
+                }
             }
         }
     }
-
-    /// UPnP: searches for an upnp internet gateway device (a router).
-    pub async fn probe(&mut self) -> Result<ProbeResult> {
-        let upnp = self.upnp_available_from_cache() || self.probe_upnp_available().await;
-
-        Ok(ProbeResult {
-            pcp: false,
-            pmp: false,
-            upnp,
-        })
-    }
-
-    /// Checks if the last seen upnp gateway should still be trusted as available.
-    ///
-    /// Returns false otherwise, or if there is no cached gateway.
-    fn upnp_available_from_cache(&self) -> bool {
-        self.last_upnp_gateway_addr
-            .as_ref()
-            .map(|(_gateway_addr, last_probed)| {
-                *last_probed + AVAILABILITY_TRUST_DURATION > Instant::now()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Probes for UPnP gateways.
-    async fn probe_upnp_available(&mut self) -> bool {
-        inc!(Metrics::UpnpProbes);
-        match upnp::probe_available().await {
-            Ok(gateway_addr) => {
-                debug!("found upnp gateway {gateway_addr}");
-                let old_gateway = self
-                    .last_upnp_gateway_addr
-                    .replace((gateway_addr, Instant::now()));
-                if let Some((old_gateway_addr, _last_seen)) = old_gateway {
-                    if old_gateway_addr != gateway_addr {
-                        inc!(Metrics::UpnpGatewayUpdated);
-                        debug!("upnp gateway changed from {old_gateway_addr} to {gateway_addr}");
-                        // TODO(@divagant-martian): tailscale does not clear the mappings here.
-                        // This means the gateway has changed but we believe `self.current_mapping`
-                        // is still valid.
-                    }
-                }
-                true
-            }
-            Err(e) => {
-                inc!(Metrics::UpnpProbesFailed);
-                debug!("upnp probe failed {e}");
-                // invalidate last seen gateway and time
-                self.last_upnp_gateway_addr = None;
-                false
-            }
-        }
-    }
-
-    /*
-        /// Quickly returns with our current cached portmapping, if any.
-        /// If there's not one, it starts up a background goroutine to create one.
-        /// If the background goroutine ends up creating one, the `on_change` hook registered with the
-        /// `Client::new` constructor (if any) will fire.
-        // TODO(@divagant-martian): fix docs. Also, this will probably only ever return ipv4 addresses.
-        pub async fn get_cached_mapping_or_start_creating_one(&mut self) -> Option<SocketAddr> {
-            // TODO(@divagant-martian): this has a lock ensure just one mapping attempt is underway
-            if let Some(mapping) = &mut self.current_external_address {
-                let now = Instant::now();
-                if now <= mapping.good_until() {
-                    debug!("renewing mapping {mapping}");
-                    // TODO(@divagant-martian): this would go in a goroutine
-                    if now >= mapping.renew_after() {
-                        inc!(Metrics::UpnpPortmapAttempts);
-                        if let Err(e) = mapping.renew().await {
-                            inc!(Metrics::UpnpPortmapFailed);
-                            debug!("failed to renew port mapping {mapping}: {e}");
-                        }
-                    }
-                    // port mapping is still good regardless of renewal
-                    Some(mapping.external().into())
-                } else {
-                    // TODO(@divagant-martian): tailscale returns nil without clearing the mapping
-                    None
-                }
-            } else if let Some(local_port) = self.local_port {
-                inc!(Metrics::UpnpPortmapAttempts);
-                match upnp::Mapping::new(std::net::Ipv4Addr::LOCALHOST, local_port).await {
-                    Ok(mapping) => {
-                        debug!("upnp port mapping created {mapping}");
-                        let external = mapping.external().into();
-                        self.current_external_address = Some(mapping);
-                        Some(external)
-                    }
-                    Err(e) => {
-                        inc!(Metrics::UpnpPortmapFailed);
-                        debug!("Failed to create upnp port mapping: {e}");
-                        None
-                    }
-                }
-            } else {
-                debug!("No valid local port provided to create a mapping");
-                None
-            }
-        }
-
-    pub async fn close(&mut self) {
-        // TODO(@divagant-martian):
-        // tailscale has a `closed` bool, which is not very pretty.
-        // Easiest way to emulate this is consume self and have the owner have an Option. This does
-        // bring some complexity, so maybe we can just not close (permanently) but simply clean
-        // (invalidate mappings)
-        //
-        // The only place this is ever used is to prevent closing twice...
-        let _ = self.invalidate_mapping().await;
-    }
-    */
 }

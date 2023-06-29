@@ -8,11 +8,14 @@ use std::{
 use anyhow::Result;
 use igd::aio as aigd;
 
+use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
+use tracing::debug;
+
 /// Seconds we ask the router to maintain the port mapping. 0 means infinite.
 const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
 
 /// Maximum duration a UPnP search can take before timing out.
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 
@@ -101,13 +104,21 @@ impl Mapping {
 }
 
 /// Searchs for upnp gateways, returns the [`SocketAddrV4`] if any was found.
-pub async fn probe_available() -> Result<SocketAddrV4> {
-    let gateway = aigd::search_gateway(igd::SearchOptions {
+pub async fn probe_available() -> Option<SocketAddrV4> {
+    inc!(Metrics::UpnpProbes);
+    match aigd::search_gateway(igd::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
     })
-    .await?;
-    Ok(gateway.addr)
+    .await
+    {
+        Ok(gateway) => Some(gateway.addr),
+        Err(e) => {
+            inc!(Metrics::UpnpProbesFailed);
+            debug!("upnp probe failed: {e}");
+            None
+        }
+    }
 }
 
 impl Display for Mapping {
