@@ -29,5 +29,4 @@ ignore = [
 [sources]
 allow-git = [
           "https://github.com/JelteF/derive_more", # see #1035
-          "https://github.com/dalek-cryptography/ed25519-dalek", # see #1035
 ]
