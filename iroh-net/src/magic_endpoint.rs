@@ -300,8 +300,8 @@ impl MagicEndpoint {
 
     /// Inform the magic socket about addresses of the peer.
     ///
-    /// The magic socket will try to connect to these addresses, and if successfull,
-    /// prefer them over talking to the peer over the DERP relay.
+    /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
+    /// when connecting to this peer (in addition to addresses obtained from a derp server).
     pub async fn add_known_addrs(
         &self,
         peer_id: PeerId,
