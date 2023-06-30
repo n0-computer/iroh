@@ -13,8 +13,9 @@
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
+use anyhow::bail;
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -29,21 +30,36 @@ use iroh_net::{
     tls::{Keypair, PeerId},
     MagicEndpoint,
 };
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use url::Url;
 
 #[derive(Parser, Debug)]
 struct Args {
+    /// Private key to derive our peer id from
     #[clap(long)]
     private_key: Option<String>,
+    /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
-    topic: String,
-    #[clap(short, long)]
-    derp_server: Option<Url>,
-    #[clap(short, long)]
-    peers: Vec<PeerId>,
+    derp: Option<Url>,
+    /// Disable DERP completeley
+    #[clap(long)]
+    no_derp: bool,
+    /// Set your nickname
     #[clap(short, long)]
     name: Option<String>,
+    /// Set the bind address for our socket. By default, a random port will be used.
+    #[clap(short, long)]
+    bind_addr: Option<SocketAddr>,
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Parser, Debug)]
+enum Command {
+    OpenTopic { topic: String },
+    JoinTicket { ticket: String },
 }
 
 #[tokio::main]
@@ -51,6 +67,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    let bind_addr = args
+        .bind_addr
+        .unwrap_or_else(|| SocketAddr::new([127, 0, 0, 1].into(), 0));
+
+    // parse or generate our keypair
     let keypair = match args.private_key {
         None => Keypair::generate(),
         Some(key) => parse_keypair(&key)?,
@@ -58,58 +79,93 @@ async fn main() -> anyhow::Result<()> {
     println!("> our private key: {}", fmt_secret(&keypair));
 
     // configure our derp map
-    // TODO: this should be a one-liner
-    let derp_map = match args.derp_server {
-        None => default_derp_map(),
-        Some(url) => {
-            let derp_port = match url.port() {
-                Some(port) => port,
-                None => match url.scheme() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => anyhow::bail!(
-                        "Invalid scheme in DERP URL, only http: and https: schemes are supported."
-                    ),
-                },
-            };
-            DerpMap::default_from_node(url, 3478, derp_port, UseIpv4::None, UseIpv6::None)
-        }
+    let derp_map = match (args.no_derp, args.derp) {
+        (false, None) => Some(default_derp_map()),
+        (false, Some(url)) => Some(derp_map_from_url(url)?),
+        (true, None) => None,
+        (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
+    println!("> using DERP servers: {:?}", fmt_derp_map(&derp_map));
 
-    // init a peerid -> name hashmap
-    let mut names = HashMap::new();
+    // init a cell that will hold our gossip handle to be used in endpoint callbacks
+    let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+    // init a channel that will emit once the initial endpoints of our local node are discovered
+    let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
 
     // build our magic endpoint
+    let gossip_cell_clone = gossip_cell.clone();
     let endpoint = MagicEndpoint::builder()
         .keypair(keypair)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
-        .derp_map(Some(derp_map))
-        .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+        .derp_map(derp_map)
+        .on_endpoints(Box::new(move |endpoints| {
+            // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+            if let Some(gossip) = gossip_cell_clone.get() {
+                gossip.update_endpoints(endpoints).ok();
+            }
+            // trigger oneshot on the first endpoint update
+            initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
+        }))
+        .bind(bind_addr)
         .await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
+    // wait for a first endpoint update so that we know about at least one of our addrs
+    let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
+    println!("> our endpoints: {initial_endpoints:?}");
+
     // create the gossip protocol
     let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
+    gossip_cell.set(gossip.clone()).unwrap();
+
+    // pass our initial peer info to the gossip protocol
+    gossip.update_endpoints(&initial_endpoints)?;
 
     // spawn our endpoint loop that forwards incoming connections to the gossiper
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
-    // join the topic with the peers provided
-    let topic: TopicId = blake3::hash(args.topic.as_bytes()).into();
-    println!("> joining topic {topic} with peers {:?}", args.peers);
-    gossip.join(topic, args.peers).await?;
-    println!("> joined! now send some gossip...");
+    let mut our_ticket = match &args.command {
+        Command::OpenTopic { topic } => {
+            println!("> opening topic {topic} and waiting for peers to join us...");
+            let topic = blake3::hash(topic.as_bytes()).into();
+            gossip.join(topic, vec![]).await?;
+            let peers = vec![];
+            Ticket { topic, peers }
+        }
+        Command::JoinTicket { ticket } => {
+            let Ticket { topic, peers } = Ticket::from_str(ticket)?;
+            println!("> joining topic {topic} and connecting to {peers:?}",);
+            // add the peer addrs from the ticket to our known addrs so that they can be dialed
+            for peer in &peers {
+                endpoint.add_known_addrs(peer.peer_id, &peer.addrs).await?;
+            }
+            let peer_ids = peers.iter().map(|peer| peer.peer_id).collect();
+            gossip.join(topic, peer_ids).await?;
+            println!("> joined! now send some gossip...");
+            Ticket { topic, peers }
+        }
+    };
+
+    // add our local endpoints to the ticket and print it for others to join
+    let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
+    our_ticket.peers.push(PeerAddr {
+        peer_id: endpoint.peer_id(),
+        addrs,
+    });
+    println!("> ticket to join us: {our_ticket}");
+
+    let topic = our_ticket.topic;
 
     // broadcast our name, if set
     if let Some(name) = args.name {
-        names.insert(endpoint.peer_id(), name.clone());
-        let message =
-            SignedMessage::sign_and_encode(endpoint.keypair(), &Message::AboutMe { name })?;
-        gossip.broadcast(topic, message).await?;
+        let message = Message::AboutMe { name };
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        gossip.broadcast(topic, encoded_message).await?;
     }
 
     // subscribe and print loop
-    tokio::spawn(subscribe_loop(gossip.clone(), topic, names));
+    tokio::spawn(subscribe_loop(gossip.clone(), topic));
 
     // spawn an input thread that reads stdin
     // not using tokio here because they recommend this for "technical reasons"
@@ -118,19 +174,18 @@ async fn main() -> anyhow::Result<()> {
 
     // broadcast each line we type
     while let Some(text) = line_rx.recv().await {
-        let message =
-            SignedMessage::sign_and_encode(endpoint.keypair(), &Message::Message { text })?;
-        gossip.broadcast(topic, message).await?;
+        let message = Message::Message { text };
+        let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
+        gossip.broadcast(topic, encoded_message).await?;
     }
 
     Ok(())
 }
 
-async fn subscribe_loop(
-    gossip: GossipHandle,
-    topic: TopicId,
-    mut names: HashMap<PeerId, String>,
-) -> anyhow::Result<()> {
+async fn subscribe_loop(gossip: GossipHandle, topic: TopicId) -> anyhow::Result<()> {
+    // init a peerid -> name hashmap
+    let mut names = HashMap::new();
+    // get a stream that emits updates on our topic
     let mut stream = gossip.subscribe(topic).await?;
     loop {
         let event = stream.recv().await?;
@@ -173,7 +228,7 @@ fn input_loop(line_tx: tokio::sync::mpsc::Sender<String>) -> anyhow::Result<()> 
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SignedMessage {
     from: PeerId,
     data: Bytes,
@@ -203,11 +258,56 @@ impl SignedMessage {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 enum Message {
     AboutMe { name: String },
     Message { text: String },
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Ticket {
+    topic: TopicId,
+    peers: Vec<PeerAddr>,
+}
+impl Ticket {
+    /// Deserializes from bytes.
+    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        postcard::from_bytes(bytes).map_err(Into::into)
+    }
+    /// Serializes to bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PeerAddr {
+    peer_id: PeerId,
+    addrs: Vec<SocketAddr>,
+}
+
+/// Serializes to base32.
+impl fmt::Display for Ticket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let encoded = self.to_bytes();
+        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
+
+/// Deserializes from base32.
+impl FromStr for Ticket {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        let slf = Self::from_bytes(&bytes)?;
+        Ok(slf)
+    }
+}
+
+// helpers
 
 fn fmt_peer_id(input: &PeerId) -> String {
     let text = format!("{}", input);
@@ -226,4 +326,35 @@ fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
         .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
     let key = SigningKey::from_bytes(&bytes);
     Ok(key.into())
+}
+fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
+    match derp_map {
+        None => "None".to_string(),
+        Some(map) => {
+            let regions = map.regions.iter().map(|(id, region)| {
+                let nodes = region.nodes.iter().map(|node| node.host_name.to_string());
+                (*id, nodes.collect::<Vec<_>>())
+            });
+            format!("{:?}", regions.collect::<Vec<_>>())
+        }
+    }
+}
+fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
+    // TODO: this should be a one-liner
+    // will be solved by https://github.com/n0-computer/iroh/pull/1143
+    let derp_port = match url.port() {
+        Some(port) => port,
+        None => match url.scheme() {
+            "http" => 80,
+            "https" => 443,
+            _ => bail!("Invalid scheme in DERP URL, only http: and https: schemes are supported."),
+        },
+    };
+    Ok(DerpMap::default_from_node(
+        url,
+        3478,
+        derp_port,
+        UseIpv4::None,
+        UseIpv6::None,
+    ))
 }

@@ -1730,6 +1730,7 @@ dependencies = [
  "futures",
  "indexmap 1.9.3",
  "iroh-net",
+ "once_cell",
  "postcard",
  "quinn",
  "rand",
