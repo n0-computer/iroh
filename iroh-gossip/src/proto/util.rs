@@ -19,10 +19,13 @@ pub struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
 }
 
-impl<T> IndexSet<T>
-where
-    T: Hash + Eq + PartialEq,
-{
+impl<T: Hash + Eq + PartialEq> Default for IndexSet<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Hash + Eq + PartialEq> IndexSet<T> {
     pub fn new() -> Self {
         Self {
             inner: indexmap::IndexSet::new(),
