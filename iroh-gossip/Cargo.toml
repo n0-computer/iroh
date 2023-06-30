@@ -29,6 +29,7 @@ quinn = { version = "0.10", optional = true }
 tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
 postcard = { version = "1", optional = true, default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
+once_cell = "1.18.0"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -38,3 +39,7 @@ url = "2.4.0"
 [features]
 default = ["net"]
 net = ["futures", "iroh-net", "quinn", "tokio", "postcard", "tokio-util"]
+
+[[example]]
+name = "chat"
+required-features = ["net"]
