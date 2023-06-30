@@ -13,7 +13,7 @@ use crate::{
         self, cfg,
         derp::DerpMap,
         magicsock::{Callbacks, Conn},
-        netmap,
+        netmap::NetworkMap,
     },
     tls::{self, Keypair, PeerId},
 };
@@ -143,7 +143,7 @@ pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
     conn: Conn,
     endpoint: quinn::Endpoint,
-    netmap: Arc<Mutex<netmap::NetworkMap>>,
+    netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
 }
 
@@ -218,7 +218,7 @@ impl MagicEndpoint {
             keypair: Arc::new(keypair),
             conn,
             endpoint,
-            netmap: Arc::new(Mutex::new(netmap::NetworkMap { peers: vec![] })),
+            netmap: Arc::new(Mutex::new(NetworkMap { peers: vec![] })),
             keylog,
         })
     }
@@ -307,33 +307,33 @@ impl MagicEndpoint {
         peer_id: PeerId,
         addrs: &[SocketAddr],
     ) -> anyhow::Result<()> {
-        let node_key: hp::key::node::PublicKey = peer_id.into();
         const DEFAULT_DERP_REGION: u16 = 1;
 
-        let peer = {
-            let mut addresses = Vec::new();
-            let mut endpoints = Vec::new();
-
-            // Add the provided address as a starting point.
-            for addr in addrs {
-                addresses.push(addr.ip());
-                endpoints.push(*addr);
-            }
-            cfg::Node {
-                name: None,
-                addresses,
-                key: node_key.clone(),
-                endpoints,
-                derp: Some(DEFAULT_DERP_REGION),
-            }
-        };
-
+        let node_key: hp::key::node::PublicKey = peer_id.into();
         let netmap = {
             let mut netmap = self.netmap.lock().unwrap();
-            netmap.peers.push(peer);
+            let node = netmap.peers.iter_mut().find(|peer| peer.key == node_key);
+            if let Some(node) = node {
+                for addr in addrs {
+                    if !node.endpoints.contains(addr) {
+                        node.endpoints.push(*addr);
+                        node.addresses.push(addr.ip());
+                    }
+                }
+            } else {
+                let endpoints = addrs.to_vec();
+                let addresses = endpoints.iter().map(|ep| ep.ip()).collect();
+                let node = cfg::Node {
+                    name: None,
+                    addresses,
+                    endpoints,
+                    key: node_key.clone(),
+                    derp: Some(DEFAULT_DERP_REGION),
+                };
+                netmap.peers.push(node)
+            }
             netmap.clone()
         };
-
         self.conn.set_network_map(netmap).await?;
         Ok(())
     }
