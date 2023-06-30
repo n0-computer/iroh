@@ -192,7 +192,6 @@ impl MagicEndpoint {
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        // let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let conn = hp::magicsock::Conn::new(hp::magicsock::Options {
             port: bind_addr.port(),
             private_key: keypair.secret().clone().into(),
