@@ -75,7 +75,7 @@ where
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    pub(crate) server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    server: Option<crate::hp::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
     mesh_clients: Option<MeshClients>,
@@ -273,21 +273,22 @@ impl ServerBuilder {
                     .iter()
                     .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
             );
-            let mut mesh_clients = None;
 
             let packet_fwd = server.packet_forwarder_handler();
 
-            if let Some(mesh_addrs) = self.mesh_derpers {
+            let mesh_clients = if let Some(mesh_addrs) = self.mesh_derpers {
                 ensure!(
                     self.mesh_key.is_some(),
                     "Must provide a `MeshKey` when trying to join a mesh network."
                 );
 
                 let mesh_key = self.mesh_key.expect("checked");
-                mesh_clients = Some(MeshClients::new(
+                Some(MeshClients::new(
                     mesh_key, secret_key, mesh_addrs, packet_fwd,
-                ));
-            }
+                ))
+            } else {
+                None
+            };
 
             (
                 DerpHandler::ConnHandler(server.client_conn_handler(header_map)),
@@ -369,7 +370,7 @@ impl ServerState {
                     }
                     res = listener.accept() => match res {
                         Ok((stream, peer_addr)) => {
-                            debug!("[{http_str}] derp: Connection opened from {}", peer_addr);
+                            debug!("[{http_str}] derp: Connection opened from {peer_addr}");
                             let tls_config = self.tls_config.clone();
                             let service = self.service.clone();
                             // spawn a task to handle the connection
@@ -378,17 +379,18 @@ impl ServerState {
                                     .handle_connection(stream, tls_config)
                                     .await
                                 {
-                                    error!("[{http_str}] derp: failed to handle connection: {:?}", e);
+                                    error!("[{http_str}] derp: failed to handle connection: {e}");
                                 }
                             }.instrument(debug_span!("handle_connection")));
                         }
                         Err(err) => {
-                            error!("[{http_str}] derp: failed to accept connection: {:#?}", err);
+                            error!("[{http_str}] derp: failed to accept connection: {err}");
                         }
                     }
                 }
             }
             set.shutdown().await;
+            debug!("[{http_str}] derp: server has been shutdown.");
         }.instrument(debug_span!("serve")));
 
         // start meshing

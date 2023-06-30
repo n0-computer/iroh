@@ -50,7 +50,8 @@ impl MeshClients {
                 for (_, region) in derp_map.regions.iter() {
                     for node in region.nodes.iter() {
                         // note: `node.host_name` is expected to include the scheme
-                        let url: Url = format!("{}/derp", node.host_name).parse().unwrap();
+                        let mut url = node.host_name.clone();
+                        url.set_path("/derp");
                         urls.push(url);
                     }
                 }
@@ -60,7 +61,9 @@ impl MeshClients {
         for addr in addrs {
             let client = ClientBuilder::new()
                 .mesh_key(Some(self.mesh_key))
-                .build_with_server_url(self.server_key.clone(), addr);
+                .server_url(addr)
+                .build(self.server_key.clone())
+                .expect("will only fail if no `server_url` is present");
 
             let packet_forwarder_handler = self.packet_fwd.clone();
             self.tasks.spawn(async move {
@@ -78,8 +81,11 @@ impl MeshClients {
 }
 
 #[derive(Debug, Clone)]
+/// The different ways to express the mesh network you want to join.
 pub enum MeshAddrs {
+    /// Supply a `DerpMap` of all the derp servers you want to mesh with.
     DerpMap(DerpMap),
+    /// Supply a list of `Url`s of all the derp server you want to mesh with.
     Addrs(Vec<Url>),
 }
 
@@ -122,11 +128,15 @@ mod tests {
             .await?;
 
         let alice_key = SecretKey::generate();
-        let alice = ClientBuilder::new().build_with_server_url(alice_key.clone(), a_url);
+        let alice = ClientBuilder::new()
+            .server_url(a_url)
+            .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
-        let bob = ClientBuilder::new().build_with_server_url(bob_key.clone(), b_url);
+        let bob = ClientBuilder::new()
+            .server_url(b_url)
+            .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
         // send bob a message from alice
