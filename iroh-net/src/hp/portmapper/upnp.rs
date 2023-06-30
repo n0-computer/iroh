@@ -19,15 +19,17 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub struct Mapping {
     /// The internet Gateway device (router) used to create this mapping.
+    #[debug("{}", gateway)]
     gateway: aigd::Gateway,
     /// The external address obtained by this mapping.
     external_addr: SocketAddrV4,
     /// Local address used to create this mapping.
     local_addr: SocketAddrV4,
     /// Instant in which the mapping was first created or last renewed.
+    #[debug(skip)]
     created_at: Instant,
 }
 
