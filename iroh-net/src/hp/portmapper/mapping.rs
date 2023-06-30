@@ -46,12 +46,15 @@ pub(super) enum Event {
     Expired { external_port: NonZeroU16 },
 }
 /// Holds the current mapping value and ensures that any change is reported accordingly.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(super) struct CurrentMapping {
     /// Active port mapping.
     mapping: State,
     /// A [`watch::Sender`] that keeps the latest external address for subscribers to changes.
     address_tx: watch::Sender<Option<SocketAddrV4>>,
+    /// Waker to ensure this is polled when needed.
+    #[debug(skip)]
+    waker: Option<std::task::Waker>,
 }
 
 impl CurrentMapping {
@@ -65,6 +68,7 @@ impl CurrentMapping {
         let wrapper = CurrentMapping {
             mapping,
             address_tx,
+            waker: None,
         };
         (wrapper, address_rx)
     }
@@ -75,6 +79,11 @@ impl CurrentMapping {
         trace!("New port mapping {mapping:?}");
         let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
         let old_mapping = self.mapping.replace(mapping);
+        // mapping changed
+        // TODO(@divma): maybe only wake if mapping is some
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref()
+        }
         self.address_tx.send_if_modified(|old_addr| {
             // replace the value always, as it could have different internal values
             let old_addr = std::mem::replace(old_addr, maybe_external_addr);
@@ -85,6 +94,15 @@ impl CurrentMapping {
     }
 
     fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Event> {
+        // grab the waker if needed
+        if let Some(waker) = &self.waker {
+            if waker.will_wake(cx.waker()) {
+                self.waker = Some(cx.waker().clone());
+            }
+        } else {
+            self.waker = Some(cx.waker().clone());
+        }
+
         // poll the mapping deadlines to keep the state up to date
         if let State::Active {
             mapping,
@@ -105,7 +123,6 @@ impl CurrentMapping {
                     Poll::Ready(Event::Expired { external_port })
                 } else {
                     // mapping is due for renewal
-                    // TODO(@divma): this sleep needs to be polled. Gotta add a waker
                     *deadline = Box::pin(time::sleep(Duration::from_secs(3)));
                     *expire_after = true;
                     Poll::Ready(Event::Renew { external_port })
