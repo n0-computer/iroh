@@ -93,13 +93,21 @@ pub enum MeshAddrs {
 mod tests {
     use crate::hp::derp::{http::ServerBuilder, ReceivedMessage};
     use anyhow::{bail, Result};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
 
     #[tokio::test]
     async fn test_mesh_network() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
         let mesh_key: MeshKey = [1; 32];
         let a_key = SecretKey::generate();
+        tracing::info!("derp server a: {:?}", a_key.public_key());
         let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(a_key))
             .mesh_key(Some(mesh_key))
@@ -107,6 +115,7 @@ mod tests {
             .await?;
 
         let b_key = SecretKey::generate();
+        tracing::info!("derp server b: {:?}", b_key.public_key());
         let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(b_key))
             .mesh_key(Some(mesh_key))
@@ -128,31 +137,50 @@ mod tests {
             .await?;
 
         let alice_key = SecretKey::generate();
+        tracing::info!("client alice: {:?}", alice_key.public_key());
         let alice = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
+        tracing::info!("client bob: {:?}", bob_key.public_key());
         let bob = ClientBuilder::new()
             .server_url(b_url)
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
+        // needs time for the mesh network to fully mesh
+        // packets may get dropped the first go-around
+        // this will loop until we get the first keepalive, message, which means
+        // there is really something wrong if we can't gt
         // send bob a message from alice
         let msg = "howdy, bob!";
+        tracing::info!("send message from alice to bob");
         alice.send(bob_key.public_key(), msg.into()).await?;
 
-        let (recv, _) = bob.recv_detail().await?;
-        if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-            assert_eq!(alice_key.public_key(), source);
-            assert_eq!(msg, data);
-        } else {
-            bail!("unexpected ReceivedMessage {recv:?}");
+        loop {
+            tokio::select! {
+                recv = bob.recv_detail() => {
+                    let (recv, _) = recv?;
+                    if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+                        assert_eq!(alice_key.public_key(), source);
+                        assert_eq!(msg, data);
+                        break;
+                    } else {
+                        bail!("unexpected ReceivedMessage {recv:?}");
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    tracing::info!("attempting to send another message from alice to bob");
+                    alice.send(bob_key.public_key(), msg.into()).await?;
+                }
+            }
         }
 
         // send alice a message from bob
         let msg = "why hello, alice!";
+        tracing::info!("send message from bob to alice");
         bob.send(alice_key.public_key(), msg.into()).await?;
 
         let (recv, _) = alice.recv_detail().await?;
