@@ -309,8 +309,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cfg = Config::load(&cli).await?;
+    run(cli.dev, cfg).await
+}
 
-    let (addr, tls_config) = if cli.dev {
+async fn run(dev_mode: bool, cfg: Config) -> Result<()> {
+    let (addr, tls_config) = if dev_mode {
         let port = if cfg.addr.port() != 443 {
             cfg.addr.port()
         } else {
@@ -751,6 +754,15 @@ async fn server_stun_listener(sock: UdpSocket) {
 mod tests {
     use super::*;
 
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use bytes::Bytes;
+    use iroh_net::hp::{
+        derp::{http::ClientBuilder, ReceivedMessage},
+        key::node::SecretKey,
+    };
+
     #[tokio::test]
     async fn test_serve_no_content_handler() {
         let challenge = "123az__.";
@@ -781,5 +793,155 @@ mod tests {
             escape_hostname("hello.host.name_foo-bar%baz"),
             "hello.host.namefoo-barbaz"
         );
+    }
+
+    #[tokio::test]
+    async fn test_derper_basic() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+        let cfg = Config::default();
+        let derper_task = tokio::spawn(
+            async move {
+                let res = run(true, cfg).await;
+                if let Err(e) = res {
+                    println!("error starting derp server {e}");
+                }
+            }
+            .instrument(debug_span!("derper")),
+        );
+
+        let derper_addr_str = "http://[::]:3340";
+        let derper_addr: Url = derper_addr_str.parse().unwrap();
+
+        // set up clients
+        let a_secret_key = SecretKey::generate();
+        let a_key = a_secret_key.public_key();
+        let client_a = ClientBuilder::new()
+            .server_url(derper_addr.clone())
+            .build(a_secret_key)?;
+        let connect_client = client_a.clone();
+
+        // give the derper some time to set up
+        if let Err(e) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(e) => {
+                        tracing::warn!("client a unable to connect to derper: {e:?}. Attempting to dial again in 10ms");
+                        tokio::time::sleep(Duration::from_millis(100)).await
+                    }
+                }
+            }
+        })
+        .await
+        {
+            bail!("error connecting client a to derper: {e:?}");
+        }
+
+        let b_secret_key = SecretKey::generate();
+        let b_key = b_secret_key.public_key();
+        let client_b = ClientBuilder::new()
+            .server_url(derper_addr)
+            .build(b_secret_key)?;
+        client_b.connect().await?;
+
+        let msg = Bytes::from("hello, b");
+        client_a.send(b_key.clone(), msg.clone()).await?;
+
+        let (res, _) = client_b.recv_detail().await?;
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(a_key, source);
+            assert_eq!(msg, data);
+        } else {
+            bail!("client_b received unexpected message {res:?}");
+        }
+
+        let msg = Bytes::from("howdy, a");
+        client_b.send(a_key.clone(), msg.clone()).await?;
+
+        let (res, _) = client_a.recv_detail().await?;
+        if let ReceivedMessage::ReceivedPacket { source, data } = res {
+            assert_eq!(b_key, source);
+            assert_eq!(msg, data);
+        } else {
+            bail!("client_a received unexpected message {res:?}");
+        }
+
+        // run stun check
+        let stun_addr: SocketAddr =
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 3478);
+
+        let txid = stun::TransactionId::default();
+        let req = stun::request(txid);
+        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
+
+        let server_socket = socket.clone();
+        let server_task = tokio::task::spawn(async move {
+            let mut buf = vec![0u8; 64000];
+            let len = server_socket.recv(&mut buf).await.unwrap();
+            dbg!(len);
+            buf.truncate(len);
+            buf
+        });
+
+        tracing::info!("sending stun request to {stun_addr}");
+        if let Err(e) = socket.send_to(&req, stun_addr).await {
+            bail!("socket.send_to error: {e:?}");
+        }
+
+        let response = server_task.await.unwrap();
+        let (txid_back, response_addr) = stun::parse_response(&response).unwrap();
+        assert_eq!(txid, txid_back);
+        tracing::info!("got {response_addr}");
+
+        // get 200 home page response
+        tracing::info!("send request for homepage");
+        let req = hyper::Request::builder()
+            .method(hyper::Method::GET)
+            .uri(derper_addr_str)
+            .body(Body::empty())
+            .unwrap();
+
+        let client = hyper::Client::new();
+        let res = client.request(req).await?;
+        assert_eq!(StatusCode::OK, res.status());
+        tracing::info!("got OK");
+
+        assert!(!hyper::body::to_bytes(res.into_body())
+            .await
+            .unwrap()
+            .is_empty());
+
+        // test captive portal
+        tracing::info!("test captive portal response");
+        let challenge = "123az__.";
+        let req = hyper::Request::builder()
+            .method(hyper::Method::GET)
+            .uri(format!("{derper_addr_str}/generate_204"))
+            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+            .body(Body::empty())
+            .unwrap();
+
+        let res = client.request(req).await?;
+        assert_eq!(StatusCode::NO_CONTENT, res.status());
+
+        let header = res
+            .headers()
+            .get(NO_CONTENT_RESPONSE_HEADER)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(header, format!("response {challenge}"));
+        assert!(hyper::body::to_bytes(res.into_body())
+            .await
+            .unwrap()
+            .is_empty());
+        tracing::info!("got successful captive portal response");
+
+        derper_task.abort();
+        Ok(())
     }
 }
