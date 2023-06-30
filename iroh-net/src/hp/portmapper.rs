@@ -14,6 +14,9 @@ use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
 
 use crate::util;
 
+use mapping::CurrentMapping;
+
+mod mapping;
 mod upnp;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
@@ -30,7 +33,7 @@ pub struct ProbeOutput {
     pub pmp: bool,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 enum Message {
     /// Request to update the local port.
     ///
@@ -44,6 +47,7 @@ enum Message {
     /// [`oneshot::Sender`].
     Probe {
         /// Sender side to communicate the result of the probe.
+        #[debug("skip")]
         result_tx: oneshot::Sender<Result<ProbeOutput, String>>,
     },
 }
@@ -271,47 +275,6 @@ enum ReleaseMapping {
     No,
 }
 
-/// Holds the current mapping value and ensures that any change is reported accordingly.
-#[derive(Debug)]
-struct CurrentMapping {
-    /// Active port mapping.
-    mapping: Option<upnp::Mapping>,
-    /// A [`watch::Sender`] that keeps the latest external address for subscribers to changes.
-    address_tx: watch::Sender<Option<SocketAddrV4>>,
-}
-
-impl CurrentMapping {
-    /// Creates a new [`CurrentMapping`] and returns the watcher over it's external address.
-    fn new(mapping: Option<upnp::Mapping>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
-        let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
-        let (address_tx, address_rx) = watch::channel(maybe_external_addr);
-        let wrapper = CurrentMapping {
-            mapping,
-            address_tx,
-        };
-        (wrapper, address_rx)
-    }
-
-    /// Updates the mapping, informing of any changes to the external address. The old mapping is
-    /// returned.
-    fn update(&mut self, mapping: Option<upnp::Mapping>) -> Option<upnp::Mapping> {
-        trace!("New port mapping {mapping:?}");
-        let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
-        let old_mapping = std::mem::replace(&mut self.mapping, mapping);
-        self.address_tx.send_if_modified(|old_addr| {
-            // replace the value always, as it could have different internal values
-            let old_addr = std::mem::replace(old_addr, maybe_external_addr);
-            // inform only if this produces a different external address
-            old_addr != maybe_external_addr
-        });
-        old_mapping
-    }
-
-    fn value(&self) -> Option<&upnp::Mapping> {
-        self.mapping.as_ref()
-    }
-}
-
 impl Service {
     fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new(None);
@@ -331,18 +294,18 @@ impl Service {
         if let Some(old_mapping) = self.current_mapping.update(None) {
             if release == ReleaseMapping::Yes {
                 if let Err(e) = old_mapping.release().await {
-                    debug!("Failed to release mapping {e}");
+                    debug!("failed to release mapping {e}");
                 }
             }
         }
     }
 
     async fn run(mut self) -> Result<()> {
-        debug!("Portmap starting");
+        debug!("portmap starting");
         loop {
             tokio::select! {
                 msg = self.rx.recv() => {
-                    trace!("tick: msg");
+                    trace!("tick: msg {msg:?}");
                     match msg {
                         Some(msg) => {
                             self.handle_msg(msg).await;
@@ -390,7 +353,7 @@ impl Service {
             }
         };
         for tx in receivers {
-            // Ignore the error. If the receiver is no longer there we don't really care.
+            // ignore the error. If the receiver is no longer there we don't really care
             let _ = tx.send(result.clone());
         }
     }
@@ -400,12 +363,11 @@ impl Service {
             Ok(mapping) => {
                 let old_mapping = self.current_mapping.update(Some(mapping));
             }
-            Err(e) => debug!("Failed to get a port mapping {e}"),
+            Err(e) => debug!("failed to get a port mapping {e}"),
         }
     }
 
     async fn handle_msg(&mut self, msg: Message) {
-        debug!("received message {msg:?}");
         match msg {
             Message::UpdateLocalPort { local_port } => self.update_local_port(local_port).await,
             Message::Probe { result_tx } => self.probe_request(result_tx),
@@ -431,7 +393,7 @@ impl Service {
 
             if did_cancel {
                 debug!(
-                    "Canceled mapping task due to local port update. Old: {:?} New: {:?}",
+                    "canceled mapping task due to local port update. Old: {:?} New: {:?}",
                     old_port, self.local_port
                 )
             }
@@ -444,7 +406,7 @@ impl Service {
             // Start a new mapping task to account for the new port if necessary.
 
             if let Some(local_port) = self.local_port {
-                debug!("Getting a port mapping for port {local_port}");
+                debug!("getting a port mapping for port {local_port}");
                 let handle = tokio::spawn(upnp::Mapping::new(
                     std::net::Ipv4Addr::LOCALHOST,
                     local_port,
