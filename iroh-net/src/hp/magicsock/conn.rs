@@ -36,7 +36,7 @@ use crate::{
 
 use super::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{Options as EndpointOptions, PeerMap},
+    endpoint::{EndpointInfo, Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
 };
@@ -372,7 +372,7 @@ impl Conn {
         Ok(c)
     }
 
-    pub async fn tracked_endpoints(&self) -> Result<Vec<key::node::PublicKey>> {
+    pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
             .send(ActorMessage::TrackedEndpoints(s))
@@ -743,7 +743,7 @@ impl Drop for WgGuard {
 #[derive(Debug)]
 pub(super) enum ActorMessage {
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
-    TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
+    TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<cfg::Endpoint>>),
     GetMappingAddr(
         key::node::PublicKey,
@@ -903,11 +903,7 @@ impl Actor {
                 let _ = s.send(());
             }
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self
-                    .peer_map
-                    .endpoints()
-                    .map(|(_, ep)| ep.public_key.clone())
-                    .collect();
+                let eps: Vec<_> = self.peer_map.endpoints().map(|(_, ep)| ep.info()).collect();
                 let _ = s.send(eps);
             }
             ActorMessage::LocalEndpoints(s) => {
@@ -2744,7 +2740,13 @@ mod tests {
         }
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
-            self.conn.tracked_endpoints().await.unwrap_or_default()
+            self.conn
+                .tracked_endpoints()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|ep| ep.public_key)
+                .collect()
         }
 
         fn public(&self) -> key::node::PublicKey {

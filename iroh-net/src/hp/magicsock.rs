@@ -10,4 +10,5 @@ mod timer;
 mod udp_actor;
 
 pub use self::conn::{Conn, Options};
+pub use self::endpoint::EndpointInfo;
 pub use self::timer::Timer;

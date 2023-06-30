@@ -122,6 +122,26 @@ impl Endpoint {
         &self.public_key
     }
 
+    /// Returns info about this endpoint
+    pub fn info(&self) -> EndpointInfo {
+        let addrs = self
+            .endpoint_state
+            .keys()
+            .filter_map(|addr| match addr {
+                SendAddr::Udp(addr) => Some(*addr),
+                _ => None,
+            })
+            .collect();
+
+        EndpointInfo {
+            public_key: self.public_key.clone(),
+            derp_addr: self.derp_addr,
+            addrs,
+            has_direct_connection: self.is_best_addr_valid(Instant::now()),
+            latency: self.best_addr.as_ref().and_then(|a| a.latency),
+        }
+    }
+
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
     fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<u16>, bool) {
@@ -1006,6 +1026,21 @@ struct EndpointState {
 
     /// Index in nodecfg.Node.Endpoints; meaningless if last_got_ping non-zero.
     index: Index,
+}
+
+/// Details about an Endpoint
+#[derive(Debug, Clone)]
+pub struct EndpointInfo {
+    /// The public key of the endpoint.
+    pub public_key: key::node::PublicKey,
+    /// Derp region, if available.
+    pub derp_addr: Option<u16>,
+    /// List of addresses this node might be reachable under.
+    pub addrs: Vec<SocketAddr>,
+    /// Is this node currently direcly reachable?
+    pub has_direct_connection: bool,
+    /// Current latency information, for a direct connection if available.
+    pub latency: Option<Duration>,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
