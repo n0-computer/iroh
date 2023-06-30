@@ -9,8 +9,8 @@ mod rebinding_conn;
 mod timer;
 mod udp_actor;
 
-pub use self::endpoint::EndpointInfo;
 pub use self::conn::{Callbacks, Conn, Options};
+pub use self::endpoint::EndpointInfo;
 pub use self::timer::Timer;
 
 #[cfg(test)]
