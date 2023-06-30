@@ -38,9 +38,8 @@ impl<T> std::ops::Deref for AbortingJoinHandle<T> {
     }
 }
 
-/// Holds a handle to abort a task.
+/// Holds a handle to a task and aborts it on drop.
 ///
-/// The task can be manually aborted, or aborted once self is dropped.
 /// See [`tokio::task::AbortHandle`].
 pub struct CancelOnDrop {
     task_name: &'static str,

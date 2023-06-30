@@ -1,17 +1,13 @@
-#![allow(unused)]
+//! Port mapping client and service.
+
 use std::{
-    net::{SocketAddr, SocketAddrV4},
+    net::SocketAddrV4,
     num::NonZeroU16,
-    result,
     time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Result};
-use tokio::{
-    sync::{mpsc, oneshot, watch},
-    task,
-};
-use tokio_stream::wrappers;
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, trace};
 
 use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
@@ -20,14 +16,17 @@ use crate::util;
 
 mod upnp;
 
-/// If a port mapping service has been seen during the last [`AVAILABILITY_TRUST_DURATION`] it
-/// will not be probed again.
+/// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
+/// not be probed again.
 const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 10 minutes
 
 #[derive(Debug, Clone)]
 pub struct ProbeOutput {
+    /// If UPnP can be considered available.
     pub upnp: bool,
+    /// If PCP can be considered available.
     pub pcp: bool,
+    /// If PMP can be considered available.
     pub pmp: bool,
 }
 
@@ -35,7 +34,8 @@ pub struct ProbeOutput {
 enum Message {
     /// Request to update the local port.
     ///
-    /// The resulting external address can be obtained subscribing using the [`Handle`].
+    /// The resulting external address can be obtained subscribing using
+    /// [`Client::watch_external_address`].
     /// A value of `None` will deactivate port mapping.
     UpdateLocalPort { local_port: Option<NonZeroU16> },
     /// Request to probe the port mapping protocols.
@@ -43,10 +43,12 @@ enum Message {
     /// The requester should wait for the result at the [`oneshot::Receiver`] counterpart of the
     /// [`oneshot::Sender`].
     Probe {
+        /// Sender side to communicate the result of the probe.
         result_tx: oneshot::Sender<Result<ProbeOutput, String>>,
     },
 }
 
+/// Port mapping client.
 #[derive(Debug, Clone)]
 pub struct Client {
     /// A watcher over the most recent external address obtained from port mapping.
@@ -56,7 +58,7 @@ pub struct Client {
     /// Channel used to communicate with the port mapping service.
     service_tx: mpsc::Sender<Message>,
     /// A handle to the service that will cancel the spawned task once the client is dropped.
-    service_handle: std::sync::Arc<util::CancelOnDrop>,
+    _service_handle: std::sync::Arc<util::CancelOnDrop>,
 }
 
 impl Client {
@@ -64,7 +66,7 @@ impl Client {
     pub async fn new() -> Self {
         let (service_tx, service_rx) = mpsc::channel(4);
 
-        let (mut service, watcher) = Service::new(service_rx);
+        let (service, watcher) = Service::new(service_rx);
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
@@ -74,17 +76,19 @@ impl Client {
         Client {
             port_mapping: watcher,
             service_tx,
-            service_handle: std::sync::Arc::new(handle),
+            _service_handle: std::sync::Arc::new(handle),
         }
     }
 
     /// Request a probe to the port mapping protocols.
+    ///
+    /// Return the [`oneshot::Receiver`] used to obtain the result of the probe.
     pub fn probe(&self) -> oneshot::Receiver<Result<ProbeOutput, String>> {
         let (result_tx, result_rx) = oneshot::channel();
 
         use mpsc::error::TrySendError::*;
         if let Err(e) = self.service_tx.try_send(Message::Probe { result_tx }) {
-            // Recover the sender and return the error there
+            // recover the sender and return the error there
             let (result_tx, e) = match e {
                 Full(Message::Probe { result_tx }) => (result_tx, "Port mapping channel full"),
                 Closed(Message::Probe { result_tx }) => (result_tx, "Port mapping channel closed"),
@@ -100,7 +104,8 @@ impl Client {
 
     /// Update the local port.
     ///
-    /// A value of `None` will invalidate any active mapping and deactivate port mapping.
+    /// A value of `None` will invalidate any active mapping and deactivate port mapping
+    /// maintenance.
     /// This can fail if communicating with the port-mapping service fails.
     // TODO(@divma): there is nothing that can be done when receiving this error. Maybe it's best
     // to log it and move on.
@@ -116,17 +121,23 @@ impl Client {
     }
 }
 
+/// Port mapping protocol information obtained during a probe.
+///
+/// This can be updated with [`Probe::new_from_valid_probe`].
 #[derive(Debug, Default)]
 struct Probe {
+    /// Address of the [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
+    // TODO(@divma): pcp placeholder.
     last_pcp: Option<Instant>,
+    // TODO(@divma): pmp placeholder.
     last_pmp: Option<Instant>,
 }
 
 impl Probe {
     /// Creates a new probe that is considered valid.
     ///
-    /// For any protocol, if the passed result is `None` a probe will be done.
+    /// For any protocol, if the passed result is `None` it will be probed.
     async fn new_from_valid_probe(mut valid_probe: Probe) -> Probe {
         let mut upnp_probing_task = util::MaybeFuture {
             inner: valid_probe.last_upnp_gateway_addr.is_none().then(|| {
@@ -138,6 +149,7 @@ impl Probe {
             }),
         };
 
+        // placeholder tasks
         let pcp_probing_task = async { None };
         let pmp_probing_task = async { None };
 
@@ -151,14 +163,17 @@ impl Probe {
         while !upnp_done || !pcp_done || !pmp_done {
             tokio::select! {
                 last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
+                    trace!("tick: upnp probe ready");
                     valid_probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
                     upnp_done = true;
                 },
                 last_pmp = &mut pmp_probing_task, if !pmp_done => {
+                    trace!("tick: pmp probe ready");
                     valid_probe.last_pmp = last_pmp;
                     pmp_done = true;
                 },
                 last_pcp = &mut pcp_probing_task, if !pcp_done => {
+                    trace!("tick: pcp probe ready");
                     valid_probe.last_pcp = last_pcp;
                     pcp_done = true;
                 },
@@ -172,11 +187,11 @@ impl Probe {
     ///
     /// If at least one protocol needs to be probed, returns a [`Probe`] with any invalid value
     /// removed.
-    // TODO(@divma): This name is lame.
+    // TODO(@divma): function name is lame
     fn result(&self) -> Result<ProbeOutput, Probe> {
         let now = Instant::now();
 
-        // Get the last upnp gateway if it's valid.
+        // get the last upnp gateway if it's valid
         let last_valid_upnp_gateway =
             self.last_upnp_gateway_addr
                 .as_ref()
@@ -184,13 +199,13 @@ impl Probe {
                     *last_probed + AVAILABILITY_TRUST_DURATION > now
                 });
 
-        // Not probing for now.
+        // not probing for now
         let last_valid_pcp = Some(now);
 
-        // Not probing for now.
+        // not probing for now
         let last_valid_pmp = Some(now);
 
-        // Decide if a new probe is necessary
+        // decide if a new probe is necessary
         if last_valid_upnp_gateway.is_none() || last_valid_pmp.is_none() || last_valid_pcp.is_none()
         {
             Err(Probe {
@@ -200,7 +215,7 @@ impl Probe {
             })
         } else {
             // TODO(@divma): note that if we are here then all services are ready (should all be
-            // `true`). But since pcp and pmp are not being probed, get hardcoded to `false`.
+            // `true`). But since pcp and pmp are not being probed, they get hardcoded to `false`
             Ok(ProbeOutput {
                 upnp: true,
                 pcp: false,
@@ -227,9 +242,13 @@ type ProbeResult = Result<ProbeOutput, String>;
 pub struct Service {
     /// Local port to map.
     local_port: Option<NonZeroU16>,
-
+    /// Channel over which the service is informed of messages.
+    ///
+    /// The service will stop when all senders are gone.
     rx: mpsc::Receiver<Message>,
+    /// Currently active mapping.
     current_mapping: CurrentMapping,
+    /// Last updated probe.
     full_probe: Probe,
     /// Task attempting to get a port mapping.
     ///
@@ -255,11 +274,14 @@ enum ReleaseMapping {
 /// Holds the current mapping value and ensures that any change is reported accordingly.
 #[derive(Debug)]
 struct CurrentMapping {
+    /// Active port mapping.
     mapping: Option<upnp::Mapping>,
+    /// A [`watch::Sender`] that keeps the latest external address for subscribers to changes.
     address_tx: watch::Sender<Option<SocketAddrV4>>,
 }
 
 impl CurrentMapping {
+    /// Creates a new [`CurrentMapping`] and returns the watcher over it's external address.
     fn new(mapping: Option<upnp::Mapping>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
         let (address_tx, address_rx) = watch::channel(maybe_external_addr);
@@ -320,6 +342,7 @@ impl Service {
         loop {
             tokio::select! {
                 msg = self.rx.recv() => {
+                    trace!("tick: msg");
                     match msg {
                         Some(msg) => {
                             self.handle_msg(msg).await;
@@ -331,6 +354,7 @@ impl Service {
                     }
                 }
                 mapping_result = util::MaybeFuture{inner: self.mapping_task.as_mut()} => {
+                    trace!("tick: mapping ready");
                     // regardless of outcome, the task is finished, clear it
                     self.mapping_task = None;
                     // there isn't really a way to react to a join error here. Flatten it to make
@@ -342,6 +366,7 @@ impl Service {
                     self.on_mapping_result(result).await;
                 }
                 probe_result = util::MaybeFuture{inner: self.probing_task.as_mut().map(|(fut, _rec)| fut)} => {
+                    trace!("tick: probe ready");
                     // retrieve the receivers and clear the task.
                     let receivers = self.probing_task.take().expect("is some").1;
                     let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
