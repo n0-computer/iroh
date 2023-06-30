@@ -2645,7 +2645,7 @@ mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "http://test-node.invalid".parse().unwrap(),
+                        host_name: "https://test-node.invalid".parse().unwrap(),
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),

@@ -327,13 +327,10 @@ impl DerpActor {
         info!("adding connection to derp-{region_id} for {why}");
 
         let my_derp = self.conn.my_derp();
-
-        // Note that derp::http.new_region_client does not dial the server
-        // (it doesn't block) so it is safe to do under the state lock.
-
         let conn1 = self.conn.clone();
-
         let ipv6_reported = self.conn.ipv6_reported.clone();
+
+        // building a client does not dial
         let dc = derp::http::ClientBuilder::new()
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
@@ -341,7 +338,7 @@ impl DerpActor {
             })
             .can_ack_pings(true)
             .is_preferred(my_derp == region_id)
-            .new_region(self.conn.private_key.clone(), move || {
+            .get_region(move || {
                 let conn = conn1.clone();
                 Box::pin(async move {
                     if conn.is_closing() {
@@ -350,7 +347,9 @@ impl DerpActor {
                     }
                     conn.get_derp_region(region_id).await
                 })
-            });
+            })
+            .build(self.conn.private_key.clone())
+            .expect("will only fail is a `get_region` callback is not supplied");
 
         let cancel = CancellationToken::new();
         let ad = ActiveDerp {

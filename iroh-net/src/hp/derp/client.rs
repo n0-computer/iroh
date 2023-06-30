@@ -52,6 +52,8 @@ pub struct InnerClient {
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
     reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
+    /// Public key of the server we are connected to
+    server_public_key: PublicKey,
 }
 
 // TODO: I believe that any of these that error should actually trigger a shut down of the client
@@ -285,6 +287,10 @@ impl Client {
             }
         }
     }
+
+    pub fn server_public_key(self) -> PublicKey {
+        self.inner.server_public_key.clone()
+    }
 }
 
 /// The kinds of messages we can send to the Server
@@ -482,7 +488,7 @@ where
 
     pub async fn build(mut self, buf: Option<Bytes>) -> Result<Client> {
         // exchange information with the server
-        let (_, rate_limiter) = self.server_handshake(buf).await?;
+        let (server_public_key, rate_limiter) = self.server_handshake(buf).await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -502,6 +508,7 @@ where
                 writer_channel: writer_sender,
                 writer_task: Mutex::new(Some(writer_task)),
                 reader: Mutex::new(self.reader),
+                server_public_key,
             }),
         };
 

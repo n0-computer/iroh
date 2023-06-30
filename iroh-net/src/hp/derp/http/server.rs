@@ -28,8 +28,13 @@ use tracing::{debug, debug_span, error, info, warn, Instrument};
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::hp::{
     derp::{
-        http::client::Client as HttpClient, server::ClientConnHandler, server::MaybeTlsStream,
-        types::MeshKey, types::PacketForwarder, MaybeTlsStreamServer,
+        http::client::Client as HttpClient,
+        http::mesh_clients::{MeshAddrs, MeshClients},
+        server::ClientConnHandler,
+        server::MaybeTlsStream,
+        types::MeshKey,
+        types::PacketForwarder,
+        MaybeTlsStreamServer,
     },
     key::node::SecretKey,
 };
@@ -73,6 +78,7 @@ pub struct Server {
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
+    mesh_clients: Option<MeshClients>,
 }
 
 impl Server {
@@ -81,6 +87,11 @@ impl Server {
         if let Some(server) = self.server {
             server.close().await;
         }
+
+        if let Some(mesh_clients) = self.mesh_clients {
+            mesh_clients.shutdown().await;
+        }
+
         self.cancel_server_loop.cancel();
         if let Err(e) = self.http_server_task.await {
             warn!("Error shutting down server: {e:?}");
@@ -90,6 +101,31 @@ impl Server {
     /// Get the local address of this server.
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Mesh the server to a new `derp_map`
+    pub async fn re_mesh(&mut self, mesh_addrs: MeshAddrs) -> Result<()> {
+        let (mesh_key, server_key, packet_fwd) = if let Some(server) = &self.server {
+            let mesh_key = if let Some(key) = server.mesh_key() {
+                key
+            } else {
+                bail!("no mesh key, unable to mesh with other derp servers");
+            };
+            let server_key = server.private_key();
+            let packet_fwd = server.packet_forwarder_handler();
+            (mesh_key, server_key, packet_fwd)
+        } else {
+            bail!("no derp server, unable to mesh with other derp servers");
+        };
+        if let Some(mesh_clients) = self.mesh_clients.take() {
+            mesh_clients.shutdown().await;
+        }
+
+        let mut mesh_clients = MeshClients::new(mesh_key, server_key, mesh_addrs, packet_fwd);
+
+        mesh_clients.mesh().await;
+        self.mesh_clients = Some(mesh_clients);
+        Ok(())
     }
 }
 
@@ -121,6 +157,11 @@ pub struct ServerBuilder {
     /// Optional MeshKey for this server. When it exists it will ensure that This
     /// server will only mesh with other servers with the same key.
     mesh_key: Option<MeshKey>,
+    /// Optional MeshAddrs that details the other derp servers this server should
+    /// attempt to mesh with.
+    /// Having a `mesh_depers` but no `mesh_key` when attempting to `spawn` a
+    /// `Server` results in an error.
+    mesh_derpers: Option<MeshAddrs>,
     /// Optional tls configuration/TlsAcceptor combination.
     ///
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
@@ -149,6 +190,7 @@ impl ServerBuilder {
             secret_key: None,
             addr,
             mesh_key: None,
+            mesh_derpers: None,
             tls_config: None,
             handlers: Default::default(),
             derp_endpoint: "/derp",
@@ -168,6 +210,14 @@ impl ServerBuilder {
     /// The MeshKey for the mesh network this server belongs to.
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
+        self
+    }
+
+    /// The `MessAddrs` describing the different derpers this server should
+    /// attempt to mesh with. If `MeshAddrs` exists on the `ServerBuilder`,
+    /// but no `MeshKey`, `ServerBuilder::spawn` will error.
+    pub fn mesh_derpers(mut self, mesh_addrs: Option<MeshAddrs>) -> Self {
+        self.mesh_derpers = mesh_addrs;
         self
     }
 
@@ -216,26 +266,46 @@ impl ServerBuilder {
     /// Build and spawn an HTTP(S) derp Server
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
-        let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
-            let server = crate::hp::derp::server::Server::new(secret_key, self.mesh_key);
-            println!("headers: {:?}", self.headers);
+        let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
+            let server = crate::hp::derp::server::Server::new(secret_key.clone(), self.mesh_key);
             let header_map: HeaderMap = HeaderMap::from_iter(
                 self.headers
                     .iter()
                     .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
             );
 
+            let packet_fwd = server.packet_forwarder_handler();
+
+            let mesh_clients = if let Some(mesh_addrs) = self.mesh_derpers {
+                ensure!(
+                    self.mesh_key.is_some(),
+                    "Must provide a `MeshKey` when trying to join a mesh network."
+                );
+
+                let mesh_key = self.mesh_key.expect("checked");
+                Some(MeshClients::new(
+                    mesh_key, secret_key, mesh_addrs, packet_fwd,
+                ))
+            } else {
+                None
+            };
+
             (
                 DerpHandler::ConnHandler(server.client_conn_handler(header_map)),
                 Some(server),
+                mesh_clients,
             )
         } else {
-            (DerpHandler::Override(self.derp_override.unwrap()), None)
+            (
+                DerpHandler::Override(self.derp_override.unwrap()),
+                None,
+                None,
+            )
         };
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
             Some(f) => f,
-            None => Box::new(move |mut res: ResponseBuilder| {
+            None => Box::new(move |_req: Request<Body>, mut res: ResponseBuilder| {
                 for (k, v) in h.iter() {
                     res = res.header(*k, *v);
                 }
@@ -260,6 +330,7 @@ impl ServerBuilder {
             tls_config: self.tls_config,
             server: derp_server,
             service,
+            mesh_clients,
         };
 
         server_state.serve().await
@@ -272,6 +343,7 @@ pub struct ServerState {
     tls_config: Option<TlsConfig>,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
     service: DerpService,
+    mesh_clients: Option<MeshClients>,
 }
 
 impl ServerState {
@@ -298,7 +370,7 @@ impl ServerState {
                     }
                     res = listener.accept() => match res {
                         Ok((stream, peer_addr)) => {
-                            debug!("[{http_str}] derp: Connection opened from {}", peer_addr);
+                            debug!("[{http_str}] derp: Connection opened from {peer_addr}");
                             let tls_config = self.tls_config.clone();
                             let service = self.service.clone();
                             // spawn a task to handle the connection
@@ -307,23 +379,34 @@ impl ServerState {
                                     .handle_connection(stream, tls_config)
                                     .await
                                 {
-                                    error!("[{http_str}] derp: failed to handle connection: {:?}", e);
+                                    error!("[{http_str}] derp: failed to handle connection: {e}");
                                 }
                             }.instrument(debug_span!("handle_connection")));
                         }
                         Err(err) => {
-                            error!("[{http_str}] derp: failed to accept connection: {:#?}", err);
+                            error!("[{http_str}] derp: failed to accept connection: {err}");
                         }
                     }
                 }
             }
             set.shutdown().await;
+            debug!("[{http_str}] derp: server has been shutdown.");
         }.instrument(debug_span!("serve")));
+
+        // start meshing
+        let mesh_clients = if let Some(mut mesh_clients) = self.mesh_clients {
+            mesh_clients.mesh().await;
+            Some(mesh_clients)
+        } else {
+            None
+        };
+
         Ok(Server {
             addr,
             server: self.server,
             http_server_task: task,
             cancel_server_loop,
+            mesh_clients,
         })
     }
 }
@@ -413,7 +496,7 @@ impl hyper::service::Service<Request<Body>> for DerpService {
             match &self.0.derp_handler {
                 DerpHandler::Override(f) => {
                     // see if we have some override response
-                    let res = f(self.0.default_response());
+                    let res = f(req, self.0.default_response());
                     return Box::pin(async move { res });
                 }
                 DerpHandler::ConnHandler(handler) => {
@@ -424,16 +507,13 @@ impl hyper::service::Service<Request<Body>> for DerpService {
             }
         }
         // check all other possible endpoints
-        if let Some(res) = self
-            .0
-            .handlers
-            .get(&(req.method().clone(), req.uri().path()))
-        {
-            let f = res(self.0.default_response());
+        let uri = req.uri().clone();
+        if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
+            let f = res(req, self.0.default_response());
             return Box::pin(async move { f });
         }
         // otherwise return 404
-        let res = (self.0.not_found_fn)(self.0.default_response());
+        let res = (self.0.not_found_fn)(req, self.0.default_response());
         Box::pin(async move { res })
     }
 }
@@ -442,7 +522,9 @@ impl hyper::service::Service<Request<Body>> for DerpService {
 /// The hyper Service that
 struct DerpService(Arc<Inner>);
 
-type HyperFn = Box<dyn Fn(ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static>;
+type HyperFn = Box<
+    dyn Fn(Request<Body>, ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static,
+>;
 type Headers = Vec<(&'static str, &'static str)>;
 
 #[derive(derive_more::Debug)]
