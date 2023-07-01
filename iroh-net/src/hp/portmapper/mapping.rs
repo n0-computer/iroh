@@ -154,17 +154,17 @@ mod tests {
     use super::*;
     use futures::StreamExt;
 
-    const TEST_PORT_U16: u16 = 9586;
+    // for testing a mapping is simply an ip, port pair
+    type M = (Ipv4Addr, NonZeroU16);
+
     const TEST_PORT: NonZeroU16 = // SAFETY: it's clearly non zero
-        unsafe { NonZeroU16::new_unchecked(TEST_PORT_U16) };
-    const TEST_MAPPING: SocketAddrV4 =
-        SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, TEST_PORT_U16);
+        unsafe { NonZeroU16::new_unchecked(9586) };
+    const TEST_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;
     const HALF_LIFETIME_SECS: u64 = 1;
 
-    // for testing a mapping is simply an address
-    impl Mapping for SocketAddrV4 {
-        fn external(&self) -> (Ipv4Addr, NonZeroU16) {
-            (*self.ip(), self.port().try_into().unwrap())
+    impl Mapping for M {
+        fn external(&self) -> M {
+            self.clone()
         }
         fn half_lifetime(&self) -> Duration {
             Duration::from_secs(HALF_LIFETIME_SECS)
@@ -172,18 +172,20 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ntest::timeout(5000)]
+    #[ntest::timeout(2500)]
     async fn report_renew_expire_report() {
-        let (mut c, mut watcher) = CurrentMapping::<SocketAddrV4>::new();
+        let (mut c, mut watcher) = CurrentMapping::<M>::new();
         let now = std::time::Instant::now();
-        c.update(Some(TEST_MAPPING));
+        c.update(Some((TEST_IP, TEST_PORT)));
 
         // 1) check that changes are reported as soon as needed
         time::timeout(Duration::from_millis(10), watcher.changed())
             .await
             .expect("change is as immediate as it can be.")
             .expect("sender is alive");
-        assert_eq!(*watcher.borrow_and_update(), Some(TEST_MAPPING));
+        let addr = watcher.borrow_and_update().unwrap();
+        assert_eq!(addr.ip(), &TEST_IP);
+        assert_eq!(addr.port(), Into::<u16>::into(TEST_PORT));
 
         // 2) test that the mapping being due for renewal is reported in a timely matter
         let event = c.next().await.expect("Renewal is reported");
