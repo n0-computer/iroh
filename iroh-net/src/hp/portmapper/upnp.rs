@@ -30,9 +30,6 @@ pub struct Mapping {
     external_addr: SocketAddrV4,
     /// Local address used to create this mapping.
     local_addr: SocketAddrV4,
-    /// Instant in which the mapping was first created or last renewed.
-    #[debug(skip)]
-    created_at: Instant,
 }
 
 impl Mapping {
@@ -56,7 +53,6 @@ impl Mapping {
             gateway,
             external_addr,
             local_addr,
-            created_at: Instant::now(),
         })
     }
 
