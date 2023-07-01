@@ -1,4 +1,9 @@
-use std::{net::SocketAddrV4, num::NonZeroU16, pin::Pin, task::Poll};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    num::NonZeroU16,
+    pin::Pin,
+    task::Poll,
+};
 
 use futures::Future;
 use std::time::Duration;
@@ -7,12 +12,12 @@ use tracing::trace;
 
 /// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {
-    fn external(&self) -> SocketAddrV4;
+    fn external(&self) -> (Ipv4Addr, NonZeroU16);
     fn half_lifetime(&self) -> Duration;
 }
 
 impl Mapping for super::upnp::Mapping {
-    fn external(&self) -> SocketAddrV4 {
+    fn external(&self) -> (Ipv4Addr, NonZeroU16) {
         self.external()
     }
     fn half_lifetime(&self) -> Duration {
@@ -39,9 +44,12 @@ impl<M: Mapping> ActiveMapping<M> {
     }
 }
 
+/// Events in the lifetime of the mapping.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Event {
+    /// On this event, the mapping is halway through it's lifetime and should be renewed.
     Renew { external_port: NonZeroU16 },
+    /// Mapping has expired.
     Expired { external_port: NonZeroU16 },
 }
 /// Holds the current mapping value and ensures that any change is reported accordingly.
@@ -72,7 +80,10 @@ impl<M: Mapping> CurrentMapping<M> {
     /// returned.
     pub(super) fn update(&mut self, mapping: Option<M>) -> Option<M> {
         trace!("New port mapping {mapping:?}");
-        let maybe_external_addr = mapping.as_ref().map(|mapping| mapping.external());
+        let maybe_external_addr = mapping.as_ref().map(|mapping| {
+            let (ip, port) = mapping.external();
+            SocketAddrV4::new(ip, port.into())
+        });
         let old_mapping = std::mem::replace(&mut self.mapping, mapping.map(ActiveMapping::new))
             .map(|mapping| mapping.mapping);
         // mapping changed
@@ -108,11 +119,7 @@ impl<M: Mapping> CurrentMapping<M> {
         {
             if deadline.as_mut().poll(cx).is_ready() {
                 // TODO(@divma): I'm actually not sure about this but sounds ilogical
-                let external_port = mapping
-                    .external()
-                    .port()
-                    .try_into()
-                    .expect("external address can never be zero");
+                let external_port = mapping.external().1;
                 // check if the deadline means the mapping is expired or due for renewal
                 return if *expire_after {
                     self.update(None);
@@ -156,8 +163,8 @@ mod tests {
 
     // for testing a mapping is simply an address
     impl Mapping for SocketAddrV4 {
-        fn external(&self) -> SocketAddrV4 {
-            self.clone()
+        fn external(&self) -> (Ipv4Addr, NonZeroU16) {
+            (*self.ip(), self.port().try_into().unwrap())
         }
         fn half_lifetime(&self) -> Duration {
             Duration::from_secs(HALF_LIFETIME_SECS)

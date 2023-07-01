@@ -2,7 +2,7 @@ use std::{
     fmt::Display,
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -27,7 +27,9 @@ pub struct Mapping {
     #[debug("{}", gateway)]
     gateway: aigd::Gateway,
     /// The external address obtained by this mapping.
-    external_addr: SocketAddrV4,
+    external_ip: Ipv4Addr,
+    /// External port obtained by this mapping.
+    external_port: NonZeroU16,
     /// Local address used to create this mapping.
     local_addr: SocketAddrV4,
 }
@@ -49,9 +51,15 @@ impl Mapping {
                 PORT_MAPPING_DESCRIPTION,
             )
             .await?;
+        let external_ip = *external_addr.ip();
+        let external_port = external_addr
+            .port()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("upnp mapping got zero external port"))?;
         Ok(Mapping {
             gateway,
-            external_addr,
+            external_ip,
+            external_port,
             local_addr,
         })
     }
@@ -65,35 +73,37 @@ impl Mapping {
     pub(crate) async fn release(self) -> Result<()> {
         let Mapping {
             gateway,
-            external_addr,
+            external_port,
             ..
         } = self;
         gateway
-            .remove_port(igd::PortMappingProtocol::UDP, external_addr.port())
+            .remove_port(igd::PortMappingProtocol::UDP, external_port.into())
             .await?;
         Ok(())
     }
 
     /// Renews the mapping and updates the external address (external ip could change).
     pub(crate) async fn renew(&mut self) -> Result<()> {
+        // TODO(@divma): this seems handy but if we want a mapping to this port we probably want it
+        // using any protocol. Maybe should be removed
         self.gateway
             .add_port(
                 igd::PortMappingProtocol::UDP,
-                self.external_addr.port(),
+                self.external_port.into(),
                 self.local_addr,
                 PORT_MAPPING_LEASE_DURATION_SECONDS,
                 PORT_MAPPING_DESCRIPTION,
             )
             .await?;
-        let external_ip = self.gateway.get_external_ip().await?;
-        self.external_addr.set_ip(external_ip);
+        self.external_ip = self.gateway.get_external_ip().await?;
 
         Ok(())
     }
 
     // external indicates what port the mapping can be reached from on the outside.
-    pub fn external(&self) -> SocketAddrV4 {
-        self.external_addr
+    // TODO(@divma): docs
+    pub fn external(&self) -> (Ipv4Addr, NonZeroU16) {
+        (self.external_ip, self.external_port)
     }
 }
 
@@ -120,7 +130,7 @@ impl Display for Mapping {
         write!(
             f,
             "UPnP mapping {} -> {}",
-            self.local_addr, self.external_addr
+            self.local_addr, self.external_port
         )
     }
 }
