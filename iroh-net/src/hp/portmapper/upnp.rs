@@ -60,6 +60,11 @@ impl Mapping {
         })
     }
 
+    pub fn half_lifetime(&self) -> Duration {
+        // TODO(@divma): docs
+        Duration::from_secs(60 * 60)
+    }
+
     /// Releases the mapping.
     pub(crate) async fn release(self) -> Result<()> {
         let Mapping {
@@ -88,17 +93,6 @@ impl Mapping {
         self.external_addr.set_ip(external_ip);
 
         Ok(())
-    }
-
-    /// good_until will return the lease time that the mapping is valid for.
-    pub fn good_until(&self) -> Instant {
-        // assume an hour
-        self.created_at + Duration::from_secs(60 * 60)
-    }
-    /// renew_after returns the earliest time that the mapping should be renewed.
-    pub fn renew_after(&self) -> Instant {
-        // 55 minutes
-        self.created_at + Duration::from_secs(60 * 55)
     }
 
     // external indicates what port the mapping can be reached from on the outside.

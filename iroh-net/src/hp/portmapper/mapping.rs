@@ -5,14 +5,18 @@ use std::time::Duration;
 use tokio::{sync::watch, time};
 use tracing::trace;
 
-// This is an implementation detail to facilitate testing.
+/// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {
     fn external(&self) -> SocketAddrV4;
+    fn half_lifetime(&self) -> Duration;
 }
 
 impl Mapping for super::upnp::Mapping {
     fn external(&self) -> SocketAddrV4 {
         self.external()
+    }
+    fn half_lifetime(&self) -> Duration {
+        self.half_lifetime()
     }
 }
 
@@ -24,11 +28,12 @@ struct ActiveMapping<M> {
     expire_after: bool,
 }
 
-impl<M> ActiveMapping<M> {
+impl<M: Mapping> ActiveMapping<M> {
     fn new(mapping: M) -> Self {
+        let deadline = Box::pin(time::sleep(mapping.half_lifetime()));
         ActiveMapping {
             mapping,
-            deadline: Box::pin(time::sleep(Duration::from_secs(3))),
+            deadline,
             expire_after: false,
         }
     }
@@ -115,7 +120,7 @@ impl<M: Mapping> CurrentMapping<M> {
                     Poll::Ready(Event::Expired { external_port })
                 } else {
                     // mapping is due for renewal
-                    *deadline = Box::pin(time::sleep(Duration::from_secs(3)));
+                    *deadline = Box::pin(time::sleep(mapping.half_lifetime()));
                     *expire_after = true;
                     trace!("due for renewal");
                     Poll::Ready(Event::Renew { external_port })
@@ -142,22 +147,26 @@ mod tests {
     use super::*;
     use futures::StreamExt;
 
-    // for testing a mapping is simply an address
-    impl Mapping for SocketAddrV4 {
-        fn external(&self) -> SocketAddrV4 {
-            self.clone()
-        }
-    }
-
     const TEST_PORT_U16: u16 = 9586;
     const TEST_PORT: NonZeroU16 = // SAFETY: it's clearly non zero
         unsafe { NonZeroU16::new_unchecked(TEST_PORT_U16) };
     const TEST_MAPPING: SocketAddrV4 =
         SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, TEST_PORT_U16);
+    const HALF_LIFETIME_SECS: u64 = 1;
+
+    // for testing a mapping is simply an address
+    impl Mapping for SocketAddrV4 {
+        fn external(&self) -> SocketAddrV4 {
+            self.clone()
+        }
+        fn half_lifetime(&self) -> Duration {
+            Duration::from_secs(HALF_LIFETIME_SECS)
+        }
+    }
 
     #[tokio::test]
-    #[ntest::timeout(7000)] // 3 seconds for renewal, 3 seconds for expiry, 1 to.. be kind?
-    async fn it_works() {
+    #[ntest::timeout(5000)]
+    async fn report_renew_expire_report() {
         let (mut c, mut watcher) = CurrentMapping::<SocketAddrV4>::new();
         let now = std::time::Instant::now();
         c.update(Some(TEST_MAPPING));
@@ -179,8 +188,7 @@ mod tests {
             }
         );
         // check it's reported not before not after it should
-        // TODO(@divma): using hardcoded 3 everywhere
-        assert_eq!(now.elapsed().as_secs(), 3);
+        assert_eq!(now.elapsed().as_secs(), HALF_LIFETIME_SECS);
         // check renewal does not produce a change
         assert!(!watcher.has_changed().unwrap());
 
@@ -193,8 +201,7 @@ mod tests {
                 external_port: TEST_PORT
             }
         );
-        // TODO(@divma): using hardcoded 3 everywhere (renew deadline + expiry deadline)
-        assert_eq!(now.elapsed().as_secs(), 6);
+        assert_eq!(now.elapsed().as_secs(), 2 * HALF_LIFETIME_SECS);
         // check that the change is reported
         time::timeout(Duration::from_millis(10), watcher.changed())
             .await
