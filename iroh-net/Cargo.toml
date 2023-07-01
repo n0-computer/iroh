@@ -84,6 +84,7 @@ wmi = "0.13"
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ntest = "*"
 
 [build-dependencies]
 duct = "0.13.6"

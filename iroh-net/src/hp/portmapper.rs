@@ -278,7 +278,7 @@ enum ReleaseMapping {
 
 impl Service {
     fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
-        let (current_mapping, watcher) = CurrentMapping::new(None);
+        let (current_mapping, watcher) = CurrentMapping::new();
         let service = Service {
             local_port: None,
             rx,
