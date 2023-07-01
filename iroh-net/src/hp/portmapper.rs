@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, trace};
 
@@ -47,7 +48,7 @@ enum Message {
     /// [`oneshot::Sender`].
     Probe {
         /// Sender side to communicate the result of the probe.
-        #[debug("skip")]
+        #[debug("_")]
         result_tx: oneshot::Sender<Result<ProbeOutput, String>>,
     },
 }
@@ -130,8 +131,8 @@ impl Client {
 /// This can be updated with [`Probe::new_from_valid_probe`].
 #[derive(Debug, Default)]
 struct Probe {
-    /// Address of the [`igd::aio::Gateway`] and when was it last seen.
-    last_upnp_gateway_addr: Option<(SocketAddrV4, Instant)>,
+    /// The last [`igd::aio::Gateway`] and when was it last seen.
+    last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
     // TODO(@divma): pcp placeholder.
     last_pcp: Option<Instant>,
     // TODO(@divma): pmp placeholder.
@@ -334,6 +335,14 @@ impl Service {
                     let receivers = self.probing_task.take().expect("is some").1;
                     let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
                     self.on_probe_result(probe_result, receivers).await;
+                }
+                Some(event) = self.current_mapping.next() => {
+                    trace!("tick: mapping event {event:?}");
+                    match event {
+                        mapping::Event::Renew { external_port } => todo!(),
+                        mapping::Event::Expired { external_port } => todo!(),
+                    }
+
                 }
             }
         }
