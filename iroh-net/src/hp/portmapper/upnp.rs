@@ -35,27 +35,61 @@ pub struct Mapping {
 }
 
 impl Mapping {
-    pub(crate) async fn new(local_addr: Ipv4Addr, port: NonZeroU16) -> Result<Self> {
+    pub(crate) async fn new(
+        local_addr: Ipv4Addr,
+        port: NonZeroU16,
+        gateway: Option<aigd::Gateway>,
+        preferred_port: Option<NonZeroU16>,
+    ) -> Result<Self> {
         let local_addr = SocketAddrV4::new(local_addr, port.into());
-        let gateway = aigd::search_gateway(igd::SearchOptions {
-            timeout: Some(SEARCH_TIMEOUT),
-            ..Default::default()
-        })
-        .await?;
 
-        let external_addr = gateway
-            .get_any_address(
+        // search for a gateway if there is not one already
+        let gateway = if let Some(known_gateway) = gateway {
+            known_gateway
+        } else {
+            aigd::search_gateway(igd::SearchOptions {
+                timeout: Some(SEARCH_TIMEOUT),
+                ..Default::default()
+            })
+            .await?
+        };
+
+        let external_ip = gateway.get_external_ip().await?;
+
+        // if we are trying to get a specific external port, try this first. If this fails, default
+        // to try to get any port
+        if let Some(external_port) = preferred_port {
+            if gateway
+                .add_port(
+                    igd::PortMappingProtocol::UDP,
+                    external_port.into(),
+                    local_addr,
+                    PORT_MAPPING_LEASE_DURATION_SECONDS,
+                    PORT_MAPPING_DESCRIPTION,
+                )
+                .await
+                .is_ok()
+            {
+                return Ok(Mapping {
+                    gateway,
+                    external_ip,
+                    external_port,
+                    local_addr,
+                });
+            }
+        }
+
+        let external_port = gateway
+            .add_any_port(
                 igd::PortMappingProtocol::UDP,
                 local_addr,
                 PORT_MAPPING_LEASE_DURATION_SECONDS,
                 PORT_MAPPING_DESCRIPTION,
             )
-            .await?;
-        let external_ip = *external_addr.ip();
-        let external_port = external_addr
-            .port()
+            .await?
             .try_into()
             .map_err(|_| anyhow::anyhow!("upnp mapping got zero external port"))?;
+
         Ok(Mapping {
             gateway,
             external_ip,
@@ -79,24 +113,6 @@ impl Mapping {
         gateway
             .remove_port(igd::PortMappingProtocol::UDP, external_port.into())
             .await?;
-        Ok(())
-    }
-
-    /// Renews the mapping and updates the external address (external ip could change).
-    pub(crate) async fn renew(&mut self) -> Result<()> {
-        // TODO(@divma): this seems handy but if we want a mapping to this port we probably want it
-        // using any protocol. Maybe should be removed
-        self.gateway
-            .add_port(
-                igd::PortMappingProtocol::UDP,
-                self.external_port.into(),
-                self.local_addr,
-                PORT_MAPPING_LEASE_DURATION_SECONDS,
-                PORT_MAPPING_DESCRIPTION,
-            )
-            .await?;
-        self.external_ip = self.gateway.get_external_ip().await?;
-
         Ok(())
     }
 
