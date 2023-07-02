@@ -118,7 +118,6 @@ impl<M: Mapping> CurrentMapping<M> {
         }) = &mut self.mapping
         {
             if deadline.as_mut().poll(cx).is_ready() {
-                // TODO(@divma): I'm actually not sure about this but sounds ilogical
                 let external_port = mapping.external().1;
                 // check if the deadline means the mapping is expired or due for renewal
                 return if *expire_after {

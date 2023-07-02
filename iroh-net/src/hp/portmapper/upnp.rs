@@ -19,6 +19,10 @@ const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
 /// Maximum duration a UPnP search can take before timing out.
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
+/// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+const HALF_LIFETIME: Duration = Duration::from_secs(60);
+
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 
 #[derive(derive_more::Debug, Clone)]
@@ -99,8 +103,7 @@ impl Mapping {
     }
 
     pub fn half_lifetime(&self) -> Duration {
-        // TODO(@divma): docs
-        Duration::from_secs(60 * 60)
+        HALF_LIFETIME
     }
 
     /// Releases the mapping.
@@ -116,14 +119,13 @@ impl Mapping {
         Ok(())
     }
 
-    // external indicates what port the mapping can be reached from on the outside.
-    // TODO(@divma): docs
+    /// Returns the external gateway ip and port that can be used to contact this node.
     pub fn external(&self) -> (Ipv4Addr, NonZeroU16) {
         (self.external_ip, self.external_port)
     }
 }
 
-/// Searchs for upnp gateways, returns the [`SocketAddrV4`] if any was found.
+/// Searches for UPnP gateways.
 pub async fn probe_available() -> Option<Gateway> {
     inc!(Metrics::UpnpProbes);
     match aigd::search_gateway(igd::SearchOptions {
