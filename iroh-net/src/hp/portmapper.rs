@@ -108,7 +108,7 @@ impl Client {
 
             // sender was just created. If it's dropped we have two send error and are likely
             // shutting down
-            // NOTE: second Err is sn infalible match due to being the sent value
+            // NOTE: second Err is infallible match due to being the sent value
             if let Err(Err(e)) = result_tx.send(Err(e.into())) {
                 trace!("Failed to request probe: {e}")
             }
@@ -162,9 +162,9 @@ impl Client {
 struct Probe {
     /// The last [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
-    // TODO(@divma): pcp placeholder.
+    // TODO(@divma): PCP placeholder.
     last_pcp: Option<Instant>,
-    // TODO(@divma): pmp placeholder.
+    // TODO(@divma): PMP placeholder.
     last_pmp: Option<Instant>,
 }
 
@@ -249,7 +249,7 @@ impl Probe {
             })
         } else {
             // TODO(@divma): note that if we are here then all services are ready (should all be
-            // `true`). But since pcp and pmp are not being probed, they get hardcoded to `false`
+            // `true`). But since PCP and PMP are not being probed, they get hardcoded to `false`
             Ok(ProbeOutput {
                 upnp: true,
                 pcp: false,
@@ -258,7 +258,7 @@ impl Probe {
         }
     }
 
-    /// Produces a [`ProbeOutput`] without checking if the services can stll be considered valid.
+    /// Produces a [`ProbeOutput`] without checking if the services can still be considered valid.
     fn output(&self) -> ProbeOutput {
         ProbeOutput {
             upnp: self.last_upnp_gateway_addr.is_some(),
@@ -360,7 +360,7 @@ impl Service {
                 }
                 probe_result = util::MaybeFuture{inner: self.probing_task.as_mut().map(|(fut, _rec)| fut)} => {
                     trace!("tick: probe ready");
-                    // retrieve the receivers and clear the task.
+                    // retrieve the receivers and clear the task
                     let receivers = self.probing_task.take().expect("is some").1;
                     let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
                     self.on_probe_result(probe_result, receivers).await;
@@ -489,7 +489,7 @@ impl Service {
             None => {
                 match self.full_probe.result() {
                     Ok(probe_result) => {
-                        // We don't care if the requester is no longer there.
+                        // we don't care if the requester is no longer there
                         let _ = result_tx.send(Ok(probe_result));
                     }
                     Err(base_probe) => {
