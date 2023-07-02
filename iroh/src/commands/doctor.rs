@@ -611,9 +611,7 @@ async fn accept(
 async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::new().await;
     let mut watcher = port_mapper.watch_external_address();
-    port_mapper
-        .update_local_port(Some(local_port))
-        .expect("service is running");
+    port_mapper.update_local_port(Some(local_port));
 
     // wait for the mapping to be ready, or timeout waiting for a change.
     match tokio::time::timeout(timeout, watcher.changed()).await {

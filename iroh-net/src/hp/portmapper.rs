@@ -36,6 +36,8 @@ pub struct ProbeOutput {
 
 #[derive(derive_more::Debug)]
 enum Message {
+    /// Attempt to get a mapping if the local port is set but there is no mapping.
+    ProcureMapping,
     /// Request to update the local port.
     ///
     /// The resulting external address can be obtained subscribing using
@@ -91,8 +93,9 @@ impl Client {
     pub fn probe(&self) -> oneshot::Receiver<Result<ProbeOutput, String>> {
         let (result_tx, result_rx) = oneshot::channel();
 
-        use mpsc::error::TrySendError::*;
         if let Err(e) = self.service_tx.try_send(Message::Probe { result_tx }) {
+            use mpsc::error::TrySendError::*;
+
             // recover the sender and return the error there
             let (result_tx, e) = match e {
                 Full(Message::Probe { result_tx }) => (result_tx, "Port mapping channel full"),
@@ -100,24 +103,48 @@ impl Client {
                 Full(_) | Closed(_) => unreachable!("Sent value is a probe."),
             };
 
-            result_tx
-                .send(Err(e.into()))
-                .expect("receiver counterpart has not been dropped or closed.");
+            // sender was just created. If it's dropped we have two send error and are likely
+            // shutting down
+            // NOTE: second Err is sn infalible match due to being the sent value
+            if let Err(Err(e)) = result_tx.send(Err(e.into())) {
+                trace!("Failed to request probe: {e}")
+            }
         }
         result_rx
     }
 
+    /// Try to get a mapping for the last local port if there isn't one already.
+    pub fn procure_mapping(&self) {
+        // requester can't really do anything with this error if returned, so we log it
+        if let Err(e) = self.service_tx.try_send(Message::ProcureMapping) {
+            trace!("Failed to request mapping {e}")
+        }
+    }
+
     /// Update the local port.
     ///
-    /// A value of `None` will invalidate any active mapping and deactivate port mapping
-    /// maintenance.
-    /// This can fail if communicating with the port-mapping service fails.
-    // TODO(@divma): there is nothing that can be done when receiving this error. Maybe it's best
-    // to log it and move on.
-    pub fn update_local_port(&self, local_port: Option<NonZeroU16>) -> Result<()> {
-        self.service_tx
+    /// If the port changes, this will trigger a port mapping attempt.
+    pub fn update_local_port(&self, local_port: NonZeroU16) {
+        let local_port = Some(local_port);
+        // requester can't really do anything with this error if returned, so we log it
+        if let Err(e) = self
+            .service_tx
             .try_send(Message::UpdateLocalPort { local_port })
-            .map_err(Into::into)
+        {
+            trace!("Failed to update local port {e}")
+        }
+    }
+
+    /// Deactivate port mapping.
+    pub fn deactivate(&self) {
+        
+        // requester can't really do anything with this error if returned, so we log it
+        if let Err(e) = self
+            .service_tx
+            .try_send(Message::UpdateLocalPort { local_port: None })
+        {
+            trace!("Failed to deactivate port mapping {e}")
+        }
     }
 
     /// Watch the external address for changes in the mappings.
@@ -381,6 +408,7 @@ impl Service {
 
     async fn handle_msg(&mut self, msg: Message) {
         match msg {
+            Message::ProcureMapping => self.update_local_port(self.local_port).await,
             Message::UpdateLocalPort { local_port } => self.update_local_port(local_port).await,
             Message::Probe { result_tx } => self.probe_request(result_tx),
         }

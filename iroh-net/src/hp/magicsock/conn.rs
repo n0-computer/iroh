@@ -274,9 +274,9 @@ impl Conn {
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails.
         match port.try_into() {
             Ok(non_zero_port) => {
-                let _ = port_mapper.update_local_port(Some(non_zero_port));
+                port_mapper.update_local_port(non_zero_port);
             }
-            Err(_zero_port) => debug!("Skipping port mapping with zero port"),
+            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
         }
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
@@ -870,7 +870,6 @@ impl Actor {
                     let new_external_address = *portmap_watcher.borrow();
                     debug!("external address updated: {new_external_address:?}");
                     self.re_stun("portmap_updated").await;
-
                 },
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
@@ -922,7 +921,7 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
-                self.port_mapper.update_local_port(None).ok();
+                self.port_mapper.deactivate();
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
@@ -1284,6 +1283,7 @@ impl Actor {
     /// to determine its public address.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
+        self.port_mapper.procure_mapping();
         let portmap_watcher = self.port_mapper.watch_external_address();
         let nr = self.update_net_info().await.context("update_net_info")?;
 
@@ -1752,7 +1752,7 @@ impl Actor {
         // reread, as it might have changed
         // We can end up with a zero port if std::net::UdpSocket::socket_addr fails.
         if let Ok(non_zero_port) = self.local_port_v4().try_into() {
-            self.port_mapper.update_local_port(Some(non_zero_port))?;
+            self.port_mapper.update_local_port(non_zero_port);
         }
         let ipv4_addr = self.pconn4.local_addr()?;
 
