@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
     time::Duration,
@@ -34,8 +33,6 @@ pub struct Mapping {
     external_ip: Ipv4Addr,
     /// External port obtained by this mapping.
     external_port: NonZeroU16,
-    /// Local address used to create this mapping.
-    local_addr: SocketAddrV4,
 }
 
 impl Mapping {
@@ -78,7 +75,6 @@ impl Mapping {
                     gateway,
                     external_ip,
                     external_port,
-                    local_addr,
                 });
             }
         }
@@ -98,7 +94,6 @@ impl Mapping {
             gateway,
             external_ip,
             external_port,
-            local_addr,
         })
     }
 
@@ -140,15 +135,5 @@ pub async fn probe_available() -> Option<Gateway> {
             debug!("upnp probe failed: {e}");
             None
         }
-    }
-}
-
-impl Display for Mapping {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "UPnP mapping {} -> {}",
-            self.local_addr, self.external_port
-        )
     }
 }
