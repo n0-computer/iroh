@@ -37,6 +37,12 @@ pub struct ProbeOutput {
     pub pmp: bool,
 }
 
+impl ProbeOutput {
+    pub fn all_available(&self) -> bool {
+        self.upnp && self.pcp && self.pmp
+    }
+}
+
 #[derive(derive_more::Debug)]
 enum Message {
     /// Attempt to get a mapping if the local port is set but there is no mapping.
@@ -169,12 +175,15 @@ struct Probe {
 }
 
 impl Probe {
-    /// Creates a new probe that is considered valid.
-    ///
-    /// For any protocol, if the passed result is `None` it will be probed.
-    async fn new_from_valid_probe(mut valid_probe: Probe) -> Probe {
+    /// Create a new probe based on a previous output.
+    async fn new(output: ProbeOutput) -> Probe {
+        let ProbeOutput {
+            upnp,
+            pcp: _,
+            pmp: _,
+        } = output;
         let mut upnp_probing_task = util::MaybeFuture {
-            inner: valid_probe.last_upnp_gateway_addr.is_none().then(|| {
+            inner: (!upnp).then(|| {
                 Box::pin(async {
                     upnp::probe_available()
                         .await
@@ -194,76 +203,66 @@ impl Probe {
         tokio::pin!(pmp_probing_task);
         tokio::pin!(pcp_probing_task);
 
+        let mut probe = Probe::default();
+
         while !upnp_done || !pcp_done || !pmp_done {
             tokio::select! {
                 last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
                     trace!("tick: upnp probe ready");
-                    valid_probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
+                    probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
                     upnp_done = true;
                 },
                 last_pmp = &mut pmp_probing_task, if !pmp_done => {
                     trace!("tick: pmp probe ready");
-                    valid_probe.last_pmp = last_pmp;
+                    probe.last_pmp = last_pmp;
                     pmp_done = true;
                 },
                 last_pcp = &mut pcp_probing_task, if !pcp_done => {
                     trace!("tick: pcp probe ready");
-                    valid_probe.last_pcp = last_pcp;
+                    probe.last_pcp = last_pcp;
                     pcp_done = true;
                 },
             }
         }
 
-        valid_probe
+        probe
     }
 
-    /// Returns a positive probe result if all services have been seen recently enough.
-    ///
-    /// If at least one protocol needs to be probed, returns a [`Probe`] with any invalid value
-    /// removed.
-    // TODO(@divma): function name is lame
-    fn result(&self) -> Result<ProbeOutput, Probe> {
+    /// Returns a [`ProbeOutput`] indicating which services can be considered available.
+    fn output(&self) -> ProbeOutput {
         let now = Instant::now();
 
-        // get the last upnp gateway if it's valid
-        let last_valid_upnp_gateway =
-            self.last_upnp_gateway_addr
-                .as_ref()
-                .filter(|(_gateway_addr, last_probed)| {
-                    *last_probed + AVAILABILITY_TRUST_DURATION > now
-                });
+        // check if the last UPnP gateway is valid
+        let upnp = self
+            .last_upnp_gateway_addr
+            .as_ref()
+            .map(|(_gateway_addr, last_probed)| *last_probed + AVAILABILITY_TRUST_DURATION > now)
+            .unwrap_or_default();
 
         // not probing for now
-        let last_valid_pcp = Some(now);
+        let pcp = false;
 
         // not probing for now
-        let last_valid_pmp = Some(now);
+        let pmp = false;
 
-        // decide if a new probe is necessary
-        if last_valid_upnp_gateway.is_none() || last_valid_pmp.is_none() || last_valid_pcp.is_none()
-        {
-            Err(Probe {
-                last_upnp_gateway_addr: last_valid_upnp_gateway.cloned(),
-                last_pcp: last_valid_pcp,
-                last_pmp: last_valid_pmp,
-            })
-        } else {
-            // TODO(@divma): note that if we are here then all services are ready (should all be
-            // `true`). But since PCP and PMP are not being probed, they get hardcoded to `false`
-            Ok(ProbeOutput {
-                upnp: true,
-                pcp: false,
-                pmp: false,
-            })
-        }
+        ProbeOutput { upnp, pcp, pmp }
     }
 
-    /// Produces a [`ProbeOutput`] without checking if the services can still be considered valid.
-    fn output(&self) -> ProbeOutput {
-        ProbeOutput {
-            upnp: self.last_upnp_gateway_addr.is_some(),
-            pcp: false,
-            pmp: false,
+    /// Updates a probe with the `Some` values of another probe.
+    fn update(&mut self, probe: Probe) {
+        let Probe {
+            last_upnp_gateway_addr,
+            last_pcp,
+            last_pmp,
+        } = probe;
+        if last_upnp_gateway_addr.is_some() {
+            self.last_upnp_gateway_addr = last_upnp_gateway_addr;
+        }
+        if last_pcp.is_some() {
+            self.last_pcp = last_pcp;
+        }
+        if last_pmp.is_some() {
+            self.last_pmp = last_pmp;
         }
     }
 }
@@ -379,7 +378,7 @@ impl Service {
         let result = match result {
             Err(e) => Err(e.to_string()),
             Ok(probe) => {
-                self.full_probe = probe;
+                self.full_probe.update(probe);
                 // TODO(@divma): the gateway of the current mapping could have changed. Should we
                 // invalidate the mapping?
                 Ok(self.full_probe.output())
@@ -479,19 +478,14 @@ impl Service {
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
-                match self.full_probe.result() {
-                    Ok(probe_result) => {
-                        // we don't care if the requester is no longer there
-                        let _ = result_tx.send(Ok(probe_result));
-                    }
-                    Err(base_probe) => {
-                        let receivers = vec![result_tx];
-                        let handle =
-                            tokio::spawn(
-                                async move { Probe::new_from_valid_probe(base_probe).await },
-                            );
-                        self.probing_task = Some((handle.into(), receivers));
-                    }
+                let probe_output = self.full_probe.output();
+                if probe_output.all_available() {
+                    // we don't care if the requester is no longer there
+                    let _ = result_tx.send(Ok(probe_output));
+                } else {
+                    let handle = tokio::spawn(async move { Probe::new(probe_output).await });
+                    let receivers = vec![result_tx];
+                    self.probing_task = Some((handle.into(), receivers));
                 }
             }
         }
