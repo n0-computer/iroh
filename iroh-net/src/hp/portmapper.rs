@@ -299,12 +299,6 @@ pub struct Service {
     )>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
-enum ReleaseMapping {
-    Yes,
-    No,
-}
-
 impl Service {
     fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new();
@@ -319,13 +313,11 @@ impl Service {
 
         (service, watcher)
     }
-    /// Clears the current mapping and releases it if necessary.
-    async fn invalidate_mapping(&mut self, release: ReleaseMapping) {
+    /// Clears the current mapping and releases it.
+    async fn invalidate_mapping(&mut self) {
         if let Some(old_mapping) = self.current_mapping.update(None) {
-            if release == ReleaseMapping::Yes {
-                if let Err(e) = old_mapping.release().await {
-                    debug!("failed to release mapping {e}");
-                }
+            if let Err(e) = old_mapping.release().await {
+                debug!("failed to release mapping {e}");
             }
         }
     }
@@ -446,7 +438,7 @@ impl Service {
             // since the port has changed, the current mapping is no longer valid and should be
             // released
 
-            self.invalidate_mapping(ReleaseMapping::Yes).await;
+            self.invalidate_mapping().await;
 
             // start a new mapping task to account for the new port if necessary
             self.get_mapping(port)
