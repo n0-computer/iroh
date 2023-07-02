@@ -6,6 +6,7 @@ use std::{
 };
 
 use futures::Future;
+use iroh_metrics::{inc, portmap::PortmapMetrics::ExternalAddressUpdated};
 use std::time::Duration;
 use tokio::{sync::watch, time};
 use tracing::trace;
@@ -95,7 +96,11 @@ impl<M: Mapping> CurrentMapping<M> {
             // replace the value always, as it could have different internal values
             let old_addr = std::mem::replace(old_addr, maybe_external_addr);
             // inform only if this produces a different external address
-            old_addr != maybe_external_addr
+            let update = old_addr != maybe_external_addr;
+            if update {
+                inc!(ExternalAddressUpdated);
+            };
+            update
         });
         old_mapping
     }

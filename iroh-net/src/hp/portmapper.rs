@@ -196,6 +196,10 @@ impl Probe {
         let pcp_probing_task = async { None };
         let pmp_probing_task = async { None };
 
+        if upnp_probing_task.inner.is_some() {
+            inc!(Metrics::UpnpProbes);
+        }
+
         let mut upnp_done = upnp_probing_task.inner.is_none();
         let mut pcp_done = true;
         let mut pmp_done = true;
@@ -256,6 +260,26 @@ impl Probe {
             last_pmp,
         } = probe;
         if last_upnp_gateway_addr.is_some() {
+            inc!(Metrics::UpnpAvailable);
+            let new_gateway = last_upnp_gateway_addr
+                .as_ref()
+                .map(|(addr, _last_seen)| addr);
+            let old_gateway = self
+                .last_upnp_gateway_addr
+                .as_ref()
+                .map(|(addr, _last_seen)| addr);
+            if new_gateway != old_gateway {
+                inc!(Metrics::UpnpGatewayUpdated);
+                debug!(
+                    "upnp gateway changed {:?} -> {:?}",
+                    old_gateway
+                        .map(|gw| gw.to_string())
+                        .unwrap_or("None".into()),
+                    new_gateway
+                        .map(|gw| gw.to_string())
+                        .unwrap_or("None".into())
+                )
+            };
             self.last_upnp_gateway_addr = last_upnp_gateway_addr;
         }
         if last_pcp.is_some() {
@@ -397,7 +421,10 @@ impl Service {
             Ok(mapping) => {
                 self.current_mapping.update(Some(mapping));
             }
-            Err(e) => debug!("failed to get a port mapping {e}"),
+            Err(e) => {
+                debug!("failed to get a port mapping {e}");
+                inc!(Metrics::MappingFailures)
+            }
         }
     }
 
@@ -416,6 +443,7 @@ impl Service {
     async fn update_local_port(&mut self, local_port: Option<NonZeroU16>) {
         // ignore requests to update the local port in a way that does not produce a change
         if local_port != self.local_port {
+            inc!(Metrics::LocalPortUpdates);
             let old_port = std::mem::replace(&mut self.local_port, local_port);
 
             // clear the current mapping task if any
@@ -451,6 +479,7 @@ impl Service {
 
     fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
         if let Some(local_port) = self.local_port {
+            inc!(Metrics::MappingAttempts);
             debug!("getting a port mapping for port {local_port} -> {external_port:?}");
             let gateway = self
                 .full_probe
@@ -476,7 +505,6 @@ impl Service {
     /// result. If no probe is underway, a result can be returned immediately if it's still
     /// considered valid. Otherwise, a new probe task will be started.
     fn probe_request(&mut self, result_tx: oneshot::Sender<Result<ProbeOutput, String>>) {
-        inc!(Metrics::ProbeRequests);
         match self.probing_task.as_mut() {
             Some((_task_handle, receivers)) => receivers.push(result_tx),
             None => {
@@ -485,6 +513,7 @@ impl Service {
                     // we don't care if the requester is no longer there
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
+                    inc!(Metrics::ProbesStarted);
                     let handle = tokio::spawn(async move { Probe::new(probe_output).await });
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
