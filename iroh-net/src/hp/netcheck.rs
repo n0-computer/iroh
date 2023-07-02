@@ -7,14 +7,13 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use futures::{
     stream::{FuturesUnordered, StreamExt},
-    Future, FutureExt,
+    FutureExt,
 };
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use rand::seq::IteratorRandom;
@@ -27,7 +26,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::net::{interfaces, ip::to_canonical};
+use crate::{
+    net::{interfaces, ip::to_canonical},
+    util::MaybeFuture,
+};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
@@ -1718,29 +1720,6 @@ pub(crate) async fn os_has_ipv6() -> bool {
     // TODO: use socket2 to specify binding to ipv6
     let udp = UdpSocket::bind("[::1]:0").await;
     udp.is_ok()
-}
-
-/// Resolves to pending if the inner is `None`.
-#[derive(Debug)]
-struct MaybeFuture<T> {
-    inner: Option<T>,
-}
-
-impl<T> Default for MaybeFuture<T> {
-    fn default() -> Self {
-        MaybeFuture { inner: None }
-    }
-}
-
-impl<T: Future + Unpin> Future for MaybeFuture<T> {
-    type Output = T::Output;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.inner {
-            Some(ref mut t) => Pin::new(t).poll(cx),
-            None => Poll::Pending,
-        }
-    }
 }
 
 #[cfg(test)]

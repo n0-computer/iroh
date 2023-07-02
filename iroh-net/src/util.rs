@@ -7,7 +7,7 @@ use std::{
 use futures::FutureExt;
 
 /// A join handle that owns the task it is running, and aborts it when dropped.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Deref)]
 pub(crate) struct AbortingJoinHandle<T>(tokio::task::JoinHandle<T>);
 
 impl<T> From<tokio::task::JoinHandle<T>> for AbortingJoinHandle<T> {
@@ -30,19 +30,13 @@ impl<T> Drop for AbortingJoinHandle<T> {
     }
 }
 
-impl<T> std::ops::Deref for AbortingJoinHandle<T> {
-    type Target = tokio::task::JoinHandle<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 /// Holds a handle to a task and aborts it on drop.
 ///
 /// See [`tokio::task::AbortHandle`].
+#[derive(derive_more::Debug)]
 pub struct CancelOnDrop {
     task_name: &'static str,
+    #[debug(skip)]
     handle: tokio::task::AbortHandle,
 }
 
@@ -61,20 +55,13 @@ impl Drop for CancelOnDrop {
     }
 }
 
-impl std::fmt::Debug for CancelOnDrop {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CancelOnDrop")
-            .field("task_name", &self.task_name)
-            .finish()
-    }
-}
-
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
 pub struct MaybeFuture<T> {
     pub inner: Option<T>,
 }
 
+// NOTE: explicit implementation to bypass derive unnecessary bounds
 impl<T> Default for MaybeFuture<T> {
     fn default() -> Self {
         MaybeFuture { inner: None }
