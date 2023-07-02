@@ -650,7 +650,6 @@ impl ReportState {
         let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
         tokio::pin!(stun_timer);
         let probes_aborted = self.stop_probe.clone();
-        let mut dummy_fuse = false;
 
         loop {
             tokio::select! {
@@ -663,7 +662,7 @@ impl ReportState {
                     report.update_portmap_probe(pm);
                     portmap_probe.inner = None;
                 }
-                probe_report = probes.next(), if !dummy_fuse => {
+                probe_report = probes.next() => {
                     match probe_report {
                         Some(Ok(probe_report)) => {
                             debug!("finished probe: {:?}", probe_report);
@@ -698,9 +697,7 @@ impl ReportState {
                             if self.any_udp().await {
                                 captive_task.inner = None;
                             }
-                            debug!("all probes finished");
-                            dummy_fuse = true;
-                            // break;
+                            break;
                         }
                     }
                 }
