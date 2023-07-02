@@ -312,6 +312,7 @@ impl Service {
 
         (service, watcher)
     }
+
     /// Clears the current mapping and releases it.
     async fn invalidate_mapping(&mut self) {
         if let Some(old_mapping) = self.current_mapping.update(None) {
@@ -379,8 +380,9 @@ impl Service {
             Err(e) => Err(e.to_string()),
             Ok(probe) => {
                 self.full_probe.update(probe);
-                // TODO(@divma): the gateway of the current mapping could have changed. Should we
-                // invalidate the mapping?
+                // TODO(@divma): the gateway of the current mapping could have changed. Tailscale
+                // still assumes the current mapping is valid/active and will return it even after
+                // this
                 Ok(self.full_probe.output())
             }
         };
