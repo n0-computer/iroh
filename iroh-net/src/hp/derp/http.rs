@@ -1,7 +1,9 @@
 mod client;
+mod mesh_clients;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};
+pub use self::mesh_clients::MeshAddrs;
 pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
@@ -139,10 +141,13 @@ mod tests {
         if let Some(url) = server_url {
             client = client.server_url(url);
         }
-        let client = client.new_region(key.clone(), move || {
-            let region = region.clone();
-            Box::pin(async move { Some(region) })
-        });
+        let client = client
+            .get_region(move || {
+                let region = region.clone();
+                Box::pin(async move { Some(region) })
+            })
+            .build(key.clone())
+            .expect("won't fail if you supply a `get_region`");
         let public_key = key.public_key();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
         let client_reader = client.clone();
