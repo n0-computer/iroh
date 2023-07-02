@@ -169,7 +169,7 @@ mod tests {
 
     impl Mapping for M {
         fn external(&self) -> M {
-            self.clone()
+            *self
         }
         fn half_lifetime(&self) -> Duration {
             Duration::from_secs(HALF_LIFETIME_SECS)
