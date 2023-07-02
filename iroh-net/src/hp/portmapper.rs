@@ -339,8 +339,9 @@ impl Service {
                 Some(event) = self.current_mapping.next() => {
                     trace!("tick: mapping event {event:?}");
                     match event {
-                        mapping::Event::Renew { external_port } => todo!(),
-                        mapping::Event::Expired { external_port } => todo!(),
+                        mapping::Event::Renew { external_port } | mapping::Event::Expired { external_port } => {
+                            self.get_mapping(Some(external_port));
+                        },
                     }
 
                 }
@@ -358,6 +359,8 @@ impl Service {
             Err(e) => Err(e.to_string()),
             Ok(probe) => {
                 self.full_probe = probe;
+                // TODO(@divma): the gateway of the current mapping could have changed. Should we
+                // invalidate the mapping?
                 Ok(self.full_probe.output())
             }
         };
@@ -370,7 +373,7 @@ impl Service {
     async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {
         match result {
             Ok(mapping) => {
-                let old_mapping = self.current_mapping.update(Some(mapping));
+                self.current_mapping.update(Some(mapping));
             }
             Err(e) => debug!("failed to get a port mapping {e}"),
         }
@@ -388,14 +391,14 @@ impl Service {
     /// If the port changed, any port mapping task is cancelled. If the new port is some, it will
     /// start a new port mapping task.
     async fn update_local_port(&mut self, local_port: Option<NonZeroU16>) {
-        // Ignore requests to update the local port in a way that does not produce a change.
+        // ignore requests to update the local port in a way that does not produce a change
         if local_port != self.local_port {
             let old_port = std::mem::replace(&mut self.local_port, local_port);
 
-            // Clear the current mapping task if any.
+            // clear the current mapping task if any
 
             let dropped_task = self.mapping_task.take();
-            // Check if the dropped task had finished to reduce log noise.
+            // check if the dropped task had finished to reduce log noise
             let did_cancel = dropped_task
                 .map(|task| !task.is_finished())
                 .unwrap_or_default();
@@ -407,21 +410,40 @@ impl Service {
                 )
             }
 
-            // Since the port has changed, the current mapping is no longer valid and should be
-            // release.
+            // get the current external port if any to try to get it again
+            let port = self.current_mapping.external().map(|(_addr, port)| port);
+
+            // since the port has changed, the current mapping is no longer valid and should be
+            // released
 
             self.invalidate_mapping(ReleaseMapping::Yes).await;
 
-            // Start a new mapping task to account for the new port if necessary.
+            // start a new mapping task to account for the new port if necessary
+            self.get_mapping(port)
+        } else if self.current_mapping.external().is_some() {
+            // if the local port has not changed, but there is no active mapping try to get one
+            self.get_mapping(None)
+        }
+    }
 
-            if let Some(local_port) = self.local_port {
-                debug!("getting a port mapping for port {local_port}");
-                let handle = tokio::spawn(upnp::Mapping::new(
-                    std::net::Ipv4Addr::LOCALHOST,
+    fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
+        if let Some(local_port) = self.local_port {
+            debug!("getting a port mapping for port {local_port} -> {external_port:?}");
+            let gateway = self
+                .full_probe
+                .last_upnp_gateway_addr
+                .as_ref()
+                .map(|(gateway, _last_seen)| gateway.clone());
+            let local_ip = std::net::Ipv4Addr::LOCALHOST;
+            self.mapping_task = Some(
+                tokio::spawn(upnp::Mapping::new(
+                    local_ip,
                     local_port,
-                ));
-                self.mapping_task = Some(handle.into());
-            }
+                    gateway,
+                    external_port,
+                ))
+                .into(),
+            );
         }
     }
 
