@@ -24,6 +24,9 @@ mod upnp;
 /// not be probed again.
 const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 10 minutes
 
+/// Capacity of the channel to communicate with the long-running service.
+const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
+
 #[derive(Debug, Clone)]
 pub struct ProbeOutput {
     /// If UPnP can be considered available.
@@ -71,7 +74,7 @@ pub struct Client {
 impl Client {
     /// Create a new port mapping client.
     pub async fn new() -> Self {
-        let (service_tx, service_rx) = mpsc::channel(4);
+        let (service_tx, service_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
 
         let (service, watcher) = Service::new(service_rx);
 
@@ -137,7 +140,6 @@ impl Client {
 
     /// Deactivate port mapping.
     pub fn deactivate(&self) {
-        
         // requester can't really do anything with this error if returned, so we log it
         if let Err(e) = self
             .service_tx
