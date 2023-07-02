@@ -136,6 +136,12 @@ impl<M: Mapping> CurrentMapping<M> {
         }
         Poll::Pending
     }
+
+    pub(crate) fn external(&self) -> Option<(Ipv4Addr, NonZeroU16)> {
+        self.mapping
+            .as_ref()
+            .map(|mapping| mapping.mapping.external())
+    }
 }
 
 impl<M: Mapping> futures::Stream for CurrentMapping<M> {
