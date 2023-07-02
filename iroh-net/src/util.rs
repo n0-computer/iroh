@@ -44,6 +44,8 @@ impl CancelOnDrop {
     pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
         CancelOnDrop { task_name, handle }
     }
+
+    pub fn cancel(self) {}
 }
 
 impl Drop for CancelOnDrop {
@@ -59,7 +61,7 @@ pub struct MaybeFuture<T> {
     pub inner: Option<T>,
 }
 
-// NOTE: explicit implementation to bypass derive's unnecessary bounds
+// NOTE: explicit implementation to bypass derive unnecessary bounds
 impl<T> Default for MaybeFuture<T> {
     fn default() -> Self {
         MaybeFuture { inner: None }

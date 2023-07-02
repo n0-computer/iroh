@@ -536,15 +536,17 @@ impl ReportState {
         mut self,
         actor_addr: ActorAddr,
         dm: DerpMap,
-        portmap_probe: Option<oneshot::Receiver<Result<portmapper::ProbeOutput, String>>>,
+        port_mapper: Option<portmapper::Client>,
+        skip_external_network: bool,
     ) -> Result<(Report, DerpMap)> {
-        debug!(portmap_probe = %portmap_probe.is_some(), "running report");
+        debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
-        let mut portmap_probe = {
-            let inner = portmap_probe.map(|portmap_probe| {
-                Box::pin(async move {
-                    match portmap_probe.await {
+        let mut portmap_probe = MaybeFuture::default();
+        if !skip_external_network {
+            if let Some(port_mapper) = port_mapper {
+                portmap_probe.inner = Some(Box::pin(async move {
+                    match port_mapper.probe().await {
                         Ok(Ok(res)) => Some(res),
                         Ok(Err(err)) => {
                             warn!("skipping port mapping: {err:?}");
@@ -555,10 +557,9 @@ impl ReportState {
                             None
                         }
                     }
-                })
-            });
-            MaybeFuture { inner }
-        };
+                }));
+            }
+        }
 
         self.prepare_hairpin().await;
 
@@ -1332,18 +1333,15 @@ impl Actor {
             .create_report_state(&derp_map, stun_sock_v4, stun_sock_v6)
             .await
             .context("failed to create ReportState")?;
-        let portmap_probe = self
-            .port_mapper
-            .as_ref()
-            .filter(|_| !self.skip_external_network)
-            .map(|port_mapper| port_mapper.probe());
+        let port_mapper = self.port_mapper.clone();
+        let skip_external = self.skip_external_network;
         let addr = self.addr();
 
         tokio::spawn(async move {
             let _guard = cancel_token.drop_guard();
             match time::timeout(
                 OVERALL_PROBE_TIMEOUT,
-                report_state.run(addr.clone(), derp_map, portmap_probe),
+                report_state.run(addr.clone(), derp_map, port_mapper, skip_external),
             )
             .await
             {
