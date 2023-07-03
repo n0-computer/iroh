@@ -16,6 +16,7 @@ mod linux;
 mod windows;
 
 pub use default_net::ip::{Ipv4Net, Ipv6Net};
+use default_net::Gateway;
 
 use crate::net::ip::{is_loopback, is_private_v6, is_up};
 
@@ -26,13 +27,11 @@ use crate::net::ip::{is_loopback, is_private_v6, is_up};
     target_os = "macos",
     target_os = "ios"
 ))]
-use self::bsd::{default_route, likely_home_router};
+use self::bsd::default_route;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use self::linux::default_route;
 #[cfg(target_os = "windows")]
 use self::windows::default_route;
-
-use super::ip::is_private;
 
 /// Represents a network interface.
 #[derive(Debug)]
@@ -341,7 +340,7 @@ pub async fn default_route_interface() -> Option<String> {
 /// machine using it.
 #[derive(Debug, Clone)]
 pub struct HomeRouter {
-    pub gateway: IpAddr,
+    pub gateway: Gateway,
     pub my_ip: Option<IpAddr>,
 }
 
@@ -351,32 +350,9 @@ impl HomeRouter {
     /// In addition, it returns the IP address of the current machine on
     /// the LAN using that gateway.
     /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
-    pub async fn new() -> Option<Self> {
-        let gateway = likely_home_router().await?;
-        let mut my_ip = None;
-
-        let ifaces = default_net::interface::get_interfaces();
-        for iface in ifaces {
-            let iface = Interface { iface };
-
-            // Skip interaces that are up
-            if !iface.is_up() {
-                continue;
-            }
-
-            for addr in iface.addrs() {
-                // Match the IP type to the gateway.
-                let both_ipv4 = gateway.is_ipv4() && addr.addr().is_ipv4();
-                let both_ipv6 = gateway.is_ipv6() && addr.addr().is_ipv6();
-                if !both_ipv4 && !both_ipv6 {
-                    continue;
-                }
-
-                if is_private(&gateway) && is_private(&addr.addr()) {
-                    my_ip = Some(addr.addr());
-                }
-            }
-        }
+    pub fn new() -> Option<Self> {
+        let gateway = default_net::get_default_gateway().ok()?;
+        let my_ip = default_net::interface::get_local_ipaddr();
 
         Some(HomeRouter { gateway, my_ip })
     }
@@ -396,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_likely_home_router() {
-        let home_router = HomeRouter::new().await.expect("missing home router");
+        let home_router = HomeRouter::new().expect("missing home router");
         println!("home router: {:#?}", home_router);
     }
 }

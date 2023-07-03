@@ -1,10 +1,13 @@
 //! Linux-specific network interfaces implementations.
 
+use std::net::Ipv4Addr;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{anyhow, Result};
 #[cfg(not(target_os = "android"))]
 use futures::TryStreamExt;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 use super::DefaultRouteDetails;
 
@@ -23,10 +26,161 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
     res.ok().flatten()
 }
 
+static PROC_NET_ROUTE_ERR: AtomicBool = AtomicBool::new(false);
+const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
+/// The max number of lines to read from /proc/net/route looking for a default route.
+const MAX_PROC_NET_ROUTE_READ: usize = 1000;
+
+/// Parses 10.0.0.1 out of:
+///
+/// ```norun
+/// $ cat /proc/net/route
+/// Iface   Destination     Gateway         Flags   RefCnt  Use     Metric  Mask            MTU     Window  IRTT
+/// ens18   00000000        0100000A        0003    0       0       0       00000000        0       0       0
+/// ens18   0000000A        00000000        0001    0       0       0       0000FFFF        0       0       0
+/// ```
+pub async fn likely_home_router() -> Option<Ipv4Addr> {
+    if PROC_NET_ROUTE_ERR.load(Ordering::Relaxed) {
+        // If we failed to read /proc/net/route previously, don't keep trying.
+        // But if we're on Android, go into the Android path.
+        #[cfg(target_os = "android")]
+        return likely_home_router_android();
+        #[cfg(not(target_os = "android"))]
+        return None;
+    }
+    let file = File::open(PROC_NET_ROUTE_PATH).await.ok()?;
+
+    match parse_proc_net_home_router(file).await {
+        Ok(ip) => ip,
+        Err(err) => {
+            tracing::debug!("failed to read /proc/net/route: {:?}", err);
+
+            PROC_NET_ROUTE_ERR.store(true, Ordering::Relaxed);
+            #[cfg(target_os = "android")]
+            return likely_home_router_android();
+            #[cfg(not(target_os = "android"))]
+            return None;
+        }
+    }
+}
+
+async fn parse_proc_net_home_router<R: AsyncRead + Unpin>(source: R) -> Result<Option<Ipv4Addr>> {
+    let mut line_num = 0;
+    let mut reader = BufReader::new(source).lines();
+
+    while let Some(line) = reader.next_line().await? {
+        line_num += 1;
+
+        if line_num == 1 {
+            // Skip header line.
+            continue;
+        }
+        if line_num > MAX_PROC_NET_ROUTE_READ {
+            anyhow::bail!("/proc/net too long");
+        }
+
+        let mut fields = line.split_ascii_whitespace();
+        let Some(gateway_hex) = fields.nth(2) else {
+            continue;
+        };
+        let Some(flags_hex) = fields.next() else {
+            continue;
+        };
+
+        let mut flags_bytes = [0u8; 2];
+        if hex::decode_to_slice(flags_hex, &mut flags_bytes).is_err() {
+            continue;
+        }
+        let flags = u16::from_be_bytes(flags_bytes);
+
+        let mut gateway_bytes = [0u8; 4];
+        if hex::decode_to_slice(gateway_hex, &mut gateway_bytes).is_err() {
+            continue;
+        }
+        let gateway = u32::from_le_bytes(gateway_bytes);
+
+        dbg!(gateway);
+        dbg!(flags);
+
+        if dbg!(flags & (libc::RTF_UP | libc::RTF_GATEWAY))
+            != dbg!(libc::RTF_UP | libc::RTF_GATEWAY)
+        {
+            continue;
+        }
+
+        let ip = Ipv4Addr::from(gateway);
+        if ip.is_private() {
+            return Ok(Some(ip));
+        }
+    }
+    // if errors.Is(err, errStopReading) {
+    // 	err = nil
+    // }
+    // if err != nil {
+    // 	procNetRouteErr.Store(true)
+    // 	if runtime.GOOS == "android" {
+    // 		return likelyHomeRouterIPAndroid()
+    // 	}
+    // 	log.Printf("interfaces: failed to read /proc/net/route: %v", err)
+    // }
+    // if ret.IsValid() {
+    // 	return ret, true
+    // }
+    // if lineNum >= maxProcNetRouteRead {
+    // 	// If we went over our line limit without finding an answer, assume
+    // 	// we're a big fancy Linux router (or at least not a home system)
+    // 	// and set the error bit so we stop trying this in the future (and wasting CPU).
+    // 	// See https://github.com/tailscale/tailscale/issues/7621.
+    // 	//
+    // 	// Remember that "likelyHomeRouterIP" exists purely to find the port
+    // 	// mapping service (UPnP, PMP, PCP) often present on a home router. If we hit
+    // 	// the route (line) limit without finding an answer, we're unlikely to ever
+    // 	// find one in the future.
+    // 	procNetRouteErr.Store(true)
+    // }
+    Ok(None)
+}
+
+/// Android apps don't have permission to read /proc/net/route, at
+/// least on Google devices and the Android emulator.
+#[cfg(target_os = "android")]
+async fn likely_home_router_android() -> Option<Ipv4Addr> {
+    // cmd := exec.Command("/system/bin/ip", "route", "show", "table", "0")
+    // out, err := cmd.StdoutPipe()
+    // if err != nil {
+    // 	return
+    // }
+    // if err := cmd.Start(); err != nil {
+    // 	log.Printf("interfaces: running /system/bin/ip: %v", err)
+    // 	return
+    // }
+    // // Search for line like "default via 10.0.2.2 dev radio0 table 1016 proto static mtu 1500 "
+    // lineread.Reader(out, func(line []byte) error {
+    // 	const pfx = "default via "
+    // 	if !mem.HasPrefix(mem.B(line), mem.S(pfx)) {
+    // 		return nil
+    // 	}
+    // 	line = line[len(pfx):]
+    // 	sp := bytes.IndexByte(line, ' ')
+    // 	if sp == -1 {
+    // 		return nil
+    // 	}
+    // 	ipb := line[:sp]
+    // 	if ip, err := netip.ParseAddr(string(ipb)); err == nil && ip.Is4() {
+    // 		ret = ip
+    // 		log.Printf("interfaces: found Android default route %v", ip)
+    // 	}
+    // 	return nil
+    // })
+    // cmd.Process.Kill()
+    // cmd.Wait()
+    // return ret, ret.IsValid()
+    None
+}
+
 async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
-    const PATH: &str = "/proc/net/route";
     const ZERO_ADDR: &str = "00000000";
-    let file = File::open(PATH).await?;
+    let file = File::open(PROC_NET_ROUTE_PATH).await?;
 
     // Explicitly set capacity, this is min(4096, DEFAULT_BUF_SIZE):
     // https://github.com/google/gvisor/issues/5732
@@ -197,5 +351,22 @@ mod tests {
             assert!(!route.interface_name.is_empty());
             assert!(route.interface_index > 0);
         }
+    }
+
+    #[tokio::test]
+    async fn test_parse_proc_net_home_router() {
+        let source = r#"Iface   Destination     Gateway         Flags   RefCnt  Use     Metric  Mask            MTU     Window  IRTT
+ens18   00000000        0100000A        0003    0       0       0       00000000        0       0       0
+ens18   0000000A        00000000        0001    0       0       0       0000FFFF        0       0       0
+"#;
+
+        let expected: Ipv4Addr = "10.0.0.1".parse().unwrap();
+        assert_eq!(
+            parse_proc_net_home_router(std::io::Cursor::new(source))
+                .await
+                .unwrap()
+                .unwrap(),
+            expected,
+        );
     }
 }
