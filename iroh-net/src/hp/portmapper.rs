@@ -98,7 +98,7 @@ impl Client {
 
     /// Request a probe to the port mapping protocols.
     ///
-    /// Return the [`oneshot::Receiver`] used to obtain the result of the probe.
+    /// Returns the [`oneshot::Receiver`] used to obtain the result of the probe.
     pub fn probe(&self) -> oneshot::Receiver<Result<ProbeOutput, String>> {
         let (result_tx, result_rx) = oneshot::channel();
 
@@ -162,8 +162,6 @@ impl Client {
 }
 
 /// Port mapping protocol information obtained during a probe.
-///
-/// This can be updated with [`Probe::new_from_valid_probe`].
 #[derive(Debug, Default)]
 struct Probe {
     /// The last [`igd::aio::Gateway`] and when was it last seen.
@@ -362,7 +360,7 @@ impl Service {
                         }
                     }
                 }
-                mapping_result = util::MaybeFuture{inner: self.mapping_task.as_mut()} => {
+                mapping_result = util::MaybeFuture{ inner: self.mapping_task.as_mut() } => {
                     trace!("tick: mapping ready");
                     // regardless of outcome, the task is finished, clear it
                     self.mapping_task = None;
@@ -374,11 +372,11 @@ impl Service {
                     };
                     self.on_mapping_result(result).await;
                 }
-                probe_result = util::MaybeFuture{inner: self.probing_task.as_mut().map(|(fut, _rec)| fut)} => {
+                probe_result = util::MaybeFuture{ inner: self.probing_task.as_mut().map(|(fut, _rec)| fut) } => {
                     trace!("tick: probe ready");
                     // retrieve the receivers and clear the task
                     let receivers = self.probing_task.take().expect("is some").1;
-                    let probe_result = probe_result.map_err(|join_err|anyhow!("Failed to obtain a result {join_err}"));
+                    let probe_result = probe_result.map_err(|join_err| anyhow!("Failed to obtain a result {join_err}"));
                     self.on_probe_result(probe_result, receivers).await;
                 }
                 Some(event) = self.current_mapping.next() => {
@@ -471,7 +469,7 @@ impl Service {
 
             // start a new mapping task to account for the new port if necessary
             self.get_mapping(port)
-        } else if self.current_mapping.external().is_some() {
+        } else if self.current_mapping.external().is_none() {
             // if the local port has not changed, but there is no active mapping try to get one
             self.get_mapping(None)
         }

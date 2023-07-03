@@ -20,8 +20,9 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
 /// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
-const HALF_LIFETIME: Duration = Duration::from_secs(60);
+const HALF_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
+/// Name with which we register the mapping in the router.
 const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 
 #[derive(derive_more::Debug, Clone)]

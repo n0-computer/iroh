@@ -271,7 +271,7 @@ impl Conn {
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
 
-        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails.
+        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
         match port.try_into() {
             Ok(non_zero_port) => {
                 port_mapper.update_local_port(non_zero_port);
@@ -1750,9 +1750,13 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        // We can end up with a zero port if std::net::UdpSocket::socket_addr fails.
-        if let Ok(non_zero_port) = self.local_port_v4().try_into() {
-            self.port_mapper.update_local_port(non_zero_port);
+        // we can end up with a zero port if std::net::UdpSocket::socket_addr fails
+        match self.local_port_v4().try_into() {
+            Ok(non_zero_port) => self.port_mapper.update_local_port(non_zero_port),
+            Err(_zero_port) => {
+                // since the local port might still be the same, don't deactivate port mapping
+                debug!("Skipping port mapping on rebind with zero local port");
+            }
         }
         let ipv4_addr = self.pconn4.local_addr()?;
 

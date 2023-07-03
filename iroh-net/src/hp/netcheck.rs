@@ -123,7 +123,7 @@ impl Report {
         self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
     }
 
-    /// Updates the portmap related values based on [`portmapper::ProbeResult`].
+    /// Updates the portmap related values based on a [`portmapper::ProbeResult`].
     pub fn update_portmap_probe(&mut self, probe_result: Option<portmapper::ProbeOutput>) {
         match probe_result {
             Some(portmapper::ProbeOutput { upnp, pmp, pcp }) => {

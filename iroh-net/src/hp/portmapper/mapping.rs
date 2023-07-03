@@ -14,6 +14,7 @@ use tracing::trace;
 /// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {
     fn external(&self) -> (Ipv4Addr, NonZeroU16);
+    /// Half the lifetime of a mapping. This is used to calculate when a mapping should be renewed.
     fn half_lifetime(&self) -> Duration;
 }
 
@@ -53,6 +54,7 @@ pub(super) enum Event {
     /// Mapping has expired.
     Expired { external_port: NonZeroU16 },
 }
+
 /// Holds the current mapping value and ensures that any change is reported accordingly.
 #[derive(derive_more::Debug)]
 pub(super) struct CurrentMapping<M = super::upnp::Mapping> {

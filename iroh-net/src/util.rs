@@ -44,8 +44,6 @@ impl CancelOnDrop {
     pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
         CancelOnDrop { task_name, handle }
     }
-
-    pub fn cancel(self) {}
 }
 
 impl Drop for CancelOnDrop {
