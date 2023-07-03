@@ -102,7 +102,7 @@ pub enum Commands {
     PortMap {
         /// Local port to get a mapping.
         local_port: NonZeroU16,
-        /// How long to wait for an external port to be ready.
+        /// How long to wait for an external port to be ready in seconds.
         #[clap(long, default_value_t = 10)]
         timeout_secs: u64,
     },
