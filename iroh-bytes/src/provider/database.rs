@@ -108,9 +108,7 @@ impl BaoCollection for InMemDatabase {
     type Entry = InMemDatabaseEntry;
 
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        println!("getting entry for {:?}", hash);
         let (o, d) = self.0.get(hash)?;
-        println!("got entry for {:?}", hash);
         Some(InMemDatabaseEntry {
             outboard: o.clone(),
             data: d.clone(),
@@ -122,7 +120,8 @@ impl BaoCollection for InMemDatabase {
 ///
 /// The entry has the ability to provide you with an (outboard, data)
 /// reader pair. Creating the reader is async and may fail. The futures that
-/// create the readers must be `Send`, but the readers themselves
+/// create the readers must be `Send`, but the readers themselves don't have to
+/// be.
 pub trait BaoCollectionEntry<D: BaoCollection>: Clone + Send + Sync + 'static {
     fn hash(&self) -> blake3::Hash;
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;

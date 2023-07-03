@@ -14,6 +14,7 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// Create a new collection from a list of blobs and total size of the raw data
     pub fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
         let mut blobs = blobs;
         let n = blobs.len();

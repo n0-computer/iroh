@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::fsm::encode_ranges_validated;
+use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
@@ -661,6 +661,7 @@ pub async fn send_blob<D: BaoCollection, W: AsyncWrite + Unpin + Send + 'static>
     match db.get(&name) {
         Some(entry) => {
             let outboard = entry.outboard().await?;
+            let size = outboard.tree().size().0;
             let mut file_reader = entry.data_reader().await?;
             let res = bao_tree::io::fsm::encode_ranges_validated(
                 &mut file_reader,
@@ -672,7 +673,7 @@ pub async fn send_blob<D: BaoCollection, W: AsyncWrite + Unpin + Send + 'static>
             debug!("done sending blob {} {:?}", name, res);
             res?;
 
-            Ok((SentStatus::Sent, 0))
+            Ok((SentStatus::Sent, size))
         }
         _ => {
             debug!("blob not found {}", name);
