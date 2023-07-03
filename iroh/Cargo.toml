@@ -35,7 +35,7 @@ console = { version = "0.15.5", optional = true }
 dirs-next = { version = "2.0.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-iroh-io = { path = "../iroh-io", optional = true }
+iroh-io = { version = "0.2.0-rc.1", optional = true }
 multibase = { version = "0.9.1", optional = true }
 num_cpus = { version = "1.15.0", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
@@ -62,6 +62,7 @@ testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
+iroh-io = { version = "0.2.0-rc.1" }
 
 [[bin]]
 name = "iroh"

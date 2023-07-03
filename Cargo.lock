@@ -271,13 +271,14 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.5.0-beta1"
-source = "git+https://github.com/n0-computer/bao-tree#38c73bdb77b17e7613bea548dce22de0cc653698"
+version = "0.5.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fde60af6c1f367d51b5e42749852a30711921b3f841c364d35123f58777967dc"
 dependencies = [
  "blake3",
  "bytes",
  "futures",
- "iroh-io",
+ "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "range-collections",
  "self_cell",
  "smallvec",
@@ -1604,7 +1605,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh-bytes",
- "iroh-io",
+ "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "iroh-metrics",
  "iroh-net",
  "multibase",
@@ -1641,7 +1642,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body",
- "iroh-io",
+ "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "iroh-net",
  "multibase",
  "num_cpus",
@@ -1683,6 +1684,19 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "iroh-io"
+version = "0.2.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b759fb4d3a677920f98501ebc1ae898f0d01a15b39c557c758354c8c36791433"
+dependencies = [
+ "bytes",
+ "futures",
+ "pin-project",
+ "smallvec",
+ "tokio",
 ]
 
 [[package]]
