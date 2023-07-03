@@ -31,6 +31,9 @@
 //! In general it is assumed that readers are cheap, so in case of an error you can
 //! always get a new reader. Also, if you need concurrent access to the same resource,
 //! create multiple readers.
+
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+
 use bytes::Bytes;
 use futures::Future;
 use pin_project::pin_project;
