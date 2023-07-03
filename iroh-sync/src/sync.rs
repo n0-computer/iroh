@@ -582,16 +582,15 @@ impl Ord for AuthorId {
 
 impl RangeKey for RecordIdentifier {
     fn contains(&self, range: &crate::ranger::Range<Self>) -> bool {
-        // For now we just do key inclusion and check if namespace and author match
-        if self.namespace != range.x().namespace || self.namespace != range.y().namespace {
-            return false;
-        }
-        if self.author != range.x().author || self.author != range.y().author {
-            return false;
-        }
+        use crate::ranger::contains;
 
-        let mapped_range = range.clone().map(|x, y| (x.key, y.key));
-        crate::ranger::contains(&self.key, &mapped_range)
+        let key_range = range.clone().map(|x, y| (x.key, y.key));
+        let namespace_range = range.clone().map(|x, y| (x.namespace, y.namespace));
+        let author_range = range.clone().map(|x, y| (x.author, y.author));
+
+        contains(&self.key, &key_range)
+            && contains(&self.namespace, &namespace_range)
+            && contains(&self.author, &author_range)
     }
 }
 
@@ -734,6 +733,67 @@ mod tests {
             .get_content(entries[1].entry().record().content_hash())
             .unwrap();
         assert_eq!(&content[..], b"round 2");
+    }
+
+    #[test]
+    fn test_multikey() {
+        let mut rng = rand::thread_rng();
+
+        let k = vec!["a", "c", "z"];
+
+        let mut n: Vec<_> = (0..3).map(|_| Namespace::new(&mut rng)).collect();
+        n.sort_by_key(|n| *n.id());
+
+        let mut a: Vec<_> = (0..3).map(|_| Author::new(&mut rng)).collect();
+        a.sort_by_key(|a| *a.id());
+
+        // Just key
+        {
+            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new(k[1], n[0].id(), a[0].id());
+            let ri2 = RecordIdentifier::new(k[2], n[0].id(), a[0].id());
+
+            let range = Range::new(ri0.clone(), ri2.clone());
+            assert!(ri0.contains(&range), "start");
+            assert!(ri1.contains(&range), "inside");
+            assert!(!ri2.contains(&range), "end");
+        }
+
+        // Just namespace
+        {
+            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new(k[0], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new(k[0], n[2].id(), a[0].id());
+
+            let range = Range::new(ri0.clone(), ri2.clone());
+            assert!(ri0.contains(&range), "start");
+            assert!(ri1.contains(&range), "inside");
+            assert!(!ri2.contains(&range), "end");
+        }
+
+        // Just author
+        {
+            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new(k[0], n[0].id(), a[1].id());
+            let ri2 = RecordIdentifier::new(k[0], n[0].id(), a[2].id());
+
+            let range = Range::new(ri0.clone(), ri2.clone());
+            assert!(ri0.contains(&range), "start");
+            assert!(ri1.contains(&range), "inside");
+            assert!(!ri2.contains(&range), "end");
+        }
+
+        // Just key and namespace
+        {
+            let ri0 = RecordIdentifier::new(k[0], n[0].id(), a[0].id());
+            let ri1 = RecordIdentifier::new(k[1], n[1].id(), a[0].id());
+            let ri2 = RecordIdentifier::new(k[2], n[2].id(), a[0].id());
+
+            let range = Range::new(ri0.clone(), ri2.clone());
+            assert!(ri0.contains(&range), "start");
+            assert!(ri1.contains(&range), "inside");
+            assert!(!ri2.contains(&range), "end");
+        }
     }
 
     #[test]
