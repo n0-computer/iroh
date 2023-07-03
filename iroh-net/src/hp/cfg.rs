@@ -142,7 +142,7 @@ pub struct PingResult {
 /// A node or peer in the iroh network.
 ///
 /// Nodes are primarily identified by their [`Node::key`].
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     /// The public key or PeerID, the primary identifier of this node.
     pub key: key::node::PublicKey,

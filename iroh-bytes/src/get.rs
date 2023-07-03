@@ -69,12 +69,12 @@ pub async fn run_ticket(
     keylog: bool,
     derp_map: Option<DerpMap>,
 ) -> Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        ticket.addrs(),
+    let connection = iroh_net::MagicEndpoint::dial_peer(
         ticket.peer(),
         &crate::P2P_ALPN,
-        keylog,
+        ticket.addrs(),
         derp_map,
+        keylog,
     )
     .await?;
 
@@ -624,12 +624,12 @@ pub async fn run(
     request: AnyGetRequest,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        &opts.addrs,
+    let connection = iroh_net::MagicEndpoint::dial_peer(
         opts.peer_id,
         &crate::P2P_ALPN,
-        opts.keylog,
+        &opts.addrs,
         opts.derp_map,
+        opts.keylog,
     )
     .await?;
     Ok(run_connection(connection, request))
