@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use quinn_proto::VarInt;
 use tracing::{debug, trace};
 
@@ -56,17 +56,32 @@ impl MagicEndpointBuilder {
     }
 
     /// Specify the DERP servers that are used by this endpoint.
+    ///
+    /// DERP servers are used to discover other peers by [`PeerId`] and also
+    /// help establish connections between peers by being an initial relay
+    /// for traffic while assisting in holepunching to establish a direct
+    /// connection between the peers.
     pub fn derp_map(mut self, derp_map: Option<DerpMap>) -> Self {
         self.derp_map = derp_map;
         self
     }
 
     /// Set a custom [quinn::TransportConfig] for this endpoint.
+    ///
+    /// The transport config contains parameters governing the QUIC state machine.
+    ///
+    /// If unset, the default config is used. Default values should be suitable for most internet
+    /// applications. Applications protocols which forbid remotely-initiated streams should set
+    /// `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to zero.
     pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
         self.transport_config = Some(transport_config);
         self
     }
 
+    /// Maximum number of simultaneous connections to accept.
+    ///
+    /// New incoming connections are only accepted if the total number of incoming or outgoing
+    /// connections is less than this. Outgoing connections are unaffected.
     pub fn concurrent_connections(mut self, concurrent_connections: u32) -> Self {
         self.concurrent_connections = Some(concurrent_connections);
         self
@@ -99,9 +114,9 @@ impl MagicEndpointBuilder {
 
     /// Bind the magic endpoint on the specified socket address.
     ///
-    /// The *bind_addr* is the address that should be bound locally.  Even though this is an
-    /// outgoing connection a socket must be bound and this is explicit.  The main choice to
-    /// make here is the address family: IPv4 or IPv6.  Otherwise you normally bind to the
+    /// The *bind_addr* is the address that should be bound locally. Even if this is an
+    /// outgoing connection a socket must be bound and this is explicit. The main choice to
+    /// make here is the address family: IPv4 or IPv6. Otherwise you normally bind to the
     /// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
     pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
@@ -156,9 +171,17 @@ impl MagicEndpoint {
     /// Connect to a remote endpoint, creating an endpoint on the fly.
     ///
     /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
-    /// the remote endpoint, they can be specified and will be added to the endpoint's peer map.
-    /// If no addresses are specified, the endpoint will try to dial the peer through the
-    /// configured DERP servers.
+    /// the remote endpoint, they can be specified and will be used to try and establish a direct
+    /// connection without involving a DERP server. If no addresses are specified, the endpoint
+    /// will try to dial the peer through the configured DERP servers.
+    ///
+    /// If *derp_map* is set, these DERP servers are used to discover the dialed peer by its
+    /// [`PeerId`], help establish the connection being an initial relay for traffic and assist in
+    /// holepunching.
+    ///
+    /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
+    /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
+    /// to be able to decrypt captured traffic for debugging purposes.
     pub async fn dial_peer(
         peer_id: PeerId,
         alpn_protocol: &[u8],
@@ -222,7 +245,7 @@ impl MagicEndpoint {
         })
     }
 
-    /// Accept a connection on the socket.
+    /// Accept an incoming connection on the socket.
     pub fn accept(&self) -> quinn::Accept<'_> {
         self.endpoint.accept()
     }
@@ -237,17 +260,19 @@ impl MagicEndpoint {
         &self.keypair
     }
 
-    /// Get the local addresses on which the underlying magic socket is bound.
+    /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
         self.conn.local_addr()
     }
 
-    /// Get the local endpoints on which the underlying magic socket is listening.
+    /// Get the local and discovered endpoint addresses on which the underlying
+    /// magic socket is reachable.
     ///
-    /// This returns information on the network state of the endpoints in addition to
-    /// their addresses.
+    /// This list contains both the locally-bound addresses and the endpoint's
+    /// publicly-reachable addresses, if they could be discovered through
+    /// STUN or port mapping.
     pub async fn local_endpoints(&self) -> anyhow::Result<Vec<cfg::Endpoint>> {
         self.conn.local_endpoints().await
     }
@@ -255,9 +280,9 @@ impl MagicEndpoint {
     /// Connect to a remote endpoint.
     ///
     /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
-    /// the remote endpoint, they can be specified and will be added to the endpoint's peer map.
-    /// If no addresses are specified, the endpoint will try to dial the peer through the
-    /// configured DERP servers.
+    /// the remote endpoint, they can be specified and will be used to try and establish a direct
+    /// connection without involving a DERP server. If no addresses are specified, the endpoint
+    /// will try to dial the peer through the configured DERP servers.
     pub async fn connect(
         &self,
         peer_id: PeerId,
@@ -267,11 +292,9 @@ impl MagicEndpoint {
         self.add_known_addrs(peer_id, known_addrs).await?;
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
-        let addr = self
-            .conn
-            .get_mapping_addr(&node_key)
-            .await
-            .expect("just inserted");
+        let addr = self.conn.get_mapping_addr(&node_key).await.ok_or_else(|| {
+            anyhow!("failed to retrieve the mapped address from the magic socket")
+        })?;
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -304,7 +327,7 @@ impl MagicEndpoint {
     pub async fn add_known_addrs(
         &self,
         peer_id: PeerId,
-        addrs: &[SocketAddr],
+        endpoints: &[SocketAddr],
     ) -> anyhow::Result<()> {
         const DEFAULT_DERP_REGION: u16 = 1;
 
@@ -313,14 +336,14 @@ impl MagicEndpoint {
             let mut netmap = self.netmap.lock().unwrap();
             let node = netmap.peers.iter_mut().find(|peer| peer.key == node_key);
             if let Some(node) = node {
-                for addr in addrs {
-                    if !node.endpoints.contains(addr) {
-                        node.endpoints.push(*addr);
-                        node.addresses.push(addr.ip());
+                for endpoint in endpoints {
+                    if !node.endpoints.contains(endpoint) {
+                        node.endpoints.push(*endpoint);
+                        node.addresses.push(endpoint.ip());
                     }
                 }
             } else {
-                let endpoints = addrs.to_vec();
+                let endpoints = endpoints.to_vec();
                 let addresses = endpoints.iter().map(|ep| ep.ip()).collect();
                 let node = cfg::Node {
                     name: None,
