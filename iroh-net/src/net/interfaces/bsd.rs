@@ -4,7 +4,7 @@
 
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
 use once_cell::sync::Lazy;
@@ -24,6 +24,27 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
         interface_name: iface.name,
         interface_description: None,
     })
+}
+
+pub async fn likely_home_router() -> Option<IpAddr> {
+    let rib = fetch_routing_table()?;
+    let msgs = parse_routing_table(&rib)?;
+    for rm in msgs {
+        if !is_default_gateway(&rm) {
+            continue;
+        }
+
+        if let Some(gw) = rm.addrs.get(libc::RTAX_GATEWAY as usize) {
+            if let Addr::Inet4 { ip } = gw {
+                return Some(IpAddr::V4(*ip));
+            }
+
+            if let Addr::Inet6 { ip, .. } = gw {
+                return Some(IpAddr::V6(*ip));
+            }
+        }
+    }
+    None
 }
 
 /// Returns the index of the network interface that
