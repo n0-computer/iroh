@@ -50,7 +50,7 @@ impl MeshClients {
                 for (_, region) in derp_map.regions.iter() {
                     for node in region.nodes.iter() {
                         // note: `node.host_name` is expected to include the scheme
-                        let mut url = node.host_name.clone();
+                        let mut url = node.url.clone();
                         url.set_path("/derp");
                         urls.push(url);
                     }

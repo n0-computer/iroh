@@ -2656,7 +2656,7 @@ pub(crate) mod tests {
                         region_id: 1,
                         // In test mode, the DERP client does not validate HTTPS certs, so the host
                         // name is irrelevant, but the port is used.
-                        host_name: format!("https://test-node.invalid:{}", https_addr.port())
+                        url: format!("https://test-node.invalid:{}", https_addr.port())
                             .parse()
                             .unwrap(),
                         stun_only: false,
