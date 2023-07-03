@@ -14,7 +14,7 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub(crate) fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
+    pub fn new(blobs: Vec<Blob>, total_blobs_size: u64) -> anyhow::Result<Self> {
         let mut blobs = blobs;
         let n = blobs.len();
         blobs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -24,6 +24,11 @@ impl Collection {
             blobs,
             total_blobs_size,
         })
+    }
+
+    /// Serialize this collection to a std Vec<u8>
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(postcard::to_stdvec(self)?)
     }
 
     /// Deserialize a collection from a byte slice
