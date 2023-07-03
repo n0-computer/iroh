@@ -2,7 +2,6 @@
 //! and to test connectivity to specific other nodes.
 use std::{
     net::SocketAddr,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -17,9 +16,9 @@ use iroh_net::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
         key::node::SecretKey,
-        magicsock,
     },
-    tls::{self, Keypair},
+    tls::{Keypair, PeerId, PublicKey},
+    MagicEndpoint,
 };
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -443,12 +442,17 @@ fn configure_local_derp_map() -> DerpMap {
 }
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
-const DEFAULT_DERP_REGION: u16 = 1;
 
 async fn make_endpoint(
     private_key: SecretKey,
     derp_map: Option<DerpMap>,
-) -> anyhow::Result<(magicsock::Conn, quinn::Endpoint)> {
+) -> anyhow::Result<MagicEndpoint> {
+    tracing::info!(
+        "public key: {}",
+        hex::encode(private_key.public_key().as_bytes())
+    );
+    tracing::info!("derp map {:#?}", derp_map);
+
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
     let on_net_info = |ni: hp::cfg::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
@@ -463,51 +467,26 @@ async fn make_endpoint(
         on_derp_s.try_send(()).ok();
     };
 
-    tracing::info!(
-        "public key: {}",
-        hex::encode(private_key.public_key().as_bytes())
-    );
-    tracing::info!("derp map {:#?}", derp_map);
-    let opts = magicsock::Options {
-        port: 0,
-        on_endpoints: Some(Box::new(on_endpoints)),
-        on_derp_active: Some(Box::new(on_derp_active)),
-        on_net_info: Some(Box::new(on_net_info)),
-        private_key,
-    };
-    let key = opts.private_key.clone();
-    let conn = magicsock::Conn::new(opts).await?;
-
-    conn.set_derp_map(derp_map).await?;
-    tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
-        .await
-        .context("wait for derp connection")?;
-    let tls_server_config =
-        tls::make_server_config(&key.clone().into(), vec![DR_DERP_ALPN.to_vec()], false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-    server_config.transport_config(Arc::new(transport_config));
-    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
-        quinn::EndpointConfig::default(),
-        Some(server_config),
-        conn.clone(),
-        Arc::new(quinn::TokioRuntime),
-    )?;
 
-    let tls_client_config = tls::make_client_config(
-        &key.clone().into(),
-        None,
-        vec![DR_DERP_ALPN.to_vec()],
-        false,
-    )?;
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-    client_config.transport_config(Arc::new(transport_config));
-    endpoint.set_default_client_config(client_config);
-    Ok((conn, endpoint))
+    let endpoint = MagicEndpoint::builder()
+        .keypair(private_key.into())
+        .alpns(vec![DR_DERP_ALPN.to_vec()])
+        .derp_map(derp_map)
+        .transport_config(transport_config)
+        .on_net_info(Box::new(on_net_info))
+        .on_endpoints(Box::new(on_endpoints))
+        .on_derp_active(Box::new(on_derp_active))
+        .bind(0)
+        .await?;
+
+    tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
+        .await
+        .context("wait for derp connection")?;
+
+    Ok(endpoint)
 }
 
 async fn connect(
@@ -516,36 +495,24 @@ async fn connect(
     remote_endpoints: Vec<SocketAddr>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let (conn, endpoint) = make_endpoint(private_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
 
     let bytes = hex::decode(dial)?;
     let bytes: [u8; 32] = bytes.try_into().ok().context("unexpected key length")?;
-    let key: hp::key::node::PublicKey = hp::key::node::PublicKey::from(bytes);
+    let peer_id = PeerId::from(PublicKey::from_bytes(&bytes).context("failed to parse PeerId")?);
 
-    let endpoints = remote_endpoints;
-    let addresses = endpoints.iter().map(|a| a.ip()).collect();
-    conn.set_network_map(hp::netmap::NetworkMap {
-        peers: vec![hp::cfg::Node {
-            name: None,
-            key: key.clone(),
-            endpoints,
-            addresses,
-            derp: Some(DEFAULT_DERP_REGION),
-        }],
-    })
-    .await?;
-    let addr = conn.get_mapping_addr(&key).await;
-    let addr = addr.context("no mapping address")?;
-    tracing::info!("dialing {:?} at {:?}", key, addr);
-    let connecting = endpoint.connect(addr, "localhost")?;
-    match connecting.await {
+    tracing::info!("dialing {:?}", peer_id);
+    let conn = endpoint
+        .connect(peer_id, &DR_DERP_ALPN, &remote_endpoints)
+        .await;
+    match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
         Err(cause) => {
-            eprintln!("unable to connect to {addr}: {cause}");
+            eprintln!("unable to connect to {peer_id}: {cause}");
         }
     }
 
@@ -566,9 +533,9 @@ async fn accept(
     config: TestConfig,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
-    let (conn, endpoint) = make_endpoint(private_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
 
-    let endpoints = conn.local_endpoints().await?;
+    let endpoints = endpoint.local_endpoints().await?;
     let remote_addrs = endpoints
         .iter()
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
