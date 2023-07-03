@@ -2492,7 +2492,7 @@ impl std::fmt::Display for QuicMappedAddr {
 pub(crate) mod tests {
     use anyhow::Context;
     use rand::RngCore;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -2712,7 +2712,7 @@ pub(crate) mod tests {
                 .transport_config(transport_config)
                 .derp_map(Some(derp_map))
                 .alpns(vec![ALPN.to_vec()])
-                .bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16).into())
+                .bind(0)
                 .await?;
 
             tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())

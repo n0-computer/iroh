@@ -20,8 +20,8 @@ struct Cli {
     secret: Option<String>,
     #[clap(short, long, default_value = "n0/iroh/examples/magic/0")]
     alpn: String,
-    #[clap(short, long, default_value = "0.0.0.0:0")]
-    bind_address: SocketAddr,
+    #[clap(short, long, default_value = "0")]
+    bind_port: u16,
     #[clap(short, long)]
     derp_url: Option<Url>,
     #[clap(subcommand)]
@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .keypair(keypair)
         .alpns(vec![args.alpn.to_string().into_bytes()])
         .derp_map(Some(derp_map))
-        .bind(args.bind_address)
+        .bind(args.bind_port)
         .await?;
 
     let me = endpoint.peer_id();

@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -114,11 +114,11 @@ impl MagicEndpointBuilder {
 
     /// Bind the magic endpoint on the specified socket address.
     ///
-    /// The *bind_addr* is the address that should be bound locally. Even if this is an
-    /// outgoing connection a socket must be bound and this is explicit. The main choice to
-    /// make here is the address family: IPv4 or IPv6. Otherwise you normally bind to the
-    /// `UNSPECIFIED` address on port `0` thus allowing the kernel to do the right thing.
-    pub async fn bind(self, bind_addr: SocketAddr) -> anyhow::Result<MagicEndpoint> {
+    /// The *bind_port* is the port that should be bound locally.
+    /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
+    /// You can pass `0` to let the operating system chosse a free port for you.
+    /// NOTE: This will be improved soon to add support for binding on specific addresses.
+    pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let mut server_config = make_server_config(
             &keypair,
@@ -131,7 +131,7 @@ impl MagicEndpointBuilder {
         }
         MagicEndpoint::bind(
             keypair,
-            bind_addr,
+            bind_port,
             Some(server_config),
             self.derp_map,
             Some(self.callbacks),
@@ -189,14 +189,8 @@ impl MagicEndpoint {
         derp_map: Option<DerpMap>,
         keylog: bool,
     ) -> anyhow::Result<quinn::Connection> {
-        let bind_addr = if known_addrs.iter().any(|addr| addr.ip().is_ipv6()) {
-            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into()
-        } else {
-            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into()
-        };
         let endpoint =
-            MagicEndpoint::bind(Keypair::generate(), bind_addr, None, derp_map, None, keylog)
-                .await?;
+            MagicEndpoint::bind(Keypair::generate(), 0, None, derp_map, None, keylog).await?;
         endpoint
             .connect(peer_id, alpn_protocol, known_addrs)
             .await
@@ -209,14 +203,14 @@ impl MagicEndpoint {
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
         keypair: Keypair,
-        bind_addr: SocketAddr,
+        bind_port: u16,
         server_config: Option<quinn::ServerConfig>,
         derp_map: Option<DerpMap>,
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
         let conn = hp::magicsock::Conn::new(hp::magicsock::Options {
-            port: bind_addr.port(),
+            port: bind_port,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
         })
@@ -432,8 +426,6 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
 
 #[cfg(test)]
 mod test {
-    use std::net::SocketAddr;
-
     use futures::future::BoxFuture;
 
     use super::{accept_conn, MagicEndpoint};
@@ -451,13 +443,13 @@ mod test {
         let ep1 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .derp_map(Some(derp_map.clone()))
-            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .bind(0)
             .await?;
 
         let ep2 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .derp_map(Some(derp_map.clone()))
-            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .bind(0)
             .await?;
 
         Ok((ep1, ep2, cleanup))

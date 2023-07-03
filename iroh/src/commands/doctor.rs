@@ -1,7 +1,7 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     time::{Duration, Instant},
 };
 
@@ -479,7 +479,7 @@ async fn make_endpoint(
         .on_net_info(Box::new(on_net_info))
         .on_endpoints(Box::new(on_endpoints))
         .on_derp_active(Box::new(on_derp_active))
-        .bind((Ipv4Addr::UNSPECIFIED, 0).into())
+        .bind(0)
         .await?;
 
     tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())

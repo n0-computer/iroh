@@ -225,7 +225,7 @@ where
                     endpoints_update_s.send(()).ok();
                 }
             }))
-            .bind(self.bind_addr)
+            .bind(self.bind_addr.port())
             .await?;
 
         trace!("created quinn endpoint");
