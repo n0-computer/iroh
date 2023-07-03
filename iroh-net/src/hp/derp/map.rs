@@ -41,7 +41,7 @@ impl DerpMap {
                 nodes: vec![DerpNode {
                     name: "default-1".into(),
                     region_id: 1,
-                    url: url,
+                    url,
                     stun_only: !derp_ipv4.is_enabled() && !derp_ipv6.is_enabled(),
                     stun_port,
                     ipv4: derp_ipv4,
