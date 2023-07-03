@@ -406,7 +406,9 @@ impl Service {
                 // TODO(@divma): the gateway of the current mapping could have changed. Tailscale
                 // still assumes the current mapping is valid/active and will return it even after
                 // this
-                Ok(self.full_probe.output())
+                let output = self.full_probe.output();
+                debug!("probe output {output}");
+                Ok(output)
             }
         };
         for tx in receivers {
@@ -479,13 +481,41 @@ impl Service {
     fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
         if let Some(local_port) = self.local_port {
             inc!(Metrics::MappingAttempts);
-            debug!("getting a port mapping for port {local_port} -> {external_port:?}");
+            let local_ip = match get_if_addrs::get_if_addrs() {
+                Ok(candidates) => {
+                    let maybe_addr = candidates.into_iter().find_map(|addr| {
+                        let ip = addr.ip();
+                        if !ip.is_loopback() && !ip.is_unspecified() && !ip.is_multicast() {
+                            if let std::net::IpAddr::V4(v4_local_addr) = ip {
+                                return Some(v4_local_addr);
+                            }
+                        }
+                        None
+                    });
+                    match maybe_addr {
+                        Some(addr) => addr,
+                        None => {
+                            // try to be optimistic
+                            debug!(
+                                "no address suitable for portmapping found, attempting localhost"
+                            );
+                            std::net::Ipv4Addr::LOCALHOST
+                        }
+                    }
+                }
+                Err(e) => {
+                    // try to be optimistic
+                    debug!("failed to get interface addresses {e}, attempting localhost");
+                    std::net::Ipv4Addr::LOCALHOST
+                }
+            };
+
+            debug!("getting a port mapping for port {local_ip}:{local_port} -> {external_port:?}");
             let gateway = self
                 .full_probe
                 .last_upnp_gateway_addr
                 .as_ref()
                 .map(|(gateway, _last_seen)| gateway.clone());
-            let local_ip = std::net::Ipv4Addr::LOCALHOST;
             self.mapping_task = Some(
                 tokio::spawn(upnp::Mapping::new(
                     local_ip,
