@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.5.0-beta1"
-source = "git+https://github.com/n0-computer/bao-tree#3b605393ed7207c506ac17b4be4b94c11e753a83"
+source = "git+https://github.com/n0-computer/bao-tree#38c73bdb77b17e7613bea548dce22de0cc653698"
 dependencies = [
  "blake3",
  "bytes",
@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.2.0-beta1"
+version = "0.2.0-rc.1"
 dependencies = [
  "axum",
  "bytes",

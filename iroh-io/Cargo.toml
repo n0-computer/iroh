@@ -1,6 +1,6 @@
 [package]
 name = "iroh-io"
-version = "0.2.0-beta1"
+version = "0.2.0-rc.1"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 authors = ["rklaehn <rklaehn@protonmail.com>", "n0 team"]
