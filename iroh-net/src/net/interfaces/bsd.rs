@@ -26,7 +26,7 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
     })
 }
 
-pub async fn likely_home_router() -> Option<IpAddr> {
+pub fn likely_home_router() -> Option<IpAddr> {
     let rib = fetch_routing_table()?;
     let msgs = parse_routing_table(&rib)?;
     for rm in msgs {

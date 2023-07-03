@@ -16,7 +16,6 @@ mod linux;
 mod windows;
 
 pub use default_net::ip::{Ipv4Net, Ipv6Net};
-use default_net::Gateway;
 
 use crate::net::ip::{is_loopback, is_private_v6, is_up};
 
@@ -340,7 +339,7 @@ pub async fn default_route_interface() -> Option<String> {
 /// machine using it.
 #[derive(Debug, Clone)]
 pub struct HomeRouter {
-    pub gateway: Gateway,
+    pub gateway: IpAddr,
     pub my_ip: Option<IpAddr>,
 }
 
@@ -351,10 +350,29 @@ impl HomeRouter {
     /// the LAN using that gateway.
     /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
     pub fn new() -> Option<Self> {
-        let gateway = default_net::get_default_gateway().ok()?;
+        let gateway = Self::get_default_gateway()?;
         let my_ip = default_net::interface::get_local_ipaddr();
 
         Some(HomeRouter { gateway, my_ip })
+    }
+
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    fn get_default_gateway() -> Option<IpAddr> {
+        // default_net doesn't work yet
+        // See: https://github.com/shellrow/default-net/issues/34
+        bsd::likely_home_router()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "window"))]
+    fn get_default_gateway() -> Option<IpAddr> {
+        let gateway = default_net::get_default_gateway().ok()?;
+        Some(gateway.ip_addr)
     }
 }
 
