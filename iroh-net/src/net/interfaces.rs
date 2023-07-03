@@ -369,7 +369,7 @@ impl HomeRouter {
         bsd::likely_home_router()
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "window"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
     fn get_default_gateway() -> Option<IpAddr> {
         let gateway = default_net::get_default_gateway().ok()?;
         Some(gateway.ip_addr)
