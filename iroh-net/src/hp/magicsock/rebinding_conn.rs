@@ -36,6 +36,13 @@ impl RebindingUdpConn {
         network: Network,
         cur_port_fate: CurrentPortFate,
     ) -> anyhow::Result<()> {
+        trace!(
+            "rebinding from {} to {} ({:?})",
+            self.port(),
+            port,
+            cur_port_fate
+        );
+
         // Do not bother rebinding if we are keeping the port.
         if self.port() == port && cur_port_fate == CurrentPortFate::Keep {
             return Ok(());

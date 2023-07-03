@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, TryFutureExt};
 use iroh_bytes::provider::database::BaoCollection;
+use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
     blobs::Collection,
     protocol::Closed,
@@ -37,7 +38,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -51,7 +52,8 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 4433);
+/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
@@ -64,11 +66,12 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D, E = DummyServerEndpoint, C = ()>
+pub struct Builder<D = Database, E = DummyServerEndpoint, C = (), A = ()>
 where
     D: BaoCollection,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
+    A: RequestAuthorizationHandler<D>,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
@@ -76,6 +79,7 @@ where
     db: D,
     keylog: bool,
     custom_get_handler: C,
+    auth_handler: A,
     derp_map: Option<DerpMap>,
     rt: Option<runtime::Handle>,
 }
@@ -93,22 +97,24 @@ impl<D: BaoCollection> Builder<D> {
             derp_map: None,
             rpc_endpoint: Default::default(),
             custom_get_handler: Default::default(),
+            auth_handler: Default::default(),
             rt: None,
         }
     }
 }
 
-impl<D, E, C> Builder<D, E, C>
+impl<E, C, A, D> Builder<D, E, C, A>
 where
     D: BaoCollection,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
+    A: RequestAuthorizationHandler<D>,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
         self,
         value: E2,
-    ) -> Builder<D, E2, C> {
+    ) -> Builder<D, E2, C, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -116,6 +122,7 @@ where
             db: self.db,
             keylog: self.keylog,
             custom_get_handler: self.custom_get_handler,
+            auth_handler: self.auth_handler,
             rpc_endpoint: value,
             derp_map: self.derp_map,
             rt: self.rt,
@@ -132,7 +139,7 @@ where
     pub fn custom_get_handler<C2: CustomGetHandler<D>>(
         self,
         custom_handler: C2,
-    ) -> Builder<D, E, C2> {
+    ) -> Builder<D, E, C2, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -141,6 +148,25 @@ where
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             custom_get_handler: custom_handler,
+            auth_handler: self.auth_handler,
+            derp_map: self.derp_map,
+            rt: self.rt,
+        }
+    }
+
+    pub fn custom_auth_handler<A2: RequestAuthorizationHandler<D>>(
+        self,
+        auth_handler: A2,
+    ) -> Builder<D, E, C, A2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            custom_get_handler: self.custom_get_handler,
+            auth_handler,
             derp_map: self.derp_map,
             rt: self.rt,
         }
@@ -148,7 +174,7 @@ where
 
     /// Binds the node service to a different socket.
     ///
-    /// By default it binds to `127.0.0.1:4433`.
+    /// By default it binds to `127.0.0.1:11204`.
     pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
         self.bind_addr = addr;
         self
@@ -232,7 +258,7 @@ where
         // the size of this channel must be large because the producer can be on
         // a different thread than the consumer, and can produce a lot of events
         // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(256);
+        let (events_sender, _events_receiver) = broadcast::channel(512);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
 
@@ -262,6 +288,7 @@ where
                     self.rpc_endpoint,
                     internal_rpc,
                     self.custom_get_handler,
+                    self.auth_handler,
                     rt3,
                 )
                 .await
@@ -283,6 +310,7 @@ where
         Ok(node)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         server: quinn::Endpoint,
         events: broadcast::Sender<Event>,
@@ -290,6 +318,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
+        auth_handler: A,
         rt: runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -340,8 +369,9 @@ where
                         let db = handler.inner.db.clone();
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
+                        let auth_handler = auth_handler.clone();
                         let rt2 = rt.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, rt2));
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
@@ -467,7 +497,7 @@ impl<D: BaoCollection> Node<D> {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs)
+        Ticket::new(hash, self.peer_id(), addrs, None)
     }
 
     /// Aborts the node.
@@ -610,7 +640,7 @@ impl<D: BaoCollection> RpcHandler<D> {
         let data_sources = iroh_bytes::provider::create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, _) = iroh_bytes::provider::collection::create_collection(
+        let (db, hash) = iroh_bytes::provider::collection::create_collection(
             data_sources,
             Progress::new(progress),
         )
@@ -618,6 +648,12 @@ impl<D: BaoCollection> RpcHandler<D> {
         if let Some(current) = self.concrete_db() {
             current.union_with(db);
         }
+
+        if let Err(e) = self.inner.events.send(Event::ByteProvide(
+            iroh_bytes::provider::Event::CollectionAdded { hash },
+        )) {
+            warn!("failed to send CollectionAdded event: {:?}", e);
+        };
 
         Ok(())
     }
@@ -726,6 +762,9 @@ pub fn make_server_config(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::bail;
+    use futures::StreamExt;
+    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -754,5 +793,59 @@ mod tests {
         let ticket = node.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_node_add_collection_event() -> Result<()> {
+        let db = Database::from(HashMap::new());
+        let node = Builder::with_db(db)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+            .runtime(&test_runtime())
+            .spawn()
+            .await?;
+
+        let _drop_guard = node.cancel_token().drop_guard();
+
+        let mut events = node.subscribe();
+        let provide_handle = tokio::spawn(async move {
+            while let Ok(msg) = events.recv().await {
+                if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
+                    msg
+                {
+                    return Some(hash);
+                }
+            }
+            None
+        });
+
+        let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+            let mut stream = node
+                .controller()
+                .server_streaming(ProvideRequest {
+                    path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                })
+                .await?;
+
+            while let Some(item) = stream.next().await {
+                match item? {
+                    ProvideProgress::AllDone { hash } => {
+                        return Ok(hash);
+                    }
+                    ProvideProgress::Abort(e) => {
+                        bail!("Error while adding data: {e}");
+                    }
+                    _ => {}
+                }
+            }
+            bail!("stream ended without providing data");
+        })
+        .await
+        .context("timeout")?
+        .context("get failed")?;
+
+        let event_hash = provide_handle.await?.expect("missing collection event");
+        assert_eq!(got_hash, event_hash);
+
+        Ok(())
     }
 }

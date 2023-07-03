@@ -99,13 +99,13 @@ pub struct Report {
     /// None means not checked.
     pub pcp: Option<bool>,
     /// or 0 for unknown
-    pub preferred_derp: usize,
+    pub preferred_derp: u16,
     /// keyed by DERP Region ID
-    pub region_latency: HashMap<usize, Duration>,
+    pub region_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v4_latency: HashMap<usize, Duration>,
+    pub region_v4_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v6_latency: HashMap<usize, Duration>,
+    pub region_v6_latency: HashMap<u16, Duration>,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
@@ -224,7 +224,8 @@ impl Client {
             })
         {
             inc!(NetcheckMetrics::StunPacketsDropped);
-        };
+            warn!("dropping stun packet from {}", src);
+        }
     }
 
     /// Runs a netcheck, returning the report.
@@ -297,7 +298,7 @@ async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> 
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Result<bool> {
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
     let preferred_derp = if preferred_derp.is_none()
@@ -333,7 +334,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // Has a node, as we filtered out regions without nodes above.
     let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
-    if node.host_name.ends_with(&DOT_INVALID) {
+    if node
+        .host_name
+        .host_str()
+        .map(|s| s.ends_with(&DOT_INVALID))
+        .unwrap_or_default()
+    {
         // Don't try to connect to invalid hostnames. This occurred in tests:
         // https://github.com/tailscale/tailscale/issues/6207
         // TODO(bradfitz,andrew-d): how to actually handle this nicely?
@@ -347,13 +353,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
-    let challenge = format!("ts_{}", node.host_name);
 
+    let host_name = node.host_name.host_str().unwrap_or_default();
+    let challenge = format!("ts_{}", host_name);
+    let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
-        .request(
-            reqwest::Method::GET,
-            format!("http://{}/generate_204", node.host_name),
-        )
+        .request(reqwest::Method::GET, portal_url)
         .header("X-Tailscale-Challenge", &challenge)
         .send()
         .await?;
@@ -447,29 +452,36 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
             // TODO: original code returns None here, but that seems wrong?
         }
     }
-    async move {
-        debug!(?proto, %n.host_name, "Performing DNS lookup for derp addr");
 
-        // TODO: add singleflight+dnscache here.
-        if let Ok(addrs) = DNS_RESOLVER.lookup_ip(&n.host_name).await {
-            for addr in addrs {
-                if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                    let addr = to_canonical(addr);
-                    return Ok(SocketAddr::new(addr, port));
+    match n.host_name.host() {
+        Some(url::Host::Domain(hostname)) => {
+            async move {
+                debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
+
+                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
+                    for addr in addrs {
+                        if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
+                            let addr = to_canonical(addr);
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                        if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                        if proto == ProbeProto::Https {
+                            // For now just return the first one
+                            return Ok(SocketAddr::new(addr, port));
+                        }
+                    }
                 }
-                if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                    return Ok(SocketAddr::new(addr, port));
-                }
-                if proto == ProbeProto::Https {
-                    // For now just return the first one
-                    return Ok(SocketAddr::new(addr, port));
-                }
+                Err(anyhow!("no suitable addr found for derp config"))
             }
+            .instrument(debug_span!("dns"))
+            .await
         }
-        Err(anyhow!("no suitable addr found for derp config"))
+        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
+        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        None => Err(anyhow!("no valid hostname available")),
     }
-    .instrument(debug_span!("dns"))
-    .await
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
@@ -566,7 +578,13 @@ impl ReportState {
         };
 
         let pinger = if self.plan.has_https_probes() {
-            Some(Pinger::new().await.context("failed to create pinger")?)
+            match Pinger::new().await {
+                Ok(pinger) => Some(pinger),
+                Err(err) => {
+                    debug!("failed to create pinger: {err:#}");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -1013,7 +1031,7 @@ fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
     false
 }
 
-fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duration) {
+fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
     let prev = m.entry(region_id).or_insert(d);
     if d < *prev {
         *prev = d;
@@ -1031,7 +1049,7 @@ fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
     None
 }
 
-fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
+fn max_duration_value(m: &HashMap<u16, Duration>) -> Duration {
     m.values().max().cloned().unwrap_or_default()
 }
 
@@ -1770,7 +1788,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("derp.iroh.network.", 3478, 0)];
+        let stun_servers = vec![("https://derp.iroh.network.", 3478, 0)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
@@ -1783,7 +1801,7 @@ mod tests {
                     .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
                         name: format!("default-{}", i),
                         region_id: 1,
-                        host_name: host_name.into(),
+                        host_name: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
                         ipv4: UseIpv4::None,
@@ -1900,7 +1918,7 @@ mod tests {
             let mut report = Report::default();
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid derp server key");
-                let region_id: usize = s[1..].parse().unwrap();
+                let region_id: u16 = s[1..].parse().unwrap();
                 report
                     .region_latency
                     .insert(region_id, Duration::from_secs(d));
@@ -1917,7 +1935,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredDERP on final step
-            want_derp: usize,
+            want_derp: u16,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node};
@@ -19,9 +19,10 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::{
     blobs::Collection,
     get::{self, get_response_machine, get_response_machine::ConnectedNext, Stats},
-    protocol::{AnyGetRequest, GetRequest},
+    protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{
         self, create_collection, database::InMemDatabase, CustomGetHandler, DataSource, Database,
+        RequestAuthorizationHandler,
     },
     runtime,
     util::Hash,
@@ -622,6 +623,7 @@ struct CollectionCustomHandler;
 impl CustomGetHandler<Database> for CollectionCustomHandler {
     fn handle(
         &self,
+        _token: Option<RequestToken>,
         _data: Bytes,
         database: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
@@ -644,6 +646,7 @@ struct BlobCustomHandler;
 impl CustomGetHandler<Database> for BlobCustomHandler {
     fn handle(
         &self,
+        _token: Option<RequestToken>,
         _data: Bytes,
         database: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
@@ -677,7 +680,10 @@ async fn test_custom_request_blob() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+        let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
+            token: None,
+            data: Bytes::from(&b"hello"[..]),
+        });
         let response = get::run(
             request,
             get::Options {
@@ -715,7 +721,10 @@ async fn test_custom_request_collection() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = Bytes::from(&b"hello"[..]).into();
+        let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
+            token: None,
+            data: Bytes::from(&b"hello"[..]),
+        });
         let response = get::run(
             request,
             get::Options {
@@ -735,4 +744,92 @@ async fn test_custom_request_collection() {
     .await
     .expect("timeout")
     .expect("get failed");
+}
+
+#[derive(Clone, Debug)]
+struct CustomAuthHandler;
+
+impl<D> RequestAuthorizationHandler<D> for CustomAuthHandler {
+    fn authorize(
+        &self,
+        _db: D,
+        token: Option<RequestToken>,
+        _request: &iroh_bytes::protocol::Request,
+    ) -> BoxFuture<'static, Result<()>> {
+        async move {
+            match token {
+                Some(token) => {
+                    if token.as_bytes() != &[1, 2, 3, 4, 5, 6][..] {
+                        bail!("bad token")
+                    }
+                    Ok(())
+                }
+                None => {
+                    bail!("give token plz")
+                }
+            }
+        }
+        .boxed()
+    }
+}
+
+#[tokio::test]
+async fn test_token_passthrough() -> Result<()> {
+    let rt = test_runtime();
+    let readme = readme_path();
+    let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let provider = Node::builder(db)
+        .bind_addr("0.0.0.0:0".parse().unwrap())
+        .custom_auth_handler(CustomAuthHandler)
+        .runtime(&rt)
+        .spawn()
+        .await?;
+
+    let token = Some(RequestToken::new(vec![1, 2, 3, 4, 5, 6])?);
+    let mut events = provider.subscribe();
+    let event_handle = rt.main().spawn(async move {
+        while let Ok(msg) = events.recv().await {
+            match msg {
+                Event::ByteProvide(bp_msg) => {
+                    if let iroh_bytes::provider::Event::GetRequestReceived { token: tok, .. } =
+                        bp_msg
+                    {
+                        // println!("token: {:?}", token);
+                        return tok;
+                    }
+                }
+            }
+        }
+        None
+    });
+
+    let addrs = provider.local_endpoint_addresses().await?;
+    let peer_id = provider.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        dial_peer(&addrs, peer_id, &iroh_bytes::P2P_ALPN, true, None).await?;
+        let request = GetRequest::all(hash).with_token(token).into();
+        let response = get::run(
+            request,
+            get::Options {
+                addrs,
+                peer_id,
+                keylog: true,
+                derp_map: None,
+            },
+        )
+        .await?;
+        let (_collection, items, _stats) = aggregate_get_response(response).await?;
+        let actual = &items[&0];
+        let expected = tokio::fs::read(readme_path()).await?;
+        assert_eq!(actual, &expected);
+        anyhow::Ok(())
+    })
+    .await
+    .context("timeout")?
+    .context("get failed")?;
+
+    let token = event_handle.await?.expect("missing token");
+    assert_eq!(token.as_bytes(), &[1, 2, 3, 4, 5, 6][..]);
+
+    Ok(())
 }

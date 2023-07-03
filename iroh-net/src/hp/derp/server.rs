@@ -176,9 +176,7 @@ where
     /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
     /// [`Server`].
     pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<P> {
-        PacketForwarderHandler {
-            server_channel: self.server_channel.clone(),
-        }
+        PacketForwarderHandler::new(self.server_channel.clone())
     }
 
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
@@ -220,6 +218,12 @@ impl<P> PacketForwarderHandler<P>
 where
     P: PacketForwarder,
 {
+    pub(crate) fn new(channel: mpsc::Sender<ServerMessage<P>>) -> Self {
+        Self {
+            server_channel: channel,
+        }
+    }
+
     pub fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::AddPacketForwarder {
@@ -557,7 +561,7 @@ where
 fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
     let mut params =
         rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
-    params.serial_number = Some(PROTOCOL_VERSION as u64);
+    params.serial_number = Some((PROTOCOL_VERSION as u64).into());
     // Windows requires not_after and not_before set:
     params.not_after = time::OffsetDateTime::now_utc()
         .checked_add(30 * time::Duration::DAY)

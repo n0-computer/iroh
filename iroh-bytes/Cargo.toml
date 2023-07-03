@@ -47,7 +47,7 @@ walkdir = "2"
 http-body = "0.4.5"
 proptest = "1.0.0"
 rand = "0.8"
-testdir = "0.7.2"
+testdir = "0.8"
 tempfile = "3.4"
 tokio = { version = "1", features = ["macros", "test-util"] }
 

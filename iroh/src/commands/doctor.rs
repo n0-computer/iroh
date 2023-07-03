@@ -194,11 +194,14 @@ async fn send_blocks(
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
     let mut client = hp::netcheck::Client::new(None).await?;
 
-    let dm = stun_host
-        .map(|host_name|
-        // creating a derp map from host name and stun port
-        DerpMap::default_from_node(host_name, stun_port, 0, UseIpv4::None, UseIpv6::None))
-        .unwrap_or_else(|| config.derp_map().expect("derp map not configured"));
+    let dm = match stun_host {
+        Some(host_name) => {
+            let host_name = host_name.parse()?;
+            // creating a derp map from host name and stun port
+            DerpMap::default_from_node(host_name, stun_port, 0, UseIpv4::None, UseIpv6::None)
+        }
+        None => config.derp_map().expect("derp map not configured"),
+    };
     println!("getting report using derp map {dm:#?}");
 
     let r = client.get_report(dm, None, None).await?;
@@ -432,7 +435,7 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
 
 fn configure_local_derp_map() -> DerpMap {
     let stun_port = 3478;
-    let host_name = "derp.invalid".into();
+    let host_name = "http://derp.invalid".parse().unwrap();
     let derp_port = 3340;
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
     let derp_ipv6 = UseIpv6::None;
@@ -527,13 +530,7 @@ async fn connect(
             key: key.clone(),
             endpoints,
             addresses,
-            derp: Some(SocketAddr::new(hp::cfg::DERP_MAGIC_IP, DEFAULT_DERP_REGION)),
-            created: Instant::now(),
-            hostinfo: iroh_net::hp::hostinfo::Hostinfo::default(),
-            keep_alive: false,
-            expired: false,
-            online: None,
-            last_seen: None,
+            derp: Some(DEFAULT_DERP_REGION),
         }],
     })
     .await?;

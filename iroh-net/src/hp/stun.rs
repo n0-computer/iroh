@@ -166,7 +166,7 @@ pub mod test {
         let mut m = DerpMap::default();
 
         for (i, addr) in stun.enumerate() {
-            let region_id = i + 1;
+            let region_id = (i + 1) as u16;
             let host = addr.ip();
             let port = addr.port();
 
@@ -178,7 +178,7 @@ pub mod test {
             let node = DerpNode {
                 name: format!("{region_id}a"),
                 region_id,
-                host_name: format!("{region_id}.invalid."),
+                host_name: format!("http://{region_id}.invalid").parse().unwrap(),
                 ipv4,
                 ipv6,
                 stun_port: port,
