@@ -1,3 +1,4 @@
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]
 
 pub mod defaults;
