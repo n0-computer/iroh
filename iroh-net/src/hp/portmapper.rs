@@ -468,7 +468,9 @@ impl Service {
             // since the port has changed, the current mapping is no longer valid and should be
             // released
 
-            self.invalidate_mapping().await;
+            if port.is_some() {
+                self.invalidate_mapping().await;
+            }
 
             // start a new mapping task to account for the new port if necessary
             self.get_mapping(port)
@@ -481,36 +483,19 @@ impl Service {
     fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
         if let Some(local_port) = self.local_port {
             inc!(Metrics::MappingAttempts);
-            let local_ip = match get_if_addrs::get_if_addrs() {
-                Ok(candidates) => {
-                    let maybe_addr = candidates.into_iter().find_map(|addr| {
-                        let ip = addr.ip();
-                        if !ip.is_loopback() && !ip.is_unspecified() && !ip.is_multicast() {
-                            if let std::net::IpAddr::V4(v4_local_addr) = ip {
-                                return Some(v4_local_addr);
-                            }
-                        }
-                        None
-                    });
-                    match maybe_addr {
-                        Some(addr) => addr,
-                        None => {
-                            // try to be optimistic
-                            debug!(
-                                "no address suitable for portmapping found, attempting localhost"
-                            );
-                            std::net::Ipv4Addr::LOCALHOST
-                        }
-                    }
+            let local_ip = match default_net::interface::get_local_ipaddr() {
+                Some(std::net::IpAddr::V4(ip))
+                    if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() =>
+                {
+                    ip
                 }
-                Err(e) => {
-                    // try to be optimistic
-                    debug!("failed to get interface addresses {e}, attempting localhost");
+                _ => {
+                    debug!("no address suitable for portmapping found, attempting localhost");
                     std::net::Ipv4Addr::LOCALHOST
                 }
             };
 
-            debug!("getting a port mapping for port {local_ip}:{local_port} -> {external_port:?}");
+            debug!("getting a port mapping for {local_ip}:{local_port} -> {external_port:?}");
             let gateway = self
                 .full_probe
                 .last_upnp_gateway_addr

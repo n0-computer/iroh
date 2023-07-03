@@ -82,7 +82,7 @@ impl<M: Mapping> CurrentMapping<M> {
     /// Updates the mapping, informing of any changes to the external address. The old mapping is
     /// returned.
     pub(super) fn update(&mut self, mapping: Option<M>) -> Option<M> {
-        trace!("New port mapping {mapping:?}");
+        trace!("new port mapping {mapping:?}");
         let maybe_external_addr = mapping.as_ref().map(|mapping| {
             let (ip, port) = mapping.external();
             SocketAddrV4::new(ip, port.into())
@@ -128,14 +128,14 @@ impl<M: Mapping> CurrentMapping<M> {
                 let external_port = mapping.external().1;
                 // check if the deadline means the mapping is expired or due for renewal
                 return if *expire_after {
+                    trace!("mapping expired {mapping:?}");
                     self.update(None);
-                    trace!("mapping expired");
                     Poll::Ready(Event::Expired { external_port })
                 } else {
                     // mapping is due for renewal
                     *deadline = Box::pin(time::sleep(mapping.half_lifetime()));
                     *expire_after = true;
-                    trace!("due for renewal");
+                    trace!("due for renewal {mapping:?}");
                     Poll::Ready(Event::Renew { external_port })
                 };
             }
