@@ -27,7 +27,8 @@ const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 1
 /// Capacity of the channel to communicate with the long-running service.
 const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[display("portmap={{ UPnP: {upnp}, PMP: {pmp}, PCP: {pcp} }}")]
 pub struct ProbeOutput {
     /// If UPnP can be considered available.
     pub upnp: bool,

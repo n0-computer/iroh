@@ -91,15 +91,8 @@ pub struct Report {
     /// Whether the router supports communicating between two local devices through the NATted
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
-    /// Whether UPnP appears present on the LAN.
-    /// None means not checked.
-    pub upnp: Option<bool>,
-    /// Whether NAT-PMP appears present on the LAN.
-    /// None means not checked.
-    pub pmp: Option<bool>,
-    /// Whether PCP appears present on the LAN.
-    /// None means not checked.
-    pub pcp: Option<bool>,
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// or 0 for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID
@@ -115,29 +108,6 @@ pub struct Report {
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
-}
-
-impl Report {
-    /// Reports whether any of UPnP, PMP, or PCP are non-empty.
-    pub fn any_port_mapping_checked(&self) -> bool {
-        self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
-    }
-
-    /// Updates the portmap related values based on a [`portmapper::ProbeResult`].
-    pub fn update_portmap_probe(&mut self, probe_result: Option<portmapper::ProbeOutput>) {
-        match probe_result {
-            Some(portmapper::ProbeOutput { upnp, pmp, pcp }) => {
-                self.upnp = Some(upnp);
-                self.pmp = Some(pmp);
-                self.pcp = Some(pcp);
-            }
-            None => {
-                self.upnp = None;
-                self.pmp = None;
-                self.pcp = None;
-            }
-        }
-    }
 }
 
 impl fmt::Display for Report {
@@ -661,7 +631,7 @@ impl ReportState {
                 },
                 pm = &mut portmap_probe => {
                     let mut report = self.report.write().await;
-                    report.update_portmap_probe(pm);
+                    report.portmap_probe = pm;
                     portmap_probe.inner = None;
                 }
                 probe_report = probes.next() => {
@@ -730,7 +700,7 @@ impl ReportState {
         if portmap_probe.inner.is_some() {
             let probe_result = portmap_probe.await;
             let mut report = self.report.write().await;
-            report.update_portmap_probe(probe_result);
+            report.portmap_probe = probe_result;
             debug!("port_map done");
         }
 
@@ -1606,11 +1576,8 @@ impl Actor {
         }
         log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
         log += &format!(" hair={:?}", r.hair_pinning);
-        if r.any_port_mapping_checked() {
-            log += &format!(
-                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
-                r.upnp, r.pmp, r.pcp
-            );
+        if let Some(probe) = &r.portmap_probe {
+            log += &format!(" {}", probe);
         } else {
             log += " portmap=?";
         }
@@ -1877,9 +1844,7 @@ mod tests {
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
-        r.upnp = None;
-        r.pmp = None;
-        r.pcp = None;
+        r.portmap_probe = None;
 
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
