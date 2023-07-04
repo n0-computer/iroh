@@ -13,7 +13,7 @@ rust-version = "1.65"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.4.1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.5.0-rc.1", features = ["tokio_fsm"], default-features = false }
 blake3 = "1.3.3"
 bytes = { version = "1.4", features = ["serde"] }
 data-encoding = "2.3.3"
@@ -21,7 +21,7 @@ derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_mor
 flume = "0.10.14"
 futures = "0.3.25"
 hex = "0.4.3"
-iroh-io = { path = "../iroh-io" }
+iroh-io = { version = "0.2.0-rc.1" }
 iroh-net = { path = "../iroh-net" }
 multibase = "0.9.1"
 num_cpus = "1.15.0"

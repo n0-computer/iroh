@@ -34,7 +34,7 @@ impl Commands {
                     let item = item?;
                     println!(
                         "{} {} ({})",
-                        item.path.display(),
+                        item.path,
                         Blake3Cid(item.hash),
                         HumanBytes(item.size),
                     );

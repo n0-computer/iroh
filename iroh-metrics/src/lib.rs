@@ -13,3 +13,4 @@ mod service;
 pub mod iroh;
 pub mod magicsock;
 pub mod netcheck;
+pub mod portmap;

@@ -69,12 +69,12 @@ pub async fn run_ticket(
     keylog: bool,
     derp_map: Option<DerpMap>,
 ) -> Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        ticket.addrs(),
+    let connection = iroh_net::MagicEndpoint::dial_peer(
         ticket.peer(),
         &crate::P2P_ALPN,
-        keylog,
+        ticket.addrs(),
         derp_map,
+        keylog,
     )
     .await?;
 
@@ -438,7 +438,7 @@ pub mod get_response_machine {
         {
             let (content, size) = self.next().await?;
             if let Some(o) = outboard.as_mut() {
-                o.write_array_at(0, size.to_le_bytes()).await?;
+                o.write_at(0, &size.to_le_bytes()).await?;
             }
             content.write_all_with_outboard(outboard, data).await
         }
@@ -527,14 +527,12 @@ pub mod get_response_machine {
                                 if let Some(outboard) = outboard.as_mut() {
                                     let offset = parent.node.post_order_offset() * 64 + 8;
                                     let (l_hash, r_hash) = parent.pair;
-                                    outboard.write_array_at(offset, *l_hash.as_bytes()).await?;
-                                    outboard
-                                        .write_array_at(offset + 32, *r_hash.as_bytes())
-                                        .await?;
+                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
+                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {
-                                data.write_at(leaf.offset.0, leaf.data).await?;
+                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
                             }
                         }
                     }
@@ -624,12 +622,12 @@ pub async fn run(
     request: AnyGetRequest,
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::client::dial_peer(
-        &opts.addrs,
+    let connection = iroh_net::MagicEndpoint::dial_peer(
         opts.peer_id,
         &crate::P2P_ALPN,
-        opts.keylog,
+        &opts.addrs,
         opts.derp_map,
+        opts.keylog,
     )
     .await?;
     Ok(run_connection(connection, request))
@@ -736,7 +734,7 @@ fn get_missing_range_impl(
         tracing::debug!("Found incomplete file: {:?}", paths.temp);
         // we got incomplete data
         let outboard = std::fs::read(&paths.outboard)?;
-        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard, false);
+        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard);
         match outboard {
             Ok(outboard) => {
                 // compute set of valid ranges from the outboard and the file
@@ -745,7 +743,7 @@ fn get_missing_range_impl(
                 // Otherwise, we would have to rehash the file.
                 //
                 // Do a quick check of the outboard in case something went wrong when writing.
-                let mut valid = bao_tree::outboard::valid_ranges(&outboard)?;
+                let mut valid = bao_tree::io::sync::valid_ranges(&outboard)?;
                 let valid_from_file =
                     RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
                 tracing::debug!("valid_from_file: {:?}", valid_from_file);

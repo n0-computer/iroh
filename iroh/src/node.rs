@@ -6,6 +6,7 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 
+use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -16,18 +17,21 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, Stream, TryFutureExt};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::blobs::Collection;
+use iroh_bytes::provider::database::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
-    blobs::Collection,
     protocol::Closed,
     provider::{CustomGetHandler, Database, ProvideProgress, Ticket, ValidateProgress},
     runtime,
     util::{Hash, Progress},
 };
+use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
+    MagicEndpoint,
 };
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -64,16 +68,17 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E = DummyServerEndpoint, C = (), A = ()>
+pub struct Builder<D = Database, E = DummyServerEndpoint, C = (), A = ()>
 where
+    D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
-    A: RequestAuthorizationHandler,
+    C: CustomGetHandler<D>,
+    A: RequestAuthorizationHandler<D>,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
     rpc_endpoint: E,
-    db: Database,
+    db: D,
     keylog: bool,
     custom_get_handler: C,
     auth_handler: A,
@@ -83,9 +88,9 @@ where
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
 
-impl Builder {
+impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
-    pub fn with_db(db: Database) -> Self {
+    pub fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -100,17 +105,18 @@ impl Builder {
     }
 }
 
-impl<E, C, A> Builder<E, C, A>
+impl<E, C, A, D> Builder<D, E, C, A>
 where
+    D: BaoReadonlyDb,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler,
-    A: RequestAuthorizationHandler,
+    C: CustomGetHandler<D>,
+    A: RequestAuthorizationHandler<D>,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
         self,
         value: E2,
-    ) -> Builder<E2, C, A> {
+    ) -> Builder<D, E2, C, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -132,7 +138,10 @@ where
     }
 
     /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler>(self, custom_handler: C2) -> Builder<E, C2, A> {
+    pub fn custom_get_handler<C2: CustomGetHandler<D>>(
+        self,
+        custom_handler: C2,
+    ) -> Builder<D, E, C2, A> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -147,10 +156,10 @@ where
         }
     }
 
-    pub fn custom_auth_handler<A2: RequestAuthorizationHandler>(
+    pub fn custom_auth_handler<A2: RequestAuthorizationHandler<D>>(
         self,
         auth_handler: A2,
-    ) -> Builder<E, C, A2> {
+    ) -> Builder<D, E, C, A2> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -202,49 +211,30 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node> {
+    pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
-        let tls_server_config = tls::make_server_config(
-            &self.keypair,
-            PROTOCOLS.iter().map(|p| p.to_vec()).collect(),
-            self.keylog,
-        )?;
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+
+        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
 
-        server_config
-            .transport_config(Arc::new(transport_config))
-            .concurrent_connections(MAX_CONNECTIONS);
-
-        let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
-        let conn = iroh_net::hp::magicsock::Conn::new(iroh_net::hp::magicsock::Options {
-            port: self.bind_addr.port(),
-            private_key: self.keypair.secret().clone().into(),
-            on_endpoints: Some(Box::new(move |eps| {
+        let endpoint = MagicEndpoint::builder()
+            .keypair(self.keypair.clone())
+            .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
+            .keylog(self.keylog)
+            .derp_map(self.derp_map)
+            .transport_config(transport_config)
+            .concurrent_connections(MAX_CONNECTIONS)
+            .on_endpoints(Box::new(move |eps| {
                 if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
                     endpoints_update_s.send(()).ok();
                 }
-            })),
-            ..Default::default()
-        })
-        .await?;
-        trace!("created magicsock");
-
-        let derp_map = self.derp_map.unwrap_or_default();
-        conn.set_derp_map(Some(derp_map))
-            .await
-            .context("setting derp map")?;
-
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            Some(server_config),
-            conn.clone(),
-            Arc::new(quinn::TokioRuntime),
-        )?;
+            }))
+            .bind(self.bind_addr.port())
+            .await?;
 
         trace!("created quinn endpoint");
 
@@ -262,7 +252,7 @@ where
         let rt3 = rt.clone();
         let inner = Arc::new(NodeInner {
             db: self.db,
-            conn,
+            endpoint: endpoint.clone(),
             keypair: self.keypair,
             events,
             controller,
@@ -305,9 +295,9 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn run(
-        server: quinn::Endpoint,
+        server: MagicEndpoint,
         events: broadcast::Sender<Event>,
-        handler: RpcHandler,
+        handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: C,
@@ -316,8 +306,12 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok(addr) = server.local_addr() {
-            debug!("listening at: {addr}");
+        if let Ok((ipv4, ipv6)) = server.local_addr() {
+            debug!(
+                "listening at: {}{}",
+                ipv4,
+                ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+            );
         }
         let cancel_token = handler.inner.cancel_token.clone();
         loop {
@@ -379,7 +373,10 @@ where
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
         let error_code = Closed::ProviderTerminating;
-        server.close(error_code.into(), error_code.reason());
+        server
+            .close(error_code.into(), error_code.reason())
+            .await
+            .ok();
     }
 }
 
@@ -417,15 +414,15 @@ impl iroh_bytes::provider::EventSender for MappedSender {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node {
-    inner: Arc<NodeInner>,
+pub struct Node<D: BaoMap> {
+    inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
 #[derive(Debug)]
-struct NodeInner {
-    db: Database,
-    conn: iroh_net::hp::magicsock::Conn,
+struct NodeInner<D> {
+    db: D,
+    endpoint: MagicEndpoint,
     keypair: Keypair,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
@@ -439,11 +436,11 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl Node {
+impl<D: BaoReadonlyDb> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder(db: Database) -> Builder {
+    pub fn builder(db: D) -> Builder<D> {
         Builder::with_db(db)
     }
 
@@ -510,9 +507,9 @@ impl Node {
     }
 }
 
-impl NodeInner {
+impl<D: BaoMap> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.conn.local_endpoints().await
+        self.endpoint.local_endpoints().await
     }
 
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
@@ -521,7 +518,7 @@ impl NodeInner {
     }
 
     fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.conn.local_addr()?;
+        let (v4, v6) = self.endpoint.local_addr()?;
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
@@ -531,7 +528,7 @@ impl NodeInner {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl Future for Node {
+impl<D: BaoMap> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -540,11 +537,11 @@ impl Future for Node {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler {
-    inner: Arc<NodeInner>,
+struct RpcHandler<D> {
+    inner: Arc<NodeInner<D>>,
 }
 
-impl RpcHandler {
+impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -553,30 +550,48 @@ impl RpcHandler {
         self,
         _msg: ListBlobsRequest,
     ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
-        let items = self
-            .inner
-            .db
-            .external()
-            .map(|(hash, path, size)| ListBlobsResponse { hash, path, size });
-        futures::stream::iter(items)
+        use bao_tree::io::fsm::Outboard;
+
+        let db = self.inner.db.clone();
+        futures::stream::iter(db.blobs()).filter_map(move |hash| {
+            let db = db.clone();
+            async move {
+                let entry = db.get(&hash)?;
+                let hash = entry.hash().into();
+                let size = entry.outboard().await.ok()?.tree().size().0;
+                let path = "".to_owned();
+                Some(ListBlobsResponse { hash, size, path })
+            }
+        })
     }
 
     fn list_collections(
         self,
         _msg: ListCollectionsRequest,
     ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        // collections are always stored internally, so we take everything that is stored internally
-        // and try to parse it as a collection
-        let items = self.inner.db.internal().filter_map(|(hash, collection)| {
-            Collection::from_bytes(&collection)
-                .ok()
-                .map(|collection| ListCollectionsResponse {
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.local_pool().clone();
+        let roots = db.roots();
+        futures::stream::iter(roots).filter_map(move |hash| {
+            let db = db.clone();
+            let local = local.clone();
+            async move {
+                let entry = db.get(&hash)?;
+                let data = local
+                    .spawn_pinned(|| async move {
+                        let mut reader = entry.data_reader().await.ok()?;
+                        reader.read_to_end().await.ok()
+                    })
+                    .await
+                    .ok()??;
+                let collection = Collection::from_bytes(&data).ok()?;
+                Some(ListCollectionsResponse {
                     hash,
                     total_blobs_count: collection.blobs().len(),
                     total_blobs_size: collection.total_blobs_size(),
                 })
-        });
-        futures::stream::iter(items)
+            }
+        })
     }
 
     /// Invoke validate on the database and stream out the result
@@ -586,8 +601,9 @@ impl RpcHandler {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
+        let db = self.inner.db.clone();
         self.rt().main().spawn(async move {
-            if let Err(e) = self.inner.db.validate(tx).await {
+            if let Err(e) = db.validate(tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
         });
@@ -623,7 +639,13 @@ impl RpcHandler {
             Progress::new(progress),
         )
         .await?;
-        self.inner.db.union_with(db);
+
+        // todo: generify this
+        // for now provide will only work if D is a Database
+        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
+            current.union_with(db);
+        }
 
         if let Err(e) = self.inner.events.send(Event::ByteProvide(
             iroh_bytes::provider::Event::CollectionAdded { hash },
@@ -681,10 +703,10 @@ impl RpcHandler {
     }
 }
 
-fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<D: BaoReadonlyDb, C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler,
+    handler: &RpcHandler<D>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();

@@ -5,12 +5,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use bao_tree::io::fsm::encode_ranges_validated;
-use bao_tree::outboard::PreOrderMemOutboardRef;
+use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::BoxFuture;
-use futures::FutureExt;
-use iroh_io::{Either, FileAdapter};
+use futures::future::{BoxFuture, Either};
+use futures::{Future, FutureExt};
+use iroh_io::{AsyncSliceReaderExt, FileAdapter};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, debug_span, warn};
@@ -22,9 +21,8 @@ use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec, Request, RequestToken,
     VERSION,
 };
-use crate::tokio_util::read_as_bytes;
+use crate::provider::database::BaoMapEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
-use crate::IROH_BLOCK_SIZE;
 
 pub mod collection;
 pub mod database;
@@ -33,6 +31,8 @@ mod ticket;
 pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
+
+use self::database::BaoMap;
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -149,21 +149,21 @@ pub enum ProvideProgress {
 /// hook into the request handling to process authorization by examining
 /// the request and any given token. Any error returned will abort the request,
 /// and the error will be sent to the requester.
-pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
+pub trait RequestAuthorizationHandler<D>: Send + Sync + Clone + 'static {
     /// Handle the authorization request, given an opaque data blob from the requester.
     fn authorize(
         &self,
-        db: Database,
+        db: D,
         token: Option<RequestToken>,
         request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
 /// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
-impl RequestAuthorizationHandler for () {
+impl<D> RequestAuthorizationHandler<D> for () {
     fn authorize(
         &self,
-        _db: Database,
+        _db: D,
         token: Option<RequestToken>,
         _request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
@@ -182,23 +182,24 @@ impl RequestAuthorizationHandler for () {
 
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
-pub trait CustomGetHandler: Send + Sync + Clone + 'static {
+pub trait CustomGetHandler<D>: Send + Sync + Clone + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
     fn handle(
         &self,
         token: Option<RequestToken>,
         request: Bytes,
-        db: Database,
+        db: D,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
 }
 
+/// Handle the custom request, given an opaque data blob from the requester.
 /// Define CustomGetHandler for () so we can use it as a no-op default.
-impl CustomGetHandler for () {
+impl<D> CustomGetHandler<D> for () {
     fn handle(
         &self,
         _token: Option<RequestToken>,
         _request: Bytes,
-        _db: Database,
+        _db: D,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
         async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
     }
@@ -207,7 +208,6 @@ impl CustomGetHandler for () {
 /// A [`Database`] entry.
 ///
 /// This is either stored externally in the file system, or internally in the database.
-/// Collections are always stored internally for now.
 ///
 /// Internally stored entries are stored in the iroh home directory when the database is
 /// persisted.
@@ -248,26 +248,31 @@ impl DbEntry {
         }
     }
 
-    pub fn outboard(&self) -> &Bytes {
-        match self {
-            DbEntry::External { outboard, .. } => outboard,
-            DbEntry::Internal { outboard, .. } => outboard,
-        }
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
+        futures::future::ok(match self {
+            DbEntry::External { outboard, .. } => outboard.clone(),
+            DbEntry::Internal { outboard, .. } => outboard.clone(),
+        })
     }
 
     /// A reader for the data.
-    pub async fn data_reader(&self) -> io::Result<Either<Bytes, FileAdapter>> {
-        Ok(match self {
-            DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path.clone()).await?),
-            DbEntry::Internal { data, .. } => Either::Left(data.clone()),
-        })
+    pub fn data_reader(
+        &self,
+    ) -> impl Future<Output = io::Result<Either<Bytes, FileAdapter>>> + 'static {
+        let this = self.clone();
+        async move {
+            Ok(match this {
+                DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path).await?),
+                DbEntry::Internal { data, .. } => Either::Left(data),
+            })
+        }
     }
 
     /// Returns the size of the blob or collection.
     ///
     /// For collections this is the size of the serialized collection.
     /// For blobs it is the blob size.
-    pub fn size(&self) -> u64 {
+    pub async fn size(&self) -> u64 {
         match self {
             DbEntry::External { size, .. } => *size,
             DbEntry::Internal { data, .. } => data.len() as u64,
@@ -359,23 +364,22 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<E: EventSender>(
+pub async fn transfer_collection<D: BaoMap, E: EventSender>(
     request: GetRequest,
     // Database from which to fetch blobs.
-    db: &Database,
+    db: &D,
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    outboard: &Bytes,
-    mut data: Either<Bytes, FileAdapter>,
+    outboard: D::Outboard,
+    mut data: D::DataReader,
 ) -> Result<SentStatus> {
     let hash = request.hash;
-    let outboard = PreOrderMemOutboardRef::new(hash.into(), IROH_BLOCK_SIZE, outboard)?;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
     let c = if !just_root {
-        let bytes = read_as_bytes(&mut data).await?;
+        let bytes = data.read_to_end().await?;
         let c: Collection = postcard::from_bytes(&bytes)?;
         let _ = writer.events.send(Event::TransferCollectionStarted {
             connection_id: writer.connection_id(),
@@ -394,7 +398,7 @@ pub async fn transfer_collection<E: EventSender>(
             // send the root
             encode_ranges_validated(
                 &mut data,
-                outboard,
+                &outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer.inner,
             )
@@ -439,18 +443,18 @@ pub trait EventSender: Clone + Send + 'static {
 }
 
 pub async fn handle_connection<
-    C: CustomGetHandler,
+    D: BaoMap,
+    C: CustomGetHandler<D>,
     E: EventSender,
-    A: RequestAuthorizationHandler,
+    A: RequestAuthorizationHandler<D>,
 >(
     connecting: quinn::Connecting,
-    db: Database,
+    db: D,
     events: E,
     custom_get_handler: C,
     authorization_handler: A,
     rt: crate::runtime::Handle,
 ) {
-    // let _x = NonSend::default();
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
         Ok(conn) => conn,
@@ -498,12 +502,12 @@ pub async fn handle_connection<
     .await
 }
 
-async fn handle_stream<E: EventSender>(
-    db: Database,
+async fn handle_stream<D: BaoMap, E: EventSender>(
+    db: D,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler,
-    authorization_handler: impl RequestAuthorizationHandler,
+    custom_get_handler: impl CustomGetHandler<D>,
+    authorization_handler: impl RequestAuthorizationHandler<D>,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -535,11 +539,11 @@ async fn handle_stream<E: EventSender>(
         }
     }
 }
-async fn handle_custom_get<E: EventSender>(
-    db: Database,
+async fn handle_custom_get<E: EventSender, D: BaoMap>(
+    db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler,
+    custom_get_handler: impl CustomGetHandler<D>,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
         len: request.data.len(),
@@ -558,8 +562,8 @@ async fn handle_custom_get<E: EventSender>(
     handle_get(db, request, writer).await
 }
 
-pub async fn handle_get<E: EventSender>(
-    db: Database,
+pub async fn handle_get<D: BaoMap, E: EventSender>(
+    db: D,
     request: GetRequest,
     mut writer: ResponseWriter<E>,
 ) -> Result<()> {
@@ -581,7 +585,7 @@ pub async fn handle_get<E: EventSender>(
                 request,
                 &db,
                 &mut writer,
-                entry.outboard(),
+                entry.outboard().await?,
                 entry.data_reader().await?,
             )
             .await
@@ -648,20 +652,17 @@ pub enum SentStatus {
     NotFound,
 }
 
-pub async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
-    db: &Database,
+pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
+    db: &D,
     name: Hash,
     ranges: &RangeSpec,
     writer: &mut W,
 ) -> Result<(SentStatus, u64)> {
     match db.get(&name) {
-        Some(DbEntry::External {
-            outboard,
-            path,
-            size,
-        }) => {
-            let outboard = PreOrderMemOutboardRef::new(name.into(), IROH_BLOCK_SIZE, &outboard)?;
-            let mut file_reader = FileAdapter::open(path.clone()).await?;
+        Some(entry) => {
+            let outboard = entry.outboard().await?;
+            let size = outboard.tree().size().0;
+            let mut file_reader = entry.data_reader().await?;
             let res = bao_tree::io::fsm::encode_ranges_validated(
                 &mut file_reader,
                 outboard,
@@ -779,7 +780,7 @@ mod tests {
             for blob in blobs {
                 let size = blob.len() as u64;
                 total_blobs_size += size;
-                let (outboard, hash) = bao_tree::outboard(&blob, IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::outboard(&blob, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 let path = PathBuf::from_str(&hash.to_string()).unwrap();
@@ -800,7 +801,7 @@ mod tests {
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::outboard(&data, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 map.insert(hash, DbEntry::Internal { outboard, data });
