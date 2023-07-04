@@ -516,17 +516,17 @@ mod test {
         eprintln!("peer id 2 {peer_id_2}");
 
         let endpoint = ep2.clone();
-        let p2_connect = tokio::spawn(async move {
+        let p2_connect = async move {
             let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             send.write_all(b"hello").await.unwrap();
             send.finish().await.unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(&m, b"world");
-        });
+        };
 
         let endpoint = ep1.clone();
-        let p1_accept = tokio::spawn(async move {
+        let p1_accept = async move {
             let conn = endpoint.accept().await.unwrap();
             let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
             assert_eq!(peer_id, peer_id_2);
@@ -538,20 +538,20 @@ mod test {
 
             send.write_all(b"world").await.unwrap();
             send.finish().await.unwrap();
-        });
+        };
 
         let endpoint = ep1.clone();
-        let p1_connect = tokio::spawn(async move {
+        let p1_connect = async move {
             let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             send.write_all(b"ola").await.unwrap();
             send.finish().await.unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(&m, b"mundo");
-        });
+        };
 
         let endpoint = ep2.clone();
-        let p2_accept = tokio::spawn(async move {
+        let p2_accept = async move {
             let conn = endpoint.accept().await.unwrap();
             let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
             assert_eq!(peer_id, peer_id_1);
@@ -563,14 +563,18 @@ mod test {
 
             send.write_all(b"mundo").await.unwrap();
             send.finish().await.unwrap();
-        });
+        };
 
-        p1_accept.await.unwrap();
-        p2_connect.await.unwrap();
-
-        p2_accept.await.unwrap();
-        p1_connect.await.unwrap();
-
+        let (r1, r2, r3, r4) = tokio::join!(
+            tokio::spawn(p1_accept),
+            tokio::spawn(p2_connect),
+            tokio::spawn(p2_accept),
+            tokio::spawn(p1_connect)
+        );
+        r1.unwrap();
+        r2.unwrap();
+        r3.unwrap();
+        r4.unwrap();
         cleanup().await;
     }
 }
