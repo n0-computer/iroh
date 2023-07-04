@@ -189,6 +189,7 @@ pub trait BaoMap: Clone + Send + Sync + 'static {
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
+/// Extension of BaoMap to add misc methods used by the rpc calls
 pub trait BaoReadonlyDb: BaoMap {
     /// list all blobs in the database. This should include collections, since
     /// collections are blobs and can be requested as blobs.
