@@ -1,29 +1,23 @@
 //! Checks the network conditions from the current host.
+//!
 //! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-use std::{
-    collections::HashMap,
-    fmt::{self, Debug},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::collections::HashMap;
+use std::fmt::{self, Debug};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use futures::{
-    stream::{FuturesUnordered, StreamExt},
-    Future, FutureExt,
-};
+use futures::Future;
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use rand::seq::IteratorRandom;
-use tokio::{
-    net::UdpSocket,
-    sync::{self, mpsc, oneshot, RwLock},
-    task::{AbortHandle, JoinSet},
-    time::{self, Duration, Instant},
-};
+use tokio::net::UdpSocket;
+use tokio::sync::{self, mpsc, oneshot};
+use tokio::task::AbortHandle;
+use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
@@ -31,12 +25,11 @@ use crate::net::{interfaces, ip::to_canonical};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
-use super::{
-    derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
-    dns::DNS_RESOLVER,
-    ping::Pinger,
-    portmapper, stun,
-};
+use super::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use super::dns::DNS_RESOLVER;
+use super::ping::Pinger;
+use super::portmapper;
+use super::stun;
 
 mod probe;
 mod reportstate;
@@ -55,9 +48,6 @@ const STUN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The maximum amount of time netcheck will spend probing with ICMP packets.
 const ICMP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// The amount of time we wait for a hairpinned packet to come back.
-const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -485,559 +475,190 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     }
 }
 
-/// Holds the state for a single invocation of `Client::get_report`.
-#[derive(Debug)]
-struct ReportState {
-    hair_txn_id: stun::TransactionId,
-    got_hair_stun: oneshot::Receiver<(Duration, SocketAddr)>,
-    /// How long to wait for the hairpin message to arrive, if sent.
-    hair_timeout: Option<Pin<Box<time::Sleep>>>,
-    pc4: Option<Arc<UdpSocket>>,
-    pc6: Option<Arc<UdpSocket>>,
-    pc4_hair: Arc<UdpSocket>,
-    /// Doing a lite, follow-up netcheck
-    incremental: bool,
-    stop_probe: Arc<sync::Notify>,
-    wait_port_map: wg::AsyncWaitGroup,
-    /// The report which will be returned.
-    report: Arc<RwLock<Report>>,
-    got_ep4: Option<SocketAddr>,
-    timers: JoinSet<()>,
-    plan: ProbePlan,
-    last: Option<Arc<Report>>,
-}
-
 #[derive(Debug)]
 pub(crate) struct Inflight {
+    /// The STUN transaction ID.
     txn: stun::TransactionId,
+    /// The time the STUN probe was sent.
     start: Instant,
+    /// Response to send STUN results: latency of STUN response and the discovered address.
     s: sync::oneshot::Sender<(Duration, SocketAddr)>,
 }
 
-impl ReportState {
-    #[instrument(name = "report_state", skip_all)]
-    async fn run(
-        mut self,
-        actor_addr: ActorAddr,
-        dm: DerpMap,
-        port_mapper: Option<portmapper::Client>,
-        skip_external_network: bool,
-    ) -> Result<(Report, DerpMap)> {
-        debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
-        self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
-
-        let mut port_mapping = MaybeFuture::default();
-        if !skip_external_network {
-            if let Some(ref port_mapper) = port_mapper {
-                let port_mapper = port_mapper.clone();
-                port_mapping.inner = Some(Box::pin(async move {
-                    match port_mapper.probe().await {
-                        Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
-                        Err(err) => {
-                            warn!("skipping port mapping: {:?}", err);
-                            None
-                        }
-                    }
-                }));
-            }
-        }
-
-        self.prepare_hairpin().await;
-
-        // Even if we're doing a non-incremental update, we may want to try our
-        // preferred DERP region for captive portal detection. Save that, if we have it.
-        let preferred_derp = self.last.as_ref().map(|l| l.preferred_derp);
-
-        // If we're doing a full probe, also check for a captive portal. We
-        // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
-        // it's unnecessary.
-        let mut captive_task = if !self.incremental {
-            let dm = dm.clone();
-            MaybeFuture {
-                inner: Some(Box::pin(async move {
-                    // wait
-                    time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                    let captive_portal_check = tokio::time::timeout(
-                        CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_derp),
-                    );
-                    match captive_portal_check.await {
-                        Ok(Ok(found)) => Some(found),
-                        Ok(Err(err)) => {
-                            info!("check_captive_portal error: {:?}", err);
-                            None
-                        }
-                        Err(_) => {
-                            info!("check_captive_portal timed out");
-                            None
-                        }
-                    }
-                })),
-            }
-        } else {
-            MaybeFuture::default()
-        };
-
-        let pinger = if self.plan.has_https_probes() {
-            match Pinger::new().await {
-                Ok(pinger) => Some(pinger),
-                Err(err) => {
-                    debug!("failed to create pinger: {err:#}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let mut probes = FuturesUnordered::default();
-        for probe_set in self.plan.values() {
-            let mut set = FuturesUnordered::default();
-            for probe in probe_set {
-                let probe = probe.clone();
-                let node = named_node(&dm, probe.node());
-                ensure!(node.is_some(), "missing named node {}", probe.node());
-                let node = node.unwrap().clone();
-                let actor_addr = actor_addr.clone();
-                let pc4 = self.pc4.clone();
-                let pc6 = self.pc6.clone();
-                let report = self.report.clone();
-                let pinger = pinger.clone();
-
-                set.push(Box::pin(async move {
-                    run_probe(report, pc4, pc6, node, probe, actor_addr, pinger).await
-                }));
-            }
-
-            probes.push(Box::pin(async move {
-                while let Some(res) = set.next().await {
-                    match res {
-                        Ok(res) => {
-                            trace!(probe = ?res.probe, "probe successfull");
-                            return Ok(res);
-                        }
-                        Err(ProbeError::Transient(err, probe)) => {
-                            debug!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Err(ProbeError::Fatal(err, probe)) => {
-                            debug!(?probe, "probe error fatal: {:#}", err);
-                            return Err(err);
-                        }
-                    }
-                }
-                bail!("no successfull probes");
-            }));
-        }
-
-        let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
-        tokio::pin!(stun_timer);
-        let probes_aborted = self.stop_probe.clone();
-
-        loop {
-            tokio::select! {
-                _ = &mut stun_timer => {
-                    debug!("STUN timer expired");
-                    break;
-                },
-                pm = &mut port_mapping => {
-                    let mut report = self.report.write().await;
-                    match pm {
-                        Some((upnp, pmp, pcp)) => {
-                            report.upnp = Some(upnp);
-                            report.pmp = Some(pmp);
-                            report.pcp = Some(pcp);
-                        }
-                        None => {
-                            report.upnp = None;
-                            report.pmp = None;
-                            report.pcp = None;
-                        }
-                    }
-                    port_mapping.inner = None;
-                }
-                probe_report = probes.next() => {
-                    match probe_report {
-                        Some(Ok(probe_report)) => {
-                            debug!("finished probe: {:?}", probe_report);
-                            match probe_report.probe {
-                                Probe::Https { region, .. } => {
-                                    if let Some(delay) = probe_report.delay {
-                                        let mut report = self.report.write().await;
-                                        let l = report.region_latency.entry(region.region_id).or_insert(delay);
-                                        if *l >= delay {
-                                            *l = delay;
-                                        }
-                                    }
-                                }
-                                Probe::Ipv4 { node, .. } | Probe::Ipv6 { node, .. } => {
-                                    if let Some(delay) = probe_report.delay {
-                                        let node = named_node(&dm, &node).expect("missing node");
-                                        self.add_node_latency(node, probe_report.addr, delay).await;
-                                    }
-                                }
-                            }
-                            let mut report = self.report.write().await;
-                            report.ipv4_can_send = probe_report.ipv4_can_send;
-                            report.ipv6_can_send = probe_report.ipv6_can_send;
-                            report.icmpv4 = probe_report.icmpv4;
-                        }
-                        Some(Err(err)) => {
-                            warn!("probe error: {:?}", err);
-                        }
-                        None => {
-                            // All of our probes finished, so if we have >0 responses, we
-                            // stop our captive portal check.
-                            if self.any_udp().await {
-                                captive_task.inner = None;
-                            }
-                            break;
-                        }
-                    }
-                }
-                found = &mut captive_task => {
-                    let mut report = self.report.write().await;
-                    report.captive_portal = found;
-                    captive_task.inner = None;
-                }
-                _ = probes_aborted.notified() => {
-                    // Saw enough regions.
-                    debug!("saw enough regions; not waiting for rest");
-                    // We can stop the captive portal check since we know that we
-                    // got a bunch of STUN responses.
-                    captive_task.inner = None;
-                    break;
-                }
-            }
-        }
-
-        // abort the rest of the probes
-        debug!("aborting {} probes, already done", probes.len());
-        drop(probes);
-
-        if let Some(hair_pin) = self.wait_hair_check().await {
-            self.report.write().await.hair_pinning = Some(hair_pin);
-        }
-
-        if !skip_external_network && port_mapper.is_some() {
-            self.wait_port_map.wait().await;
-            debug!("port_map done");
-        }
-
-        self.stop_timers();
-
-        // Wait for captive portal check before finishing the report.
-        if captive_task.inner.is_some() {
-            let mut report = self.report.write().await;
-            report.captive_portal = captive_task.await;
-        }
-
-        let ReportState { report, .. } = self;
-        let report = RwLock::into_inner(Arc::try_unwrap(report).expect("should be the last one"));
-
-        Ok((report, dm))
-    }
-
-    async fn prepare_hairpin(&self) {
-        // At least the Apple Airport Extreme doesn't allow hairpin
-        // sends from a private socket until it's seen traffic from
-        // that src IP:port to something else out on the internet.
-        //
-        // See https://github.com/tailscale/tailscale/issues/188#issuecomment-600728643
-        //
-        // And it seems that even sending to a likely-filtered RFC 5737
-        // documentation-only IPv4 range is enough to set up the mapping.
-        // So do that for now. In the future we might want to classify networks
-        // that do and don't require this separately. But for now help it.
-        let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
-
-        if let Err(err) = self
-            .pc4_hair
-            .send_to(
-                b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
-                documentation_ip,
-            )
-            .await
-        {
-            warn!("unable to send hairpin prep: {:?}", err);
-        }
-    }
-
-    async fn any_udp(&self) -> bool {
-        self.report.read().await.udp
-    }
-
-    fn sent_hair_check(&self) -> bool {
-        self.hair_timeout.is_some()
-    }
-
-    async fn start_hair_check(&mut self, dst: SocketAddr) {
-        if self.sent_hair_check() || self.incremental {
-            return;
-        }
-        match self
-            .pc4_hair
-            .send_to(&stun::request(self.hair_txn_id), dst)
-            .await
-        {
-            Ok(_) => {
-                debug!("sent haircheck to {}", dst);
-                self.hair_timeout = Some(Box::pin(time::sleep(HAIRPIN_CHECK_TIMEOUT)));
-            }
-            Err(err) => {
-                debug!("failed to send haircheck to {}: {:?}", dst, err);
-            }
-        }
-    }
-
-    async fn wait_hair_check(&mut self) -> Option<bool> {
-        let last = self.last.as_deref();
-        if self.incremental {
-            if let Some(last) = last {
-                return last.hair_pinning;
-            }
-            return None;
-        }
-        match self.hair_timeout {
-            Some(ref mut hair_timeout) => {
-                tokio::select! {
-                    biased;
-                    _ = &mut self.got_hair_stun => {
-                        debug!("hair_check received");
-                        Some(true)
-                    }
-                    _ = hair_timeout => {
-                        debug!("hair_check timeout");
-                        Some(false)
-                    }
-                }
-            }
-            None => None,
-        }
-    }
-
-    fn stop_timers(&mut self) {
-        self.timers.abort_all();
-    }
-
-    /// Updates `self` to note that node's latency is `d`. If `ipp`
-    /// is non-zero (for all but HTTPS replies), it's recorded as our UDP IP:port.
-    async fn add_node_latency(&mut self, node: &DerpNode, ipp: Option<SocketAddr>, d: Duration) {
-        debug!(node = %node.name, latency = ?d, "add node latency");
-        let mut report = self.report.write().await;
-        report.udp = true;
-        update_latency(&mut report.region_latency, node.region_id, d);
-
-        // Once we've heard from enough regions (3), start a timer to
-        // give up on the other ones. The timer's duration is a
-        // function of whether this is our initial full probe or an
-        // incremental one. For incremental ones, wait for the
-        // duration of the slowest region. For initial ones, double that.
-        if report.region_latency.len() == ENOUGH_REGIONS {
-            let mut timeout = max_duration_value(&report.region_latency);
-            if !self.incremental {
-                timeout *= 2;
-            }
-
-            let stop_probe = self.stop_probe.clone();
-            self.timers.spawn(async move {
-                time::sleep(timeout).await;
-                stop_probe.notify_waiters();
-            });
-        }
-
-        if let Some(ipp) = ipp {
-            if ipp.is_ipv6() {
-                update_latency(&mut report.region_v6_latency, node.region_id, d);
-                report.ipv6 = true;
-                report.global_v6 = Some(ipp);
-            // TODO: track MappingVariesByDestIP for IPv6
-            // too? Would be sad if so, but who knows.
-            } else if ipp.is_ipv4() {
-                update_latency(&mut report.region_v4_latency, node.region_id, d);
-                report.ipv4 = true;
-                if self.got_ep4.is_none() {
-                    self.got_ep4 = Some(ipp);
-                    report.global_v4 = Some(ipp);
-                    drop(report);
-                    self.start_hair_check(ipp).await;
-                } else if self.got_ep4 != Some(ipp) {
-                    report.mapping_varies_by_dest_ip = Some(true);
-                } else if report.mapping_varies_by_dest_ip.is_none() {
-                    report.mapping_varies_by_dest_ip = Some(false);
-                }
-            }
-        }
-    }
-}
-
+/// Errors for [`run_probe`].
+///
+/// The main purpose is to signal whether other probes in this probe set should still be
+/// run.  Recall that a probe set is normally a set of identical probes with delays,
+/// effectively creating retries, and the first successful probe of a probe set will cancel
+/// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
+/// the set or not.
 #[derive(Debug)]
 enum ProbeError {
     /// Abort the current set.
-    Fatal(anyhow::Error, Probe),
-    /// Continue the other probes.
-    Transient(anyhow::Error, Probe),
+    AbortSet(anyhow::Error, Probe),
+    /// Continue the other probes in the set.
+    Error(anyhow::Error, Probe),
 }
 
-/// Executes a particular [`Probe`], including using a delayed start if needed.
-///
-/// If *pc4* and *pc6* are `None` the STUN probes are disabled.
-#[allow(clippy::too_many_arguments)]
-#[instrument(level = "debug", skip_all, fields(probe = ?probe))]
-async fn run_probe(
-    report: Arc<RwLock<Report>>,
-    pc4: Option<Arc<UdpSocket>>,
-    pc6: Option<Arc<UdpSocket>>,
-    node: DerpNode,
-    probe: Probe,
-    actor_addr: ActorAddr,
-    pinger: Option<Pinger>,
-) -> Result<ProbeReport, ProbeError> {
-    if !probe.delay().is_zero() {
-        debug!("delaying probe");
-        time::sleep(*probe.delay()).await;
-    }
+// /// Executes a particular [`Probe`], including using a delayed start if needed.
+// ///
+// /// If *pc4* and *pc6* are `None` the STUN probes are disabled.
+// #[allow(clippy::too_many_arguments)]
+// #[instrument(level = "debug", skip_all, fields(probe = ?probe))]
+// async fn run_probe(
+//     report: Arc<RwLock<Report>>,
+//     pc4: Option<Arc<UdpSocket>>,
+//     pc6: Option<Arc<UdpSocket>>,
+//     node: DerpNode,
+//     probe: Probe,
+//     actor_addr: ActorAddr,
+//     pinger: Option<Pinger>,
+// ) -> Result<ProbeReport, ProbeError> {
+//     if !probe.delay().is_zero() {
+//         debug!("delaying probe");
+//         time::sleep(probe.delay()).await;
+//     }
 
-    if !probe_would_help(&*report.read().await, &probe, &node) {
-        return Err(ProbeError::Fatal(anyhow!("probe would not help"), probe));
-    }
+//     if !probe_would_help(&*report.read().await, &probe, &node) {
+//         return Err(ProbeError::AbortSet(anyhow!("probe would not help"), probe));
+//     }
 
-    let addr = get_node_addr(&node, probe.proto())
-        .await
-        .context("no derp node addr")
-        .map_err(|e| ProbeError::Transient(e, probe.clone()))?;
-    let txid = stun::TransactionId::default();
-    let req = stun::request(txid);
-    let sent = Instant::now(); // after DNS lookup above
+//     let addr = get_node_addr(&node, probe.proto())
+//         .await
+//         .context("no derp node addr")
+//         .map_err(|e| ProbeError::Error(e, probe.clone()))?;
+//     let txid = stun::TransactionId::default();
+//     let req = stun::request(txid);
+//     let sent = Instant::now(); // after DNS lookup above
 
-    let (stun_tx, stun_rx) = oneshot::channel();
-    let (msg_response_tx, msg_response_rx) = oneshot::channel();
-    actor_addr
-        .send(ActorMessage::InFlightStun(
-            Inflight {
-                txn: txid,
-                start: sent,
-                s: stun_tx,
-            },
-            msg_response_tx,
-        ))
-        .await
-        .map_err(|e| ProbeError::Transient(e.into(), probe.clone()))?;
-    msg_response_rx
-        .await
-        .map_err(|e| ProbeError::Transient(e.into(), probe.clone()))?;
-    let mut result = ProbeReport::new(probe.clone());
+//     let (stun_tx, stun_rx) = oneshot::channel();
+//     let (msg_response_tx, msg_response_rx) = oneshot::channel();
+//     actor_addr
+//         .send(ActorMessage::InFlightStun(
+//             Inflight {
+//                 txn: txid,
+//                 start: sent,
+//                 s: stun_tx,
+//             },
+//             msg_response_tx,
+//         ))
+//         .await
+//         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+//     msg_response_rx
+//         .await
+//         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+//     let mut result = ProbeReport::new(probe.clone());
 
-    match probe {
-        Probe::Ipv4 { .. } => {
-            if let Some(ref pc4) = pc4 {
-                let n = pc4.send_to(&req, addr).await;
-                inc!(NetcheckMetrics::StunPacketsSentIpv4);
-                debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
-                // TODO:  || neterror.TreatAsLostUDP(err)
-                if n.is_ok() && n.unwrap() == req.len() {
-                    result.ipv4_can_send = true;
+//     match probe {
+//         Probe::Ipv4 { .. } => {
+//             if let Some(ref pc4) = pc4 {
+//                 let n = pc4.send_to(&req, addr).await;
+//                 inc!(NetcheckMetrics::StunPacketsSentIpv4);
+//                 debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
+//                 // TODO:  || neterror.TreatAsLostUDP(err)
+//                 if n.is_ok() && n.unwrap() == req.len() {
+//                     result.ipv4_can_send = true;
 
-                    let (delay, addr) = stun_rx
-                        .await
-                        .map_err(|e| ProbeError::Transient(e.into(), probe))?;
-                    result.delay = Some(delay);
-                    result.addr = Some(addr);
-                }
-            }
-        }
-        Probe::Ipv6 { .. } => {
-            if let Some(ref pc6) = pc6 {
-                let n = pc6.send_to(&req, addr).await;
-                inc!(NetcheckMetrics::StunPacketsSentIpv6);
-                debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
-                // TODO:  || neterror.TreatAsLostUDP(err)
-                if n.is_ok() && n.unwrap() == req.len() {
-                    result.ipv6_can_send = true;
+//                     let (delay, addr) = stun_rx
+//                         .await
+//                         .map_err(|e| ProbeError::Error(e.into(), probe))?;
+//                     result.delay = Some(delay);
+//                     result.addr = Some(addr);
+//                 }
+//             }
+//         }
+//         Probe::Ipv6 { .. } => {
+//             if let Some(ref pc6) = pc6 {
+//                 let n = pc6.send_to(&req, addr).await;
+//                 inc!(NetcheckMetrics::StunPacketsSentIpv6);
+//                 debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
+//                 // TODO:  || neterror.TreatAsLostUDP(err)
+//                 if n.is_ok() && n.unwrap() == req.len() {
+//                     result.ipv6_can_send = true;
 
-                    let (delay, addr) = stun_rx
-                        .await
-                        .map_err(|e| ProbeError::Transient(e.into(), probe))?;
-                    result.delay = Some(delay);
-                    result.addr = Some(addr);
-                }
-            }
-        }
-        Probe::Https { region, .. } => {
-            debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
+//                     let (delay, addr) = stun_rx
+//                         .await
+//                         .map_err(|e| ProbeError::Error(e.into(), probe))?;
+//                     result.delay = Some(delay);
+//                     result.addr = Some(addr);
+//                 }
+//             }
+//         }
+//         Probe::Https { region, .. } => {
+//             debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
 
-            let res = if let Some(ref pinger) = pinger {
-                tokio::join!(
-                    time::timeout(
-                        ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(&region, pinger).map(Some)
-                    ),
-                    measure_https_latency(&region)
-                )
-            } else {
-                (Ok(None), measure_https_latency(&region).await)
-            };
-            if let Ok(Some(icmp_res)) = res.0 {
-                match icmp_res {
-                    Ok(d) => {
-                        result.delay = Some(d);
-                        result.ipv4_can_send = true;
-                        result.icmpv4 = true;
-                    }
-                    Err(err) => {
-                        warn!("icmp latency measurement failed: {:?}", err);
-                    }
-                }
-            }
-            match res.1 {
-                Ok((d, ip)) => {
-                    result.delay = Some(d);
-                    // We set these IPv4 and IPv6 but they're not really used
-                    // and we don't necessarily set them both. If UDP is blocked
-                    // and both IPv4 and IPv6 are available over TCP, it's basically
-                    // random which fields end up getting set here.
-                    // Since they're not needed, that's fine for now.
-                    if ip.is_ipv4() {
-                        result.ipv4_can_send = true
-                    }
-                    if ip.is_ipv6() {
-                        result.ipv6_can_send = true
-                    }
-                }
-                Err(err) => {
-                    warn!("https latency measurement failed: {:?}", err);
-                }
-            }
-        }
-    }
+//             let res = if let Some(ref pinger) = pinger {
+//                 tokio::join!(
+//                     time::timeout(
+//                         ICMP_PROBE_TIMEOUT,
+//                         measure_icmp_latency(&region, pinger).map(Some)
+//                     ),
+//                     measure_https_latency(&region)
+//                 )
+//             } else {
+//                 (Ok(None), measure_https_latency(&region).await)
+//             };
+//             if let Ok(Some(icmp_res)) = res.0 {
+//                 match icmp_res {
+//                     Ok(d) => {
+//                         result.delay = Some(d);
+//                         result.ipv4_can_send = true;
+//                         result.icmpv4 = true;
+//                     }
+//                     Err(err) => {
+//                         warn!("icmp latency measurement failed: {:?}", err);
+//                     }
+//                 }
+//             }
+//             match res.1 {
+//                 Ok((d, ip)) => {
+//                     result.delay = Some(d);
+//                     // We set these IPv4 and IPv6 but they're not really used
+//                     // and we don't necessarily set them both. If UDP is blocked
+//                     // and both IPv4 and IPv6 are available over TCP, it's basically
+//                     // random which fields end up getting set here.
+//                     // Since they're not needed, that's fine for now.
+//                     if ip.is_ipv4() {
+//                         result.ipv4_can_send = true
+//                     }
+//                     if ip.is_ipv6() {
+//                         result.ipv6_can_send = true
+//                     }
+//                 }
+//                 Err(err) => {
+//                     warn!("https latency measurement failed: {:?}", err);
+//                 }
+//             }
+//         }
+//     }
 
-    Ok(result)
-}
+//     Ok(result)
+// }
 
-fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
-    // If the probe is for a region we don't yet know about, that would help.
-    if !report.region_latency.contains_key(&node.region_id) {
-        return true;
-    }
+// fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
+//     // If the probe is for a region we don't yet know about, that would help.
+//     if !report.region_latency.contains_key(&node.region_id) {
+//         return true;
+//     }
 
-    // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-    if probe.proto() == ProbeProto::Ipv6 && report.region_v6_latency.is_empty() {
-        return true;
-    }
+//     // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
+//     if probe.proto() == ProbeProto::Ipv6 && report.region_v6_latency.is_empty() {
+//         return true;
+//     }
 
-    // For IPv4, we need at least two IPv4 results overall to
-    // determine whether we're behind a NAT that shows us as
-    // different source IPs and/or ports depending on who we're
-    // talking to. If we don't yet have two results yet
-    // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
-    // would be good.
-    if probe.proto() == ProbeProto::Ipv4 && report.mapping_varies_by_dest_ip.is_none() {
-        return true;
-    }
+//     // For IPv4, we need at least two IPv4 results overall to
+//     // determine whether we're behind a NAT that shows us as
+//     // different source IPs and/or ports depending on who we're
+//     // talking to. If we don't yet have two results yet
+//     // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
+//     // would be good.
+//     if probe.proto() == ProbeProto::Ipv4 && report.mapping_varies_by_dest_ip.is_none() {
+//         return true;
+//     }
 
-    // Otherwise not interesting.
-    false
-}
+//     // Otherwise not interesting.
+//     false
+// }
 
 fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duration) {
     let prev = m.entry(region_id).or_insert(d);
@@ -1061,13 +682,20 @@ fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
     m.values().max().cloned().unwrap_or_default()
 }
 
+// TODO: move to reportcheck.rs probably
 #[derive(Debug)]
 struct ProbeReport {
+    /// Whether we can send IPv4 UDP packets.
     ipv4_can_send: bool,
+    /// Whether we can send IPv6 UDP packets.
     ipv6_can_send: bool,
+    /// Whether we can send ICMP packets.
     icmpv4: bool,
+    /// The latency to the derp node.
     delay: Option<Duration>,
+    /// The probe that generated this report.
     probe: Probe,
+    /// The discovered public address.
     addr: Option<SocketAddr>,
 }
 impl ProbeReport {
@@ -1196,11 +824,20 @@ struct Actor {
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    /// The response channel if there is a check running.
+    // /// The response channel if there is a check running.
+    // ///
+    // /// There can only ever be one check running at a time.  If it is running the response
+    // /// channel is stored here.
+    // current_check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
+    /// The ReportState actor currently generating a report.
     ///
-    /// There can only ever be one check running at a time.  If it is running the response
-    /// channel is stored here.
-    current_check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
+    /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut
+    /// down if it was started.  The finished report is sent on the channel.
+    current_report_run: Option<(
+        reportstate::ReportState,
+        tokio_util::sync::DropGuard,
+        oneshot::Sender<Result<Arc<Report>>>,
+    )>,
 }
 
 impl Actor {
@@ -1218,7 +855,7 @@ impl Actor {
             skip_external_network: false,
             port_mapper,
             in_flight_stun_requests: Default::default(),
-            current_check_run: None,
+            current_report_run: None,
         })
     }
 
@@ -1233,10 +870,11 @@ impl Actor {
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
-    #[instrument(name = "actor", skip_all)]
+    #[instrument(name = "netcheck.actor", skip_all)]
     async fn run(&mut self) {
         debug!("netcheck actor starting");
         while let Some(msg) = self.receiver.recv().await {
+            trace!(?msg, "handling message");
             match msg {
                 ActorMessage::RunCheck {
                     derp_map,
@@ -1248,12 +886,10 @@ impl Actor {
                         .await;
                 }
                 ActorMessage::ReportReady { report, derp_map } => {
-                    self.handle_report_ready(*report, derp_map);
-                    self.in_flight_stun_requests.clear();
+                    self.handle_report_ready(report, derp_map);
                 }
                 ActorMessage::ReportAborted => {
-                    self.in_flight_stun_requests.clear();
-                    self.current_check_run.take();
+                    self.handle_report_aborted();
                 }
                 ActorMessage::StunPacket { payload, from_addr } => {
                     self.handle_stun_packet(&payload, from_addr);
@@ -1266,6 +902,10 @@ impl Actor {
     }
 
     /// Starts a check run as requested by the [`ActorMessage::RunCheck`] message.
+    ///
+    /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
+    /// itself.  This is not ideal since really you want to send STUN probes from the
+    /// sockets you will be using.
     async fn handle_run_check(
         &mut self,
         derp_map: DerpMap,
@@ -1273,38 +913,13 @@ impl Actor {
         stun_sock_v6: Option<Arc<UdpSocket>>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
-        if self.current_check_run.is_some() {
-            response_tx
-                .send(Err(anyhow!("A check is already running")))
-                .ok();
+        if self.current_report_run.is_some() {
+            warn!("ignoring RunCheck request; ReportState actor already running");
             return;
         }
-        match self
-            .start_report_run(derp_map, stun_sock_v4, stun_sock_v6)
-            .await
-        {
-            Ok(()) => {
-                self.current_check_run = Some(response_tx);
-            }
-            Err(err) => {
-                response_tx.send(Err(err)).ok();
-            }
-        }
-    }
 
-    /// Spawns a task running a [`ReportState`] run.
-    ///
-    /// When the run is completed the task sends the result back to this actor.
-    ///
-    /// The `stun_sock_v4` and `stun_sock_v6` arguments are used to send stun probes from if
-    /// they are bound sockets.  If not this will try and bind sockets for the probes
-    /// itself.
-    async fn start_report_run(
-        &mut self,
-        derp_map: DerpMap,
-        stun_sock_v4: Option<Arc<UdpSocket>>,
-        stun_sock_v6: Option<Arc<UdpSocket>>,
-    ) -> Result<()> {
+        let now = Instant::now();
+
         let cancel_token = CancellationToken::new();
         let stun_sock_v4 = match stun_sock_v4 {
             Some(sock) => Some(sock),
@@ -1328,82 +943,6 @@ impl Actor {
                 .await
             }
         };
-
-        let report_state = self
-            .create_report_state(&derp_map, stun_sock_v4, stun_sock_v6)
-            .await
-            .context("failed to create ReportState")?;
-        let port_mapper = self.port_mapper.clone();
-        let skip_external = self.skip_external_network;
-        let addr = self.addr();
-
-        tokio::spawn(async move {
-            let _guard = cancel_token.drop_guard();
-            match time::timeout(
-                OVERALL_PROBE_TIMEOUT,
-                report_state.run(addr.clone(), derp_map, port_mapper, skip_external),
-            )
-            .await
-            {
-                Ok(Ok((report, derp_map))) => {
-                    addr.send(ActorMessage::ReportReady {
-                        report: Box::new(report),
-                        derp_map,
-                    })
-                    .await
-                    .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
-                }
-                Err(err) => {
-                    warn!("generate report timed out: {:?}", err);
-                    inc!(NetcheckMetrics::ReportsError);
-                    addr.send(ActorMessage::ReportAborted)
-                        .await
-                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
-                }
-                Ok(Err(err)) => {
-                    warn!("failed to generate report: {:?}", err);
-                    inc!(NetcheckMetrics::ReportsError);
-                    addr.send(ActorMessage::ReportAborted)
-                        .await
-                        .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
-                }
-            }
-        });
-        Ok(())
-    }
-
-    /// Creates the initial [`ReportState`].
-    ///
-    /// A bit messy as it uses a bunch of state from the [`Actor`].
-    ///
-    /// The *pc4* and *pc6* are the sockets to send STUN packets from.  If they are `None`
-    /// **STUN is disabled**.
-    async fn create_report_state(
-        &mut self,
-        dm: &DerpMap,
-        pc4: Option<Arc<UdpSocket>>,
-        pc6: Option<Arc<UdpSocket>>,
-    ) -> Result<ReportState> {
-        let now = Instant::now();
-
-        // Setup hairpin detection infrastructure, it sends a probe our own discovered IPv4
-        // address.
-        let pc4_hair = UdpSocket::bind("0.0.0.0:0")
-            .await
-            .context("udp4: failed to bind")?;
-        let hair_id = stun::TransactionId::default();
-        trace!(txn=%hair_id, "Hairpin transaction ID");
-        let (hair_tx, hair_rx) = oneshot::channel();
-        let inflight = Inflight {
-            txn: hair_id,
-            start: Instant::now(), // ignored by hairpin probe
-            s: hair_tx,
-        };
-        let (msg_response_tx, msg_response_rx) = oneshot::channel();
-        self.handle_in_flight_stun(inflight, msg_response_tx);
-        msg_response_rx.await?;
-
-        let if_state = interfaces::State::new().await;
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
@@ -1423,35 +962,39 @@ impl Actor {
         }
         inc!(NetcheckMetrics::Reports);
 
+        // TODO: not sure we're allowed to await in this function...  We can make the
+        // probeplan inside the ReportState actor though.
+        let if_state = interfaces::State::new().await;
         let last = self.reports.last.clone();
-        let plan = ProbePlan::new(dm, &if_state, last.as_deref());
+        let plan = ProbePlan::new(&derp_map, &if_state, last.as_deref());
 
-        Ok(ReportState {
-            incremental: last.is_some(),
-            pc4,
-            pc6,
-            pc4_hair: Arc::new(pc4_hair),
-            hair_timeout: None,
-            stop_probe: Arc::new(sync::Notify::new()),
-            wait_port_map: wg::AsyncWaitGroup::new(),
-            report: Default::default(),
-            got_ep4: None,
-            timers: Default::default(),
-            hair_txn_id: hair_id,
-            got_hair_stun: hair_rx,
+        let actor = reportstate::ReportState::new(
+            self.addr(),
+            last.clone(),
             plan,
-            last,
-        })
+            self.port_mapper.clone(),
+            self.skip_external_network,
+            last.is_some(), // TODO: doesn't need to be passed
+            derp_map,
+            stun_sock_v4,
+            stun_sock_v6,
+        );
+
+        self.current_report_run = Some((actor, cancel_token.drop_guard(), response_tx));
     }
 
-    /// Handles the [`ActorMessage::ReportReady`] message.
-    ///
-    /// Finishes the report, sends it to the response channel.
-    fn handle_report_ready(&mut self, report: Report, derp_map: DerpMap) {
-        let report = self.finish_and_store_report(report, &derp_map);
-        if let Some(response_tx) = self.current_check_run.take() {
-            // If no one want the report anymore just drop it.
-            response_tx.send(Ok(report)).ok();
+    fn handle_report_ready(&mut self, report: Box<Report>, derp_map: DerpMap) {
+        let report = self.finish_and_store_report(*report, &derp_map);
+        self.in_flight_stun_requests.clear();
+        if let Some((_actor, _guard, report_tx)) = self.current_report_run.take() {
+            report_tx.send(Ok(report)).ok();
+        }
+    }
+
+    fn handle_report_aborted(&mut self) {
+        self.in_flight_stun_requests.clear();
+        if let Some((_actor, _guard, report_tx)) = self.current_report_run.take() {
+            report_tx.send(Err(anyhow!("report aborted"))).ok();
         }
     }
 
@@ -1753,17 +1296,25 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::Ipv4Addr;
+
     use bytes::BytesMut;
+    use tokio::time;
+
+    use crate::test_utils::setup_logging;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
+        let _guard = setup_logging();
         let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
         let mut client = Client::new(None).await?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
+        // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             println!("--round {}", i);
             let r = client.get_report(dm.clone(), None, None).await?;
@@ -1800,6 +1351,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
+        let _guard = setup_logging();
+
         let mut client = Client::new(None)
             .await
             .context("failed to create netcheck client")?;
@@ -2154,4 +1707,6 @@ mod tests {
         task.abort();
         Ok(())
     }
+
+    // TODO: test captive task
 }

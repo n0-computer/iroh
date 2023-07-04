@@ -1,9 +1,10 @@
-use std::{collections::HashMap, ops::Deref, time::Duration};
+use std::collections::HashMap;
+use std::fmt;
+use std::ops::Deref;
+use std::time::Duration;
 
-use crate::{
-    hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
-    net::interfaces,
-};
+use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::net::interfaces;
 
 use super::Report;
 
@@ -57,11 +58,25 @@ pub enum Probe {
     },
 }
 
+impl fmt::Display for Probe {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Probe::Ipv4 { delay, node } => write!(f, "Ipv4 after {delay:?} to {node}"),
+            Probe::Ipv6 { delay, node } => write!(f, "Ipv6 after {delay:?} to {node}"),
+            Probe::Https {
+                delay,
+                node,
+                region,
+            } => write!(f, "Https after {delay:?} to {node} {}", region.region_code),
+        }
+    }
+}
+
 impl Probe {
-    pub fn delay(&self) -> &Duration {
+    pub fn delay(&self) -> Duration {
         match self {
             Probe::Ipv4 { delay, .. } | Probe::Ipv6 { delay, .. } | Probe::Https { delay, .. } => {
-                delay
+                *delay
             }
         }
     }
@@ -112,6 +127,20 @@ impl Probe {
 /// work to use a probe plan.
 #[derive(Debug, Default, Clone)]
 pub struct ProbePlan(HashMap<String, Vec<Probe>>);
+
+impl fmt::Display for ProbePlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ProbePlan {{")?;
+        for (name, probe_set) in self.0.iter() {
+            writeln!(f, r#"    ProbeSet("{name}") {{"#)?;
+            for probe in probe_set {
+                writeln!(f, "        {probe},")?;
+            }
+            writeln!(f, "    }}")?;
+        }
+        writeln!(f, "}}")
+    }
+}
 
 impl ProbePlan {
     pub fn has_https_probes(&self) -> bool {

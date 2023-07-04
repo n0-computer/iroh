@@ -64,7 +64,7 @@ impl Client {
     /// sending a new STUN request to our own public address, if we receive this request
     /// back then hairpinning works, otherwise it does not.
     ///
-    /// Will do nothing if this actor is already finished.
+    /// Will do nothing if this actor is already finished or a check has already started.
     pub(super) fn start_check(&self, dst: SocketAddr) {
         self.addr.try_send(Message::StartCheck(dst)).ok();
     }
@@ -118,7 +118,7 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "hairpin_actor", skip_all)]
+    #[instrument(name = "hairpin.actor", skip_all)]
     async fn run(&mut self) {
         match self.run_inner().await {
             Ok(_) => debug!("hairpin actor finished successfully"),
@@ -141,7 +141,7 @@ impl Actor {
         };
 
         let txn = stun::TransactionId::default();
-        trace!(%txn, "Hairpin transaction ID");
+        trace!(%txn, "Sending hairpin with transaction ID");
         let (stun_tx, stun_rx) = oneshot::channel();
         let inflight = Inflight {
             txn,
