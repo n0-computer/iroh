@@ -72,9 +72,6 @@ impl FromStr for RequestToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "random" {
-            return Ok(Self::generate());
-        }
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
         RequestToken::new(bytes)
     }

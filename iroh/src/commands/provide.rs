@@ -25,6 +25,15 @@ use super::{
     MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
 };
 
+// impl Into<RequestToken> for RequestTokenOptions {
+//     fn into(self) -> RequestToken {
+//         match self {
+//             RequestTokenOptions::Random => RequestToken::generate(),
+//             RequestTokenOptions::Token(token) => token,
+//         }
+//     }
+// }
+
 #[derive(Debug)]
 pub struct ProvideOptions {
     pub addr: SocketAddr,

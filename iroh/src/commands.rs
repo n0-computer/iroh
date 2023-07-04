@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{net::SocketAddr, path::PathBuf};
@@ -106,6 +107,11 @@ impl Cli {
                 rpc_port,
                 request_token,
             } => {
+                let request_token = match request_token {
+                    Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
+                    Some(RequestTokenOptions::Token(token)) => Some(token),
+                    None => None,
+                };
                 self::provide::run(
                     rt,
                     path,
@@ -173,7 +179,7 @@ pub enum Commands {
         ///
         /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
         #[clap(long)]
-        request_token: Option<RequestToken>,
+        request_token: Option<RequestTokenOptions>,
     },
     /// List availble content on the provider.
     #[clap(subcommand)]
@@ -302,4 +308,22 @@ pub fn init_metrics_collection(
     }
     tracing::info!("Metrics server not started, no address provided");
     None
+}
+
+#[derive(Debug, Clone)]
+pub enum RequestTokenOptions {
+    Random,
+    Token(RequestToken),
+}
+
+impl FromStr for RequestTokenOptions {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.to_lowercase().trim() == "random" {
+            return Ok(Self::Random);
+        }
+        let token = RequestToken::from_str(s)?;
+        Ok(Self::Token(token))
+    }
 }

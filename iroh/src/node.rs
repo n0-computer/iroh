@@ -775,12 +775,21 @@ impl StaticTokenAuthHandler {
 impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
     fn authorize(
         &self,
-        db: D,
+        _db: D,
         token: Option<RequestToken>,
-        request: &Request,
+        _request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         match &self.token {
-            None => ().authorize(db, token, request),
+            None => async move {
+                if let Some(token) = token {
+                    anyhow::bail!(
+                        "no authorization handler defined, but token was provided: {:?}",
+                        token
+                    );
+                }
+                Ok(())
+            }
+            .boxed(),
             Some(expect) => {
                 let expect = expect.clone();
                 async move {
