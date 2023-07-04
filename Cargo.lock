@@ -792,7 +792,7 @@ dependencies = [
  "libc",
  "memalloc",
  "netlink-packet-core",
- "netlink-packet-route 0.15.0",
+ "netlink-packet-route",
  "netlink-sys",
  "once_cell",
  "system-configuration",
@@ -1766,7 +1766,7 @@ dependencies = [
  "igd",
  "iroh-metrics",
  "libc",
- "netlink-packet-route 0.16.0",
+ "netlink-packet-route",
  "ntest",
  "once_cell",
  "os_info",
@@ -2030,20 +2030,6 @@ name = "netlink-packet-route"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea993e32c77d87f01236c38f572ecb6c311d592e56a06262a007fd2a6e31253c"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "byteorder",
- "libc",
- "netlink-packet-core",
- "netlink-packet-utils",
-]
-
-[[package]]
-name = "netlink-packet-route"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1218a21ee099ea3bb36e49365c329069bd05c9c604a08e0ae4d9114dcb72ea8f"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
@@ -3110,7 +3096,7 @@ dependencies = [
  "futures",
  "log",
  "netlink-packet-core",
- "netlink-packet-route 0.15.0",
+ "netlink-packet-route",
  "netlink-packet-utils",
  "netlink-proto",
  "netlink-sys",
