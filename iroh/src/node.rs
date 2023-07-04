@@ -17,16 +17,17 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, Stream, TryFutureExt};
-use iroh_bytes::provider::database::BaoCollection;
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::blobs::Collection;
+use iroh_bytes::provider::database::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
-    blobs::Collection,
     protocol::Closed,
     provider::{CustomGetHandler, Database, ProvideProgress, Ticket, ValidateProgress},
     runtime,
     util::{Hash, Progress},
 };
+use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
@@ -68,7 +69,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct Builder<D = Database, E = DummyServerEndpoint, C = (), A = ()>
 where
-    D: BaoCollection,
+    D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
     A: RequestAuthorizationHandler<D>,
@@ -86,7 +87,7 @@ where
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
 
-impl<D: BaoCollection> Builder<D> {
+impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
     pub fn with_db(db: D) -> Self {
         Self {
@@ -105,7 +106,7 @@ impl<D: BaoCollection> Builder<D> {
 
 impl<E, C, A, D> Builder<D, E, C, A>
 where
-    D: BaoCollection,
+    D: BaoReadonlyDb,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
     A: RequestAuthorizationHandler<D>,
@@ -424,7 +425,7 @@ impl iroh_bytes::provider::EventSender for MappedSender {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoCollection> {
+pub struct Node<D: BaoMap> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -446,7 +447,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoCollection> Node<D> {
+impl<D: BaoReadonlyDb> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
@@ -517,7 +518,7 @@ impl<D: BaoCollection> Node<D> {
     }
 }
 
-impl<D: BaoCollection> NodeInner<D> {
+impl<D: BaoMap> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.conn.local_endpoints().await
     }
@@ -538,7 +539,7 @@ impl<D: BaoCollection> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoCollection> Future for Node<D> {
+impl<D: BaoMap> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -551,7 +552,7 @@ struct RpcHandler<D> {
     inner: Arc<NodeInner<D>>,
 }
 
-impl<D: BaoCollection> RpcHandler<D> {
+impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -565,38 +566,48 @@ impl<D: BaoCollection> RpcHandler<D> {
         self,
         _msg: ListBlobsRequest,
     ) -> impl Stream<Item = ListBlobsResponse> + Send + 'static {
-        let items = if let Some(db) = self.concrete_db() {
-            db.external()
-                .map(|(hash, path, size)| ListBlobsResponse { hash, path, size })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        futures::stream::iter(items)
+        use bao_tree::io::fsm::Outboard;
+
+        let db = self.inner.db.clone();
+        futures::stream::iter(db.blobs()).filter_map(move |hash| {
+            let db = db.clone();
+            async move {
+                let entry = db.get(&hash)?;
+                let hash = entry.hash().into();
+                let size = entry.outboard().await.ok()?.tree().size().0;
+                let path = "".to_owned();
+                Some(ListBlobsResponse { hash, size, path })
+            }
+        })
     }
 
     fn list_collections(
         self,
         _msg: ListCollectionsRequest,
     ) -> impl Stream<Item = ListCollectionsResponse> + Send + 'static {
-        // collections are always stored internally, so we take everything that is stored internally
-        // and try to parse it as a collection
-        let items = if let Some(db) = self.concrete_db() {
-            db.internal()
-                .filter_map(|(hash, collection)| {
-                    Collection::from_bytes(&collection).ok().map(|collection| {
-                        ListCollectionsResponse {
-                            hash,
-                            total_blobs_count: collection.blobs().len(),
-                            total_blobs_size: collection.total_blobs_size(),
-                        }
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.local_pool().clone();
+        let roots = db.roots();
+        futures::stream::iter(roots).filter_map(move |hash| {
+            let db = db.clone();
+            let local = local.clone();
+            async move {
+                let entry = db.get(&hash)?;
+                let data = local
+                    .spawn_pinned(|| async move {
+                        let mut reader = entry.data_reader().await.ok()?;
+                        reader.read_to_end().await.ok()
                     })
+                    .await
+                    .ok()??;
+                let collection = Collection::from_bytes(&data).ok()?;
+                Some(ListCollectionsResponse {
+                    hash,
+                    total_blobs_count: collection.blobs().len(),
+                    total_blobs_size: collection.total_blobs_size(),
                 })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        futures::stream::iter(items)
+            }
+        })
     }
 
     /// Invoke validate on the database and stream out the result
@@ -606,13 +617,12 @@ impl<D: BaoCollection> RpcHandler<D> {
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        if let Some(db) = self.concrete_db() {
-            self.rt().main().spawn(async move {
-                if let Err(e) = db.validate(tx).await {
-                    tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
-                }
-            });
-        }
+        let db = self.inner.db.clone();
+        self.rt().main().spawn(async move {
+            if let Err(e) = db.validate(tx).await {
+                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            }
+        });
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
@@ -705,7 +715,7 @@ impl<D: BaoCollection> RpcHandler<D> {
     }
 }
 
-fn handle_rpc_request<D: BaoCollection, C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<D: BaoReadonlyDb, C: ServiceEndpoint<ProviderService>>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, C>,
     handler: &RpcHandler<D>,

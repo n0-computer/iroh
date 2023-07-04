@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use bao_tree::{io::fsm::Outboard, outboard::PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::{
-    future::{BoxFuture, Either},
+    future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
@@ -88,7 +88,7 @@ pub struct InMemDatabaseEntry {
     data: Bytes,
 }
 
-impl BaoCollectionEntry<InMemDatabase> for InMemDatabaseEntry {
+impl BaoMapEntry<InMemDatabase> for InMemDatabaseEntry {
     fn hash(&self) -> blake3::Hash {
         self.outboard.root()
     }
@@ -102,7 +102,7 @@ impl BaoCollectionEntry<InMemDatabase> for InMemDatabaseEntry {
     }
 }
 
-impl BaoCollection for InMemDatabase {
+impl BaoMap for InMemDatabase {
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Bytes;
     type Entry = InMemDatabaseEntry;
@@ -116,13 +116,30 @@ impl BaoCollection for InMemDatabase {
     }
 }
 
+impl BaoReadonlyDb for InMemDatabase {
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
+    }
+
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
+
+    fn validate(
+        &self,
+        _tx: mpsc::Sender<ValidateProgress>,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        future::ok(()).boxed()
+    }
+}
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait BaoCollectionEntry<D: BaoCollection>: Clone + Send + Sync + 'static {
+pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
     fn hash(&self) -> blake3::Hash;
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
@@ -134,7 +151,7 @@ pub struct DbPair {
     entry: DbEntry,
 }
 
-impl BaoCollectionEntry<Database> for DbPair {
+impl BaoMapEntry<Database> for DbPair {
     fn hash(&self) -> blake3::Hash {
         self.hash
     }
@@ -155,7 +172,7 @@ impl BaoCollectionEntry<Database> for DbPair {
 }
 
 /// A generic collection of blobs with precomputed outboards
-pub trait BaoCollection: Clone + Send + Sync + 'static {
+pub trait BaoMap: Clone + Send + Sync + 'static {
     /// The outboard type. This can be an in memory outboard or an outboard that
     /// retrieves the data asynchronously from a remote database.
     type Outboard: bao_tree::io::fsm::Outboard;
@@ -163,7 +180,7 @@ pub trait BaoCollection: Clone + Send + Sync + 'static {
     type DataReader: AsyncSliceReader;
     /// The entry type. An entry is a cheaply cloneable handle that can be used
     /// to open readers for both the data and the outboard
-    type Entry: BaoCollectionEntry<Self>;
+    type Entry: BaoMapEntry<Self>;
     /// Get an entry for a hash.
     ///
     /// This can also be used for a membership test by just checking if there
@@ -172,7 +189,42 @@ pub trait BaoCollection: Clone + Send + Sync + 'static {
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
-impl BaoCollection for Database {
+pub trait BaoReadonlyDb: BaoMap {
+    /// list all blobs in the database. This should include collections, since
+    /// collections are blobs and can be requested as blobs.
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// list all roots (collections or other explicitly added things) in the database
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// Validate the database
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+}
+
+impl BaoReadonlyDb for Database {
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let inner = self.0.read().unwrap();
+        let items = inner
+            .iter()
+            .map(|(hash, _)| Hash::from(*hash))
+            .collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let inner = self.0.read().unwrap();
+        let items = inner
+            .iter()
+            .filter(|(_, entry)| !entry.is_external())
+            .map(|(hash, _)| Hash::from(*hash))
+            .collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
+        self.validate0(tx).boxed()
+    }
+}
+
+impl BaoMap for Database {
     type Entry = DbPair;
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Either<Bytes, FileAdapter>;
@@ -452,7 +504,7 @@ impl Database {
     /// Validate the entire database, including collections.
     ///
     /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
-    pub async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
+    async fn validate0(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
         // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
         let mut data = self
             .0

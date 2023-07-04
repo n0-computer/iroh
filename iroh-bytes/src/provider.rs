@@ -21,7 +21,7 @@ use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec, Request, RequestToken,
     VERSION,
 };
-use crate::provider::database::BaoCollectionEntry;
+use crate::provider::database::BaoMapEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 
 pub mod collection;
@@ -32,7 +32,7 @@ pub use database::Database;
 pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
-use self::database::BaoCollection;
+use self::database::BaoMap;
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -364,7 +364,7 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: BaoCollection, E: EventSender>(
+pub async fn transfer_collection<D: BaoMap, E: EventSender>(
     request: GetRequest,
     // Database from which to fetch blobs.
     db: &D,
@@ -443,7 +443,7 @@ pub trait EventSender: Clone + Send + 'static {
 }
 
 pub async fn handle_connection<
-    D: BaoCollection,
+    D: BaoMap,
     C: CustomGetHandler<D>,
     E: EventSender,
     A: RequestAuthorizationHandler<D>,
@@ -502,7 +502,7 @@ pub async fn handle_connection<
     .await
 }
 
-async fn handle_stream<D: BaoCollection, E: EventSender>(
+async fn handle_stream<D: BaoMap, E: EventSender>(
     db: D,
     mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
@@ -539,7 +539,7 @@ async fn handle_stream<D: BaoCollection, E: EventSender>(
         }
     }
 }
-async fn handle_custom_get<E: EventSender, D: BaoCollection>(
+async fn handle_custom_get<E: EventSender, D: BaoMap>(
     db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
@@ -562,7 +562,7 @@ async fn handle_custom_get<E: EventSender, D: BaoCollection>(
     handle_get(db, request, writer).await
 }
 
-pub async fn handle_get<D: BaoCollection, E: EventSender>(
+pub async fn handle_get<D: BaoMap, E: EventSender>(
     db: D,
     request: GetRequest,
     mut writer: ResponseWriter<E>,
@@ -652,7 +652,7 @@ pub enum SentStatus {
     NotFound,
 }
 
-pub async fn send_blob<D: BaoCollection, W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
     db: &D,
     name: Hash,
     ranges: &RangeSpec,
