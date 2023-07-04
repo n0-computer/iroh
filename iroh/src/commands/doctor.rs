@@ -13,6 +13,7 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh_bytes::tokio_util::ProgressWriter;
 use iroh_net::{
+    defaults::DEFAULT_DERP_STUN_PORT,
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
@@ -62,7 +63,7 @@ pub enum Commands {
         /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
         #[clap(long)]
         stun_host: Option<String>,
-        #[clap(long, default_value_t = 3478)]
+        #[clap(long, default_value_t = DEFAULT_DERP_STUN_PORT)]
         stun_port: u16,
     },
     Accept {
@@ -444,7 +445,7 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
 }
 
 fn configure_local_derp_map() -> DerpMap {
-    let stun_port = 3478;
+    let stun_port = DEFAULT_DERP_STUN_PORT;
     let host_name = "http://derp.invalid".parse().unwrap();
     let derp_port = 3340;
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
