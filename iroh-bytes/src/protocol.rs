@@ -55,6 +55,13 @@ impl RequestToken {
         Ok(Self { bytes })
     }
 
+    /// Generate a random 32 byte request token.
+    pub fn generate() -> Self {
+        Self {
+            bytes: rand::random::<[u8; 32]>().to_vec().into(),
+        }
+    }
+
     /// Returns a reference the token bytes.
     pub fn as_bytes(&self) -> &Bytes {
         &self.bytes
@@ -65,6 +72,9 @@ impl FromStr for RequestToken {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "random" {
+            return Ok(Self::generate());
+        }
         let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
         RequestToken::new(bytes)
     }

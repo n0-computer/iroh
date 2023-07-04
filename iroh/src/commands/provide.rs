@@ -6,15 +6,18 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use iroh_bytes::{
-    provider::{Database, FNAME_PATHS},
+    protocol::{Request, RequestToken},
+    provider::{Database, RequestAuthorizationHandler, FNAME_PATHS},
     runtime,
 };
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
 use crate::{
-    config::{iroh_data_root, Config},
+    config::iroh_data_root,
     node::Node,
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -24,14 +27,16 @@ use super::{
     MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
 };
 
-pub async fn run(
-    config: &Config,
-    rt: &runtime::Handle,
-    path: Option<PathBuf>,
-    addr: SocketAddr,
-    rpc_port: ProviderRpcPort,
-    keylog: bool,
-) -> Result<()> {
+#[derive(Debug)]
+pub struct ProvideOptions {
+    pub addr: SocketAddr,
+    pub rpc_port: ProviderRpcPort,
+    pub keylog: bool,
+    pub request_token: Option<RequestToken>,
+    pub derp_map: Option<DerpMap>,
+}
+
+pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptions) -> Result<()> {
     if let Some(ref path) = path {
         ensure!(
             path.exists(),
@@ -57,18 +62,12 @@ pub async fn run(
         }
     };
     let key = Some(iroh_data_root.join("keypair"));
-
-    let provider = provide(
-        db.clone(),
-        addr,
-        key,
-        keylog,
-        rpc_port.into(),
-        config.derp_map(),
-        rt,
-    )
-    .await?;
+    let token = opts.request_token.clone();
+    let provider = provide(db.clone(), rt, key, opts).await?;
     let controller = provider.controller();
+    if let Some(t) = token.as_ref() {
+        println!("Request token: {}", t);
+    }
 
     // task that will add data to the provider, either from a file or from stdin
     let fut = {
@@ -93,7 +92,7 @@ pub async fn run(
             let stream = controller.server_streaming(ProvideRequest { path }).await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
-            let ticket = provider.ticket(hash).await?;
+            let ticket = provider.ticket(hash, token).await?;
             println!("All-in-one ticket: {ticket}");
             anyhow::Ok(tmp_path)
         })
@@ -123,22 +122,23 @@ pub async fn run(
 
 async fn provide(
     db: Database,
-    addr: SocketAddr,
-    key: Option<PathBuf>,
-    keylog: bool,
-    rpc_port: Option<u16>,
-    dm: Option<DerpMap>,
     rt: &runtime::Handle,
+    key: Option<PathBuf>,
+    opts: ProvideOptions,
 ) -> Result<Node<Database>> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = Node::builder(db).keylog(keylog);
-    if let Some(dm) = dm {
+    let mut builder = Node::builder(db)
+        .custom_auth_handler(TokenAuth {
+            token: opts.request_token,
+        })
+        .keylog(opts.keylog);
+    if let Some(dm) = opts.derp_map {
         builder = builder.derp_map(dm);
     }
-    let builder = builder.bind_addr(addr).runtime(rt);
+    let builder = builder.bind_addr(opts.addr).runtime(rt);
 
-    let provider = if let Some(rpc_port) = rpc_port {
+    let provider = if let Some(rpc_port) = opts.rpc_port.into() {
         let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
         builder
             .rpc_endpoint(rpc_endpoint)
@@ -235,6 +235,41 @@ impl FromStr for ProviderRpcPort {
             Ok(ProviderRpcPort::Disabled)
         } else {
             Ok(ProviderRpcPort::Enabled(s.parse()?))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TokenAuth {
+    token: Option<RequestToken>,
+}
+
+impl<D> RequestAuthorizationHandler<D> for TokenAuth {
+    fn authorize(
+        &self,
+        db: D,
+        token: Option<RequestToken>,
+        request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        match &self.token {
+            None => return ().authorize(db, token, request),
+            Some(expect) => {
+                let expect = expect.clone();
+                async move {
+                    match token {
+                        // Some(ref token) if token == &self.token => Ok(()),
+                        Some(token) => {
+                            if token == expect {
+                                Ok(())
+                            } else {
+                                anyhow::bail!("invalid token")
+                            }
+                        }
+                        None => anyhow::bail!("no token provided"),
+                    }
+                }
+                .boxed()
+            }
         }
     }
 }

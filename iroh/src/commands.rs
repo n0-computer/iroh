@@ -12,7 +12,7 @@ use quic_rpc::RpcClient;
 
 use crate::{config::Config, rpc_protocol::*};
 
-use self::provide::ProviderRpcPort;
+use self::provide::{ProvideOptions, ProviderRpcPort};
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -104,7 +104,21 @@ impl Cli {
                 path,
                 addr,
                 rpc_port,
-            } => self::provide::run(config, rt, path, addr, rpc_port, self.keylog).await,
+                request_token,
+            } => {
+                self::provide::run(
+                    rt,
+                    path,
+                    ProvideOptions {
+                        addr,
+                        rpc_port,
+                        keylog: self.keylog,
+                        request_token,
+                        derp_map: config.derp_map(),
+                    },
+                )
+                .await
+            }
             Commands::List(cmd) => cmd.run().await,
             Commands::Validate { rpc_port } => self::validate::run(rpc_port).await,
             Commands::Shutdown { force, rpc_port } => {
@@ -155,6 +169,11 @@ pub enum Commands {
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
         rpc_port: ProviderRpcPort,
+        /// Use a token to authenticate requests for data
+        ///
+        /// Pass "random" to generate a random token, or base32-encoded bytes to use as a token
+        #[clap(long)]
+        request_token: Option<RequestToken>,
     },
     /// List availble content on the provider.
     #[clap(subcommand)]
