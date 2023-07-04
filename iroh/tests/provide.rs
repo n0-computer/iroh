@@ -8,7 +8,10 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
-use iroh::node::{Event, Node};
+use iroh::{
+    commands::provide,
+    node::{Event, Node},
+};
 use iroh_net::MagicEndpoint;
 use rand::RngCore;
 use testdir::testdir;
@@ -502,14 +505,35 @@ async fn test_run_ticket() {
     let rt = test_runtime();
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let token = Some(RequestToken::generate());
     let node = Node::builder(db)
         .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+        .custom_auth_handler(provide::TokenAuth::new(token.clone()))
         .runtime(&rt)
         .spawn()
         .await
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
-    let ticket = node.ticket(hash, None).await.unwrap();
+
+    let no_token_ticket = node.ticket(hash, None).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let response = get::run_ticket(
+            &no_token_ticket,
+            GetRequest::all(no_token_ticket.hash()).into(),
+            true,
+            None,
+        )
+        .await?;
+
+        let response = aggregate_get_response(response).await;
+        assert!(response.is_err());
+        anyhow::Result::<_>::Ok(())
+    })
+    .await
+    .expect("timeout")
+    .expect("getting without token failed in an unexpected way");
+
+    let ticket = node.ticket(hash, token).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let response =
             get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, None).await?;

@@ -240,8 +240,14 @@ impl FromStr for ProviderRpcPort {
 }
 
 #[derive(Debug, Clone)]
-struct TokenAuth {
+pub struct TokenAuth {
     token: Option<RequestToken>,
+}
+
+impl TokenAuth {
+    pub fn new(token: Option<RequestToken>) -> Self {
+        Self { token }
+    }
 }
 
 impl<D> RequestAuthorizationHandler<D> for TokenAuth {
@@ -251,8 +257,9 @@ impl<D> RequestAuthorizationHandler<D> for TokenAuth {
         token: Option<RequestToken>,
         request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
+        println!("comparing {:?} to {:?}", token, self.token);
         match &self.token {
-            None => return ().authorize(db, token, request),
+            None => ().authorize(db, token, request),
             Some(expect) => {
                 let expect = expect.clone();
                 async move {
