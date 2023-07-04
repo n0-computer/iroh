@@ -11,13 +11,16 @@ use futures::{
     future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter, AsyncSliceWriter};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, AsyncSliceWriter, FileAdapter};
+use rand::Rng;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    fmt::{self, Debug}, io,
+    fmt::{self, Debug},
+    fs::OpenOptions,
+    io,
     path::{Path, PathBuf},
     result,
-    sync::{Arc, RwLock}, fs::OpenOptions,
+    sync::{Arc, RwLock},
 };
 use tokio::sync::mpsc;
 
@@ -140,7 +143,12 @@ impl BaoDb for InMemDatabase {
         todo!()
     }
 
-    fn insert(&self, hash: Hash, data: VfsId<Self>, outboard: Option<VfsId<Self>>) -> BoxFuture<'_, io::Result<()>> {
+    fn insert(
+        &self,
+        _hash: Hash,
+        _data: VfsId<Self>,
+        _outboard: Option<VfsId<Self>>,
+    ) -> BoxFuture<'_, io::Result<()>> {
         todo!()
     }
 }
@@ -212,8 +220,8 @@ pub trait BaoReadonlyDb: BaoMap {
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
 }
 
-pub trait Vfs: Debug + Send + Sync + 'static {
-    type Id: Send + Sync + 'static;
+pub trait Vfs: Clone + Debug + Send + Sync + 'static {
+    type Id: Debug + Clone + Send + Sync + 'static;
     type ReadRaw: AsyncSliceReader;
     type WriteRaw: AsyncSliceWriter;
     /// create a handle for internal data
@@ -239,6 +247,16 @@ pub enum Purpose {
     Meta,
 }
 
+impl Purpose {
+    fn extension(&self) -> &str {
+        match self {
+            Purpose::Data => "data",
+            Purpose::Outboard => "outboard",
+            Purpose::Meta => "meta",
+        }
+    }
+}
+
 type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
 
 pub trait BaoDb: BaoReadonlyDb {
@@ -247,7 +265,12 @@ pub trait BaoDb: BaoReadonlyDb {
     /// The Vfs of this database
     fn vfs(&self) -> &Self::Vfs;
     /// Insert a new blob into the database
-    fn insert(&self, hash: Hash, data: VfsId<Self>, outboard: Option<VfsId<Self>>) -> BoxFuture<'_, io::Result<()>>;
+    fn insert(
+        &self,
+        hash: Hash,
+        data: VfsId<Self>,
+        outboard: Option<VfsId<Self>>,
+    ) -> BoxFuture<'_, io::Result<()>>;
 }
 
 impl BaoReadonlyDb for Database {
@@ -285,7 +308,7 @@ impl BaoMap for Database {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalFs;
 
 impl Vfs for LocalFs {
@@ -294,25 +317,30 @@ impl Vfs for LocalFs {
     type WriteRaw = FileAdapter;
 
     fn create(&self, name_hint: &[u8], purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
-        todo!()
+        let dir = std::env::temp_dir();
+        let rand = rand::thread_rng().gen::<[u8; 16]>();
+        let name = hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + purpose.extension();
+        let filename = dir.join(name);
+        futures::future::ok(filename).boxed()
     }
 
     fn open_read(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
-        FileAdapter::create(move || {
-            std::fs::File::open(handle.as_path())
-        }).boxed()
+        FileAdapter::create(move || std::fs::File::open(handle.as_path())).boxed()
     }
 
     fn open_write(&self, handle: PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
         FileAdapter::create(move || {
-            OpenOptions::new().write(true).create(true).open(handle.as_path())
-        }).boxed()
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(handle.as_path())
+        })
+        .boxed()
     }
 
     fn delete(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<()>> {
-        todo!()
+        tokio::fs::remove_file(handle).boxed()
     }
-
 }
 
 impl BaoDb for Database {
@@ -322,17 +350,38 @@ impl BaoDb for Database {
         &LocalFs
     }
 
-    fn insert(&self, hash: Hash, data: PathBuf, outboard: Option<PathBuf>) -> BoxFuture<'_, io::Result<()>> {
-        async move {
+    fn insert(
+        &self,
+        hash: Hash,
+        data: PathBuf,
+        outboard: Option<PathBuf>,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let outboard = std::fs::read(outboard.unwrap())?.into();
+            let size = std::fs::metadata(data.as_path())?.len();
             let entry = DbEntry::External {
-                outboard: todo!(),
+                outboard,
                 path: data,
-                size: todo!(),
+                size,
             };
-            let mut inner = self.0.write().unwrap();
+            println!("{} {:?}", hash, entry);
+            let mut inner = db.0.write().unwrap();
             inner.insert(hash, entry);
             Ok(())
-        }.boxed()
+        })
+        .map(make_io_error)
+        .boxed()
+    }
+}
+
+fn make_io_error<T>(
+    r: std::result::Result<io::Result<T>, tokio::task::JoinError>,
+) -> io::Result<T> {
+    match r {
+        Ok(Ok(t)) => Ok(t),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
     }
 }
 

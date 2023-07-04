@@ -9,7 +9,6 @@
 use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -21,9 +20,9 @@ use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::Co;
 use iroh_bytes::blobs::Collection;
-use iroh_bytes::get::get_response_machine;
-use iroh_bytes::protocol::{AnyGetRequest, GetRequest};
-use iroh_bytes::provider::database::{BaoMap, BaoMapEntry, BaoReadonlyDb, BaoDb, Vfs, Purpose};
+use iroh_bytes::get::get_response_machine::{self, ConnectedNext, EndBlobNext};
+use iroh_bytes::protocol::GetRequest;
+use iroh_bytes::provider::database::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
 use iroh_bytes::provider::{RequestAuthorizationHandler, ShareProgress};
 use iroh_bytes::{
     protocol::Closed,
@@ -49,8 +48,8 @@ use tracing::{debug, trace, warn};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
-    VersionResponse, WatchRequest, WatchResponse, ShareRequest,
+    ProviderResponse, ProviderService, ShareRequest, ShutdownRequest, ValidateRequest,
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 
 const MAX_CONNECTIONS: u32 = 1024;
@@ -626,25 +625,54 @@ impl<D: BaoDb> RpcHandler<D> {
     }
 
     async fn share0(self, msg: ShareRequest, co: &Co<ShareProgress>) -> anyhow::Result<()> {
-        let vfs = self.inner.db.vfs();
         let local = self.inner.rt.local_pool().clone();
+        let db = self.inner.db.clone();
         if msg.single {
-            if self.inner.db.get(&msg.hash).is_some() {
+            if false && self.inner.db.get(&msg.hash).is_some() {
                 co.yield_(ShareProgress::AllDone).await;
             } else {
+                let vfs = db.vfs().clone();
                 let name_hint = msg.hash.as_bytes();
                 let data = vfs.create(name_hint, Purpose::Data).await?;
                 let outboard = vfs.create(name_hint, Purpose::Outboard).await?;
-                let conn = self.inner.endpoint.connect(msg.peer, &iroh_bytes::P2P_ALPN, &msg.addrs).await?;
-                local.spawn_pinned(move || async move {
-                    let mut of = vfs.open_write(outboard).await?;
-                    let mut df = vfs.open_write(data).await?;
-                    let request = get_response_machine::AtInitial::new(conn, iroh_bytes::protocol::Request::Get(GetRequest::all(msg.hash)));
-                    io::Result::Ok(())
-                }).await.unwrap();
+                let conn = self
+                    .inner
+                    .endpoint
+                    .connect(msg.peer, &iroh_bytes::P2P_ALPN, &msg.addrs)
+                    .await?;
+                let hash = msg.hash;
+                local
+                    .spawn_pinned(move || async move {
+                        let of = vfs.open_write(outboard.clone()).await?;
+                        let mut df = vfs.open_write(data.clone()).await?;
+                        let request = get_response_machine::AtInitial::new(
+                            conn,
+                            iroh_bytes::protocol::Request::Get(GetRequest::single(msg.hash)),
+                        );
+                        let next = request.next().await?;
+                        let ConnectedNext::StartRoot(start) = next.next().await? else {
+                        anyhow::bail!("expected StartRoot");
+                    };
+                        let end = start
+                            .next()
+                            .write_all_with_outboard(&mut Some(of), &mut df)
+                            .await?;
+                        let EndBlobNext::Closing(end) = end.next() else {
+                        anyhow::bail!("expected Closing");
+                    };
+                        let _stats = end.next().await?;
+                        db.insert(hash, data, Some(outboard)).await?;
+                        anyhow::Ok(())
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
             }
         } else {
-            co.yield_(ShareProgress::Abort(anyhow::anyhow!("not implemented").into())).await;
+            co.yield_(ShareProgress::Abort(
+                anyhow::anyhow!("not implemented").into(),
+            ))
+            .await;
         }
         Ok(())
     }
@@ -761,10 +789,7 @@ fn handle_rpc_request<D: BaoDb, C: ServiceEndpoint<ProviderService>>(
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
             }
-            Share(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::share)
-                    .await
-            }
+            Share(msg) => chan.server_streaming(msg, handler, RpcHandler::share).await,
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,

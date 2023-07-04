@@ -146,7 +146,6 @@ pub enum ProvideProgress {
     Abort(RpcError),
 }
 
-
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShareProgress {
@@ -155,7 +154,6 @@ pub enum ShareProgress {
     /// We got an error and need to abort
     Abort(RpcError),
 }
-
 
 /// hook into the request handling to process authorization by examining
 /// the request and any given token. Any error returned will abort the request,

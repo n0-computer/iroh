@@ -42,6 +42,7 @@ tracing = "0.1"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
+rand = "0.8"
 
 [dev-dependencies]
 http-body = "0.4.5"

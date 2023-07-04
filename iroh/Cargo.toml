@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-stream = "0.1"
 tracing = "0.1"
+rand = "0.8"
 
 # CLI
 clap = { version = "4", features = ["derive"], optional = true }

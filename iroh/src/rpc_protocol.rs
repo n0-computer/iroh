@@ -31,7 +31,7 @@ pub struct ShareRequest {
     pub hash: Hash,
     pub single: bool,
     pub peer: PeerId,
-    pub addrs: Vec<SocketAddr>, 
+    pub addrs: Vec<SocketAddr>,
 }
 
 impl Msg<ProviderService> for ShareRequest {

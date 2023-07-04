@@ -58,9 +58,23 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
-            Commands::Share { hash, single, rpc_port, peer, addrs, .. } => {
+            Commands::Share {
+                hash,
+                single,
+                rpc_port,
+                peer,
+                addrs,
+                ..
+            } => {
                 let client = make_rpc_client(rpc_port).await?;
-                let mut stream = client.server_streaming(ShareRequest { hash: hash.0, single, peer, addrs }).await?;
+                let mut stream = client
+                    .server_streaming(ShareRequest {
+                        hash: hash.0,
+                        single,
+                        peer,
+                        addrs,
+                    })
+                    .await?;
                 while let Some(item) = stream.next().await {
                     let item = item?;
                     println!("{:?}", item);
