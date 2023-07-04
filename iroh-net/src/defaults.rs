@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+//! Default values used in [`iroh-net`][`crate`]
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
+/// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
     DerpMap {
-        regions: HashMap::from_iter([(1, default_derp_region())].into_iter()),
+        regions: [(1, default_derp_region())].into(),
     }
 }
 
+/// Get the default [`DerpRegion`].
 pub fn default_derp_region() -> DerpRegion {
     // The default derper run by number0.
     let default_n0_derp = DerpNode {

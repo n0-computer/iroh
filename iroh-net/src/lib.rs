@@ -1,7 +1,7 @@
 // #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]
 
-#[allow(missing_docs, rustdoc::broken_intra_doc_links)]
+#[deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod defaults;
 #[allow(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod hp;
