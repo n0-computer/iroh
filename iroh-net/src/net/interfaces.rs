@@ -339,7 +339,9 @@ pub async fn default_route_interface() -> Option<String> {
 /// machine using it.
 #[derive(Debug, Clone)]
 pub struct HomeRouter {
+    /// Ip of the router.
     pub gateway: IpAddr,
+    /// Our local Ip if known.
     pub my_ip: Option<IpAddr>,
 }
 
