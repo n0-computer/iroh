@@ -153,6 +153,7 @@ fn make_server_config(
     Ok(server_config)
 }
 
+/// An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,

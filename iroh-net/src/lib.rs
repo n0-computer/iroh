@@ -5,7 +5,7 @@
 pub mod defaults;
 #[allow(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod hp;
-#[allow(missing_docs, rustdoc::broken_intra_doc_links)]
+#[deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod magic_endpoint;
 #[deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod net;
