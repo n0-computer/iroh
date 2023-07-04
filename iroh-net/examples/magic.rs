@@ -64,7 +64,13 @@ async fn main() -> anyhow::Result<()> {
                     ),
                 },
             };
-            DerpMap::default_from_node(url, DEFAULT_DERP_STUN_PORT, derp_port, UseIpv4::None, UseIpv6::None)
+            DerpMap::default_from_node(
+                url,
+                DEFAULT_DERP_STUN_PORT,
+                derp_port,
+                UseIpv4::None,
+                UseIpv6::None,
+            )
         }
     };
 
