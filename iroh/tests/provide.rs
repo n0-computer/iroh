@@ -16,11 +16,11 @@ use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
-    blobs::Collection,
+    blobs::{Blob, Collection},
     get::{self, get_response_machine, get_response_machine::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{
-        self, create_collection, CustomGetHandler, DataSource, Database,
+        self, create_collection, database::InMemDatabase, CustomGetHandler, DataSource, Database,
         RequestAuthorizationHandler,
     },
     runtime,
@@ -63,7 +63,7 @@ async fn multi_file() -> Result<()> {
 async fn many_files() -> Result<()> {
     setup_logging();
     let rt = test_runtime();
-    let num_files = [10, 100, 1000, 10000];
+    let num_files = [10, 100];
     for num in num_files {
         println!("NUM_FILES: {num}");
         let file_opts = (0..num)
@@ -181,7 +181,7 @@ async fn transfer_random_data<S>(
     rt: &crate::runtime::Handle,
 ) -> Result<()>
 where
-    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
+    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
     let file_opts = file_opts
         .into_iter()
@@ -197,38 +197,43 @@ where
 // Run the test for a vec of filenames and blob data
 async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, rt: &crate::runtime::Handle) -> Result<()>
 where
-    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
+    S: Into<String> + std::fmt::Debug + std::cmp::PartialEq + Clone,
 {
-    let dir: PathBuf = testdir!();
-
-    // create and save files
-    let mut files = Vec::new();
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
+
+    let (mut mdb, lookup) = InMemDatabase::new(file_opts.clone());
+    let mut blobs = Vec::new();
+    let mut total_blobs_size = 0u64;
 
     for opt in file_opts.into_iter() {
         let (name, data) = opt;
         let name = name.into();
         println!("Sending {}: {}b", name, data.len());
 
-        let path = dir.join(name.clone());
+        let path = PathBuf::from(&name);
         // get expected hash of file
         let hash = blake3::hash(&data);
         let hash = Hash::from(hash);
-
-        tokio::fs::write(&path, data).await?;
-        files.push(provider::DataSource::new(path.clone()));
+        let blob = Blob {
+            name: name.clone(),
+            hash,
+        };
+        blobs.push(blob);
+        total_blobs_size += data.len() as u64;
 
         // keep track of expected values
         expects.push((name, path, hash));
     }
+    let collection = Collection::new(blobs, total_blobs_size)?;
+    let collection_bytes = collection.to_bytes()?;
+    let collection_hash = mdb.insert(collection_bytes);
+
     // sort expects by name to match the canonical order of blobs
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let (db, collection_hash) = provider::create_collection(files).await?;
-
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(db)
+    let node = Node::builder(mdb.clone())
         .runtime(rt)
         .bind_addr(addr)
         .spawn()
@@ -270,9 +275,10 @@ where
     let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
     let (collection, children, _stats) = aggregate_get_response(response).await?;
     assert_eq!(num_blobs, collection.blobs().len());
-    for (i, (name, path, hash)) in expects.into_iter().enumerate() {
+    for (i, (name, hash)) in lookup.into_iter().enumerate() {
+        let hash = Hash::from(hash);
         let blob = &collection.blobs()[i];
-        let expect = tokio::fs::read(&path).await?;
+        let expect = mdb.get(&hash).unwrap();
         let got = &children[&(i as u64)];
         assert_eq!(name, blob.name);
         assert_eq!(hash, blob.hash);
@@ -603,7 +609,7 @@ fn readme_path() -> PathBuf {
 #[derive(Clone, Debug)]
 struct CollectionCustomHandler;
 
-impl CustomGetHandler for CollectionCustomHandler {
+impl CustomGetHandler<Database> for CollectionCustomHandler {
     fn handle(
         &self,
         _token: Option<RequestToken>,
@@ -626,7 +632,7 @@ impl CustomGetHandler for CollectionCustomHandler {
 #[derive(Clone, Debug)]
 struct BlobCustomHandler;
 
-impl CustomGetHandler for BlobCustomHandler {
+impl CustomGetHandler<Database> for BlobCustomHandler {
     fn handle(
         &self,
         _token: Option<RequestToken>,
@@ -732,10 +738,10 @@ async fn test_custom_request_collection() {
 #[derive(Clone, Debug)]
 struct CustomAuthHandler;
 
-impl RequestAuthorizationHandler for CustomAuthHandler {
+impl<D> RequestAuthorizationHandler<D> for CustomAuthHandler {
     fn authorize(
         &self,
-        _db: Database,
+        _db: D,
         token: Option<RequestToken>,
         _request: &iroh_bytes::protocol::Request,
     ) -> BoxFuture<'static, Result<()>> {

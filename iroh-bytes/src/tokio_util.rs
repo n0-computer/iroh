@@ -3,7 +3,7 @@ use std::{io, pin::Pin, task::Poll};
 
 use bytes::Bytes;
 use futures::{future::LocalBoxFuture, FutureExt};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter, Either, FileAdapter};
+use iroh_io::AsyncSliceWriter;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
@@ -68,18 +68,15 @@ impl<W> ConcatenateSliceWriter<W> {
 }
 
 impl<W: AsyncWrite + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWriter<W> {
-    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_at(&mut self, _offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_bytes_at(&mut self, _offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         async move { self.0.write_all(&data).await }.boxed_local()
     }
 
-    type WriteArrayAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_array_at<const N: usize>(
-        &mut self,
-        _offset: u64,
-        bytes: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_> {
-        async move { self.0.write_all(&bytes).await }.boxed_local()
+    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_at(&mut self, _offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+        let t: smallvec::SmallVec<[u8; 16]> = bytes.into();
+        async move { self.0.write_all(&t).await }.boxed_local()
     }
 
     type SyncFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
@@ -110,19 +107,15 @@ impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
 }
 
 impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
-    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+    type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         self.1.try_send((offset, Bytes::len(&data))).ok();
-        self.0.write_at(offset, data)
+        self.0.write_bytes_at(offset, data)
     }
 
-    type WriteArrayAtFuture<'a> = W::WriteArrayAtFuture<'a>;
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        bytes: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_> {
-        self.0.write_array_at(offset, bytes)
+    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
+    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+        self.0.write_at(offset, bytes)
     }
 
     type SyncFuture<'a> = W::SyncFuture<'a>;
@@ -241,15 +234,5 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
-pub(crate) async fn read_as_bytes(reader: &mut Either<Bytes, FileAdapter>) -> io::Result<Bytes> {
-    match reader {
-        Either::Left(cursor) => Ok(cursor.clone()),
-        Either::Right(file) => {
-            let len = file.len().await?;
-            file.read_at(0, len as usize).await
-        }
     }
 }

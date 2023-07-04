@@ -72,16 +72,16 @@ pub mod file_adapter {
         io::Result<u64>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::write_at]
+        /// The future returned by [FileAdapter::write_bytes_at]
         #[derive(Debug)]
-        WriteAtFuture,
+        WriteBytesAtFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::write_array_at]
+        /// The future returned by [FileAdapter::write_at]
         #[derive(Debug)]
-        WriteArrayAtFuture,
+        WriteAtFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
@@ -121,29 +121,25 @@ pub mod file_adapter {
     }
 
     impl AsyncSliceWriter for FileAdapter {
-        type WriteAtFuture<'a> = WriteAtFuture<'a>;
+        type WriteBytesAtFuture<'a> = WriteBytesAtFuture<'a>;
 
-        fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+        fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+            let fut = self
+                .0
+                .take()
+                .map(|t| (t.write_bytes_at(offset, data), &mut self.0))
+                .into();
+            WriteBytesAtFuture(fut)
+        }
+
+        type WriteAtFuture<'a> = WriteAtFuture<'a>;
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
             let fut = self
                 .0
                 .take()
                 .map(|t| (t.write_at(offset, data), &mut self.0))
                 .into();
             WriteAtFuture(fut)
-        }
-
-        type WriteArrayAtFuture<'a> = WriteArrayAtFuture<'a>;
-        fn write_array_at<const N: usize>(
-            &mut self,
-            offset: u64,
-            data: [u8; N],
-        ) -> Self::WriteArrayAtFuture<'_> {
-            let fut = self
-                .0
-                .take()
-                .map(|t| (t.write_array_at(offset, data), &mut self.0))
-                .into();
-            WriteArrayAtFuture(fut)
         }
 
         type SyncFuture<'a> = SyncFuture<'a>;
@@ -244,7 +240,7 @@ impl FileAdapterFsm {
 }
 
 impl FileAdapterFsm {
-    fn write_at(mut self, offset: u64, data: Bytes) -> JoinHandle<(Self, io::Result<()>)> {
+    fn write_bytes_at(mut self, offset: u64, data: Bytes) -> JoinHandle<(Self, io::Result<()>)> {
         fn inner<W: std::io::Write + std::io::Seek>(
             this: &mut W,
             offset: u64,
@@ -260,22 +256,19 @@ impl FileAdapterFsm {
         })
     }
 
-    fn write_array_at<const N: usize>(
-        mut self,
-        offset: u64,
-        bytes: [u8; N],
-    ) -> JoinHandle<(Self, io::Result<()>)> {
+    fn write_at(mut self, offset: u64, bytes: &[u8]) -> JoinHandle<(Self, io::Result<()>)> {
         fn inner<W: std::io::Write + std::io::Seek>(
             this: &mut W,
             offset: u64,
-            buf: &[u8],
+            buf: smallvec::SmallVec<[u8; 16]>,
         ) -> io::Result<()> {
             this.seek(SeekFrom::Start(offset))?;
-            this.write_all(buf)?;
+            this.write_all(&buf)?;
             Ok(())
         }
+        let t: smallvec::SmallVec<[u8; 16]> = bytes.into();
         spawn_blocking(move || {
-            let res = inner(&mut self.0, offset, &bytes);
+            let res = inner(&mut self.0, offset, t);
             (self, res)
         })
     }
