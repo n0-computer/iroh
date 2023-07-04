@@ -14,9 +14,11 @@ rust-version = "1.65"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
+bao-tree = { version = "0.5.0-rc.1", features = ["tokio_fsm"], default-features = false }
 derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
+iroh-io = { version = "0.2.0-rc.1" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
@@ -35,7 +37,6 @@ console = { version = "0.15.5", optional = true }
 dirs-next = { version = "2.0.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-iroh-io = { path = "../iroh-io", optional = true }
 multibase = { version = "0.9.1", optional = true }
 num_cpus = { version = "1.15.0", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
@@ -46,7 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "iroh-io", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
+cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
 test = []
 
@@ -62,6 +63,7 @@ testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
+iroh-io = { version = "0.2.0-rc.1" }
 
 [[bin]]
 name = "iroh"

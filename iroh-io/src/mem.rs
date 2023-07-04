@@ -28,18 +28,14 @@ impl AsyncSliceReader for bytes::BytesMut {
 }
 
 impl AsyncSliceWriter for bytes::BytesMut {
-    type WriteAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+    type WriteBytesAtFuture<'a> = future::Ready<io::Result<()>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         future::ready(write_extend(self, offset, &data))
     }
 
-    type WriteArrayAtFuture<'a> = future::Ready<io::Result<()>>;
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        data: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_> {
-        future::ready(write_extend(self, offset, &data))
+    type WriteAtFuture<'a> = future::Ready<io::Result<()>>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+        future::ready(write_extend(self, offset, data))
     }
 
     type SetLenFuture<'a> = future::Ready<io::Result<()>>;

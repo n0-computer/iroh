@@ -1,6 +1,6 @@
 [package]
 name = "iroh-io"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 authors = ["rklaehn <rklaehn@protonmail.com>", "n0 team"]
@@ -14,11 +14,13 @@ bytes = "1.4.0"
 futures = "0.3.28"
 pin-project = "1"
 reqwest = { version = "0.11", features = ["stream"], default-features = false, optional = true }
+smallvec = { version = "1", default-features = false, optional = true }
 tokio = { version = "1", features = ["io-util", "rt"], optional = true }
+tokio-util = { version = "0.7", default-features = false, optional = true }
 
 [features]
 http = ["reqwest"]
-tokio-io = ["tokio"]
+tokio-io = ["tokio", "smallvec"]
 default = ["tokio-io"]
 
 [dev-dependencies]
