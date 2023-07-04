@@ -1,3 +1,5 @@
+//! An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
+
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
