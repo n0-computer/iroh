@@ -546,11 +546,6 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         self.inner.rt.clone()
     }
 
-    fn concrete_db(&self) -> Option<Database> {
-        let db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        db.downcast_ref::<Database>().cloned()
-    }
-
     fn list_blobs(
         self,
         _msg: ListBlobsRequest,
@@ -644,7 +639,11 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
             Progress::new(progress),
         )
         .await?;
-        if let Some(current) = self.concrete_db() {
+
+        // todo: generify this
+        // for now provide will only work if D is a Database
+        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
             current.union_with(db);
         }
 

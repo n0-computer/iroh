@@ -202,10 +202,7 @@ pub trait BaoReadonlyDb: BaoMap {
 impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let inner = self.0.read().unwrap();
-        let items = inner
-            .iter()
-            .map(|(hash, _)| Hash::from(*hash))
-            .collect::<Vec<_>>();
+        let items = inner.iter().map(|(hash, _)| *hash).collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
 
@@ -214,7 +211,7 @@ impl BaoReadonlyDb for Database {
         let items = inner
             .iter()
             .filter(|(_, entry)| !entry.is_external())
-            .map(|(hash, _)| Hash::from(*hash))
+            .map(|(hash, _)| *hash)
             .collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
