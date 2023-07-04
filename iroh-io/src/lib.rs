@@ -165,7 +165,9 @@ mod mem;
 #[pin_project(project = EitherProj)]
 #[must_use]
 pub enum Either<L, R> {
+    /// The left variant
     Left(#[pin] L),
+    /// The right variant
     Right(#[pin] R),
 }
 
