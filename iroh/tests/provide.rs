@@ -8,10 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
-use iroh::{
-    commands::provide,
-    node::{Event, Node},
-};
+use iroh::node::{Event, Node, StaticTokenAuthHandler};
 use iroh_net::MagicEndpoint;
 use rand::RngCore;
 use testdir::testdir;
@@ -508,7 +505,7 @@ async fn test_run_ticket() {
     let token = Some(RequestToken::generate());
     let node = Node::builder(db)
         .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-        .custom_auth_handler(provide::TokenAuth::new(token.clone()))
+        .custom_auth_handler(StaticTokenAuthHandler::new(token.clone()))
         .runtime(&rt)
         .spawn()
         .await

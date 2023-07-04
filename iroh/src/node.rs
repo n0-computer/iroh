@@ -20,7 +20,7 @@ use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::{
     blobs::Collection,
-    protocol::{Closed, RequestToken},
+    protocol::{Closed, Request, RequestToken},
     provider::{
         database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
         CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, Ticket,
@@ -758,6 +758,47 @@ pub fn make_server_config(
         .transport_config(Arc::new(transport_config))
         .concurrent_connections(max_connections);
     Ok(server_config)
+}
+
+/// Use a single token of opaque bytes to authorize all requests
+#[derive(Debug, Clone)]
+pub struct StaticTokenAuthHandler {
+    token: Option<RequestToken>,
+}
+
+impl StaticTokenAuthHandler {
+    pub fn new(token: Option<RequestToken>) -> Self {
+        Self { token }
+    }
+}
+
+impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
+    fn authorize(
+        &self,
+        db: D,
+        token: Option<RequestToken>,
+        request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        match &self.token {
+            None => ().authorize(db, token, request),
+            Some(expect) => {
+                let expect = expect.clone();
+                async move {
+                    match token {
+                        Some(token) => {
+                            if token == expect {
+                                Ok(())
+                            } else {
+                                anyhow::bail!("invalid token")
+                            }
+                        }
+                        None => anyhow::bail!("no token provided"),
+                    }
+                }
+                .boxed()
+            }
+        }
+    }
 }
 
 #[cfg(test)]

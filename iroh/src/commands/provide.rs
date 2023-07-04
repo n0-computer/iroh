@@ -6,11 +6,9 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use futures::future::BoxFuture;
-use futures::FutureExt;
 use iroh_bytes::{
-    protocol::{Request, RequestToken},
-    provider::{Database, RequestAuthorizationHandler, FNAME_PATHS},
+    protocol::RequestToken,
+    provider::{Database, FNAME_PATHS},
     runtime,
 };
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
@@ -18,7 +16,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
 use crate::{
     config::iroh_data_root,
-    node::Node,
+    node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
 
@@ -129,9 +127,7 @@ async fn provide(
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db)
-        .custom_auth_handler(TokenAuth {
-            token: opts.request_token,
-        })
+        .custom_auth_handler(StaticTokenAuthHandler::new(opts.request_token))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
         builder = builder.derp_map(dm);
@@ -235,48 +231,6 @@ impl FromStr for ProviderRpcPort {
             Ok(ProviderRpcPort::Disabled)
         } else {
             Ok(ProviderRpcPort::Enabled(s.parse()?))
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TokenAuth {
-    token: Option<RequestToken>,
-}
-
-impl TokenAuth {
-    pub fn new(token: Option<RequestToken>) -> Self {
-        Self { token }
-    }
-}
-
-impl<D> RequestAuthorizationHandler<D> for TokenAuth {
-    fn authorize(
-        &self,
-        db: D,
-        token: Option<RequestToken>,
-        request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        println!("comparing {:?} to {:?}", token, self.token);
-        match &self.token {
-            None => ().authorize(db, token, request),
-            Some(expect) => {
-                let expect = expect.clone();
-                async move {
-                    match token {
-                        // Some(ref token) if token == &self.token => Ok(()),
-                        Some(token) => {
-                            if token == expect {
-                                Ok(())
-                            } else {
-                                anyhow::bail!("invalid token")
-                            }
-                        }
-                        None => anyhow::bail!("no token provided"),
-                    }
-                }
-                .boxed()
-            }
         }
     }
 }
