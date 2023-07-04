@@ -11,13 +11,13 @@ use futures::{
     future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter, AsyncSliceWriter};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    fmt, io,
+    fmt::{self, Debug}, io,
     path::{Path, PathBuf},
     result,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock}, fs::OpenOptions,
 };
 use tokio::sync::mpsc;
 
@@ -133,6 +133,18 @@ impl BaoReadonlyDb for InMemDatabase {
     }
 }
 
+impl BaoDb for InMemDatabase {
+    type Vfs = LocalFs;
+
+    fn vfs(&self) -> &Self::Vfs {
+        todo!()
+    }
+
+    fn insert(&self, hash: Hash, data: VfsId<Self>, outboard: Option<VfsId<Self>>) -> BoxFuture<'_, io::Result<()>> {
+        todo!()
+    }
+}
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
@@ -200,6 +212,44 @@ pub trait BaoReadonlyDb: BaoMap {
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
 }
 
+pub trait Vfs: Debug + Send + Sync + 'static {
+    type Id: Send + Sync + 'static;
+    type ReadRaw: AsyncSliceReader;
+    type WriteRaw: AsyncSliceWriter;
+    /// create a handle for internal data
+    ///
+    /// `name_hint` is a hint for the internal name (base).
+    /// `purpose` can also be used as a hint for the internal name (extension).
+    fn create(&self, name_hint: &[u8], purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>>;
+    /// open an internal handle for reading
+    fn open_read(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
+    /// open an internal handle for writing
+    fn open_write(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>>;
+    /// delete an internal handle
+    fn delete(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<()>>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Purpose {
+    /// File is going to be used to store data
+    Data,
+    /// File is going to be used to store a bao outboard
+    Outboard,
+    /// File is going to be used to store metadata
+    Meta,
+}
+
+type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
+
+pub trait BaoDb: BaoReadonlyDb {
+    /// The Vfs type to use
+    type Vfs: Vfs;
+    /// The Vfs of this database
+    fn vfs(&self) -> &Self::Vfs;
+    /// Insert a new blob into the database
+    fn insert(&self, hash: Hash, data: VfsId<Self>, outboard: Option<VfsId<Self>>) -> BoxFuture<'_, io::Result<()>>;
+}
+
 impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let inner = self.0.read().unwrap();
@@ -232,6 +282,57 @@ impl BaoMap for Database {
             hash: blake3::Hash::from(*hash),
             entry,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct LocalFs;
+
+impl Vfs for LocalFs {
+    type Id = PathBuf;
+    type ReadRaw = FileAdapter;
+    type WriteRaw = FileAdapter;
+
+    fn create(&self, name_hint: &[u8], purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
+        todo!()
+    }
+
+    fn open_read(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
+        FileAdapter::create(move || {
+            std::fs::File::open(handle.as_path())
+        }).boxed()
+    }
+
+    fn open_write(&self, handle: PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
+        FileAdapter::create(move || {
+            OpenOptions::new().write(true).create(true).open(handle.as_path())
+        }).boxed()
+    }
+
+    fn delete(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<()>> {
+        todo!()
+    }
+
+}
+
+impl BaoDb for Database {
+    type Vfs = LocalFs;
+
+    fn vfs(&self) -> &Self::Vfs {
+        &LocalFs
+    }
+
+    fn insert(&self, hash: Hash, data: PathBuf, outboard: Option<PathBuf>) -> BoxFuture<'_, io::Result<()>> {
+        async move {
+            let entry = DbEntry::External {
+                outboard: todo!(),
+                path: data,
+                size: todo!(),
+            };
+            let mut inner = self.0.write().unwrap();
+            inner.insert(hash, entry);
+            Ok(())
+        }.boxed()
     }
 }
 

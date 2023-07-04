@@ -11,7 +11,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+pub use iroh_bytes::provider::{ProvideProgress, ShareProgress, ValidateProgress};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideRequest {
@@ -24,6 +24,22 @@ impl Msg<ProviderService> for ProvideRequest {
 
 impl ServerStreamingMsg<ProviderService> for ProvideRequest {
     type Response = ProvideProgress;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShareRequest {
+    pub hash: Hash,
+    pub single: bool,
+    pub peer: PeerId,
+    pub addrs: Vec<SocketAddr>, 
+}
+
+impl Msg<ProviderService> for ShareRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ShareRequest {
+    type Response = ShareProgress;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,6 +164,7 @@ pub enum ProviderRequest {
     ListBlobs(ListBlobsRequest),
     ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
+    Share(ShareRequest),
     Id(IdRequest),
     Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
@@ -165,6 +182,7 @@ pub enum ProviderResponse {
     Id(IdResponse),
     Addrs(AddrsResponse),
     Validate(ValidateProgress),
+    Share(ShareProgress),
     Shutdown(()),
 }
 

@@ -5,6 +5,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use futures::StreamExt;
 use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
 use iroh_net::tls::PeerId;
 use quic_rpc::transport::quinn::QuinnConnection;
@@ -57,6 +58,15 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
+            Commands::Share { hash, single, rpc_port, peer, addrs, .. } => {
+                let client = make_rpc_client(rpc_port).await?;
+                let mut stream = client.server_streaming(ShareRequest { hash: hash.0, single, peer, addrs }).await?;
+                while let Some(item) = stream.next().await {
+                    let item = item?;
+                    println!("{:?}", item);
+                }
+                Ok(())
+            }
             Commands::Get {
                 hash,
                 peer,
@@ -210,6 +220,29 @@ pub enum Commands {
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
+    },
+    /// Fetch the data identified by HASH from a provider
+    Share {
+        /// The hash to retrieve, as a Blake3 CID
+        hash: Blake3Cid,
+        /// PeerId of the provider
+        #[clap(long, short)]
+        peer: PeerId,
+        /// Addresses of the provider
+        #[clap(long, short)]
+        addrs: Vec<SocketAddr>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long)]
+        token: Option<RequestToken>,
+        /// Directory in which to save the file(s), defaults to writing to STDOUT
+        #[clap(long, short)]
+        out: Option<PathBuf>,
+        /// True to download a single blob, false (default) to download a collection and its children.
+        #[clap(long, default_value_t = false)]
+        single: bool,
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
     },
     /// Fetch data from a provider using a ticket.
     ///
