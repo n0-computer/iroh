@@ -9,7 +9,7 @@ pub mod hp;
 pub mod magic_endpoint;
 #[allow(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod net;
-#[allow(missing_docs, rustdoc::broken_intra_doc_links)]
+#[deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod tls;
 #[deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod util;
