@@ -790,7 +790,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash).await.unwrap();
+        let ticket = node.ticket(hash, None).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

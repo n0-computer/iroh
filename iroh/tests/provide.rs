@@ -509,7 +509,7 @@ async fn test_run_ticket() {
         .await
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
-    let ticket = node.ticket(hash).await.unwrap();
+    let ticket = node.ticket(hash, None).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let response =
             get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, None).await?;
