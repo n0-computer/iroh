@@ -18,17 +18,14 @@ pub fn default_derp_map() -> DerpMap {
 
 pub fn default_derp_region() -> DerpRegion {
     // The default derper run by number0.
-    let host_name = format!("https://{DEFAULT_DERP_HOSTNAME}").parse().unwrap();
-
     let default_n0_derp = DerpNode {
         name: "default-1".into(),
         region_id: 1,
-        host_name,
+        url: format!("https://{DEFAULT_DERP_HOSTNAME}").parse().unwrap(),
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
         ipv4: UseIpv4::Some(DEFAULT_DERP_IPV4),
         ipv6: UseIpv6::None,
-        derp_port: 443,
         stun_test_ip: None,
     };
     DerpRegion {

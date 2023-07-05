@@ -78,6 +78,21 @@ pub async fn run_ticket(
     )
     .await?;
 
+    let request = if ticket.token().is_some() && request.token().is_none() {
+        // we have a ticket, but no token, so we need to add the token to the request
+        match request {
+            AnyGetRequest::Get(get_request) => {
+                AnyGetRequest::Get(get_request.with_token(ticket.token().cloned()))
+            }
+            AnyGetRequest::CustomGet(mut custom_get_request) => {
+                custom_get_request.token = ticket.token().cloned();
+                AnyGetRequest::CustomGet(custom_get_request)
+            }
+        }
+    } else {
+        request
+    };
+
     Ok(run_connection(connection, request))
 }
 
