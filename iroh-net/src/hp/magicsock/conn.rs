@@ -381,6 +381,7 @@ impl Conn {
         Ok(c)
     }
 
+    /// Retrieve information about known peer's endpoints in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
@@ -390,6 +391,7 @@ impl Conn {
         Ok(res)
     }
 
+    /// Query for the local endpoints discovered during the last endpoint discovery.
     pub async fn local_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
@@ -399,6 +401,7 @@ impl Conn {
         Ok(res)
     }
 
+    /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(*self.local_addrs.read().unwrap())
     }
