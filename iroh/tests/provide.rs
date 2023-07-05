@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -9,7 +9,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node, StaticTokenAuthHandler};
-use iroh_net::MagicEndpoint;
+use iroh_net::{
+    tls::{Keypair, PeerId},
+    MagicEndpoint,
+};
 use rand::RngCore;
 use testdir::testdir;
 use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
@@ -117,6 +120,18 @@ async fn empty_files() -> Result<()> {
     transfer_random_data(file_opts, &rt).await
 }
 
+/// Create new get options with the given peer id and addresses, using a
+/// randomly generated keypair.
+fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> get::Options {
+    get::Options {
+        keypair: Keypair::generate(),
+        peer_id,
+        addrs,
+        keylog: false,
+        derp_map: None,
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let dir: PathBuf = testdir!();
@@ -150,16 +165,11 @@ async fn multiple_clients() -> Result<()> {
 
         tasks.push(rt.local_pool().spawn_pinned(move || {
             async move {
-                let opts = get::Options {
-                    addrs,
-                    peer_id,
-                    keylog: true,
-                    derp_map: None,
-                };
+                let opts = get_options(peer_id, addrs);
                 let expected_data = &content;
                 let expected_name = &name;
-                let response = get::run(GetRequest::all(hash).into(), opts).await?;
-                let (collection, children, _stats) = aggregate_get_response(response).await?;
+                let request = GetRequest::all(hash).into();
+                let (collection, children, _stats) = run_get_request(opts, request).await?;
                 assert_eq!(expected_name, &collection.blobs()[0].name);
                 assert_eq!(&file_hash, &collection.blobs()[0].hash);
                 assert_eq!(expected_data, &children[&0]);
@@ -265,15 +275,9 @@ where
     });
 
     let addrs = node.local_endpoint_addresses().await?;
-    let opts = get::Options {
-        addrs,
-        peer_id: node.peer_id(),
-        keylog: true,
-        derp_map: None,
-    };
-
-    let response = get::run(GetRequest::all(collection_hash).into(), opts).await?;
-    let (collection, children, _stats) = aggregate_get_response(response).await?;
+    let opts = get_options(node.peer_id(), addrs);
+    let request = GetRequest::all(collection_hash).into();
+    let (collection, children, _stats) = run_get_request(opts, request).await?;
     assert_eq!(num_blobs, collection.blobs().len());
     for (i, (name, hash)) in lookup.into_iter().enumerate() {
         let hash = Hash::from(hash);
@@ -385,18 +389,9 @@ async fn test_server_close() {
         }
     });
 
-    let response = get::run(
-        GetRequest::all(hash).into(),
-        get::Options {
-            addrs: node_addr,
-            peer_id,
-            keylog: true,
-            derp_map: None,
-        },
-    )
-    .await
-    .unwrap();
-    let (_collection, _children, _stats) = aggregate_get_response(response).await.unwrap();
+    let opts = get_options(peer_id, node_addr);
+    let request = GetRequest::all(hash).into();
+    let (_collection, _children, _stats) = run_get_request(opts, request).await.unwrap();
 
     // Unwrap the JoinHandle, then the result of the Provider
     tokio::time::timeout(Duration::from_secs(10), supervisor)
@@ -431,19 +426,11 @@ async fn test_blob_reader_partial() -> Result<()> {
     let peer_id = node.peer_id();
 
     let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-        let request = get::run(
-            GetRequest::all(hash).into(),
-            get::Options {
-                addrs: node_addr,
-                peer_id,
-                keylog: true,
-                derp_map: None,
-            },
-        )
-        .await
-        .unwrap();
+        let connection = get::dial(get_options(peer_id, node_addr)).await.unwrap();
+        let response =
+            get_response_machine::AtInitial::new(connection, GetRequest::all(hash).into());
         // connect
-        let connected = request.next().await.unwrap();
+        let connected = response.next().await.unwrap();
         // send the request
         let _start = connected.next().await.unwrap();
         // and then just hang
@@ -479,18 +466,9 @@ async fn test_ipv6() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = get::run(
-            GetRequest::all(hash).into(),
-            get::Options {
-                addrs,
-                peer_id,
-                keylog: true,
-                derp_map: None,
-            },
-        )
-        .await
-        .unwrap();
-        aggregate_get_response(request).await
+        let opts = get_options(peer_id, addrs);
+        let request = GetRequest::all(hash).into();
+        run_get_request(opts, request).await
     })
     .await
     .expect("timeout")
@@ -514,15 +492,9 @@ async fn test_run_ticket() {
 
     let no_token_ticket = node.ticket(hash, None).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let response = get::run_ticket(
-            &no_token_ticket,
-            GetRequest::all(no_token_ticket.hash()).into(),
-            true,
-            None,
-        )
-        .await?;
-
-        let response = aggregate_get_response(response).await;
+        let opts = no_token_ticket.as_get_options(Keypair::generate());
+        let request = GetRequest::all(no_token_ticket.hash()).into();
+        let response = run_get_request(opts, request).await;
         assert!(response.is_err());
         anyhow::Result::<_>::Ok(())
     })
@@ -532,9 +504,10 @@ async fn test_run_ticket() {
 
     let ticket = node.ticket(hash, token).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let response =
-            get::run_ticket(&ticket, GetRequest::all(ticket.hash()).into(), true, None).await?;
-        aggregate_get_response(response).await
+        let request = GetRequest::all(hash)
+            .with_token(ticket.token().cloned())
+            .into();
+        run_get_request(ticket.as_get_options(Keypair::generate()), request).await
     })
     .await
     .expect("timeout")
@@ -553,10 +526,12 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
     Ok(())
 }
 
-// helper to aggregate a get response and return all relevant data
-async fn aggregate_get_response(
-    initial: get_response_machine::AtInitial,
+async fn run_get_request(
+    opts: get::Options,
+    request: AnyGetRequest,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+    let connection = get::dial(opts).await?;
+    let initial = get_response_machine::AtInitial::new(connection, request);
     use get_response_machine::*;
     let mut items = BTreeMap::new();
     let connected = initial.next().await?;
@@ -610,11 +585,9 @@ async fn test_run_fsm() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let connection =
-            MagicEndpoint::dial_peer(peer_id, &iroh_bytes::P2P_ALPN, &addrs, None, true).await?;
+        let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash).into();
-        let stream = get::run_connection(connection, request);
-        let (collection, children, _) = aggregate_get_response(stream).await?;
+        let (collection, children, _) = run_get_request(opts, request).await?;
         validate_children(collection, children)?;
         anyhow::Ok(())
     })
@@ -694,16 +667,8 @@ async fn test_custom_request_blob() {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
-        let response = get::run(
-            request,
-            get::Options {
-                addrs,
-                peer_id,
-                keylog: true,
-                derp_map: None,
-            },
-        )
-        .await?;
+        let connection = get::dial(get_options(peer_id, addrs)).await?;
+        let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
         let header = start.next();
@@ -735,17 +700,8 @@ async fn test_custom_request_collection() {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
-        let response = get::run(
-            request,
-            get::Options {
-                addrs,
-                peer_id,
-                keylog: true,
-                derp_map: None,
-            },
-        )
-        .await?;
-        let (_collection, items, _stats) = aggregate_get_response(response).await?;
+        let opts = get_options(peer_id, addrs);
+        let (_collection, items, _stats) = run_get_request(opts, request).await?;
         let actual = &items[&0];
         let expected = tokio::fs::read(readme_path()).await?;
         assert_eq!(actual, &expected);
@@ -816,19 +772,18 @@ async fn test_token_passthrough() -> Result<()> {
     let addrs = provider.local_endpoint_addresses().await?;
     let peer_id = provider.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        MagicEndpoint::dial_peer(peer_id, &iroh_bytes::P2P_ALPN, &addrs, None, true).await?;
+        let endpoint = MagicEndpoint::builder()
+            .keypair(Keypair::generate())
+            .keylog(true)
+            .bind(0)
+            .await?;
+        endpoint
+            .connect(peer_id, &iroh_bytes::P2P_ALPN, &addrs)
+            .await
+            .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();
-        let response = get::run(
-            request,
-            get::Options {
-                addrs,
-                peer_id,
-                keylog: true,
-                derp_map: None,
-            },
-        )
-        .await?;
-        let (_collection, items, _stats) = aggregate_get_response(response).await?;
+        let opts = get_options(peer_id, addrs);
+        let (_collection, items, _stats) = run_get_request(opts, request).await?;
         let actual = &items[&0];
         let expected = tokio::fs::read(readme_path()).await?;
         assert_eq!(actual, &expected);
