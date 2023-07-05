@@ -1,4 +1,5 @@
 //! Utilities used in [`iroh-net`][`crate`]
+
 use std::{
     future::Future,
     pin::Pin,

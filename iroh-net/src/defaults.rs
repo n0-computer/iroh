@@ -1,4 +1,5 @@
 //! Default values used in [`iroh-net`][`crate`]
+use std::collections::HashMap;
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 

@@ -2,7 +2,6 @@
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates.
-//! Based on rust-libp2p/transports/tls
 
 use std::sync::Arc;
 

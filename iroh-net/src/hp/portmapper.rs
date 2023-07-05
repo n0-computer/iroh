@@ -40,7 +40,7 @@ pub struct ProbeOutput {
 }
 
 impl ProbeOutput {
-    /// Indicate if all port mapping protocols are available.
+    /// Indicates if all port mapping protocols are available.
     pub fn all_available(&self) -> bool {
         self.upnp && self.pcp && self.pmp
     }

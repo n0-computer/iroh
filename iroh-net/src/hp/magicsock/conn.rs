@@ -381,7 +381,7 @@ impl Conn {
         Ok(c)
     }
 
-    /// Retrieve information about known peer's endpoints in the network.
+    /// Retrieve information about known peers' endpoints in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender

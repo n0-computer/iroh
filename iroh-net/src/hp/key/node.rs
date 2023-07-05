@@ -135,7 +135,7 @@ impl SecretKey {
         crypto_box::ChaChaBox::new(&other.0, &self.0)
     }
 
-    /// Creates a shared secret between the [`SecretKey`] and the given [`PublicKey`], and sealsthe
+    /// Creates a shared secret between the [SecretKey] and the given [PublicKey], and seals the
     /// provided cleartext.
     pub fn seal_to(&self, other: &PublicKey, cleartext: &[u8]) -> Vec<u8> {
         use crypto_box::aead::{Aead, AeadCore, OsRng};
