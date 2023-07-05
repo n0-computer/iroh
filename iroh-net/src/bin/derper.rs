@@ -19,10 +19,13 @@ use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
 use iroh_net::hp::{
     derp::{
         self,
-        http::{ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig},
+        http::{
+            MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
+        },
     },
     key, stun,
 };
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -36,75 +39,19 @@ type HyperResult<T> = std::result::Result<T, HyperError>;
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
 struct Cli {
-    /// Run in localhost development mode.
+    /// Run in localhost development mode over plain HTTP.
+    ///
+    /// Defaults to running the derper on port 334.
+    ///
+    /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
-    /// Server HTTPS listen address.
-    #[clap(long, short, default_value = "[::]:443")]
-    addr: SocketAddr,
-    /// The port on which to serve HTTP. The listener is bound to the same IP (if any) as specified in the -a flag.
-    #[clap(long, default_value_t = 80)]
-    http_port: u16,
-    /// The UDP port on which to serve STUN. The listener is bound to the same IP (if any) as specified in the -a flag.
-    #[clap(long, default_value_t = 3478)]
-    stun_port: u16,
-    /// Config file path
+    /// Config file path. Generate a default configuration file by supplying a path.
     #[clap(long, short)]
-    config_path: PathBuf,
-    /// Mode for getting a cert. possible options: manual, letsencrypt
-    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a private key from
-    /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
-    #[clap(long, value_enum, default_value_t = CertMode::LetsEncrypt)]
-    cert_mode: CertMode,
-    /// Whether to use the LetsEncrypt production or staging server.
-    ///
-    /// While in developement, LetsEncrypt prefers you to use the staging server. However, the staging server seems to
-    /// only use `ECDSA` keys. In their current set up, you can only get intermediate certificates
-    /// for `ECDSA` keys if you are on their "allowlist". The production server uses `RSA` keys,
-    /// which allow for issuing intermediate certificates in all normal circumstances.
-    /// So, to have valid certificates, we must use the LetsEncrypt production server.
-    /// Read more here: <https://letsencrypt.org/certificates/#intermediate-certificates>
-    /// Default is true. This flag is ignored if we are not using `cert_mode: CertMode::LetsEncrypt`.
-    #[clap(long, default_value_t = true)]
-    prod_tls: bool,
-    /// The contact email for the tls certificate. Required when running the Derper with TLS
-    /// enabled.
-    #[clap(long)]
-    tls_contact: Option<String>,
-    /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.
-    #[clap(long)]
-    cert_dir: Option<PathBuf>,
-    /// Certificate hostname.
-    #[clap(long, default_value = "derp.iroh.network.")]
-    hostname: String,
-    /// Whether to run a STUN server. It will bind to the same IP (if any) as the --addr flag value.
-    #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
-    run_stun: bool,
-    /// Whether to run a DERP server. The only reason to set this false is if you're decommissioning a
-    /// server but want to keep its bootstrap DNS functionality still running.
-    #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
-    run_derp: bool,
-    /// If non-empty, path to file containing the mesh pre-shared key file. It should contain some hex string; whitespace is trimmed.
-    #[clap(long)]
-    mesh_psk_file: Option<PathBuf>,
-    /// Optional comma-separated list of hostnames to mesh with; the server's own hostname can be in the list
-    #[clap(long)]
-    mesh_with: Option<Vec<String>>,
-    /// Optional comma-separated list of hostnames to make available at /bootstrap-dns.
-    #[clap(long)]
-    bootstrap_dns_names: Option<Vec<String>>,
-    /// Optional comma-separated list of hostnames to make available at /bootstrap-dns and not publish in the list
-    #[clap(long)]
-    unpublished_dns_names: Option<Vec<String>>,
-    /// Rate limit for accepting new connection. Unlimited if not set.
-    #[clap(long)]
-    accept_conn_limit: Option<f64>,
-    /// Burst limit for accepting new connection. Unlimited if not set.
-    #[clap(long)]
-    accept_conn_burst: Option<usize>,
+    config_path: Option<PathBuf>,
 }
 
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum CertMode {
     Manual,
     LetsEncrypt,
@@ -206,23 +153,104 @@ fn load_private_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 
 #[derive(Serialize, Deserialize)]
 struct Config {
+    /// PrivateKey for this Derper.
     private_key: key::node::SecretKey,
+    /// Server listen address.
+    ///
+    /// Defaults to [::]:443.
+    ///
+    /// If the port address is 443, the derper will issue a warning if it is started
+    /// without a `tls` config.
+    addr: SocketAddr,
+
+    /// The UDP port on which to serve STUN. The listener is bound to the same IP (if any) as specified in the `addr` field. Defaults to 3478.
+    stun_port: u16,
+    /// Certificate hostname. Defaults to `derp.iroh.network`
+    hostname: String,
+    /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
+    ///
+    /// Defaults to `true`.
+    enable_stun: bool,
+    /// Whether to run a DERP server. The only reason to set this false is if you're decommissioning a
+    /// server but want to keep its bootstrap DNS functionality still running.
+    ///
+    /// Defaults to `true`
+    enable_derp: bool,
+    /// TLS specific configuration
+    tls: Option<TlsConfig>,
+    /// Rate limiting configuration
+    limits: Option<Limits>,
+    /// Mesh network configuration
+    mesh: Option<MeshConfig>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MeshConfig {
+    /// Path to file containing the mesh pre-shared key file. It should contain some hex string; whitespace is trimmed.
+    mesh_psk_file: PathBuf,
+    /// Comma-separated list of urls to mesh with. Must also include the scheme ('http' or
+    /// 'https').
+    mesh_with: Vec<Url>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TlsConfig {
+    /// Mode for getting a cert. possible options: 'Manual', 'LetsEncrypt'
+    /// When using manual mode, a certificate will be read from `<hostname>.crt` and a private key from
+    /// `<hostname>.key`, with the `<hostname>` being the escaped hostname.
+    cert_mode: CertMode,
+    /// Whether to use the LetsEncrypt production or staging server.
+    ///
+    /// While in developement, LetsEncrypt prefers you to use the staging server. However, the staging server seems to
+    /// only use `ECDSA` keys. In their current set up, you can only get intermediate certificates
+    /// for `ECDSA` keys if you are on their "allowlist". The production server uses `RSA` keys,
+    /// which allow for issuing intermediate certificates in all normal circumstances.
+    /// So, to have valid certificates, we must use the LetsEncrypt production server.
+    /// Read more here: <https://letsencrypt.org/certificates/#intermediate-certificates>
+    /// Default is true. This field is ignored if we are not using `cert_mode: CertMode::LetsEncrypt`.
+    prod_tls: bool,
+    /// The contact email for the tls certificate.
+    contact: String,
+    /// Directory to store LetsEncrypt certs or read certificates from, if TLS is used.
+    cert_dir: Option<PathBuf>,
+    /// The port on which to serve a response for the captive portal probe over HTTP.
+    ///
+    /// The listener is bound to the same IP as specified in the `addr` field. Defaults to 80.
+    /// This field is only read in we are serving the derper over HTTPS. In that case, we must listen for requests for the `/generate_204` over a non-TLS connection.
+    captive_portal_port: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Limits {
+    /// Rate limit for accepting new connection. Unlimited if not set.
+    accept_conn_limit: Option<f64>,
+    /// Burst limit for accepting new connection. Unlimited if not set.
+    accept_conn_burst: Option<usize>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
+        Self {
             private_key: key::node::SecretKey::generate(),
+            addr: "[::]:443".parse().unwrap(),
+            stun_port: 3478,
+            hostname: "derp.iroh.network".into(),
+            enable_stun: true,
+            enable_derp: true,
+            tls: None,
+            limits: None,
+            mesh: None,
         }
     }
 }
 
 impl Config {
     async fn load(opts: &Cli) -> Result<Self> {
-        if opts.dev {
+        let config_path = if let Some(config_path) = &opts.config_path {
+            config_path
+        } else {
             return Ok(Config::default());
-        }
-        let config_path = &opts.config_path;
+        };
 
         if config_path.exists() {
             Self::read_from_file(&config_path).await
@@ -265,7 +293,10 @@ impl Config {
     }
 }
 
+/// Only used when in `dev` mode & the given port is `443`
 const DEV_PORT: u16 = 3340;
+/// Only used when tls is enabled & a captive protal port is not given
+const DEFAULT_CAPTIVE_PORTAL_PORT: u16 = 80;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -274,94 +305,130 @@ async fn main() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let mut cli = Cli::parse();
+    let cli = Cli::parse();
+    let cfg = Config::load(&cli).await?;
 
-    if cli.dev {
-        cli.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEV_PORT);
-        info!(%cli.addr, "Running in dev mode.");
+    let (addr, tls_config) = if cli.dev {
+        let port = if cfg.addr.port() != 443 {
+            cfg.addr.port()
+        } else {
+            DEV_PORT
+        };
+
+        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
+        info!(%addr, "Running in dev mode.");
+        (addr, None)
+    } else {
+        (cfg.addr, cfg.tls)
+    };
+
+    if let Some(tls_config) = &tls_config {
+        if let Some(captive_portal_port) = tls_config.captive_portal_port {
+            if addr.port() == captive_portal_port {
+                bail!("The main listening address {addr:?} and the `captive_portal_port` have the same port number.");
+            }
+        }
+    } else if addr.port() == 443 {
+        // no tls config, but the port is 443
+        warn!("The address port is 443, which is typically the expected tls port, but you have not supplied any tls configuration.\nIf you meant to run the derper with tls enabled, adjust the config file to include tls configuration.");
     }
 
-    let listen_host = cli.addr.ip();
-    let serve_tls = cli.addr.port() == 443 || CertMode::Manual == cli.cert_mode;
-
-    if serve_tls && cli.tls_contact.is_none() {
-        bail!("Must supply an email address for the `tls_contact` flag when running the derper with TLS enabled.");
-    }
-
-    let (secret_key, mesh_key) = match cli.run_derp {
+    // set up derp configuration details
+    let (secret_key, mesh_key, mesh_derpers) = match cfg.enable_derp {
         true => {
-            let cfg = Config::load(&cli).await?;
-            let mesh_key = if let Some(file) = cli.mesh_psk_file {
-                let raw = tokio::fs::read_to_string(file)
+            let (mesh_key, mesh_derpers) = if let Some(mesh_config) = cfg.mesh {
+                let raw = tokio::fs::read_to_string(mesh_config.mesh_psk_file)
                     .await
                     .context("reading mesh-pks file")?;
                 let mut mesh_key = [0u8; 32];
                 hex::decode_to_slice(raw.trim(), &mut mesh_key)
                     .context("invalid mesh-pks content")?;
                 info!("DERP mesh key configured");
-                Some(mesh_key)
+                (
+                    Some(mesh_key),
+                    Some(MeshAddrs::Addrs(mesh_config.mesh_with)),
+                )
             } else {
-                None
+                (None, None)
             };
-            (Some(cfg.private_key), mesh_key)
+            (Some(cfg.private_key), mesh_key, mesh_derpers)
         }
-        false => (None, None),
+        false => (None, None, None),
     };
 
-    let stun_task = if cli.run_stun {
+    // run stun
+    let stun_task = if cfg.enable_stun {
         Some(tokio::task::spawn(async move {
-            serve_stun(listen_host, cli.stun_port).await
+            serve_stun(addr.ip(), cfg.stun_port).await
         }))
     } else {
         None
     };
 
-    let headers: Vec<(&str, &str)> = if serve_tls {
-        TLS_HEADERS.into()
-    } else {
-        Vec::new()
-    };
-
-    let tls_config = if serve_tls {
-        // checked earlier
-        let contact = cli.tls_contact.expect("checked earlier");
-        let is_production = cli.prod_tls;
-        let (config, acceptor) = cli
+    // set up tls configuration details
+    let (tls_config, headers, captive_portal_port) = if let Some(tls_config) = tls_config {
+        let contact = tls_config.contact;
+        let is_production = tls_config.prod_tls;
+        let (config, acceptor) = tls_config
             .cert_mode
             .gen_server_config(
-                cli.hostname.clone(),
+                cfg.hostname.clone(),
                 contact,
                 is_production,
-                cli.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
+                tls_config.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
             )
             .await?;
-        Some(TlsConfig { config, acceptor })
+        let headers: Vec<(&str, &str)> = TLS_HEADERS.into();
+        (
+            Some(DerpTlsConfig { config, acceptor }),
+            headers,
+            tls_config
+                .captive_portal_port
+                .unwrap_or(DEFAULT_CAPTIVE_PORTAL_PORT),
+        )
     } else {
-        None
+        (None, Vec::new(), 0)
     };
 
-    let derp_server = DerpServerBuilder::new(cli.addr)
+    let mut builder = DerpServerBuilder::new(addr)
         .secret_key(secret_key)
         .mesh_key(mesh_key)
         .headers(headers)
-        .tls_config(tls_config)
+        .tls_config(tls_config.clone())
         .derp_override(Box::new(derp_disabled_handler))
+        .mesh_derpers(mesh_derpers)
         .request_handler(Method::GET, "/", Box::new(root_handler))
         .request_handler(Method::GET, "/index.html", Box::new(root_handler))
         .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
-        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler))
-        .spawn()
-        .await?;
+        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+    // if tls is enabled, we need to serve this endpoint from a non-tls connection
+    // which we check for below
+    if tls_config.is_none() {
+        builder = builder.request_handler(
+            Method::GET,
+            "/generate_204",
+            Box::new(serve_no_content_handler),
+        );
+    }
+    let derp_server = builder.spawn().await?;
 
-    let http_addr = SocketAddr::new(cli.addr.ip(), cli.http_port);
-    let http_task = serve_http(http_addr).await?;
+    // captive portal detections must be served over HTTP
+    let captive_portal_task = if tls_config.is_some() {
+        let http_addr = SocketAddr::new(addr.ip(), captive_portal_port);
+        let task = serve_captive_portal_service(http_addr).await?;
+        Some(task)
+    } else {
+        None
+    };
 
     tokio::signal::ctrl_c().await?;
     // Shutdown all tasks
     if let Some(task) = stun_task {
         task.abort();
     }
-    http_task.abort();
+    if let Some(task) = captive_portal_task {
+        task.abort()
+    }
     derp_server.shutdown().await;
 
     Ok(())
@@ -387,19 +454,22 @@ const TLS_HEADERS: [(&str, &str); 2] = [
     ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
 ];
 
-async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
+async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
     let http_listener = TcpListener::bind(&addr)
         .await
         .context("failed to bind http")?;
     let http_addr = http_listener.local_addr()?;
-    info!("[HTTP]: serving on {}", http_addr);
+    info!("[CaptivePortalService]: serving on {}", http_addr);
 
     let task = tokio::spawn(async move {
         loop {
             match http_listener.accept().await {
                 Ok((stream, peer_addr)) => {
-                    debug!("[HTTP] Connection opened from {}", peer_addr);
-                    let handler = HttpService;
+                    debug!(
+                        "[CaptivePortalService] Connection opened from {}",
+                        peer_addr
+                    );
+                    let handler = CaptivePortalService;
 
                     tokio::task::spawn(async move {
                         if let Err(err) = Http::new()
@@ -407,12 +477,18 @@ async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
                             .with_upgrades()
                             .await
                         {
-                            error!("[HTTP] Failed to serve connection: {:?}", err);
+                            error!(
+                                "[CaptivePortalService] Failed to serve connection: {:?}",
+                                err
+                            );
                         }
                     });
                 }
                 Err(err) => {
-                    error!("[HTTP] failed to accept connection: {:#?}", err);
+                    error!(
+                        "[CaptivePortalService] failed to accept connection: {:#?}",
+                        err
+                    );
                 }
             }
         }
@@ -421,9 +497,9 @@ async fn serve_http(addr: SocketAddr) -> Result<tokio::task::JoinHandle<()>> {
 }
 
 #[derive(Clone)]
-struct HttpService;
+struct CaptivePortalService;
 
-impl hyper::service::Service<Request<Body>> for HttpService {
+impl hyper::service::Service<Request<Body>> for CaptivePortalService {
     type Response = Response<Body>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -436,7 +512,7 @@ impl hyper::service::Service<Request<Body>> for HttpService {
         match (req.method(), req.uri().path()) {
             // Captive Portal checker
             (&Method::GET, "/generate_204") => {
-                Box::pin(serve_no_content_handler(req, Response::builder()))
+                Box::pin(async move { serve_no_content_handler(req, Response::builder()) })
             }
             _ => {
                 // Return 404 not found response.
@@ -450,14 +526,17 @@ impl hyper::service::Service<Request<Body>> for HttpService {
     }
 }
 
-fn derp_disabled_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn derp_disabled_handler(
+    _r: Request<Body>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<Body>> {
     Ok(response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
         .unwrap())
 }
 
-fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn root_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
     let response = response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -468,7 +547,7 @@ fn root_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
 }
 
 /// HTTP latency queries
-fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn probe_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
     let response = response
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
@@ -478,7 +557,7 @@ fn probe_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
     Ok(response)
 }
 
-fn robots_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
+fn robots_handler(_r: Request<Body>, response: ResponseBuilder) -> HyperResult<Response<Body>> {
     Ok(response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())
@@ -486,7 +565,7 @@ fn robots_handler(response: ResponseBuilder) -> HyperResult<Response<Body>> {
 }
 
 /// For captive portal detection.
-async fn serve_no_content_handler(
+fn serve_no_content_handler(
     r: Request<Body>,
     mut response: ResponseBuilder,
 ) -> HyperResult<Response<Body>> {
@@ -678,9 +757,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let res = serve_no_content_handler(req, Response::builder())
-            .await
-            .unwrap();
+        let res = serve_no_content_handler(req, Response::builder()).unwrap();
         assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
         let header = res

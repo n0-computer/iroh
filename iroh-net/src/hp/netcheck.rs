@@ -21,7 +21,10 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::net::{interfaces, ip::to_canonical};
+use crate::{
+    net::{interfaces, ip::to_canonical},
+    util::MaybeFuture,
+};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
@@ -80,23 +83,16 @@ pub struct Report {
     /// Whether the router supports communicating between two local devices through the NATted
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
-    /// Whether UPnP appears present on the LAN.
-    /// None means not checked.
-    pub upnp: Option<bool>,
-    /// Whether NAT-PMP appears present on the LAN.
-    /// None means not checked.
-    pub pmp: Option<bool>,
-    /// Whether PCP appears present on the LAN.
-    /// None means not checked.
-    pub pcp: Option<bool>,
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// or 0 for unknown
-    pub preferred_derp: usize,
+    pub preferred_derp: u16,
     /// keyed by DERP Region ID
-    pub region_latency: HashMap<usize, Duration>,
+    pub region_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v4_latency: HashMap<usize, Duration>,
+    pub region_v4_latency: HashMap<u16, Duration>,
     /// keyed by DERP Region ID
-    pub region_v6_latency: HashMap<usize, Duration>,
+    pub region_v6_latency: HashMap<u16, Duration>,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
@@ -104,13 +100,6 @@ pub struct Report {
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
-}
-
-impl Report {
-    /// Reports whether any of UPnP, PMP, or PCP are non-empty.
-    pub fn any_port_mapping_checked(&self) -> bool {
-        self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
-    }
 }
 
 impl fmt::Display for Report {
@@ -289,7 +278,7 @@ async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> 
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Result<bool> {
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
     let preferred_derp = if preferred_derp.is_none()
@@ -660,7 +649,7 @@ enum ProbeError {
 //     false
 // }
 
-fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duration) {
+fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
     let prev = m.entry(region_id).or_insert(d);
     if d < *prev {
         *prev = d;
@@ -678,7 +667,7 @@ fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
     None
 }
 
-fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
+fn max_duration_value(m: &HashMap<u16, Duration>) -> Duration {
     m.values().max().cloned().unwrap_or_default()
 }
 
@@ -1155,11 +1144,8 @@ impl Actor {
         }
         log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
         log += &format!(" hair={:?}", r.hair_pinning);
-        if r.any_port_mapping_checked() {
-            log += &format!(
-                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
-                r.upnp, r.pmp, r.pcp
-            );
+        if let Some(probe) = &r.portmap_probe {
+            log += &format!(" {}", probe);
         } else {
             log += " portmap=?";
         }
@@ -1269,29 +1255,6 @@ pub(crate) async fn os_has_ipv6() -> bool {
     // TODO: use socket2 to specify binding to ipv6
     let udp = UdpSocket::bind("[::1]:0").await;
     udp.is_ok()
-}
-
-/// Resolves to pending if the inner is `None`.
-#[derive(Debug)]
-struct MaybeFuture<T> {
-    inner: Option<T>,
-}
-
-impl<T> Default for MaybeFuture<T> {
-    fn default() -> Self {
-        MaybeFuture { inner: None }
-    }
-}
-
-impl<T: Future + Unpin> Future for MaybeFuture<T> {
-    type Output = T::Output;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.inner {
-            Some(ref mut t) => Pin::new(t).poll(cx),
-            None => Poll::Pending,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1459,9 +1422,7 @@ mod tests {
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
-        r.upnp = None;
-        r.pmp = None;
-        r.pcp = None;
+        r.portmap_probe = None;
 
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
@@ -1487,7 +1448,7 @@ mod tests {
             let mut report = Report::default();
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid derp server key");
-                let region_id: usize = s[1..].parse().unwrap();
+                let region_id: u16 = s[1..].parse().unwrap();
                 report
                     .region_latency
                     .insert(region_id, Duration::from_secs(d));
@@ -1504,7 +1465,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredDERP on final step
-            want_derp: usize,
+            want_derp: u16,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

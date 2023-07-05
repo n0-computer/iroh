@@ -335,6 +335,47 @@ pub async fn default_route_interface() -> Option<String> {
     DefaultRouteDetails::new().await.map(|v| v.interface_name)
 }
 
+/// Likely IPs of the residentla router, and the ip address of the current
+/// machine using it.
+#[derive(Debug, Clone)]
+pub struct HomeRouter {
+    pub gateway: IpAddr,
+    pub my_ip: Option<IpAddr>,
+}
+
+impl HomeRouter {
+    /// Returns the likely IP of the residential router, which will always
+    /// be a private address, if found.
+    /// In addition, it returns the IP address of the current machine on
+    /// the LAN using that gateway.
+    /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
+    pub fn new() -> Option<Self> {
+        let gateway = Self::get_default_gateway()?;
+        let my_ip = default_net::interface::get_local_ipaddr();
+
+        Some(HomeRouter { gateway, my_ip })
+    }
+
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    fn get_default_gateway() -> Option<IpAddr> {
+        // default_net doesn't work yet
+        // See: https://github.com/shellrow/default-net/issues/34
+        bsd::likely_home_router()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
+    fn get_default_gateway() -> Option<IpAddr> {
+        let gateway = default_net::get_default_gateway().ok()?;
+        Some(gateway.ip_addr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,5 +386,11 @@ mod tests {
             .await
             .expect("missing default route");
         println!("default_route: {:#?}", default_route);
+    }
+
+    #[tokio::test]
+    async fn test_likely_home_router() {
+        let home_router = HomeRouter::new().expect("missing home router");
+        println!("home router: {:#?}", home_router);
     }
 }

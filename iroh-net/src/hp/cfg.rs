@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use super::key;
+use super::{key, portmapper};
 
 /// Fake WireGuard endpoint IP address that means to
 /// use DERP. When used (in the Node.DERP field), the port number of
@@ -68,20 +68,14 @@ pub struct NetInfo {
     /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
     pub have_port_map: bool,
 
-    /// Whether UPnP appears present on the LAN. Empty means not checked.
-    pub upnp: Option<bool>,
-
-    /// Whether NAT-PMP appears present on the LAN. Empty means not checked.
-    pub pmp: Option<bool>,
-
-    /// Whether PCP appears present on the LAN. Empty means not checked.
-    pub pcp: Option<bool>,
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    pub portmap_probe: Option<portmapper::ProbeOutput>,
 
     /// This node's preferred DERP server for incoming traffic. The node might be be temporarily
     /// connected to multiple DERP servers (to send to other nodes)
     /// but PreferredDERP is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: usize,
+    pub preferred_derp: u16,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,
@@ -104,9 +98,7 @@ impl NetInfo {
             && self.working_udp == other.working_udp
             && self.working_icm_pv4 == other.working_icm_pv4
             && self.have_port_map == other.have_port_map
-            && self.upnp == other.upnp
-            && self.pmp == other.pmp
-            && self.pcp == other.pcp
+            && self.portmap_probe == other.portmap_probe
             && self.preferred_derp == other.preferred_derp
             && self.link_type == other.link_type
     }
@@ -116,7 +108,7 @@ impl NetInfo {
 pub enum LinkType {
     Wired,
     Wifi,
-    //LTE, 4G, 3G, etc
+    /// LTE, 4G, 3G, etc
     Mobile,
 }
 
@@ -137,7 +129,7 @@ pub struct PingResult {
     /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
     pub endpoint: Option<SocketAddr>,
     /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
-    pub derp_region_id: Option<usize>,
+    pub derp_region_id: Option<u16>,
     /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
     pub derp_region_code: Option<String>,
     /// Whether the ping request error is due to it being a ping to the local node.
@@ -150,7 +142,7 @@ pub struct PingResult {
 /// A node or peer in the iroh network.
 ///
 /// Nodes are primarily identified by their [`Node::key`].
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     /// The public key or PeerID, the primary identifier of this node.
     pub key: key::node::PublicKey,
@@ -164,8 +156,8 @@ pub struct Node {
     ///
     /// These are populated from STUN results as well as local LAN addresses.
     pub endpoints: Vec<SocketAddr>,
-    /// DERP-in-IP:port ("127.3.3.40:N") endpoint.
+    /// DERP-in-IP:port ("127.3.3.40:N") endpoint. Only stores the `N`.
     ///
     /// If this nodes expected to be reachable via DERP relaying.
-    pub derp: Option<SocketAddr>,
+    pub derp: Option<u16>,
 }

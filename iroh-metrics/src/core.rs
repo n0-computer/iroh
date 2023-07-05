@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 
-use crate::{iroh, magicsock, netcheck};
+use crate::{iroh, magicsock, netcheck, portmap};
 
 pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 
@@ -14,6 +14,7 @@ pub struct Core {
     iroh_metrics: iroh::Metrics,
     magicsock_metrics: magicsock::Metrics,
     netcheck_metrics: netcheck::Metrics,
+    portmap_metrics: portmap::Metrics,
 }
 
 impl Default for Core {
@@ -24,6 +25,7 @@ impl Default for Core {
             iroh_metrics: iroh::Metrics::new(&mut reg),
             magicsock_metrics: magicsock::Metrics::new(&mut reg),
             netcheck_metrics: netcheck::Metrics::new(&mut reg),
+            portmap_metrics: portmap::Metrics::new(&mut reg),
             registry: reg,
         }
     }
@@ -44,6 +46,10 @@ impl Core {
 
     pub fn netcheck_metrics(&self) -> &netcheck::Metrics {
         &self.netcheck_metrics
+    }
+
+    pub fn portmap_metrics(&self) -> &portmap::Metrics {
+        &self.portmap_metrics
     }
 
     pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
@@ -122,6 +128,7 @@ where
             Collector::Iroh => CORE.iroh_metrics().record(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
             Collector::Netcheck => CORE.netcheck_metrics().record(m, v),
+            Collector::Portmap => CORE.portmap_metrics().record(m, v),
         };
     }
 }
@@ -140,6 +147,7 @@ where
             Collector::Iroh => CORE.iroh_metrics().observe(m, v),
             Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
             Collector::Netcheck => CORE.netcheck_metrics().observe(m, v),
+            Collector::Portmap => CORE.portmap_metrics().observe(m, v),
         };
     }
 }
@@ -154,4 +162,6 @@ pub enum Collector {
     Magicsock,
     /// Netcheck related metrics.
     Netcheck,
+    /// Portmap related metrics.
+    Portmap,
 }

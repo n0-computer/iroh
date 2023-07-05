@@ -2,13 +2,18 @@ use super::DbEntry;
 use crate::{
     provider::ValidateProgress,
     util::{validate_bao, BaoValidationError},
-    Hash,
+    Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};
+use bao_tree::{io::fsm::Outboard, outboard::PreOrderMemOutboard};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{
+    future::{self, BoxFuture, Either},
+    FutureExt, StreamExt,
+};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt, io,
     path::{Path, PathBuf},
     result,
@@ -30,6 +35,205 @@ pub const FNAME_PATHS: &str = "paths.bin";
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
+
+#[derive(Debug, Clone, Default)]
+pub struct InMemDatabase(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
+
+impl InMemDatabase {
+    pub fn new(
+        entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
+    ) -> (Self, BTreeMap<String, blake3::Hash>) {
+        let mut names = BTreeMap::new();
+        let mut res = HashMap::new();
+        for (name, data) in entries.into_iter() {
+            let name = name.into();
+            let data: &[u8] = data.as_ref();
+            // compute the outboard
+            let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+            // add the name, this assumes that names are unique
+            names.insert(name, hash);
+            // wrap into the right types
+            let outboard =
+                PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
+            let data = Bytes::from(data.to_vec());
+            let hash = Hash::from(hash);
+            res.insert(hash, (outboard, data));
+        }
+        (Self(Arc::new(res)), names)
+    }
+
+    pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
+        let inner = Arc::make_mut(&mut self.0);
+        let data: &[u8] = data.as_ref();
+        // compute the outboard
+        let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+        // wrap into the right types
+        let outboard =
+            PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
+        let data = Bytes::from(data.to_vec());
+        let hash = Hash::from(hash);
+        inner.insert(hash, (outboard, data));
+        hash
+    }
+
+    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
+        let entry = self.0.get(hash)?;
+        Some(entry.1.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InMemDatabaseEntry {
+    outboard: PreOrderMemOutboard<Bytes>,
+    data: Bytes,
+}
+
+impl BaoMapEntry<InMemDatabase> for InMemDatabaseEntry {
+    fn hash(&self) -> blake3::Hash {
+        self.outboard.root()
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+        futures::future::ok(self.outboard.clone()).boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+        futures::future::ok(self.data.clone()).boxed()
+    }
+}
+
+impl BaoMap for InMemDatabase {
+    type Outboard = PreOrderMemOutboard<Bytes>;
+    type DataReader = Bytes;
+    type Entry = InMemDatabaseEntry;
+
+    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+        let (o, d) = self.0.get(hash)?;
+        Some(InMemDatabaseEntry {
+            outboard: o.clone(),
+            data: d.clone(),
+        })
+    }
+}
+
+impl BaoReadonlyDb for InMemDatabase {
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
+    }
+
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
+
+    fn validate(
+        &self,
+        _tx: mpsc::Sender<ValidateProgress>,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        future::ok(()).boxed()
+    }
+}
+
+/// An entry for one hash in a bao collection
+///
+/// The entry has the ability to provide you with an (outboard, data)
+/// reader pair. Creating the reader is async and may fail. The futures that
+/// create the readers must be `Send`, but the readers themselves don't have to
+/// be.
+pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
+    fn hash(&self) -> blake3::Hash;
+    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct DbPair {
+    hash: blake3::Hash,
+    entry: DbEntry,
+}
+
+impl BaoMapEntry<Database> for DbPair {
+    fn hash(&self) -> blake3::Hash {
+        self.hash
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
+        async move {
+            let mut reader = self.entry.outboard_reader().await?;
+            let bytes = reader.read_to_end().await?;
+            let hash = self.hash;
+            PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, bytes)
+        }
+        .boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, FileAdapter>>> {
+        self.entry.data_reader().boxed()
+    }
+}
+
+/// A generic collection of blobs with precomputed outboards
+pub trait BaoMap: Clone + Send + Sync + 'static {
+    /// The outboard type. This can be an in memory outboard or an outboard that
+    /// retrieves the data asynchronously from a remote database.
+    type Outboard: bao_tree::io::fsm::Outboard;
+    /// The reader type.
+    type DataReader: AsyncSliceReader;
+    /// The entry type. An entry is a cheaply cloneable handle that can be used
+    /// to open readers for both the data and the outboard
+    type Entry: BaoMapEntry<Self>;
+    /// Get an entry for a hash.
+    ///
+    /// This can also be used for a membership test by just checking if there
+    /// is an entry. Creating an entry should be cheap, any expensive ops should
+    /// be deferred to the creation of the actual readers.
+    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+}
+
+/// Extension of BaoMap to add misc methods used by the rpc calls
+pub trait BaoReadonlyDb: BaoMap {
+    /// list all blobs in the database. This should include collections, since
+    /// collections are blobs and can be requested as blobs.
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// list all roots (collections or other explicitly added things) in the database
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// Validate the database
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+}
+
+impl BaoReadonlyDb for Database {
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let inner = self.0.read().unwrap();
+        let items = inner.iter().map(|(hash, _)| *hash).collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let inner = self.0.read().unwrap();
+        let items = inner
+            .iter()
+            .filter(|(_, entry)| !entry.is_external())
+            .map(|(hash, _)| *hash)
+            .collect::<Vec<_>>();
+        Box::new(items.into_iter())
+    }
+
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
+        self.validate0(tx).boxed()
+    }
+}
+
+impl BaoMap for Database {
+    type Entry = DbPair;
+    type Outboard = PreOrderMemOutboard<Bytes>;
+    type DataReader = Either<Bytes, FileAdapter>;
+    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+        let entry = self.get(hash)?;
+        Some(DbPair {
+            hash: blake3::Hash::from(*hash),
+            entry,
+        })
+    }
+}
 
 impl From<HashMap<Hash, DbEntry>> for Database {
     fn from(map: HashMap<Hash, DbEntry>) -> Self {
@@ -298,7 +502,7 @@ impl Database {
     /// Validate the entire database, including collections.
     ///
     /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
-    pub async fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
+    async fn validate0(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
         // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
         let mut data = self
             .0
@@ -321,10 +525,10 @@ impl Database {
                 } else {
                     None
                 };
-                let size = boc.size();
                 let entry_tx = tx.clone();
                 let done_tx = tx.clone();
                 async move {
+                    let size = boc.size().await;
                     entry_tx
                         .send(ValidateProgress::Entry {
                             id,

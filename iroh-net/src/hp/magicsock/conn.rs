@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
@@ -35,7 +36,7 @@ use crate::{
 
 use super::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{Options as EndpointOptions, PeerMap},
+    endpoint::{EndpointInfo, Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
 };
@@ -100,6 +101,16 @@ pub struct Options {
     /// Zero means to pick one automatically.
     pub port: u16,
 
+    /// Private key for this node.
+    pub private_key: key::node::SecretKey,
+
+    /// Callbacks to emit on various socket events
+    pub callbacks: Callbacks,
+}
+
+/// Contains options for `Conn::listen`.
+#[derive(derive_more::Debug, Default)]
+pub struct Callbacks {
     /// Optionally provides a func to be called when endpoints change.
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
@@ -112,18 +123,14 @@ pub struct Options {
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     #[debug("on_net_info: Option<Box<..>>")]
     pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
-    /// Private key for this node.
-    pub private_key: key::node::SecretKey,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             port: 0,
-            on_endpoints: None,
-            on_derp_active: None,
-            on_net_info: None,
             private_key: key::node::SecretKey::generate(),
+            callbacks: Default::default(),
         }
     }
 }
@@ -210,7 +217,7 @@ impl Inner {
     pub(super) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         match &*self.derp_map.read().await {
             None => None,
-            Some(ref derp_map) => derp_map.regions.get(&usize::from(region)).cloned(),
+            Some(ref derp_map) => derp_map.regions.get(&region).cloned(),
         }
     }
 
@@ -254,22 +261,32 @@ impl Conn {
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
-        let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
+
+        let port_mapper = portmapper::Client::new().await;
 
         let Options {
             port,
-            on_endpoints,
-            on_derp_active,
-            on_net_info,
             private_key,
+            callbacks:
+                Callbacks {
+                    on_endpoints,
+                    on_derp_active,
+                    on_net_info,
+                },
         } = opts;
 
         let (network_recv_ch_sender, network_recv_ch_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
-        port_mapper.set_local_port(port).await;
 
+        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
+        match port.try_into() {
+            Ok(non_zero_port) => {
+                port_mapper.update_local_port(non_zero_port);
+            }
+            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+        }
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -364,7 +381,7 @@ impl Conn {
         Ok(c)
     }
 
-    pub async fn tracked_endpoints(&self) -> Result<Vec<key::node::PublicKey>> {
+    pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
             .send(ActorMessage::TrackedEndpoints(s))
@@ -507,11 +524,6 @@ impl Conn {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn on_port_map_changed(&self) {
-        self.re_stun("portmap-changed").await;
-    }
-
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
     /// It should be followed by a call to ReSTUN.
     #[instrument(skip_all, fields(self.name = %self.name))]
@@ -539,7 +551,7 @@ pub(super) struct DiscoInfo {
     shared_key: key::node::SharedSecret,
 
     /// Tthe src of a ping for `node_key`.
-    last_ping_from: Option<SocketAddr>,
+    last_ping_from: Option<SendAddr>,
 
     /// The last time of a ping for `node_key`.
     last_ping_time: Option<Instant>,
@@ -740,7 +752,7 @@ impl Drop for WgGuard {
 #[derive(Debug)]
 pub(super) enum ActorMessage {
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
-    TrackedEndpoints(sync::oneshot::Sender<Vec<key::node::PublicKey>>),
+    TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<cfg::Endpoint>>),
     GetMappingAddr(
         key::node::PublicKey,
@@ -752,11 +764,11 @@ pub(super) enum ActorMessage {
     CloseOrReconnect(u16, &'static str),
     ReStun(&'static str),
     EnqueueCallMeMaybe {
-        derp_addr: SocketAddr,
+        derp_addr: u16,
         endpoint_id: usize,
     },
     SendDiscoMessage {
-        dst: SocketAddr,
+        dst: SendAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
     },
@@ -823,6 +835,7 @@ impl Actor {
             HEARTBEAT_INTERVAL,
         );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
+        let mut portmap_watcher = self.port_mapper.watch_external_address();
 
         loop {
             tokio::select! {
@@ -861,6 +874,12 @@ impl Actor {
                     trace!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
                 }
+                Ok(()) = portmap_watcher.changed() => {
+                    trace!("tick: portmap changed");
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun("portmap_updated").await;
+                },
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
@@ -892,11 +911,7 @@ impl Actor {
                 let _ = s.send(());
             }
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self
-                    .peer_map
-                    .endpoints()
-                    .map(|(_, ep)| ep.public_key.clone())
-                    .collect();
+                let eps: Vec<_> = self.peer_map.endpoints().map(|(_, ep)| ep.info()).collect();
                 let _ = s.send(eps);
             }
             ActorMessage::LocalEndpoints(s) => {
@@ -915,7 +930,7 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
-                self.port_mapper.close();
+                self.port_mapper.deactivate();
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
@@ -993,7 +1008,10 @@ impl Actor {
     /// Returns `true` if the message should be processed.
     fn receive_ip(&mut self, bytes: &Bytes, meta: &mut quinn_udp::RecvMeta) -> bool {
         debug!("received data {} from {}", meta.len, meta.addr);
-        match self.peer_map.endpoint_for_ip_port(&meta.addr) {
+        match self
+            .peer_map
+            .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
+        {
             None => {
                 warn!("no peer_map state found for {:?}, skipping", meta.addr);
                 return false;
@@ -1043,7 +1061,7 @@ impl Actor {
             return Vec::new();
         }
         let region_id = dm.region_id;
-        let ipp = SocketAddr::new(DERP_MAGIC_IP, region_id);
+        let ipp = SendAddr::Derp(region_id);
 
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
@@ -1056,7 +1074,7 @@ impl Actor {
                     conn_sender: self.conn.actor_sender.clone(),
                     conn_public_key: self.conn.public_key.clone(),
                     public_key: dm.src.clone(),
-                    derp_addr: Some(ipp),
+                    derp_addr: Some(region_id),
                 });
                 self.peer_map.set_endpoint_for_ip_port(&ipp, id);
                 let ep = self.peer_map.by_id_mut(&id).expect("inserted");
@@ -1148,7 +1166,7 @@ impl Actor {
                     Ok((Some(udp_addr), Some(derp_addr))) => {
                         let res = self.send_raw(udp_addr, transmits.clone()).await;
                         self.send_derp(
-                            derp_addr.port(),
+                            derp_addr,
                             public_key,
                             transmits.into_iter().map(|t| t.contents).collect(),
                         );
@@ -1159,7 +1177,7 @@ impl Actor {
                     }
                     Ok((None, Some(derp_addr))) => {
                         self.send_derp(
-                            derp_addr.port(),
+                            derp_addr,
                             public_key.clone(),
                             transmits.into_iter().map(|t| t.contents).collect(),
                         );
@@ -1274,10 +1292,8 @@ impl Actor {
     /// to determine its public address.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
-        let mut portmap_ext = self
-            .port_mapper
-            .get_cached_mapping_or_start_creating_one()
-            .await;
+        self.port_mapper.procure_mapping();
+        let portmap_watcher = self.port_mapper.watch_external_address();
         let nr = self.update_net_info().await.context("update_net_info")?;
 
         // endpoint -> how it was found
@@ -1298,14 +1314,9 @@ impl Actor {
             };
         }
 
-        // If we didn't have a portmap earlier, maybe it's done by now.
-        if portmap_ext.is_none() {
-            portmap_ext = self
-                .port_mapper
-                .get_cached_mapping_or_start_creating_one()
-                .await;
-        }
-        if let Some(portmap_ext) = portmap_ext {
+        let maybe_port_mapped = *portmap_watcher.borrow();
+
+        if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
@@ -1497,14 +1508,13 @@ impl Actor {
         );
         self.no_v4_send = !r.ipv4_can_send;
 
+        let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
         let mut ni = cfg::NetInfo {
             derp_latency: Default::default(),
             mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
             hair_pinning: r.hair_pinning,
-            upnp: r.upnp,
-            pmp: r.pmp,
-            pcp: r.pcp,
-            have_port_map: self.port_mapper.have_mapping(),
+            portmap_probe: r.portmap_probe.clone(),
+            have_port_map,
             working_ipv6: Some(r.ipv6),
             os_has_ipv6: Some(r.os_has_ipv6),
             working_udp: Some(r.udp),
@@ -1524,7 +1534,7 @@ impl Actor {
             ni.preferred_derp = self.pick_derp_fallback().await;
         }
 
-        if !self.set_nearest_derp(ni.preferred_derp.try_into()?).await {
+        if !self.set_nearest_derp(ni.preferred_derp).await {
             ni.preferred_derp = 0;
         }
 
@@ -1557,7 +1567,7 @@ impl Actor {
                 .as_ref()
                 .expect("already checked")
                 .regions
-                .get(&usize::from(derp_num))
+                .get(&derp_num)
             {
                 Some(dr) => {
                     info!("home is now derp-{} ({})", derp_num, dr.region_code);
@@ -1580,7 +1590,7 @@ impl Actor {
     /// Returns a non-zero but deterministic DERP node to
     /// connect to. This is only used if netcheck couldn't find the nearest one
     /// For instance, if UDP is blocked and thus STUN latency checks aren't working
-    async fn pick_derp_fallback(&self) -> usize {
+    async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;
             if derp_map.is_none() {
@@ -1609,7 +1619,7 @@ impl Actor {
 
         let my_derp = self.conn.my_derp();
         if my_derp > 0 {
-            return my_derp.into();
+            return my_derp;
         }
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
@@ -1636,7 +1646,7 @@ impl Actor {
     }
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn enqueue_call_me_maybe(&mut self, derp_addr: SocketAddr, endpoint_id: usize) {
+    async fn enqueue_call_me_maybe(&mut self, derp_addr: u16, endpoint_id: usize) {
         let endpoint = self.peer_map.by_id(&endpoint_id);
         if endpoint.is_none() {
             warn!(
@@ -1686,7 +1696,7 @@ impl Actor {
             tokio::task::spawn(async move {
                 if let Err(err) = msg_sender
                     .send(ActorMessage::SendDiscoMessage {
-                        dst: derp_addr,
+                        dst: SendAddr::Derp(derp_addr),
                         dst_key: public_key,
                         msg,
                     })
@@ -1747,8 +1757,14 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port_v4();
-        self.port_mapper.set_local_port(port).await;
+        // we can end up with a zero port if std::net::UdpSocket::socket_addr fails
+        match self.local_port_v4().try_into() {
+            Ok(non_zero_port) => self.port_mapper.update_local_port(non_zero_port),
+            Err(_zero_port) => {
+                // since the local port might still be the same, don't deactivate port mapping
+                debug!("Skipping port mapping on rebind with zero local port");
+            }
+        }
         let ipv4_addr = self.pconn4.local_addr()?;
 
         *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
@@ -1785,7 +1801,7 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_disco_message(
         &mut self,
-        dst: SocketAddr,
+        dst: SendAddr,
         dst_key: key::node::PublicKey,
         msg: disco::Message,
     ) -> Result<bool> {
@@ -1796,7 +1812,7 @@ impl Actor {
         let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, &dst_key);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
-        let is_derp = dst.ip() == DERP_MAGIC_IP;
+        let is_derp = dst.is_derp();
         if is_derp {
             inc!(MagicsockMetrics::SendDiscoDerp);
         } else {
@@ -1842,37 +1858,38 @@ impl Actor {
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn send_addr(
         &mut self,
-        addr: SocketAddr,
+        addr: SendAddr,
         pub_key: Option<&key::node::PublicKey>,
         pkt: Bytes,
     ) -> io::Result<usize> {
-        if addr.ip() != DERP_MAGIC_IP {
-            let transmits = vec![quinn_udp::Transmit {
-                destination: addr,
-                contents: pkt,
-                ecn: None,
-                segment_size: None,
-                src_ip: None, // TODO
-            }];
-            return self.send_raw(addr, transmits).await;
-        }
-
-        match pub_key {
-            None => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "missing pub key for derp route",
-            )),
-            Some(pub_key) => {
-                self.send_derp(addr.port(), pub_key.clone(), vec![pkt]);
-                Ok(1)
+        match addr {
+            SendAddr::Udp(addr) => {
+                let transmits = vec![quinn_udp::Transmit {
+                    destination: addr,
+                    contents: pkt,
+                    ecn: None,
+                    segment_size: None,
+                    src_ip: None, // TODO
+                }];
+                self.send_raw(addr, transmits).await
             }
+            SendAddr::Derp(region) => match pub_key {
+                None => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "missing pub key for derp route",
+                )),
+                Some(pub_key) => {
+                    self.send_derp(region, pub_key.clone(), vec![pkt]);
+                    Ok(1)
+                }
+            },
         }
     }
 
     async fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: key::node::PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -1893,7 +1910,7 @@ impl Actor {
         &mut self,
         source: [u8; disco::KEY_LEN],
         sealed_box: &[u8],
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
@@ -1948,7 +1965,7 @@ impl Actor {
         }
 
         let dm = dm.unwrap();
-        let is_derp = src.ip() == DERP_MAGIC_IP;
+        let is_derp = src.is_derp();
         if is_derp {
             inc!(MagicsockMetrics::RecvDiscoDerp);
         } else {
@@ -1966,7 +1983,7 @@ impl Actor {
                         conn_sender: self.conn.actor_sender.clone(),
                         conn_public_key: self.conn.public_key.clone(),
                         public_key: sender.clone(),
-                        derp_addr: if is_derp { Some(src) } else { None },
+                        derp_addr: src.derp_region(),
                     });
                 }
                 self.handle_ping(ping, &sender, src, derp_node_src).await;
@@ -2023,7 +2040,7 @@ impl Actor {
         &mut self,
         dm: disco::Ping,
         sender: &key::node::PublicKey,
-        src: SocketAddr,
+        src: SendAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) {
         let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, sender);
@@ -2034,7 +2051,7 @@ impl Actor {
                 .unwrap_or_default();
         di.last_ping_from.replace(src);
         di.last_ping_time.replace(Instant::now());
-        let is_derp = src.ip() == DERP_MAGIC_IP;
+        let is_derp = src.is_derp();
 
         // If we got a ping over DERP, then derp_node_src is non-zero and we reply
         // over DERP (in which case ip_dst is also a DERP address).
@@ -2088,7 +2105,7 @@ impl Actor {
         let ip_dst = src;
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
-            src,
+            src: src.as_socket_addr(),
         });
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
             warn!("disco: failed to send message to {ip_dst}: {err:?}");
@@ -2145,7 +2162,8 @@ impl Actor {
                 ep.update_from_node(n);
                 let id = ep.id;
                 for endpoint in &n.endpoints {
-                    self.peer_map.set_endpoint_for_ip_port(endpoint, id);
+                    self.peer_map
+                        .set_endpoint_for_ip_port(&SendAddr::Udp(*endpoint), id);
                 }
             }
         }
@@ -2293,6 +2311,61 @@ fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
     });
 }
 
+/// Addresses to which to which we can send. This is either a UDP or a derp address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SendAddr {
+    /// UDP, the ip addr.
+    Udp(SocketAddr),
+    /// Derp, region id.
+    Derp(u16),
+}
+
+impl SendAddr {
+    pub fn is_derp(&self) -> bool {
+        matches!(self, Self::Derp(_))
+    }
+
+    pub fn as_udp(&self) -> Option<&SocketAddr> {
+        match self {
+            Self::Derp(_) => None,
+            Self::Udp(addr) => Some(addr),
+        }
+    }
+
+    pub fn derp_region(&self) -> Option<u16> {
+        match self {
+            Self::Derp(region) => Some(*region),
+            Self::Udp(_) => None,
+        }
+    }
+
+    /// Returns the mapped version or the actual `SocketAddr`.
+    pub fn as_socket_addr(&self) -> SocketAddr {
+        match self {
+            Self::Derp(region) => SocketAddr::new(DERP_MAGIC_IP, *region),
+            Self::Udp(addr) => *addr,
+        }
+    }
+}
+
+impl PartialEq<SocketAddr> for SendAddr {
+    fn eq(&self, other: &SocketAddr) -> bool {
+        match self {
+            Self::Derp(_) => false,
+            Self::Udp(addr) => addr.eq(other),
+        }
+    }
+}
+
+impl Display for SendAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendAddr::Derp(id) => write!(f, "Derp({})", id),
+            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+        }
+    }
+}
+
 /// A simple iterator to group [`Transmit`]s by destination.
 struct TransmitIter<'a> {
     transmits: &'a [quinn_udp::Transmit],
@@ -2423,7 +2496,7 @@ impl std::fmt::Display for QuicMappedAddr {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use anyhow::Context;
     use rand::RngCore;
     use std::net::Ipv4Addr;
@@ -2437,7 +2510,7 @@ mod tests {
             derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
             stun,
         },
-        tls,
+        tls, MagicEndpoint,
     };
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
@@ -2562,7 +2635,7 @@ mod tests {
         stun_ip: IpAddr,
     }
 
-    async fn run_derp_and_stun(
+    pub async fn run_derp_and_stun(
         stun_ip: IpAddr,
     ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
         // TODO: pass a mesh_key?
@@ -2588,7 +2661,7 @@ mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "http://test-node.invalid".parse().unwrap(),
+                        host_name: "https://test-node.invalid".parse().unwrap(),
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
@@ -2619,9 +2692,8 @@ mod tests {
     #[derive(Clone)]
     struct MagicStack {
         ep_ch: flume::Receiver<Vec<cfg::Endpoint>>,
-        key: key::node::SecretKey,
-        conn: Conn,
-        quic_ep: quinn::Endpoint,
+        keypair: tls::Keypair,
+        endpoint: MagicEndpoint,
     }
 
     const ALPN: [u8; 9] = *b"n0/test/1";
@@ -2630,59 +2702,51 @@ mod tests {
         async fn new(derp_map: DerpMap) -> Result<Self> {
             let (on_derp_s, mut on_derp_r) = mpsc::channel(8);
             let (ep_s, ep_r) = flume::bounded(16);
-            let opts = Options {
-                on_endpoints: Some(Box::new(move |eps: &[cfg::Endpoint]| {
+
+            let keypair = tls::Keypair::generate();
+
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+
+            let endpoint = MagicEndpoint::builder()
+                .keypair(keypair.clone())
+                .on_endpoints(Box::new(move |eps: &[cfg::Endpoint]| {
                     let _ = ep_s.send(eps.to_vec());
-                })),
-                on_derp_active: Some(Box::new(move || {
+                }))
+                .on_derp_active(Box::new(move || {
                     on_derp_s.try_send(()).ok();
-                })),
-                ..Default::default()
-            };
-            let key = opts.private_key.clone();
-            let conn = Conn::new(opts).await?;
-            conn.set_derp_map(Some(derp_map)).await?;
+                }))
+                .transport_config(transport_config)
+                .derp_map(Some(derp_map))
+                .alpns(vec![ALPN.to_vec()])
+                .bind(0)
+                .await?;
 
             tokio::time::timeout(Duration::from_secs(10), on_derp_r.recv())
                 .await
                 .context("wait for derp connection")?;
 
-            let tls_server_config =
-                tls::make_server_config(&key.clone().into(), vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            server_config.transport_config(Arc::new(transport_config));
-            let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
-                quinn::EndpointConfig::default(),
-                Some(server_config),
-                conn.clone(),
-                Arc::new(quinn::TokioRuntime),
-            )?;
-
-            let tls_client_config =
-                tls::make_client_config(&key.clone().into(), None, vec![ALPN.to_vec()], false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            client_config.transport_config(Arc::new(transport_config));
-            quic_ep.set_default_client_config(client_config);
-
             Ok(Self {
                 ep_ch: ep_r,
-                key,
-                conn,
-                quic_ep,
+                keypair,
+                endpoint,
             })
         }
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
-            self.conn.tracked_endpoints().await.unwrap_or_default()
+            self.endpoint
+                .conn()
+                .tracked_endpoints()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|ep| ep.public_key)
+                .collect()
         }
 
         fn public(&self) -> key::node::PublicKey {
-            self.key.public_key()
+            let key: key::node::SecretKey = self.keypair.secret().clone().into();
+            key.public_key()
         }
     }
 
@@ -2710,9 +2774,9 @@ mod tests {
                 peers.push(cfg::Node {
                     addresses: addresses.clone(),
                     name: Some(format!("node{}", i + 1)),
-                    key: peer.key.public_key(),
+                    key: peer.public(),
                     endpoints: eps[i].iter().map(|ep| ep.addr).collect(),
-                    derp: Some(SocketAddr::new(DERP_MAGIC_IP, 1)),
+                    derp: Some(1),
                 });
             }
 
@@ -2730,7 +2794,7 @@ mod tests {
 
             for (i, m) in ms.iter().enumerate() {
                 let nm = build_netmap(eps, ms, i).await;
-                let _ = m.conn.set_network_map(nm).await;
+                let _ = m.endpoint.conn().set_network_map(nm).await;
             }
         }
 
@@ -2763,7 +2827,7 @@ mod tests {
         })
     }
 
-    fn setup_logging() {
+    pub fn setup_logging() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -2809,11 +2873,12 @@ mod tests {
                 let a_name = stringify!($a);
                 let b_name = stringify!($b);
                 println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-                println!("[{}] {:?}", a_name, a.conn.local_addr());
-                println!("[{}] {:?}", b_name, b.conn.local_addr());
+                println!("[{}] {:?}", a_name, a.endpoint.local_addr());
+                println!("[{}] {:?}", b_name, b.endpoint.local_addr());
 
-                let a_addr = b.conn.get_mapping_addr(&a.public()).await.unwrap();
-                let b_addr = a.conn.get_mapping_addr(&b.public()).await.unwrap();
+                let a_addr = b.endpoint.conn().get_mapping_addr(&a.public()).await.unwrap();
+                let b_addr = a.endpoint.conn().get_mapping_addr(&b.public()).await.unwrap();
+                let b_peer_id = b.endpoint.peer_id();
 
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
 
@@ -2821,7 +2886,7 @@ mod tests {
                 let b_task = tokio::task::spawn(
                     async move {
                         println!("[{}] accepting conn", b_name);
-                        let conn = b.quic_ep.accept().await.expect("no conn");
+                        let conn = b.endpoint.accept().await.expect("no conn");
 
                         println!("[{}] connecting", b_name);
                         let conn = conn
@@ -2870,8 +2935,8 @@ mod tests {
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
                     let conn = a
-                        .quic_ep
-                        .connect(b_addr, "localhost")?
+                        .endpoint
+                        .connect(b_peer_id, &ALPN, &[b_addr])
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 
@@ -2912,7 +2977,7 @@ mod tests {
                     println!("[{}] close", a_name);
                     conn.close(0u32.into(), b"done");
                     println!("[{}] wait idle", a_name);
-                    a.quic_ep.wait_idle().await;
+                    a.endpoint.endpoint().wait_idle().await;
                     println!("[{}] waiting for channel", a_name);
                     b_task.await??;
                     Ok(())
@@ -2976,16 +3041,11 @@ mod tests {
             .context("failed to connect peers")?;
 
             println!("closing endpoints");
-            m1.quic_ep.close(0u32.into(), b"done");
-            m2.quic_ep.close(0u32.into(), b"done");
+            m1.endpoint.close(0u32.into(), b"done").await?;
+            m2.endpoint.close(0u32.into(), b"done").await?;
 
-            println!("closing connection m1");
-            m1.conn.close().await?;
-            assert!(m1.conn.is_closed());
-
-            println!("closing connection m2");
-            m2.conn.close().await?;
-            assert!(m2.conn.is_closed());
+            assert!(m1.endpoint.conn().is_closed());
+            assert!(m2.endpoint.conn().is_closed());
 
             println!("cleaning up");
             cleanup().await;

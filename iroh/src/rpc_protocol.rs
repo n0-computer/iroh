@@ -42,7 +42,7 @@ pub struct ListBlobsRequest;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListBlobsResponse {
-    pub path: PathBuf,
+    pub path: String,
     pub hash: Hash,
     pub size: u64,
 }

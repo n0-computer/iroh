@@ -32,9 +32,8 @@
 //! always get a new reader. Also, if you need concurrent access to the same resource,
 //! create multiple readers.
 use bytes::Bytes;
-use futures::Future;
-use pin_project::pin_project;
-use std::{io, task};
+use futures::{future::Either, Future};
+use std::io;
 
 /// A trait to abstract async reading from different resource.
 ///
@@ -70,10 +69,19 @@ pub trait AsyncSliceReader {
     fn len(&mut self) -> Self::LenFuture<'_>;
 }
 
+pub trait AsyncSliceReaderExt: AsyncSliceReader {
+    /// Read the entire resource into a [bytes::Bytes] buffer, if possible.
+    fn read_to_end(&mut self) -> Self::ReadAtFuture<'_> {
+        self.read_at(0, usize::MAX)
+    }
+}
+
+impl<T: AsyncSliceReader> AsyncSliceReaderExt for T {}
+
 /// A trait to abstract async writing to different resources.
 ///
 /// This trait does not require the notion of a current position, but instead
-/// requires explicitly passing the offset to write_at and write_array_at.
+/// requires explicitly passing the offset to write_at and write_bytes_at.
 /// In addition to the ability to write at an arbitrary offset, it also provides
 /// the ability to set the length of the resource.
 ///
@@ -84,27 +92,23 @@ pub trait AsyncSliceWriter: Sized {
     type WriteAtFuture<'a>: Future<Output = io::Result<()>> + 'a
     where
         Self: 'a;
-    /// Write the entire Bytes at the given position.
+    /// Write the entire slice at the given position.
     ///
-    /// When writing with the end of the range after the end of the blob, the blob will be extended.
-    /// When writing with the start of the range after the end of the blob, the gap will be filled with zeros.
+    /// if self.len < offset + data.len(), the underlying resource will be extended.
+    /// if self.len < offset, the gap will be filled with zeros.
     #[must_use = "io futures must be polled to completion"]
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_>;
 
-    /// The future returned by write_slice_at
-    type WriteArrayAtFuture<'a>: Future<Output = io::Result<()>> + 'a
+    /// The future returned by write_bytes_at
+    type WriteBytesAtFuture<'a>: Future<Output = io::Result<()>> + 'a
     where
         Self: 'a;
-    /// Write the entire fixed size array at the given position.
-    /// This is useful to write a small number of bytes without allocating a [bytes::Bytes].
+    /// Write the entire Bytes at the given position.
     ///
-    /// Except for taking a fixed size array instead of a [bytes::Bytes], this is equivalent to [AsyncSliceWriter::write_at].
+    /// Use this if you have a Bytes, to avoid allocations.
+    /// Other than that it is equivalent to [AsyncSliceWriter::write_at].
     #[must_use = "io futures must be polled to completion"]
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        data: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_>;
 
     /// The future returned by set_len
     type SetLenFuture<'a>: Future<Output = io::Result<()>> + 'a
@@ -142,6 +146,99 @@ macro_rules! newtype_future {
     };
 }
 
+mod box_dyn {
+    use futures::{future::LocalBoxFuture, FutureExt};
+
+    use super::*;
+
+    pub trait BoxedAsyncSliceReader: 'static {
+        fn len(&mut self) -> LocalBoxFuture<'_, io::Result<u64>>;
+        fn read_at(&mut self, offset: u64, len: usize) -> LocalBoxFuture<'_, io::Result<Bytes>>;
+    }
+
+    pub trait BoxedAsyncSliceWriter: 'static {
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn write_bytes_at(
+            &mut self,
+            offset: u64,
+            data: Bytes,
+        ) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn set_len(&mut self, len: u64) -> LocalBoxFuture<'_, io::Result<()>>;
+        fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
+    }
+
+    #[derive(Debug)]
+    pub struct Boxable<R>(R);
+
+    impl<R: AsyncSliceReader + 'static> BoxedAsyncSliceReader for Boxable<R> {
+        fn len(&mut self) -> LocalBoxFuture<'_, io::Result<u64>> {
+            AsyncSliceReader::len(self).boxed_local()
+        }
+
+        fn read_at(&mut self, offset: u64, len: usize) -> LocalBoxFuture<'_, io::Result<Bytes>> {
+            AsyncSliceReader::read_at(self, offset, len).boxed_local()
+        }
+    }
+
+    impl<R: AsyncSliceWriter + 'static> BoxedAsyncSliceWriter for Boxable<R> {
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::write_at(self, offset, data).boxed_local()
+        }
+
+        fn write_bytes_at(
+            &mut self,
+            offset: u64,
+            data: Bytes,
+        ) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::write_bytes_at(self, offset, data).boxed_local()
+        }
+
+        fn set_len(&mut self, len: u64) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::set_len(self, len).boxed_local()
+        }
+
+        fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+            AsyncSliceWriter::sync(self).boxed_local()
+        }
+    }
+
+    impl<T: BoxedAsyncSliceWriter> AsyncSliceWriter for T {
+        type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type SetLenFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+        type SyncFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+
+        fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+            BoxedAsyncSliceWriter::write_at(self, offset, data)
+        }
+
+        fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+            BoxedAsyncSliceWriter::write_bytes_at(self, offset, data)
+        }
+
+        fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+            BoxedAsyncSliceWriter::set_len(self, len)
+        }
+
+        fn sync(&mut self) -> Self::SyncFuture<'_> {
+            BoxedAsyncSliceWriter::sync(self)
+        }
+    }
+
+    impl<T: BoxedAsyncSliceReader> AsyncSliceReader for T {
+        type ReadAtFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>;
+        type LenFuture<'a> = LocalBoxFuture<'a, io::Result<u64>>;
+
+        fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+            BoxedAsyncSliceReader::read_at(self, offset, len)
+        }
+
+        fn len(&mut self) -> Self::LenFuture<'_> {
+            BoxedAsyncSliceReader::len(self)
+        }
+    }
+}
+
 #[cfg(feature = "tokio-io")]
 mod tokio_io;
 #[cfg(feature = "tokio-io")]
@@ -155,18 +252,7 @@ pub use http::*;
 /// implementations for [AsyncSliceReader] and [AsyncSliceWriter] for [bytes::Bytes] and [bytes::BytesMut]
 mod mem;
 
-/// Either type to be used with [AsyncSliceReader] and [AsyncSliceWriter].
-///
-/// This also implements [futures::Future]
-#[derive(Debug)]
-#[pin_project(project = EitherProj)]
-#[must_use]
-pub enum Either<L, R> {
-    Left(#[pin] L),
-    Right(#[pin] R),
-}
-
-impl<L, R> AsyncSliceReader for Either<L, R>
+impl<L, R> AsyncSliceReader for futures::future::Either<L, R>
 where
     L: AsyncSliceReader + 'static,
     R: AsyncSliceReader + 'static,
@@ -174,72 +260,116 @@ where
     type ReadAtFuture<'a> = Either<L::ReadAtFuture<'a>, R::ReadAtFuture<'a>>;
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.read_at(offset, len)),
-            Either::Right(r) => Either::Right(r.read_at(offset, len)),
+            futures::future::Either::Left(l) => Either::Left(l.read_at(offset, len)),
+            futures::future::Either::Right(r) => Either::Right(r.read_at(offset, len)),
         }
     }
 
     type LenFuture<'a> = Either<L::LenFuture<'a>, R::LenFuture<'a>>;
     fn len(&mut self) -> Self::LenFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.len()),
-            Either::Right(r) => Either::Right(r.len()),
+            futures::future::Either::Left(l) => Either::Left(l.len()),
+            futures::future::Either::Right(r) => Either::Right(r.len()),
         }
     }
 }
 
-impl<L, R> AsyncSliceWriter for Either<L, R>
+impl<L, R> AsyncSliceWriter for futures::future::Either<L, R>
 where
     L: AsyncSliceWriter + 'static,
     R: AsyncSliceWriter + 'static,
 {
-    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
-    fn write_at(&mut self, offset: u64, data: Bytes) -> Self::WriteAtFuture<'_> {
+    type WriteBytesAtFuture<'a> = Either<L::WriteBytesAtFuture<'a>, R::WriteBytesAtFuture<'a>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.write_at(offset, data)),
-            Either::Right(r) => Either::Right(r.write_at(offset, data)),
+            futures::future::Either::Left(l) => Either::Left(l.write_bytes_at(offset, data)),
+            futures::future::Either::Right(r) => Either::Right(r.write_bytes_at(offset, data)),
         }
     }
 
-    type WriteArrayAtFuture<'a> = Either<L::WriteArrayAtFuture<'a>, R::WriteArrayAtFuture<'a>>;
-    fn write_array_at<const N: usize>(
-        &mut self,
-        offset: u64,
-        data: [u8; N],
-    ) -> Self::WriteArrayAtFuture<'_> {
+    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.write_array_at(offset, data)),
-            Either::Right(r) => Either::Right(r.write_array_at(offset, data)),
+            futures::future::Either::Left(l) => Either::Left(l.write_at(offset, data)),
+            futures::future::Either::Right(r) => Either::Right(r.write_at(offset, data)),
         }
     }
 
     type SyncFuture<'a> = Either<L::SyncFuture<'a>, R::SyncFuture<'a>>;
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.sync()),
-            Either::Right(r) => Either::Right(r.sync()),
+            futures::future::Either::Left(l) => Either::Left(l.sync()),
+            futures::future::Either::Right(r) => Either::Right(r.sync()),
         }
     }
 
     type SetLenFuture<'a> = Either<L::SetLenFuture<'a>, R::SetLenFuture<'a>>;
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         match self {
-            Either::Left(l) => Either::Left(l.set_len(len)),
-            Either::Right(r) => Either::Right(r.set_len(len)),
+            futures::future::Either::Left(l) => Either::Left(l.set_len(len)),
+            futures::future::Either::Right(r) => Either::Right(r.set_len(len)),
         }
     }
 }
 
-impl<T, R: Future<Output = T>, L: Future<Output = T>> Future for Either<L, R> {
-    type Output = T;
+#[cfg(feature = "tokio-util")]
+impl<L, R> AsyncSliceReader for tokio_util::either::Either<L, R>
+where
+    L: AsyncSliceReader + 'static,
+    R: AsyncSliceReader + 'static,
+{
+    type ReadAtFuture<'a> = Either<L::ReadAtFuture<'a>, R::ReadAtFuture<'a>>;
+    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.read_at(offset, len)),
+            tokio_util::either::Either::Right(r) => Either::Right(r.read_at(offset, len)),
+        }
+    }
 
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-    ) -> task::Poll<Self::Output> {
-        match self.project() {
-            EitherProj::Left(l) => l.poll(cx),
-            EitherProj::Right(r) => r.poll(cx),
+    type LenFuture<'a> = Either<L::LenFuture<'a>, R::LenFuture<'a>>;
+    fn len(&mut self) -> Self::LenFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.len()),
+            tokio_util::either::Either::Right(r) => Either::Right(r.len()),
+        }
+    }
+}
+
+#[cfg(feature = "tokio-util")]
+impl<L, R> AsyncSliceWriter for tokio_util::either::Either<L, R>
+where
+    L: AsyncSliceWriter + 'static,
+    R: AsyncSliceWriter + 'static,
+{
+    type WriteBytesAtFuture<'a> = Either<L::WriteBytesAtFuture<'a>, R::WriteBytesAtFuture<'a>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.write_bytes_at(offset, data)),
+            tokio_util::either::Either::Right(r) => Either::Right(r.write_bytes_at(offset, data)),
+        }
+    }
+
+    type WriteAtFuture<'a> = Either<L::WriteAtFuture<'a>, R::WriteAtFuture<'a>>;
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.write_at(offset, data)),
+            tokio_util::either::Either::Right(r) => Either::Right(r.write_at(offset, data)),
+        }
+    }
+
+    type SyncFuture<'a> = Either<L::SyncFuture<'a>, R::SyncFuture<'a>>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.sync()),
+            tokio_util::either::Either::Right(r) => Either::Right(r.sync()),
+        }
+    }
+
+    type SetLenFuture<'a> = Either<L::SetLenFuture<'a>, R::SetLenFuture<'a>>;
+    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+        match self {
+            tokio_util::either::Either::Left(l) => Either::Left(l.set_len(len)),
+            tokio_util::either::Either::Right(r) => Either::Right(r.set_len(len)),
         }
     }
 }
@@ -367,15 +497,15 @@ mod tests {
         contents: C,
     ) -> io::Result<()> {
         // write 3 bytes at offset 0
-        file.write_at(0, vec![0, 1, 2].into()).await?;
+        file.write_bytes_at(0, vec![0, 1, 2].into()).await?;
         assert_eq!(contents(&file), &[0, 1, 2]);
 
         // write 3 bytes at offset 5
-        file.write_at(5, vec![0, 1, 2].into()).await?;
+        file.write_bytes_at(5, vec![0, 1, 2].into()).await?;
         assert_eq!(contents(&file), &[0, 1, 2, 0, 0, 0, 1, 2]);
 
         // write a u16 at offset 8
-        file.write_array_at(8, 1u16.to_le_bytes()).await?;
+        file.write_at(8, &1u16.to_le_bytes()).await?;
         assert_eq!(contents(&file), &[0, 1, 2, 0, 0, 0, 1, 2, 1, 0]);
 
         // truncate to 0
@@ -539,7 +669,7 @@ mod tests {
             apply_op(&mut reference, &op);
             match op {
                 WriteOp::Write(offset, data) => {
-                    AsyncSliceWriter::write_at(&mut bytes, offset, data.into()).await?;
+                    AsyncSliceWriter::write_bytes_at(&mut bytes, offset, data.into()).await?;
                 }
                 WriteOp::SetLen(offset) => {
                     AsyncSliceWriter::set_len(&mut bytes, offset).await?;

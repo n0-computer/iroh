@@ -23,10 +23,11 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
     res.ok().flatten()
 }
 
+const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
+
 async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
-    const PATH: &str = "/proc/net/route";
     const ZERO_ADDR: &str = "00000000";
-    let file = File::open(PATH).await?;
+    let file = File::open(PROC_NET_ROUTE_PATH).await?;
 
     // Explicitly set capacity, this is min(4096, DEFAULT_BUF_SIZE):
     // https://github.com/google/gvisor/issues/5732
