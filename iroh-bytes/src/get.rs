@@ -1,8 +1,12 @@
 //! The client side API
 //!
-//! The main entry point is [`run`]. This function takes callbacks that will
-//! be invoked when blobs or collections are received. It is up to the caller
-//! to store the received data.
+//! To get data, create a connection using the `dial` function or use any quinn
+//! connection that was obtained in another way.
+//!
+//! Create a request describing the data you want to get.
+//!
+//! Then create a state machine using [get_response_machine::AtInitial::new] and
+//! drive it to completion by calling next on each state.
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;

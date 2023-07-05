@@ -223,8 +223,8 @@ impl Client {
     /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_msg_sender`] in order for this function to receive the stun
+    /// traffic. Thus all stun packets received on those sockets should be passed to
+    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results

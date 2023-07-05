@@ -56,7 +56,7 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+/// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
 pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
