@@ -311,9 +311,6 @@ impl Actor {
             drop(probes);
         }
 
-        // TODO: consider if we can have the report live in a box from start to finish so
-        // there are no moves involves from building it here till it gets dropped by the
-        // netcheck actor.
         debug!("Sending report to netcheck actor");
         self.netcheck
             .send(netcheck::Message::ReportReady {
