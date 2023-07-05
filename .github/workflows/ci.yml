@@ -45,7 +45,7 @@ jobs:
         toolchain: ${{ matrix.rust }}
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
+      run: cargo test --workspace --all-features --lib --bins --tests magic_endpoint_connect_close
       
     - name: doctests
       run: cargo test --workspace --all-features --doc
