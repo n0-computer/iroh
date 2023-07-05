@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
 use crate::{
+    defaults::DEFAULT_DERP_STUN_PORT,
     net::{interfaces, ip::to_canonical},
     util::MaybeFuture,
 };
@@ -416,7 +417,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
-        port = 3478;
+        port = DEFAULT_DERP_STUN_PORT;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
@@ -1745,7 +1746,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("https://derp.iroh.network.", 3478)];
+        let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
