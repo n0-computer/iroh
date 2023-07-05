@@ -366,10 +366,16 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let cmd = if let Some(ref out) = out {
         cmd(
             iroh_bin(),
-            ["get-ticket", &all_in_one, "--out", out.to_str().unwrap()],
+            [
+                "get",
+                "--ticket",
+                &all_in_one,
+                "--out",
+                out.to_str().unwrap(),
+            ],
         )
     } else {
-        cmd(iroh_bin(), ["get-ticket", &all_in_one])
+        cmd(iroh_bin(), ["get", "--ticket", &all_in_one])
     }
     .stdout_capture()
     .stderr_capture();
