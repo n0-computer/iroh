@@ -13,7 +13,7 @@ pub const DEFAULT_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(35, 17
 /// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
     DerpMap {
-        regions: [(1, default_derp_region())].into(),
+        regions: HashMap::from_iter([(1, default_derp_region())].into_iter()),
     }
 }
 
