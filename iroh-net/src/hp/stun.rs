@@ -19,7 +19,7 @@ pub enum Error {
     /// The STUN message could not be parsed or is otherwise invalid.
     #[error("invalid message")]
     InvalidMessage,
-    /// STUN request is not a binding request when it should.
+    /// STUN request is not a binding request when it should be.
     #[error("not binding")]
     NotBinding,
     /// STUN packet is not a response when it should.
