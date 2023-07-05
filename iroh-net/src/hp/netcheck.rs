@@ -122,7 +122,7 @@ pub struct Client {
     ///
     /// If all senders are dropped, in other words all clones of this struct are dropped,
     /// the actor will terminate.
-    addr: ActorAddr,
+    addr: Addr,
     /// Ensures the actor is terminated when the client is dropped.
     _drop_guard: Arc<ClientDropGuard>,
 }
@@ -194,12 +194,10 @@ impl Client {
     /// There is an implicit queue here which may drop packets if the actor does not keep up
     /// consuming them.
     pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
-        if let Err(mpsc::error::TrySendError::Full(_)) =
-            self.addr.try_send(ActorMessage::StunPacket {
-                payload,
-                from_addr: src,
-            })
-        {
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.addr.try_send(Message::StunPacket {
+            payload,
+            from_addr: src,
+        }) {
             inc!(NetcheckMetrics::StunPacketsDropped);
             warn!("dropping stun packet from {}", src);
         }
@@ -228,7 +226,7 @@ impl Client {
         // right now.
         let (tx, rx) = oneshot::channel();
         self.addr
-            .send(ActorMessage::RunCheck {
+            .send(Message::RunCheck {
                 derp_map: dm.clone(),
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
@@ -539,7 +537,7 @@ impl ProbeReport {
 
 /// Messages to send to the [`Actor`].
 #[derive(Debug)]
-pub(crate) enum ActorMessage {
+pub(crate) enum Message {
     /// Run a netcheck.
     ///
     /// Only one netcheck can be run at a time, trying to run multiple concurrently will
@@ -588,19 +586,19 @@ pub(crate) enum ActorMessage {
 /// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
 /// will not keep the actor alive, which makes this handy to pass to internal tasks.
 #[derive(Debug, Clone)]
-struct ActorAddr {
-    sender: mpsc::Sender<ActorMessage>,
+struct Addr {
+    sender: mpsc::Sender<Message>,
 }
 
-impl ActorAddr {
-    async fn send(&self, msg: ActorMessage) -> Result<(), mpsc::error::SendError<ActorMessage>> {
+impl Addr {
+    async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
         self.sender.send(msg).await.map_err(|err| {
             error!("netcheck actor lost");
             err
         })
     }
 
-    fn try_send(&self, msg: ActorMessage) -> Result<(), mpsc::error::TrySendError<ActorMessage>> {
+    fn try_send(&self, msg: Message) -> Result<(), mpsc::error::TrySendError<Message>> {
         self.sender.try_send(msg).map_err(|err| {
             match &err {
                 mpsc::error::TrySendError::Full(_) => {
@@ -624,11 +622,11 @@ struct Actor {
     /// Actor messages channel.
     ///
     /// If there are no more senders the actor stops.
-    receiver: mpsc::Receiver<ActorMessage>,
+    receiver: mpsc::Receiver<Message>,
     /// The sender side of the messages channel.
     ///
     /// This allows creating new [`ActorAddr`]s from the actor.
-    sender: mpsc::Sender<ActorMessage>,
+    sender: mpsc::Sender<Message>,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -681,8 +679,8 @@ impl Actor {
     }
 
     /// Returns the channel to send messages to the actor.
-    fn addr(&self) -> ActorAddr {
-        ActorAddr {
+    fn addr(&self) -> Addr {
+        Addr {
             sender: self.sender.clone(),
         }
     }
@@ -697,7 +695,7 @@ impl Actor {
         while let Some(msg) = self.receiver.recv().await {
             trace!(?msg, "handling message");
             match msg {
-                ActorMessage::RunCheck {
+                Message::RunCheck {
                     derp_map,
                     stun_sock_v4,
                     stun_sock_v6,
@@ -706,16 +704,16 @@ impl Actor {
                     self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx)
                         .await;
                 }
-                ActorMessage::ReportReady { report, derp_map } => {
+                Message::ReportReady { report, derp_map } => {
                     self.handle_report_ready(report, derp_map);
                 }
-                ActorMessage::ReportAborted => {
+                Message::ReportAborted => {
                     self.handle_report_aborted();
                 }
-                ActorMessage::StunPacket { payload, from_addr } => {
+                Message::StunPacket { payload, from_addr } => {
                     self.handle_stun_packet(&payload, from_addr);
                 }
-                ActorMessage::InFlightStun(inflight, response_tx) => {
+                Message::InFlightStun(inflight, response_tx) => {
                     self.handle_in_flight_stun(inflight, response_tx);
                 }
             }
@@ -1023,7 +1021,7 @@ impl Actor {
 /// socket is no longer needed.
 async fn bind_local_stun_socket(
     addr: SocketAddr,
-    actor_addr: ActorAddr,
+    actor_addr: Addr,
     cancel_token: CancellationToken,
 ) -> Option<Arc<UdpSocket>> {
     let sock = match UdpSocket::bind(addr).await {
@@ -1068,14 +1066,14 @@ async fn bind_local_stun_socket(
 }
 
 /// Receive STUN response from a UDP socket, pass it to the actor.
-async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &ActorAddr) -> Result<()> {
+async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> Result<()> {
     let (count, mut from_addr) = sock
         .recv_from(buf)
         .await
         .context("Error reading from stun socket")?;
     let payload = &buf[..count];
     from_addr.set_ip(to_canonical(from_addr.ip()));
-    let msg = ActorMessage::StunPacket {
+    let msg = Message::StunPacket {
         payload: Bytes::from(payload.to_vec()),
         from_addr,
     };

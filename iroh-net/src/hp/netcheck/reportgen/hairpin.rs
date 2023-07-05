@@ -40,7 +40,7 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(netcheck: netcheck::ActorAddr, reportstate: reportgen::Addr) -> Self {
+    pub(super) fn new(netcheck: netcheck::Addr, reportstate: reportgen::Addr) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let mut actor = Actor {
             msg_tx,
@@ -107,7 +107,7 @@ enum Message {
 struct Actor {
     msg_tx: mpsc::Sender<Message>,
     msg_rx: mpsc::Receiver<Message>,
-    netcheck: netcheck::ActorAddr,
+    netcheck: netcheck::Addr,
     reportstate: reportgen::Addr,
 }
 
@@ -150,10 +150,7 @@ impl Actor {
         };
         let (msg_response_tx, msg_response_rx) = oneshot::channel();
         self.netcheck
-            .send(netcheck::ActorMessage::InFlightStun(
-                inflight,
-                msg_response_tx,
-            ))
+            .send(netcheck::Message::InFlightStun(inflight, msg_response_tx))
             .await
             .context("netcheck actor gone")?;
         msg_response_rx.await.context("netcheck actor died")?;
@@ -225,7 +222,7 @@ mod tests {
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, mut netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::ActorAddr {
+        let netcheck_addr = netcheck::Addr {
             sender: netcheck_tx,
         };
         let (reportstate_tx, mut reportstate_rx) = mpsc::channel(32);
@@ -247,7 +244,7 @@ mod tests {
         // This bit is our dummy netcheck actor: it handles the inflight request and sends
         // back the STUN request once it arrives.
         let dummy_netcheck = tokio::spawn(async move {
-            let netcheck::ActorMessage::InFlightStun(inflight, resp_tx) =
+            let netcheck::Message::InFlightStun(inflight, resp_tx) =
             netcheck_rx.recv().await.unwrap() else {
                 panic!("Wrong message received");
             };
@@ -308,7 +305,7 @@ mod tests {
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, _netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::ActorAddr {
+        let netcheck_addr = netcheck::Addr {
             sender: netcheck_tx,
         };
         let (reportstate_tx, _reportstate_rx) = mpsc::channel(32);

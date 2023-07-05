@@ -54,7 +54,7 @@ impl Client {
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
     pub(super) fn new(
-        netcheck: netcheck::ActorAddr,
+        netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
         plan: ProbePlan,
         port_mapper: Option<portmapper::Client>,
@@ -148,7 +148,7 @@ struct Actor {
     /// The receiver of the message channel.
     msg_rx: mpsc::Receiver<Message>,
     /// The address of the netcheck actor.
-    netcheck: super::ActorAddr,
+    netcheck: super::Addr,
 
     // Provided state
     /// Which probes to run.
@@ -192,7 +192,7 @@ impl Actor {
             Err(err) => {
                 error!("reportgen actor failed: {err:#}");
                 self.netcheck
-                    .send(netcheck::ActorMessage::ReportAborted)
+                    .send(netcheck::Message::ReportAborted)
                     .await
                     .ok();
             }
@@ -415,7 +415,7 @@ impl Actor {
         // netcheck actor.
         debug!("Sending report to netcheck actor");
         self.netcheck
-            .send(netcheck::ActorMessage::ReportReady {
+            .send(netcheck::Message::ReportReady {
                 report: Box::new(self.report.clone()),
                 derp_map: self.derpmap.clone(),
             })
@@ -606,7 +606,7 @@ async fn run_probe(
     stun_sock6: Option<Arc<UdpSocket>>,
     derp_node: DerpNode,
     probe: Probe,
-    netcheck: netcheck::ActorAddr,
+    netcheck: netcheck::Addr,
     pinger: Option<Pinger>,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
@@ -643,7 +643,7 @@ async fn run_probe(
     let (stun_tx, stun_rx) = oneshot::channel();
     let (stun_ready_tx, stun_ready_rx) = oneshot::channel();
     netcheck
-        .send(netcheck::ActorMessage::InFlightStun(
+        .send(netcheck::Message::InFlightStun(
             netcheck::Inflight {
                 txn: txid,
                 start: Instant::now(),
