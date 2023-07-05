@@ -18,17 +18,24 @@ pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 40));
 /// An endpoint IPPort and an associated type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
+    /// The address of the endpoint.
     pub addr: SocketAddr,
+    /// The kind of endpoint.
     pub typ: EndpointType,
 }
 
+/// Type of endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EndpointType {
+    /// Endpoint kind has not been determined yet.
     Unknown,
+    /// Endpoint is bound to a local address.
     Local,
+    /// Endpoint has a publicly reachable address found via STUN.
     Stun,
+    /// Endpoint uses a port mapping in the router.
     Portmapped,
-    /// hard NAT: STUN'ed IPv4 address + local fixed port
+    /// Hard NAT: STUN'ed IPv4 address + local fixed port.
     Stun4LocalPort,
 }
 
@@ -104,11 +111,14 @@ impl NetInfo {
     }
 }
 
+/// The type of link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkType {
+    /// A wired link (ethernet, fiber, etc).
     Wired,
+    /// A WiFi link.
     Wifi,
-    /// LTE, 4G, 3G, etc
+    /// LTE, 4G, 3G, etc.
     Mobile,
 }
 
@@ -125,6 +135,7 @@ pub struct PingResult {
     pub node_ip: Option<IpAddr>,
     /// DNS name base or (possibly not unique) hostname
     pub node_name: Option<String>,
+    /// Perceived latency in seconds.
     pub latency_seconds: Option<f64>,
     /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
     pub endpoint: Option<SocketAddr>,
