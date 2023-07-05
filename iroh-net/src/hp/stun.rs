@@ -1,3 +1,5 @@
+//! STUN packets sending and receiving.
+
 use std::net::SocketAddr;
 
 use stun_rs::{
