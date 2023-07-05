@@ -75,7 +75,7 @@ impl GetInteractive {
             } => get::Options {
                 keylog: *keylog,
                 derp_map: derp_map.clone(),
-                ..ticket.get_options(Keypair::generate())
+                ..ticket.as_get_options(Keypair::generate())
             },
             GetInteractive::Hash { opts, .. } => opts.clone(),
         }

@@ -93,7 +93,7 @@ impl Ticket {
         (hash, peer, addrs, token)
     }
 
-    pub fn get_options(&self, keypair: Keypair) -> get::Options {
+    pub fn as_get_options(&self, keypair: Keypair) -> get::Options {
         get::Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),

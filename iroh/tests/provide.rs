@@ -492,7 +492,7 @@ async fn test_run_ticket() {
 
     let no_token_ticket = node.ticket(hash, None).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = no_token_ticket.get_options(Keypair::generate());
+        let opts = no_token_ticket.as_get_options(Keypair::generate());
         let request = GetRequest::all(no_token_ticket.hash()).into();
         let response = run_get_request(opts, request).await;
         assert!(response.is_err());
@@ -507,7 +507,7 @@ async fn test_run_ticket() {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
             .into();
-        run_get_request(ticket.get_options(Keypair::generate()), request).await
+        run_get_request(ticket.as_get_options(Keypair::generate()), request).await
     })
     .await
     .expect("timeout")
