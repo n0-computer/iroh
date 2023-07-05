@@ -1,5 +1,5 @@
 super::make_metric_recorders! {
-    Portmap,
+    "Portmap",
 
     /*
      * General port mapping metrics

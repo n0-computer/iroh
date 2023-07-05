@@ -28,14 +28,12 @@ fn make_handler(
     move |_req: Request<Body>| {
         Box::pin(async move {
             CORE.encode()
+                .await
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
                 .map(|r| {
                     let body = Body::from(r);
                     Response::builder()
-                        .header(
-                            hyper::header::CONTENT_TYPE,
-                            "application/openmetrics-text; version=1.0.0; charset=utf-8",
-                        )
+                        .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
                         .body(body)
                         .expect("Failed to build response")
                 })

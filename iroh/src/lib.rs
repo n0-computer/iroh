@@ -10,3 +10,6 @@ pub mod rpc_protocol;
 pub mod commands;
 #[cfg(feature = "cli")]
 pub mod config;
+
+#[cfg(feature = "metrics")]
+pub mod metrics;

@@ -257,7 +257,7 @@ impl Gui {
         let counters2 = counters.clone();
         let counter_task = tokio::spawn(async move {
             loop {
-                Self::update_counters(&counters2);
+                Self::update_counters(&counters2).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -272,16 +272,31 @@ impl Gui {
         }
     }
 
-    fn update_counters(target: &ProgressBar) {
+    async fn update_counters(target: &ProgressBar) {
         let metrics = &CORE;
         if metrics.is_enabled() {
-            let mm = metrics.magicsock_metrics();
-            let send_ipv4 = HumanBytes(mm.send_ipv4.get());
-            let send_ipv6 = HumanBytes(mm.send_ipv6.get());
-            let send_derp = HumanBytes(mm.send_derp.get());
-            let recv_data_derp = HumanBytes(mm.recv_data_derp.get());
-            let recv_data_ipv4 = HumanBytes(mm.recv_data_ipv4.get());
-            let recv_data_ipv6 = HumanBytes(mm.recv_data_ipv6.get());
+            tracing::error!("metrics enabled");
+            let send_ipv4 = metrics.get_metric("Magicsock", "send_ipv4").await.unwrap();
+            let send_ipv4 = HumanBytes(send_ipv4.m_val_u64);
+            let send_ipv6 = metrics.get_metric("Magicsock", "send_ipv6").await.unwrap();
+            let send_ipv6 = HumanBytes(send_ipv6.m_val_u64);
+            let send_derp = metrics.get_metric("Magicsock", "send_derp").await.unwrap();
+            let send_derp = HumanBytes(send_derp.m_val_u64);
+            let recv_data_derp = metrics
+                .get_metric("Magicsock", "recv_data_derp")
+                .await
+                .unwrap();
+            let recv_data_derp = HumanBytes(recv_data_derp.m_val_u64);
+            let recv_data_ipv4 = metrics
+                .get_metric("Magicsock", "recv_data_ipv4")
+                .await
+                .unwrap();
+            let recv_data_ipv4 = HumanBytes(recv_data_ipv4.m_val_u64);
+            let recv_data_ipv6 = metrics
+                .get_metric("Magicsock", "recv_data_ipv6")
+                .await
+                .unwrap();
+            let recv_data_ipv6 = HumanBytes(recv_data_ipv6.m_val_u64);
             let text = format!(
                 r#"Counters
 
