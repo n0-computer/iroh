@@ -16,7 +16,7 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,7 +32,7 @@ use tokio::task::AbortHandle;
 use tokio::time::{self, Instant};
 use tracing::{debug, error, info, instrument, trace, warn};
 
-use crate::hp::derp::{DerpMap, DerpNode};
+use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
 use crate::hp::netcheck::{self, get_derp_addr, ProbeError, ProbeReport, Report};
 use crate::hp::ping::Pinger;
@@ -726,12 +726,12 @@ async fn run_probe(
                 tokio::join!(
                     time::timeout(
                         ICMP_PROBE_TIMEOUT,
-                        super::measure_icmp_latency(region, pinger).map(Some)
+                        measure_icmp_latency(region, pinger).map(Some)
                     ),
-                    super::measure_https_latency(region)
+                    measure_https_latency(region)
                 )
             } else {
-                (Ok(None), super::measure_https_latency(region).await)
+                (Ok(None), measure_https_latency(region).await)
             };
             if let Ok(Some(icmp_res)) = res.0 {
                 match icmp_res {
@@ -857,4 +857,70 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     let has_captive = res.status() != 204 || !is_valid_response;
 
     Ok(has_captive)
+}
+
+async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {
+    if reg.nodes.is_empty() {
+        anyhow::bail!(
+            "no nodes for region {} ({})",
+            reg.region_id,
+            reg.region_code
+        );
+    }
+
+    // Try pinging the first node in the region
+    let node = &reg.nodes[0];
+
+    // Get the IPAddr by asking for the UDP address that we would use for
+    // STUN and then using that IP.
+    let node_addr = get_derp_addr(node, ProbeProto::Ipv4)
+        .await
+        .with_context(|| format!("no address for node {}", node.name))?;
+
+    debug!(
+        "ICMP ping start to {} with payload len {} - derp {} {}",
+        node_addr,
+        node.name.as_bytes().len(),
+        node.name,
+        reg.region_id
+    );
+    // Use the unique node.name field as the packet data to reduce the
+    // likelihood that we get a mismatched echo response.
+    let d = p.send(node_addr.ip(), node.name.as_bytes()).await?;
+    debug!(
+        "ICMP ping done {} with latency {}ms - derp {} {}",
+        node_addr,
+        d.as_millis(),
+        node.name,
+        reg.region_id
+    );
+    Ok(d)
+}
+
+async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
+    anyhow::bail!("not implemented");
+    // TODO:
+    // - needs derphttp::Client
+    // - measurement hooks to measure server processing time
+
+    // metricHTTPSend.Add(1)
+    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
+    // let dc := derphttp.NewNetcheckClient(c.logf);
+    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
+    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
+    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
+    // resp, err := hc.Do(req);
+
+    // // DERPs should give us a nominal status code, so anything else is probably
+    // // an access denied by a MITM proxy (or at the very least a signal not to
+    // // trust this latency check).
+    // if resp.StatusCode > 299 {
+    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
+    // }
+    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
+    // result.End(c.timeNow())
+
+    // // TODO: decide best timing heuristic here.
+    // // Maybe the server should return the tcpinfo_rtt?
+    // return result.ServerProcessing, ip, nil
 }
