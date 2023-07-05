@@ -25,9 +25,8 @@ impl DerpMap {
 
     /// Creates a new [`DerpMap`] with a single Derp server configured.
     pub fn default_from_node(
-        host_name: Url,
+        url: Url,
         stun_port: u16,
-        derp_port: u16,
         derp_ipv4: UseIpv4,
         derp_ipv6: UseIpv6,
     ) -> Self {
@@ -42,12 +41,11 @@ impl DerpMap {
                 nodes: vec![DerpNode {
                     name: "default-1".into(),
                     region_id: 1,
-                    host_name,
+                    url,
                     stun_only: !derp_ipv4.is_enabled() && !derp_ipv6.is_enabled(),
                     stun_port,
                     ipv4: derp_ipv4,
                     ipv6: derp_ipv6,
-                    derp_port,
                     stun_test_ip: None,
                 }],
                 avoid: false,
@@ -91,7 +89,7 @@ pub struct DerpRegion {
 pub struct DerpNode {
     pub name: String,
     pub region_id: u16,
-    pub host_name: Url,
+    pub url: Url,
     pub stun_only: bool,
     pub stun_port: u16,
     pub stun_test_ip: Option<IpAddr>,
@@ -103,7 +101,6 @@ pub struct DerpNode {
     /// If `None`, A record(s) from DNS lookups of HostName are used.
     /// If `Disabled`, IPv6 is not used;
     pub ipv6: UseIpv6,
-    pub derp_port: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]

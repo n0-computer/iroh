@@ -2661,13 +2661,15 @@ pub(crate) mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "https://test-node.invalid".parse().unwrap(),
+                        // In test mode, the DERP client does not validate HTTPS certs, so the host
+                        // name is irrelevant, but the port is used.
+                        url: format!("https://test-node.invalid:{}", https_addr.port())
+                            .parse()
+                            .unwrap(),
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
-
-                        derp_port: https_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
