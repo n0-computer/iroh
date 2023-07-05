@@ -8,11 +8,11 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
-use iroh_net::tls::PeerId;
+use iroh_net::tls::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RequestToken;
-use crate::Hash;
+use crate::{get, Hash};
 
 /// A token containing everything to get a file from the provider.
 ///
@@ -91,6 +91,16 @@ impl Ticket {
             addrs,
         } = self;
         (hash, peer, addrs, token)
+    }
+
+    pub fn get_options(&self, keypair: Keypair) -> get::Options {
+        get::Options {
+            peer_id: self.peer,
+            addrs: self.addrs.clone(),
+            keypair,
+            keylog: true,
+            derp_map: None,
+        }
     }
 }
 

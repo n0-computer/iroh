@@ -6,7 +6,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
-use iroh_net::tls::PeerId;
+use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
@@ -72,6 +72,7 @@ impl Cli {
                         peer_id: peer,
                         keylog: self.keylog,
                         derp_map: config.derp_map(),
+                        keypair: Keypair::generate(),
                     },
                     token,
                     single,
