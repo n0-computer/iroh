@@ -1,5 +1,5 @@
 super::make_metric_recorders! {
-    Netcheck,
+    "Netcheck",
 
     StunPacketsDropped: Counter: "Incoming STUN packets dropped due to a full receiving queue.",
     StunPacketsSentIpv4: Counter: "Number of IPv4 STUN packets sent",

@@ -10,7 +10,6 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
-pub mod iroh;
 pub mod magicsock;
 pub mod netcheck;
 pub mod portmap;
