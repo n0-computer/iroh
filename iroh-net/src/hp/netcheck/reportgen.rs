@@ -16,11 +16,12 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
+use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use iroh_metrics::inc;
@@ -155,7 +156,7 @@ enum Message {
     // TODO: Ideally we remove the need for this message and the logic is inverted: once we
     // get a probe result we cancel all probes that are no longer needed.  But for now it's
     // this way around to ease conversion.
-    ProbeWouldHelp(Probe, DerpNode, oneshot::Sender<bool>),
+    ProbeWouldHelp(Probe, Box<DerpNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -317,6 +318,7 @@ impl Actor {
 
         // A collection of futures running probe sets.
         let mut probes = FuturesUnordered::default();
+        let mut derp_nodes_cache: BTreeMap<String, Box<DerpNode>> = BTreeMap::new();
 
         for probe_set in plan.values() {
             let mut set = FuturesUnordered::default();
@@ -324,9 +326,20 @@ impl Actor {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let node = self.derp_map.named_node(probe.node());
-                ensure!(node.is_some(), "missing named node {}", probe.node());
-                let node = node.unwrap().clone();
+                let derp_node = match derp_nodes_cache.get(probe.node()) {
+                    Some(node) => node.clone(),
+                    None => {
+                        let name = probe.node().to_string();
+                        let node = self
+                            .derp_map
+                            .named_node(&name)
+                            .with_context(|| format!("missing named derp node {}", probe.node()))?;
+                        let node = Box::new(node.clone());
+                        derp_nodes_cache.insert(name, node.clone());
+                        node
+                    }
+                };
+                let derp_node = derp_node.clone();
                 let probe = probe.clone();
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
@@ -336,7 +349,7 @@ impl Actor {
                         reportstate,
                         stun_sock4,
                         stun_sock6,
-                        node,
+                        derp_node,
                         probe,
                         netcheck,
                         pinger,
@@ -369,6 +382,7 @@ impl Actor {
             }));
         }
         self.outstanding_tasks.probes = true;
+        drop(derp_nodes_cache);
 
         loop {
             trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
@@ -457,7 +471,7 @@ impl Actor {
                 self.outstanding_tasks.hairpin = false;
             }
             Message::ProbeWouldHelp(probe, derp_node, response_tx) => {
-                let res = self.probe_would_help(probe, derp_node);
+                let res = self.probe_would_help(probe, *derp_node);
                 if response_tx.send(res).is_err() {
                     debug!("probe dropped before ProbeWouldHelp response sent");
                 }
@@ -630,7 +644,7 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
-    derp_node: DerpNode,
+    derp_node: Box<DerpNode>,
     probe: Probe,
     netcheck: netcheck::Addr,
     pinger: Option<Pinger>,

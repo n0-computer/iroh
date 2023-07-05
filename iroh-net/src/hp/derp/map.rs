@@ -59,7 +59,7 @@ impl DerpMap {
     }
 
     /// Returns the [`DerpNode`] by name.
-    pub fn named_node<'a>(&self, node_name: &str) -> Option<&DerpNode> {
+    pub fn named_node(&self, node_name: &str) -> Option<&DerpNode> {
         for r in self.regions.values() {
             for n in &r.nodes {
                 if n.name == node_name {
