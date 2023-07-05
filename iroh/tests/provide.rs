@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt};
 use iroh::node::{Event, Node};
-use iroh_net::MagicEndpoint;
+use iroh_net::{tls::Keypair, MagicEndpoint};
 use rand::RngCore;
 use testdir::testdir;
 use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
@@ -589,8 +589,15 @@ async fn test_run_fsm() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let connection =
-            MagicEndpoint::dial_peer(peer_id, &iroh_bytes::P2P_ALPN, &addrs, None, true).await?;
+        let connection = MagicEndpoint::dial_peer(
+            Keypair::generate(),
+            peer_id,
+            &iroh_bytes::P2P_ALPN,
+            &addrs,
+            None,
+            true,
+        )
+        .await?;
         let request = GetRequest::all(hash).into();
         let stream = get::run_connection(connection, request);
         let (collection, children, _) = aggregate_get_response(stream).await?;
@@ -795,7 +802,15 @@ async fn test_token_passthrough() -> Result<()> {
     let addrs = provider.local_endpoint_addresses().await?;
     let peer_id = provider.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        MagicEndpoint::dial_peer(peer_id, &iroh_bytes::P2P_ALPN, &addrs, None, true).await?;
+        MagicEndpoint::dial_peer(
+            Keypair::generate(),
+            peer_id,
+            &iroh_bytes::P2P_ALPN,
+            &addrs,
+            None,
+            true,
+        )
+        .await?;
         let request = GetRequest::all(hash).with_token(token).into();
         let response = get::run(
             request,

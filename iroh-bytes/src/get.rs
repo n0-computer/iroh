@@ -14,6 +14,7 @@ use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
+use iroh_net::tls::Keypair;
 use iroh_net::{hp::derp::DerpMap, tls::PeerId};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
@@ -70,6 +71,7 @@ pub async fn run_ticket(
     derp_map: Option<DerpMap>,
 ) -> Result<get_response_machine::AtInitial> {
     let connection = iroh_net::MagicEndpoint::dial_peer(
+        Keypair::generate(),
         ticket.peer(),
         &crate::P2P_ALPN,
         ticket.addrs(),
@@ -623,6 +625,7 @@ pub async fn run(
     opts: Options,
 ) -> anyhow::Result<get_response_machine::AtInitial> {
     let connection = iroh_net::MagicEndpoint::dial_peer(
+        Keypair::generate(),
         opts.peer_id,
         &crate::P2P_ALPN,
         &opts.addrs,

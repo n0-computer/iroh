@@ -182,15 +182,20 @@ impl MagicEndpoint {
     /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
     /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
     /// to be able to decrypt captured traffic for debugging purposes.
+    ///
+    /// Note that this function is a convenience wrapper around [MagicEndpointBuilder] and [Self::connect].
+    /// It should be used in short lived processes that only need to connect to a single peer.
+    /// Otherwise, it is more efficient to create a [MagicEndpoint] and then
+    /// use [Self::connect] to connect to multiple peers.
     pub async fn dial_peer(
+        keypair: Keypair,
         peer_id: PeerId,
         alpn_protocol: &[u8],
         known_addrs: &[SocketAddr],
         derp_map: Option<DerpMap>,
         keylog: bool,
     ) -> anyhow::Result<quinn::Connection> {
-        let endpoint =
-            MagicEndpoint::bind(Keypair::generate(), 0, None, derp_map, None, keylog).await?;
+        let endpoint = MagicEndpoint::bind(keypair, 0, None, derp_map, None, keylog).await?;
         endpoint
             .connect(peer_id, alpn_protocol, known_addrs)
             .await
