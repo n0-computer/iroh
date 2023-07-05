@@ -26,6 +26,7 @@ use crate::util::{canonicalize_path, Hash, Progress, RpcError};
 
 pub mod collection;
 pub mod database;
+mod get;
 mod ticket;
 
 pub use database::Database;
