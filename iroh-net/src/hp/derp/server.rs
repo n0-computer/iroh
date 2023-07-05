@@ -169,6 +169,7 @@ where
         }
     }
 
+    /// Whether or not the derp [Server] is closed.
     pub fn is_closed(&self) -> bool {
         self.closed
     }
@@ -224,7 +225,9 @@ where
         }
     }
 
-    pub fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
+    /// Used by [super::http::mesh_clients::MeshClients] to add a meshed derp [Server] as a [PacketForwarder] for the given
+    /// [PublicKey]
+    pub(crate) fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::AddPacketForwarder {
                 key: client_key,
@@ -237,7 +240,9 @@ where
         Ok(())
     }
 
-    pub fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
+    /// Used by [super::http::mesh_clients::MeshClients] to remove a meshed derp [Server] as a [PacketForwarder] for the given
+    /// [PublicKey]
+    pub(crate) fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::RemovePacketForwarder(client_key))
             .map_err(|e| match e {
@@ -577,8 +582,11 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
 }
 
 #[derive(Debug)]
+/// Whether or not the underlying [tokio::net::TcpStream] is served over Tls
 pub enum MaybeTlsStream {
+    /// A plain non-Tls [tokio::net::TcpStream]
     Plain(tokio::net::TcpStream),
+    /// A Tls wrapped [tokio::net::TcpStream]
     Tls(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
     #[cfg(test)]
     Test(tokio::io::DuplexStream),

@@ -188,6 +188,7 @@ pub struct ServerBuilder {
 }
 
 impl ServerBuilder {
+    /// Create a new [ServerBuilder]
     pub fn new(addr: SocketAddr) -> Self {
         Self {
             secret_key: None,

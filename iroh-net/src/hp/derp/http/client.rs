@@ -37,46 +37,67 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
+/// Possible connection errors on the [Client]
 pub enum ClientError {
     #[error("client is closed")]
+    /// The client is closed
     Closed,
     #[error("no derp client")]
+    /// There no underlying derp [super::client::Client] client exists for this http derp [Client]
     NoClient,
     #[error("error sending a packet")]
+    /// There was an error sending a packet
     Send,
     #[error("error receiving a packet")]
+    /// There was an error receiving a packet
     Receive,
     #[error("connect timeout")]
+    /// There was a connection timeout error
     ConnectTimeout,
     #[error("DERP region is not available")]
+    /// No derp nodes are available for the given region
     DerpRegionNotAvail,
     #[error("no nodes available for {0}")]
+    /// No derp nodes are availabe with that name
     NoNodeForTarget(String),
     #[error("no derp nodes found for {0}, only are stun_only nodes")]
+    /// The derp node specified only allows STUN requests
     StunOnlyNodesFound(String),
     #[error("dial error")]
+    /// There was an error dialing
     DialIO(#[from] std::io::Error),
     #[error("dial error")]
+    /// There was an error from the task doing the dialing
     DialTask(#[from] tokio::task::JoinError),
     #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
+    /// Both IPv4 and IPv6 are disabled for this derp node
     IPDisabled,
     #[error("no local addr: {0}")]
+    /// No local addresses exist
     NoLocalAddr(String),
     #[error("http connection error")]
+    /// There was http [hyper::Error]
     Hyper(#[from] hyper::Error),
     #[error("unexpected status code: expected {0}, got {1}")]
+    /// There was an unexpected status code
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
     #[error("failed to upgrade connection: {0}")]
+    /// The connection failed to upgrade
     Upgrade(String),
     #[error("failed to build derp client: {0}")]
+    /// The derp [super::client::Client] failed to build
     Build(String),
     #[error("ping timeout")]
+    /// The ping request timed out
     PingTimeout,
     #[error("cannot acknowledge pings")]
+    /// This [Client] cannot acknowledge pings
     CannotAckPings,
     #[error("invalid url: {0}")]
+    /// The given [Url] is invalid
     InvalidUrl(String),
     #[error("dns: {0:?}")]
+    /// There was an error with DNS resolution
     Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
 
@@ -161,6 +182,7 @@ impl std::fmt::Debug for ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Create a new [ClientBuilder]
     pub fn new() -> Self {
         Self::default()
     }
@@ -195,26 +217,34 @@ impl ClientBuilder {
         self
     }
 
+    /// Enable this [Client] to acknowledge pings.
     pub fn can_ack_pings(mut self, can: bool) -> Self {
         self.can_ack_pings = can;
         self
     }
 
+    /// Indicate this client is the preferred way to communicate
+    /// to the peer with this client's [key::node::PublicKey]
     pub fn is_preferred(mut self, is: bool) -> Self {
         self.is_preferred = is;
         self
     }
 
+    /// Indicates this client is a prober
     pub fn is_prober(mut self, is: bool) -> Self {
         self.is_prober = is;
         self
     }
 
+    /// Build this [Client] with a [MeshKey], and allow it to mesh
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
         self
     }
 
+    /// Build the [Client]
+    ///
+    /// Will error if there is no region or no url set.
     pub fn build(self, key: key::node::SecretKey) -> anyhow::Result<Client> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
         Ok(Client {
@@ -236,6 +266,7 @@ impl ClientBuilder {
         })
     }
 
+    /// The expected [key::node::PublicKey] of the [super::server::Server] we are connecting to.
     pub fn server_public_key(mut self, server_public_key: key::node::PublicKey) -> Self {
         self.server_public_key = Some(server_public_key);
         self

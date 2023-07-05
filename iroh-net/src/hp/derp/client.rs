@@ -88,6 +88,7 @@ impl Client {
         Ok(())
     }
 
+    /// Send a ping with 8 bytes of random data.
     pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
         self.inner
             .writer_channel
@@ -96,6 +97,8 @@ impl Client {
         Ok(())
     }
 
+    /// Respond to a ping request. The `data` field should be filled
+    /// by the 8 bytes of random data send by the ping.
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<()> {
         self.inner
             .writer_channel
@@ -126,6 +129,7 @@ impl Client {
     }
 
     /// Asks the server to close the target's TCP connection.
+    ///
     /// It's a fatal error if the client wasn't created using [`MeshKey`]
     pub async fn close_peer(&self, target: PublicKey) -> Result<()> {
         self.inner
@@ -135,10 +139,14 @@ impl Client {
         Ok(())
     }
 
+    /// The local address that the [Client] is listening on.
     pub async fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr)
     }
 
+    /// Whether or not this [Client] is closed.
+    ///
+    /// The [Client] is considered closed if the write side of the client is no longer running.
     pub async fn is_closed(&self) -> bool {
         self.inner.writer_task.lock().await.is_none()
     }
@@ -288,6 +296,7 @@ impl Client {
         }
     }
 
+    /// The [PublicKey] of the [super::server::Server] this [Client] is connected with.
     pub fn server_public_key(self) -> PublicKey {
         self.inner.server_public_key.clone()
     }
@@ -539,9 +548,11 @@ fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
 }
 
 #[derive(derive_more::Debug, Clone)]
+/// The type of message received by the [Client] from the [super::server::Server].
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
+        /// The [PublicKey] of the packet sender.
         source: PublicKey,
         /// The received packet bytes. It aliases the memory passed to Client.Recv.
         #[debug(skip)]

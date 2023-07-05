@@ -9,9 +9,12 @@
 //! between very aggressive NATs, firewalls, no IPv6, etc? Well, DERP.
 //! Based on tailscale/derp/derp.go
 
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
+/// An http specific Derp Client and Derp Server. Allows for using tls or non tls connection
+/// upgrades.
 pub mod http;
 mod map;
 mod server;

@@ -22,10 +22,7 @@ use super::{
     write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
 };
 #[derive(Debug)]
-/// A client's connection to the server
-/// A handle?
-/// should have senders here, & be clonable, i think?
-/// should be able to be held by server
+/// The [super::server::Server] side representation of a [super::client::Client]'s connection
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each Accept
     pub(crate) conn_num: usize,
