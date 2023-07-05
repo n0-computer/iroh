@@ -45,11 +45,23 @@ mod hairpin;
 /// Fake DNS TLD used in tests for an invalid hostname.
 const DOT_INVALID: &str = ".invalid";
 
+/// The maximum amount of time netcheck will spend gathering a single report.
+const OVERALL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The maximum amount of time netcheck will spend probing with STUN packets without getting a
+/// reply before switching to HTTP probing, on the assumption that outbound UDP is blocked.
+const STUN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The maximum amount of time netcheck will spend probing with ICMP packets.
+const ICMP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// How long to await for a captive-portal result, chosen semi-arbitrarily.
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
 /// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
+
+const ENOUGH_REGIONS: usize = 3;
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -364,9 +376,8 @@ impl Actor {
                 debug!("all tasks done");
                 break;
             }
-            let remaining_time = super::OVERALL_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
-            let remaining_probe_time =
-                super::STUN_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
+            let remaining_time = OVERALL_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
+            let remaining_probe_time = STUN_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
 
             tokio::select! {
                 _ = tokio::time::sleep(remaining_time) => {
@@ -544,7 +555,7 @@ impl Actor {
         // function of whether this is our initial full probe or an
         // incremental one. For incremental ones, wait for the
         // duration of the slowest region. For initial ones, double that.
-        if self.report.region_latency.len() == super::ENOUGH_REGIONS {
+        if self.report.region_latency.len() == ENOUGH_REGIONS {
             let mut timeout = super::max_duration_value(&self.report.region_latency);
             if !self.incremental {
                 timeout *= 2;
@@ -712,7 +723,7 @@ async fn run_probe(
             let res = if let Some(ref pinger) = pinger {
                 tokio::join!(
                     time::timeout(
-                        super::ICMP_PROBE_TIMEOUT,
+                        ICMP_PROBE_TIMEOUT,
                         super::measure_icmp_latency(region, pinger).map(Some)
                     ),
                     super::measure_https_latency(region)

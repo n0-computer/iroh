@@ -32,19 +32,7 @@ mod reportgen;
 
 // The various default timeouts for things.
 
-/// The maximum amount of time netcheck will spend gathering a single report.
-const OVERALL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The maximum amount of time netcheck will spend probing with STUN packets without getting a
-/// reply before switching to HTTP probing, on the assumption that outbound UDP is blocked.
-const STUN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// The maximum amount of time netcheck will spend probing with ICMP packets.
-const ICMP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
-
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
-const ENOUGH_REGIONS: usize = 3;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
