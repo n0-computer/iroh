@@ -1,5 +1,5 @@
 super::make_metric_recorders! {
-    Magicsock,
+    "Magicsock",
 
     NumDerpConnsAdded:  Counter: "num_derp_conns added",
     NumDerpConnsRemoved:  Counter: "num_derp_conns removed",

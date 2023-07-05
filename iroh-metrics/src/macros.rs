@@ -65,14 +65,14 @@ pub use observe;
 /// Generate recorder metrics for a module.
 #[macro_export]
 macro_rules! make_metric_recorders {
-    ($module_name:ident, $($name:ident: $type:ident: $description:expr $(,)?)+) => {
+    ($module_name:expr, $($name:ident: $type:ident: $description:expr $(,)?)+) => {
         paste::paste! {
             #[cfg(feature = "metrics")]
             #[allow(unused_imports)]
             use prometheus_client::metrics::counter::*;
 
             #[cfg(feature = "metrics")]
-            #[derive(Default, Clone, Debug)]
+            #[derive(Default, Debug, Clone)]
                 pub struct Metrics {
                     $(
                         pub [<$name:snake>]: $type,
@@ -90,6 +90,7 @@ macro_rules! make_metric_recorders {
         }
 
         paste::paste! {
+            use $crate::core::MetricsRecorder;
             $(
                 /// Define a metric for the module
                 pub const [<METRICS_CNT_ $name:snake:upper>]: &str = stringify!([<$name:snake>]);
@@ -97,7 +98,7 @@ macro_rules! make_metric_recorders {
 
             #[cfg(feature = "metrics")]
             impl Metrics {
-                pub(crate) fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
+                pub fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
                     let sub_registry = registry.sub_registry_with_prefix(stringify!([<$module_name:snake>]));
 
                     $(
@@ -115,18 +116,79 @@ macro_rules! make_metric_recorders {
                         )+
                     }
                 }
+
+                pub fn run(self, rx: std::sync::mpsc::Receiver<$crate::core::MMsg>) {
+                    tokio::task::spawn_blocking(move || {
+                        while true {
+                            let msg = rx.recv();
+                            match msg {
+                                Ok(msg) => {
+                                    self.handle_message(msg);
+                                }
+                                Err(e) => {
+                                    tracing::error!("error receiving message: {}", e);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                pub(crate) fn handle_message(&self, msg: $crate::core::MMsg) where Self: $crate::core::MetricsRecorder{
+                    match msg.m_callback {
+                        Some(cb) => {
+                            // TODO(arqu): this always assumes only counters
+                            match msg.m.as_str() {
+                                $(
+                                    [<METRICS_CNT_ $name:snake:upper>] => {
+                                        let x = self.[<$name:snake>].get();
+                                        let rm = $crate::core::MMsg {
+                                            m: msg.m,
+                                            m_type: $crate::core::MMsgType::Record,
+                                            m_val_u64: x,
+                                            m_val_f64: 0.0,
+                                            m_callback: None,
+                                        };
+                                        tokio::spawn(async move {
+                                            match cb.send(rm).await {
+                                                Ok(_) => {}
+                                                Err(e) => {
+                                                    tracing::error!("error sending message: {}", e);
+                                                }
+                                            };
+                                        });
+                                    }
+                                )+
+                                _ => {
+                                    tracing::error!("Unknown metric: {}", msg.m);
+                                }
+                            }
+                        }
+                        None => {
+                            match msg.m_type {
+                                $crate::core::MMsgType::Record => {
+                                    self.record(&msg.m, msg.m_val_u64);
+                                }
+                                $crate::core::MMsgType::Observe => {
+                                    self.observe(&msg.m, msg.m_val_f64);
+                                }
+                                $crate::core::MMsgType::Unknown => {
+                                    tracing::trace!("Unknown message type: {:?}", msg);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             #[cfg(feature = "metrics")]
             impl $crate::core::MetricsRecorder for Metrics {
-                fn record<M>(&self, m: M, value: u64)
-                where
-                    M: $crate::core::MetricType + std::fmt::Display,
+                fn record(&self, m: &str, value: u64)
                 {
                     use $crate::core::MetricType;
-                    match m.name() {
+                    match m {
                         $(
                             x if x ==  [<$module_name Metrics>]::$name.name() => {
+                                // TODO(arqu): this always assumes only counters
                                 self.[<$name:snake>].inc_by(value);
                             }
                         )+
@@ -137,11 +199,9 @@ macro_rules! make_metric_recorders {
 
                 }
 
-                fn observe<M>(&self, m: M, _value: f64)
-                where
-                    M: $crate::core::HistogramType + std::fmt::Display,
+                fn observe(&self, m: &str, _value: f64)
                 {
-                    tracing::error!("observe ([<$module_name:snake>]): unknown metric {}", m.name());
+                    tracing::error!("observe ([<$module_name:snake>]): unknown metric {}", m);
                 }
             }
 
@@ -162,7 +222,7 @@ macro_rules! make_metric_recorders {
             impl $crate::core::MRecorder for  [<$module_name Metrics>] {
                 fn record(&self, value: u64) {
                     $crate::core::record(
-                        $crate::core::Collector::$module_name,
+                        $module_name,
                         self.clone(),
                         value
                     );

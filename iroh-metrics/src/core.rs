@@ -1,60 +1,86 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::SyncSender,
+};
 
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
-
-use crate::{iroh, magicsock, netcheck, portmap};
+use tokio::sync::{mpsc::channel, mpsc::Sender, Mutex, RwLock};
 
 pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 
 #[derive(Debug)]
 pub struct Core {
     enabled: AtomicBool,
-    registry: Registry,
-    iroh_metrics: iroh::Metrics,
-    magicsock_metrics: magicsock::Metrics,
-    netcheck_metrics: netcheck::Metrics,
-    portmap_metrics: portmap::Metrics,
+    registry: Mutex<Registry>,
+    metrics_map: RwLock<std::collections::HashMap<String, SyncSender<MMsg>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MMsg {
+    pub m_type: MMsgType,
+    pub m: String,
+    pub m_val_u64: u64,
+    pub m_val_f64: f64,
+    pub m_callback: Option<Sender<MMsg>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum MMsgType {
+    #[default]
+    Unknown,
+    Record,
+    Observe,
 }
 
 impl Default for Core {
     fn default() -> Self {
-        let mut reg = Registry::default();
         Core {
             enabled: AtomicBool::new(false),
-            iroh_metrics: iroh::Metrics::new(&mut reg),
-            magicsock_metrics: magicsock::Metrics::new(&mut reg),
-            netcheck_metrics: netcheck::Metrics::new(&mut reg),
-            portmap_metrics: portmap::Metrics::new(&mut reg),
-            registry: reg,
+            metrics_map: RwLock::new(std::collections::HashMap::new()),
+            registry: Mutex::new(Registry::default()),
         }
     }
 }
 
 impl Core {
-    pub fn registry(&self) -> &Registry {
+    pub fn registry(&self) -> &Mutex<Registry> {
         &self.registry
     }
 
-    pub fn iroh_metrics(&self) -> &iroh::Metrics {
-        &self.iroh_metrics
+    pub async fn register_collector(&self, name: &str, sender: SyncSender<MMsg>) {
+        self.metrics_map
+            .write()
+            .await
+            .insert(name.to_string(), sender);
     }
 
-    pub fn magicsock_metrics(&self) -> &magicsock::Metrics {
-        &self.magicsock_metrics
+    pub async fn get_collector(&self, name: &str) -> Option<SyncSender<MMsg>> {
+        self.metrics_map.read().await.get(name).cloned()
     }
 
-    pub fn netcheck_metrics(&self) -> &netcheck::Metrics {
-        &self.netcheck_metrics
+    pub async fn get_metric(&self, collector: &str, metric: &str) -> Option<MMsg> {
+        let c = self.get_collector(collector).await;
+
+        if let Some(coll) = c {
+            let (tx, mut rx) = channel(1);
+
+            let _ = coll.send(MMsg {
+                m_type: MMsgType::Unknown,
+                m: metric.to_string(),
+                m_val_u64: 0,
+                m_val_f64: 0.0,
+                m_callback: Some(tx),
+            });
+            return rx.recv().await;
+        }
+        None
     }
 
-    pub fn portmap_metrics(&self) -> &portmap::Metrics {
-        &self.portmap_metrics
-    }
-
-    pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
+    pub(crate) async fn encode(&self) -> Result<String, std::fmt::Error> {
         let mut buf = String::new();
-        encode(&mut buf, self.registry())?;
+        let reg = self.registry.lock().await;
+        encode(&mut buf, &reg)?;
         Ok(buf)
     }
 
@@ -85,13 +111,9 @@ pub trait HistogramType {
 /// types for the respective modules.
 pub trait MetricsRecorder {
     /// Records a metric for any point in time metric (e.g. counter, gauge, etc.)
-    fn record<M>(&self, m: M, value: u64)
-    where
-        M: MetricType + std::fmt::Display;
+    fn record(&self, m: &str, value: u64);
     /// Observes a metric for any metric over time (e.g. histogram, summary, etc.)
-    fn observe<M>(&self, m: M, value: f64)
-    where
-        M: HistogramType + std::fmt::Display;
+    fn observe(&self, m: &str, value: f64);
 }
 
 /// Interface to record metrics.
@@ -119,17 +141,30 @@ pub trait MObserver {
 /// Internal wrapper to record metrics only if the core is enabled.
 ///
 /// Recording is for single-value metrics, each recorded metric represents a metric value.
-pub(crate) fn record<M>(c: Collector, m: M, v: u64)
+pub fn record<M>(c: &str, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
 {
     if CORE.is_enabled() {
-        match c {
-            Collector::Iroh => CORE.iroh_metrics().record(m, v),
-            Collector::Magicsock => CORE.magicsock_metrics().record(m, v),
-            Collector::Netcheck => CORE.netcheck_metrics().record(m, v),
-            Collector::Portmap => CORE.portmap_metrics().record(m, v),
-        };
+        tracing::warn!("record: {}", c);
+        let cc = c.to_string();
+        let mn = m.name().to_string();
+        tokio::task::spawn(async move {
+            match CORE.get_collector(&cc).await {
+                Some(sender) => {
+                    let _ = sender.send(MMsg {
+                        m_type: MMsgType::Record,
+                        m: mn,
+                        m_val_u64: v,
+                        m_val_f64: 0.0,
+                        m_callback: None,
+                    });
+                }
+                None => {
+                    tracing::warn!("record: {} not found", cc);
+                }
+            }
+        });
     }
 }
 
@@ -138,30 +173,29 @@ where
 /// Observing is for distribution metrics, when multiple observations are combined in a
 /// single metric value.
 #[allow(dead_code)]
-pub(crate) fn observe<M>(c: Collector, m: M, v: f64)
+pub async fn observe<M>(c: &str, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
     if CORE.is_enabled() {
-        match c {
-            Collector::Iroh => CORE.iroh_metrics().observe(m, v),
-            Collector::Magicsock => CORE.magicsock_metrics().observe(m, v),
-            Collector::Netcheck => CORE.netcheck_metrics().observe(m, v),
-            Collector::Portmap => CORE.portmap_metrics().observe(m, v),
-        };
+        tracing::warn!("observe: {}", c);
+        let cc = c.to_string();
+        let mn = m.name().to_string();
+        tokio::task::spawn(async move {
+            match CORE.get_collector(&cc).await {
+                Some(sender) => {
+                    let _ = sender.send(MMsg {
+                        m_type: MMsgType::Observe,
+                        m: mn,
+                        m_val_u64: 0,
+                        m_val_f64: v,
+                        m_callback: None,
+                    });
+                }
+                None => {
+                    tracing::warn!("observe: {} not found", cc);
+                }
+            }
+        });
     }
-}
-
-/// List of all collectors
-#[non_exhaustive]
-#[derive(Debug, PartialEq, Eq)]
-pub enum Collector {
-    /// Iroh collector aggregates all metrics from the iroh binary
-    Iroh,
-    /// Magicsock related metrics.
-    Magicsock,
-    /// Netcheck related metrics.
-    Netcheck,
-    /// Portmap related metrics.
-    Portmap,
 }

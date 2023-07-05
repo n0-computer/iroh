@@ -15,14 +15,16 @@
 //! To expose the metrics, start the metrics service with `start_metrics_server()`.
 //!
 //! # Example:
-//! ```
+//! ```rust
 //! use iroh_metrics::core::MRecorder;
-//! use iroh_metrics::iroh::IrohMetrics;
+//! use iroh_metrics::magicsock::MagicsockMetrics;
 //! use iroh_metrics::{metrics::init_metrics, inc, record};
 //!
+//! # tokio_test::block_on(async {
 //! init_metrics();
-//! iroh_metrics::record!(IrohMetrics::RequestsTotal, 2);
-//! iroh_metrics::inc!(IrohMetrics::RequestsTotal);
+//! iroh_metrics::record!(MagicsockMetrics::NumDerpConnsAdded, 2);
+//! iroh_metrics::inc!(MagicsockMetrics::NumDerpConnsAdded);
+//! })
 //! ```
 
 #[cfg(feature = "metrics")]
