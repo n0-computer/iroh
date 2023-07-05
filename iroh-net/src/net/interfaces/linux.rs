@@ -68,7 +68,7 @@ async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
 /// Try find the default route by parsing the "ip route" command output.
 ///
 /// We use this on Android where /proc/net/route can be missing entries or have locked-down
-/// permissions.  See also comments in https://github.com/tailscale/tailscale/pull/666.
+/// permissions.  See also comments in <https://github.com/tailscale/tailscale/pull/666>.
 #[cfg(target_os = "android")]
 pub async fn default_route_android_ip_route() -> Result<Option<DefaultRouteDetails>> {
     use tokio::process::Command;
