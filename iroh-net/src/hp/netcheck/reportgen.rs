@@ -17,7 +17,9 @@
 //! - Sends the completed report to the netcheck actor.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,6 +37,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
+// TODO: move ProbeError and ProbeReport here
 use crate::hp::netcheck::{self, get_derp_addr, ProbeError, ProbeReport, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
@@ -240,149 +243,12 @@ impl Actor {
             "reportstate actor starting",
         );
 
-        let if_state = interfaces::State::new().await;
-        let plan = ProbePlan::new(&self.derp_map, &if_state, self.last_report.as_deref());
-        trace!(%plan, "probe plan");
-
         let start_time = Instant::now();
         self.report.os_has_ipv6 = super::os_has_ipv6().await;
 
-        // TODO: Update the port_mapper
-        let mut port_mapping = MaybeFuture::default();
-        if !self.skip_external_network {
-            if let Some(port_mapper) = self.port_mapper.clone() {
-                port_mapping.inner = Some(Box::pin(async move {
-                    match port_mapper.probe().await {
-                        Ok(Ok(res)) => Some(res),
-                        Ok(Err(err)) => {
-                            warn!("skipping port mapping: {err:?}");
-                            None
-                        }
-                        Err(recv_err) => {
-                            warn!("skipping port mapping: {recv_err:?}");
-                            None
-                        }
-                    }
-                }));
-                self.outstanding_tasks.port_mapper = true;
-            }
-        }
-
-        // Even if we're doing a non-incremental update, we may want to try our
-        // preferred DERP region for captive portal detection. Save that, if we have it.
-        let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
-
-        // If we're doing a full probe, also check for a captive portal. We
-        // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
-        // it's unnecessary.
-        let mut captive_task = if !self.incremental {
-            let dm = self.derp_map.clone();
-            self.outstanding_tasks.captive_task = true;
-            MaybeFuture {
-                inner: Some(Box::pin(async move {
-                    // wait
-                    tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                    let captive_portal_check = tokio::time::timeout(
-                        CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_derp),
-                    );
-                    match captive_portal_check.await {
-                        Ok(Ok(found)) => Some(found),
-                        Ok(Err(err)) => {
-                            info!("check_captive_portal error: {:?}", err);
-                            None
-                        }
-                        Err(_) => {
-                            info!("check_captive_portal timed out");
-                            None
-                        }
-                    }
-                })),
-            }
-        } else {
-            self.outstanding_tasks.captive_task = false;
-            MaybeFuture::default()
-        };
-
-        let pinger = if plan.has_https_probes() {
-            match Pinger::new().await {
-                Ok(pinger) => Some(pinger),
-                Err(err) => {
-                    debug!("failed to create pinger: {err:#}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // A collection of futures running probe sets.
-        let mut probes = FuturesUnordered::default();
-        let mut derp_nodes_cache: BTreeMap<String, Box<DerpNode>> = BTreeMap::new();
-
-        for probe_set in plan.values() {
-            let mut set = FuturesUnordered::default();
-            for probe in probe_set {
-                let reportstate = self.addr();
-                let stun_sock4 = self.stun_sock4.clone();
-                let stun_sock6 = self.stun_sock6.clone();
-                let derp_node = match derp_nodes_cache.get(probe.node()) {
-                    Some(node) => node.clone(),
-                    None => {
-                        let name = probe.node().to_string();
-                        let node = self
-                            .derp_map
-                            .named_node(&name)
-                            .with_context(|| format!("missing named derp node {}", probe.node()))?;
-                        let node = Box::new(node.clone());
-                        derp_nodes_cache.insert(name, node.clone());
-                        node
-                    }
-                };
-                let derp_node = derp_node.clone();
-                let probe = probe.clone();
-                let netcheck = self.netcheck.clone();
-                let pinger = pinger.clone();
-
-                set.push(Box::pin(async move {
-                    run_probe(
-                        reportstate,
-                        stun_sock4,
-                        stun_sock6,
-                        derp_node,
-                        probe,
-                        netcheck,
-                        pinger,
-                    )
-                    .await
-                }));
-            }
-
-            // Add the probe set to all futures of probe sets.  Handle aborting a probe set
-            // if needed, only normal errors means the set continues.
-            probes.push(Box::pin(async move {
-                // Hack because ProbeSet is not it's own type yet.
-                let mut probe_proto = None;
-                while let Some(res) = set.next().await {
-                    match res {
-                        Ok(report) => return Ok(report),
-                        Err(ProbeError::Error(err, probe)) => {
-                            probe_proto = Some(probe.proto());
-                            warn!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Err(ProbeError::AbortSet(err, probe)) => {
-                            debug!(?probe, "probe set aborted: {:#}", err);
-                            return Err(err);
-                        }
-                    }
-                }
-                warn!(?probe_proto, "no successfull probes in ProbeSet");
-                Err(anyhow!("All probes in ProbeSet failed"))
-            }));
-        }
-        self.outstanding_tasks.probes = true;
-        drop(derp_nodes_cache);
+        let mut port_mapping = self.prepare_portmapper_task();
+        let mut captive_task = self.prepare_captive_portal_task();
+        let mut probes = self.prepare_probes_task().await?;
 
         loop {
             trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
@@ -614,6 +480,164 @@ impl Actor {
         if self.report.udp {
             self.outstanding_tasks.captive_task = false;
         }
+    }
+
+    /// Creates the future which will perform the portmapper task.
+    ///
+    /// The returned future will run the portmapper, if enabled, resolving to it's result.
+    fn prepare_portmapper_task(
+        &mut self,
+    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
+        let mut port_mapping = MaybeFuture::default();
+        if !self.skip_external_network {
+            if let Some(port_mapper) = self.port_mapper.clone() {
+                port_mapping.inner = Some(Box::pin(async move {
+                    match port_mapper.probe().await {
+                        Ok(Ok(res)) => Some(res),
+                        Ok(Err(err)) => {
+                            warn!("skipping port mapping: {err:?}");
+                            None
+                        }
+                        Err(recv_err) => {
+                            warn!("skipping port mapping: {recv_err:?}");
+                            None
+                        }
+                    }
+                }));
+                self.outstanding_tasks.port_mapper = true;
+            }
+        }
+        port_mapping
+    }
+
+    /// Creates the future which will perform the captive portal check.
+    fn prepare_captive_portal_task(
+        &mut self,
+    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<bool>>>>> {
+        // If we're doing a full probe, also check for a captive portal. We
+        // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
+        // it's unnecessary.
+        if !self.incremental {
+            // Even if we're doing a non-incremental update, we may want to try our
+            // preferred DERP region for captive portal detection. Save that, if we have it.
+            let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
+
+            let dm = self.derp_map.clone();
+            self.outstanding_tasks.captive_task = true;
+            MaybeFuture {
+                inner: Some(Box::pin(async move {
+                    tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
+                    let captive_portal_check = tokio::time::timeout(
+                        CAPTIVE_PORTAL_TIMEOUT,
+                        check_captive_portal(&dm, preferred_derp),
+                    );
+                    match captive_portal_check.await {
+                        Ok(Ok(found)) => Some(found),
+                        Ok(Err(err)) => {
+                            info!("check_captive_portal error: {:?}", err);
+                            None
+                        }
+                        Err(_) => {
+                            info!("check_captive_portal timed out");
+                            None
+                        }
+                    }
+                })),
+            }
+        } else {
+            self.outstanding_tasks.captive_task = false;
+            MaybeFuture::default()
+        }
+    }
+
+    /// Prepares the future which will run all the probes as per generated ProbePlan.
+    async fn prepare_probes_task(
+        &mut self,
+    ) -> Result<FuturesUnordered<Pin<Box<impl Future<Output = Result<ProbeReport>>>>>> {
+        let if_state = interfaces::State::new().await;
+        let plan = ProbePlan::new(&self.derp_map, &if_state, self.last_report.as_deref());
+        trace!(%plan, "probe plan");
+
+        let pinger = if plan.has_https_probes() {
+            match Pinger::new().await {
+                Ok(pinger) => Some(pinger),
+                Err(err) => {
+                    debug!("failed to create pinger: {err:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // A collection of futures running probe sets.
+        let probes = FuturesUnordered::default();
+        let mut derp_nodes_cache: BTreeMap<String, Box<DerpNode>> = BTreeMap::new();
+
+        for probe_set in plan.values() {
+            let mut set = FuturesUnordered::default();
+            for probe in probe_set {
+                let reportstate = self.addr();
+                let stun_sock4 = self.stun_sock4.clone();
+                let stun_sock6 = self.stun_sock6.clone();
+                let derp_node = match derp_nodes_cache.get(probe.node()) {
+                    Some(node) => node.clone(),
+                    None => {
+                        let name = probe.node().to_string();
+                        let node = self
+                            .derp_map
+                            .named_node(&name)
+                            .with_context(|| format!("missing named derp node {}", probe.node()))?;
+                        let node = Box::new(node.clone());
+                        derp_nodes_cache.insert(name, node.clone());
+                        node
+                    }
+                };
+                let derp_node = derp_node.clone();
+                let probe = probe.clone();
+                let netcheck = self.netcheck.clone();
+                let pinger = pinger.clone();
+
+                set.push(Box::pin(async move {
+                    run_probe(
+                        reportstate,
+                        stun_sock4,
+                        stun_sock6,
+                        derp_node,
+                        probe,
+                        netcheck,
+                        pinger,
+                    )
+                    .await
+                }));
+            }
+
+            // Add the probe set to all futures of probe sets.  Handle aborting a probe set
+            // if needed, only normal errors means the set continues.
+            probes.push(Box::pin(async move {
+                // Hack because ProbeSet is not it's own type yet.
+                let mut probe_proto = None;
+                while let Some(res) = set.next().await {
+                    match res {
+                        Ok(report) => return Ok(report),
+                        Err(ProbeError::Error(err, probe)) => {
+                            probe_proto = Some(probe.proto());
+                            warn!(?probe, "probe failed: {:#}", err);
+                            continue;
+                        }
+                        Err(ProbeError::AbortSet(err, probe)) => {
+                            debug!(?probe, "probe set aborted: {:#}", err);
+                            return Err(err);
+                        }
+                    }
+                }
+                warn!(?probe_proto, "no successfull probes in ProbeSet");
+                Err(anyhow!("All probes in ProbeSet failed"))
+            }));
+        }
+        self.outstanding_tasks.probes = true;
+
+        Ok(probes)
     }
 }
 
