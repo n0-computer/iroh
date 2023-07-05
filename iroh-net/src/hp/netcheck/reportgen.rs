@@ -827,7 +827,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
     if node
-        .host_name
+        .url
         .host_str()
         .map(|s| s.ends_with(&DOT_INVALID))
         .unwrap_or_default()
@@ -846,7 +846,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
 
-    let host_name = node.host_name.host_str().unwrap_or_default();
+    let host_name = node.url.host_str().unwrap_or_default();
     let challenge = format!("ts_{}", host_name);
     let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
