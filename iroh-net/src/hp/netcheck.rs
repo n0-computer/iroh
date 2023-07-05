@@ -300,7 +300,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 
     // Get the IPAddr by asking for the UDP address that we would use for
     // STUN and then using that IP.
-    let node_addr = get_node_addr(node, ProbeProto::Ipv4)
+    let node_addr = get_derp_addr(node, ProbeProto::Ipv4)
         .await
         .with_context(|| format!("no address for node {}", node.name))?;
 
@@ -327,7 +327,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 /// Returns the IP address to use to communicate to this derp node.
 ///
 /// *proto* specifies the protocol we want to use to talk to the node.
-async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
+async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
         port = 3478;

@@ -34,7 +34,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::hp::derp::{DerpMap, DerpNode};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
-use crate::hp::netcheck::{self, ProbeError, ProbeReport, Report};
+use crate::hp::netcheck::{self, get_derp_addr, ProbeError, ProbeReport, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
 use crate::net::interfaces;
@@ -659,7 +659,7 @@ async fn run_probe(
         ));
     }
 
-    let derp_addr = super::get_node_addr(&derp_node, probe.proto())
+    let derp_addr = get_derp_addr(&derp_node, probe.proto())
         .await
         .context("no derp node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
