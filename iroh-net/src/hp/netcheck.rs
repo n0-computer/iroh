@@ -390,17 +390,6 @@ fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
     }
 }
 
-fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
-    for r in dm.regions.values() {
-        for n in &r.nodes {
-            if n.name == node_name {
-                return Some(n);
-            }
-        }
-    }
-    None
-}
-
 fn max_duration_value(m: &HashMap<u16, Duration>) -> Duration {
     m.values().max().cloned().unwrap_or_default()
 }

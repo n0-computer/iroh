@@ -57,6 +57,18 @@ impl DerpMap {
 
         dm
     }
+
+    /// Returns the [`DerpNode`] by name.
+    pub fn named_node<'a>(&self, node_name: &str) -> Option<&DerpNode> {
+        for r in self.regions.values() {
+            for n in &r.nodes {
+                if n.name == node_name {
+                    return Some(n);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl fmt::Display for DerpMap {

@@ -312,7 +312,7 @@ impl Actor {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let node = super::named_node(&self.derp_map, probe.node());
+                let node = self.derp_map.named_node(probe.node());
                 ensure!(node.is_some(), "missing named node {}", probe.node());
                 let node = node.unwrap().clone();
                 let probe = probe.clone();
@@ -529,8 +529,10 @@ impl Actor {
         ipp: Option<SocketAddr>,
         latency: Duration,
     ) {
-        let node =
-            super::named_node(&self.derp_map, &derp_node).expect("derp node missing from derp map");
+        let Some(node) = self.derp_map.named_node(&derp_node) else {
+            warn!("derp node missing from derp map");
+            return;
+        };
 
         debug!(node = %node.name, ?latency, "add udp node latency");
         self.report.udp = true;
