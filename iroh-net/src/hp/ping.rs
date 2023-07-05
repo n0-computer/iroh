@@ -7,7 +7,7 @@ use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP}
 use tracing::debug;
 
 /// Allows sending ICMP echo requests to a host in order to determine network latency.
-/// Will gracefully handle both ipv4 and ipv6.
+/// Will gracefully handle both IPv4 and IPv6.
 #[derive(Debug, Clone)]
 pub struct Pinger(Arc<Inner>);
 
