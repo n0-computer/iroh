@@ -493,11 +493,7 @@ struct Actor {
     ///
     /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut
     /// down if it was started.  The finished report is sent on the channel.
-    current_report_run: Option<(
-        reportgen::Client,
-        tokio_util::sync::DropGuard,
-        oneshot::Sender<Result<Arc<Report>>>,
-    )>,
+    current_report_run: Option<ReportRun>,
 }
 
 impl Actor {
@@ -632,20 +628,24 @@ impl Actor {
             stun_sock_v6,
         );
 
-        self.current_report_run = Some((actor, cancel_token.drop_guard(), response_tx));
+        self.current_report_run = Some(ReportRun {
+            _reportgen: actor,
+            _drop_guard: cancel_token.drop_guard(),
+            report_tx: response_tx,
+        });
     }
 
     fn handle_report_ready(&mut self, report: Box<Report>, derp_map: DerpMap) {
         let report = self.finish_and_store_report(*report, &derp_map);
         self.in_flight_stun_requests.clear();
-        if let Some((_actor, _guard, report_tx)) = self.current_report_run.take() {
+        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
         }
     }
 
     fn handle_report_aborted(&mut self) {
         self.in_flight_stun_requests.clear();
-        if let Some((_actor, _guard, report_tx)) = self.current_report_run.take() {
+        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Err(anyhow!("report aborted"))).ok();
         }
     }
@@ -842,6 +842,17 @@ impl Actor {
 
         info!("{}", log);
     }
+}
+
+/// State the netcheck actor needs for an in-progress report generation.
+#[derive(Debug)]
+struct ReportRun {
+    /// The handle of the reportgen actor, cancels the actor on drop.
+    _reportgen: reportgen::Client,
+    /// Drop guard to optionally kill workers started by netcheck to support reportgen.
+    _drop_guard: tokio_util::sync::DropGuard,
+    /// Where to send the completed report.
+    report_tx: oneshot::Sender<Result<Arc<Report>>>,
 }
 
 /// Attempts to bind a local socket to send STUN packets from.
