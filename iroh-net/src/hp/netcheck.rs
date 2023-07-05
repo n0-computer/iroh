@@ -32,7 +32,7 @@ use super::portmapper;
 use super::stun;
 
 mod probe;
-mod reportstate;
+mod reportgen;
 
 /// Fake DNS TLD used in tests for an invalid hostname.
 const DOT_INVALID: &str = ".invalid";
@@ -562,12 +562,12 @@ pub(crate) enum ActorMessage {
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
-    /// A report produced by [`ReportState`].
+    /// A report produced by the reportgen actor.
     ReportReady {
         report: Box<Report>,
         derp_map: DerpMap,
     },
-    /// [`ReportState`] failed to produce a report.
+    /// The reportgen actor failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
     StunPacket {
@@ -650,12 +650,12 @@ struct Actor {
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    /// The ReportState actor currently generating a report.
+    /// The reportgen actor currently generating a report.
     ///
     /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut
     /// down if it was started.  The finished report is sent on the channel.
     current_report_run: Option<(
-        reportstate::ReportState,
+        reportgen::Client,
         tokio_util::sync::DropGuard,
         oneshot::Sender<Result<Arc<Report>>>,
     )>,
@@ -735,7 +735,7 @@ impl Actor {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
-            warn!("ignoring RunCheck request; ReportState actor already running");
+            warn!("ignoring RunCheck request; reportgen actor already running");
             return;
         }
 
@@ -784,12 +784,12 @@ impl Actor {
         inc!(NetcheckMetrics::Reports);
 
         // TODO: not sure we're allowed to await in this function...  We can make the
-        // probeplan inside the ReportState actor though.
+        // probeplan inside the reportgen actor though.
         let if_state = interfaces::State::new().await;
         let last = self.reports.last.clone();
         let plan = ProbePlan::new(&derp_map, &if_state, last.as_deref());
 
-        let actor = reportstate::ReportState::new(
+        let actor = reportgen::Client::new(
             self.addr(),
             last.clone(),
             plan,

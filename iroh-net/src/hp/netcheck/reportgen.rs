@@ -1,6 +1,6 @@
-//! The reportstate is responsible for generating a single netcheck report.
+//! The reportgen is responsible for generating a single netcheck report.
 //!
-//! It is implemented as an actor with [`ReportState`] as client or handle.
+//! It is implemented as an actor with [`Client`] as handle.
 //!
 //! The actor starts generating the report as soon as it is created, it does not receive any
 //! messages from the client.  It follows roughly these steps:
@@ -10,7 +10,7 @@
 //! - Creates portmapper future.
 //! - Creates captive portal detection future.
 //! - Creates Probe Set futures.
-//!   - These send messages to the ReportState actor, including their result.
+//!   - These send messages to the reportgen actor.
 //! - Loops driving the futures and handling actor messages:
 //!   - Disables futures as they are completed or aborted.
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
@@ -43,12 +43,12 @@ mod hairpin;
 ///
 /// Dropping this will cancel the actor and stop the report generation.
 #[derive(Debug, Clone)]
-pub(super) struct ReportState {
+pub(super) struct Client {
     // Addr is currently only used by child actors, so not yet exposed here.
     _drop_guard: Arc<DropGuard>,
 }
 
-impl ReportState {
+impl Client {
     /// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
@@ -106,7 +106,7 @@ impl Drop for DropGuard {
 
 /// The address of the reportstate [`Actor`].
 ///
-/// Unlike the [`ReportState`] struct itself this is the raw channel to send message over.
+/// Unlike the [`Client`] struct itself this is the raw channel to send message over.
 /// Keeping this alive will not keep the actor alive, which makes this handy to pass to
 /// internal tasks.
 #[derive(Debug, Clone)]
@@ -172,9 +172,9 @@ struct Actor {
     report: Report,
     /// The hairping actor.
     hairpin_actor: hairpin::Client,
-    /// Which tasks ReportState is still waiting on.
+    /// Which tasks the reportgen actor is still waiting on.
     ///
-    /// This is essentially the summary of all the work the ReportState actor is doing.
+    /// This is essentially the summary of all the work the reportgen actor is doing.
     outstanding_tasks: OutstandingTasks,
 }
 
@@ -188,9 +188,9 @@ impl Actor {
     #[instrument(name = "reportstate.actor", skip_all)]
     async fn run(&mut self) {
         match self.run_inner().await {
-            Ok(_) => debug!("ReportState actor finished"),
+            Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
-                error!("ReportState actor failed: {err:#}");
+                error!("reportgen actor failed: {err:#}");
                 self.netcheck
                     .send(netcheck::ActorMessage::ReportAborted)
                     .await
@@ -199,7 +199,7 @@ impl Actor {
         }
     }
 
-    /// Runs the main ReportState actor logic.
+    /// Runs the main reportgen actor logic.
     ///
     /// This actor runs by:
     ///
@@ -396,7 +396,7 @@ impl Actor {
                 msg = self.msg_rx.recv() => {
                     match msg {
                         Some(msg) => self.handle_message(msg),
-                        None => bail!("msg_rx closed, ReportState client must be dropped"),
+                        None => bail!("msg_rx closed, reportgen client must be dropped"),
                     }
                 }
             }
@@ -577,7 +577,7 @@ impl Actor {
     }
 }
 
-/// Tasks on which the ReportState [`Actor`] is still waiting.
+/// Tasks on which the reportgen [`Actor`] is still waiting.
 ///
 /// There is no particular progression, e.g. hairpin starts `false`, moves to `true` when a
 /// check is started and then becomes `false` again once it is finished.

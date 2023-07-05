@@ -24,7 +24,7 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use tracing::{debug, error, instrument, trace, warn};
 
-use crate::hp::netcheck::{self, reportstate, Inflight};
+use crate::hp::netcheck::{self, reportgen, Inflight};
 use crate::hp::stun;
 
 /// The amount of time we wait for a hairpinned packet to come back.
@@ -40,7 +40,7 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(netcheck: netcheck::ActorAddr, reportstate: reportstate::Addr) -> Self {
+    pub(super) fn new(netcheck: netcheck::ActorAddr, reportstate: reportgen::Addr) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let mut actor = Actor {
             msg_tx,
@@ -108,7 +108,7 @@ struct Actor {
     msg_tx: mpsc::Sender<Message>,
     msg_rx: mpsc::Receiver<Message>,
     netcheck: netcheck::ActorAddr,
-    reportstate: reportstate::Addr,
+    reportstate: reportgen::Addr,
 }
 
 impl Actor {
@@ -229,7 +229,7 @@ mod tests {
             sender: netcheck_tx,
         };
         let (reportstate_tx, mut reportstate_rx) = mpsc::channel(32);
-        let reportstate_addr = reportstate::Addr {
+        let reportstate_addr = reportgen::Addr {
             sender: reportstate_tx,
         };
 
@@ -277,7 +277,7 @@ mod tests {
 
         // Next we expect our dummy reportstate to receive the result.
         match reportstate_rx.recv().await {
-            Some(reportstate::Message::HairpinResult(val)) => assert_eq!(val, hairpinning_works),
+            Some(reportgen::Message::HairpinResult(val)) => assert_eq!(val, hairpinning_works),
             Some(msg) => panic!("Unexpected reportstate message: {msg:?}"),
             None => panic!("reportstate mpsc has no senders"),
         }
@@ -312,7 +312,7 @@ mod tests {
             sender: netcheck_tx,
         };
         let (reportstate_tx, _reportstate_rx) = mpsc::channel(32);
-        let reportstate_addr = reportstate::Addr {
+        let reportstate_addr = reportgen::Addr {
             sender: reportstate_tx,
         };
 
