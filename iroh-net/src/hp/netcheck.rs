@@ -784,7 +784,6 @@ impl Actor {
             self.reports.last.clone(),
             self.port_mapper.clone(),
             self.skip_external_network,
-            self.reports.last.is_some(), // TODO: doesn't need to be passed
             derp_map,
             stun_sock_v4,
             stun_sock_v6,

@@ -59,7 +59,6 @@ impl Client {
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
-        incremental: bool,
         derpmap: DerpMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
@@ -68,6 +67,7 @@ impl Client {
         let addr = Addr {
             sender: msg_tx.clone(),
         };
+        let incremental = last_report.is_some();
         let mut actor = Actor {
             msg_tx,
             msg_rx,
@@ -155,8 +155,6 @@ struct Actor {
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
     skip_external_network: bool,
-    /// Whether we're doing an incremental report.
-    incremental: bool,
     /// The DERP configuration.
     derp_map: DerpMap,
     /// Socket to send IPv4 STUN requests from.
@@ -165,6 +163,8 @@ struct Actor {
     stun_sock6: Option<Arc<UdpSocket>>,
 
     // Internal state.
+    /// Whether we're doing an incremental report.
+    incremental: bool,
     /// The report being built.
     report: Report,
     /// The hairping actor.
