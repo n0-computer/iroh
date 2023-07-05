@@ -82,12 +82,6 @@ pub struct Report {
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
-    // /// Whether UPnP appears present on the LAN, `None` means not checked.
-    // pub upnp: Option<bool>,
-    // /// Whether NAT-PMP appears present on the LAN, `None` means not checked.
-    // pub pmp: Option<bool>,
-    // /// Whether PCP appears present on the LAN, `None` means not checked.
-    // pub pcp: Option<bool>,
     /// or 0 for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID
@@ -492,166 +486,6 @@ enum ProbeError {
     Error(anyhow::Error, Probe),
 }
 
-// /// Executes a particular [`Probe`], including using a delayed start if needed.
-// ///
-// /// If *pc4* and *pc6* are `None` the STUN probes are disabled.
-// #[allow(clippy::too_many_arguments)]
-// #[instrument(level = "debug", skip_all, fields(probe = ?probe))]
-// async fn run_probe(
-//     report: Arc<RwLock<Report>>,
-//     pc4: Option<Arc<UdpSocket>>,
-//     pc6: Option<Arc<UdpSocket>>,
-//     node: DerpNode,
-//     probe: Probe,
-//     actor_addr: ActorAddr,
-//     pinger: Option<Pinger>,
-// ) -> Result<ProbeReport, ProbeError> {
-//     if !probe.delay().is_zero() {
-//         debug!("delaying probe");
-//         time::sleep(probe.delay()).await;
-//     }
-
-//     if !probe_would_help(&*report.read().await, &probe, &node) {
-//         return Err(ProbeError::AbortSet(anyhow!("probe would not help"), probe));
-//     }
-
-//     let addr = get_node_addr(&node, probe.proto())
-//         .await
-//         .context("no derp node addr")
-//         .map_err(|e| ProbeError::Error(e, probe.clone()))?;
-//     let txid = stun::TransactionId::default();
-//     let req = stun::request(txid);
-//     let sent = Instant::now(); // after DNS lookup above
-
-//     let (stun_tx, stun_rx) = oneshot::channel();
-//     let (msg_response_tx, msg_response_rx) = oneshot::channel();
-//     actor_addr
-//         .send(ActorMessage::InFlightStun(
-//             Inflight {
-//                 txn: txid,
-//                 start: sent,
-//                 s: stun_tx,
-//             },
-//             msg_response_tx,
-//         ))
-//         .await
-//         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-//     msg_response_rx
-//         .await
-//         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-//     let mut result = ProbeReport::new(probe.clone());
-
-//     match probe {
-//         Probe::Ipv4 { .. } => {
-//             if let Some(ref pc4) = pc4 {
-//                 let n = pc4.send_to(&req, addr).await;
-//                 inc!(NetcheckMetrics::StunPacketsSentIpv4);
-//                 debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
-//                 // TODO:  || neterror.TreatAsLostUDP(err)
-//                 if n.is_ok() && n.unwrap() == req.len() {
-//                     result.ipv4_can_send = true;
-
-//                     let (delay, addr) = stun_rx
-//                         .await
-//                         .map_err(|e| ProbeError::Error(e.into(), probe))?;
-//                     result.delay = Some(delay);
-//                     result.addr = Some(addr);
-//                 }
-//             }
-//         }
-//         Probe::Ipv6 { .. } => {
-//             if let Some(ref pc6) = pc6 {
-//                 let n = pc6.send_to(&req, addr).await;
-//                 inc!(NetcheckMetrics::StunPacketsSentIpv6);
-//                 debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
-//                 // TODO:  || neterror.TreatAsLostUDP(err)
-//                 if n.is_ok() && n.unwrap() == req.len() {
-//                     result.ipv6_can_send = true;
-
-//                     let (delay, addr) = stun_rx
-//                         .await
-//                         .map_err(|e| ProbeError::Error(e.into(), probe))?;
-//                     result.delay = Some(delay);
-//                     result.addr = Some(addr);
-//                 }
-//             }
-//         }
-//         Probe::Https { region, .. } => {
-//             debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
-
-//             let res = if let Some(ref pinger) = pinger {
-//                 tokio::join!(
-//                     time::timeout(
-//                         ICMP_PROBE_TIMEOUT,
-//                         measure_icmp_latency(&region, pinger).map(Some)
-//                     ),
-//                     measure_https_latency(&region)
-//                 )
-//             } else {
-//                 (Ok(None), measure_https_latency(&region).await)
-//             };
-//             if let Ok(Some(icmp_res)) = res.0 {
-//                 match icmp_res {
-//                     Ok(d) => {
-//                         result.delay = Some(d);
-//                         result.ipv4_can_send = true;
-//                         result.icmpv4 = true;
-//                     }
-//                     Err(err) => {
-//                         warn!("icmp latency measurement failed: {:?}", err);
-//                     }
-//                 }
-//             }
-//             match res.1 {
-//                 Ok((d, ip)) => {
-//                     result.delay = Some(d);
-//                     // We set these IPv4 and IPv6 but they're not really used
-//                     // and we don't necessarily set them both. If UDP is blocked
-//                     // and both IPv4 and IPv6 are available over TCP, it's basically
-//                     // random which fields end up getting set here.
-//                     // Since they're not needed, that's fine for now.
-//                     if ip.is_ipv4() {
-//                         result.ipv4_can_send = true
-//                     }
-//                     if ip.is_ipv6() {
-//                         result.ipv6_can_send = true
-//                     }
-//                 }
-//                 Err(err) => {
-//                     warn!("https latency measurement failed: {:?}", err);
-//                 }
-//             }
-//         }
-//     }
-
-//     Ok(result)
-// }
-
-// fn probe_would_help(report: &Report, probe: &Probe, node: &DerpNode) -> bool {
-//     // If the probe is for a region we don't yet know about, that would help.
-//     if !report.region_latency.contains_key(&node.region_id) {
-//         return true;
-//     }
-
-//     // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-//     if probe.proto() == ProbeProto::Ipv6 && report.region_v6_latency.is_empty() {
-//         return true;
-//     }
-
-//     // For IPv4, we need at least two IPv4 results overall to
-//     // determine whether we're behind a NAT that shows us as
-//     // different source IPs and/or ports depending on who we're
-//     // talking to. If we don't yet have two results yet
-//     // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
-//     // would be good.
-//     if probe.proto() == ProbeProto::Ipv4 && report.mapping_varies_by_dest_ip.is_none() {
-//         return true;
-//     }
-
-//     // Otherwise not interesting.
-//     false
-// }
-
 fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
     let prev = m.entry(region_id).or_insert(d);
     if d < *prev {
@@ -816,11 +650,6 @@ struct Actor {
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    // /// The response channel if there is a check running.
-    // ///
-    // /// There can only ever be one check running at a time.  If it is running the response
-    // /// channel is stored here.
-    // current_check_run: Option<oneshot::Sender<Result<Arc<Report>>>>,
     /// The ReportState actor currently generating a report.
     ///
     /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut

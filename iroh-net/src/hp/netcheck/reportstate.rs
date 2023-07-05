@@ -44,7 +44,7 @@ mod hairpin;
 /// Dropping this will cancel the actor and stop the report generation.
 #[derive(Debug, Clone)]
 pub(super) struct ReportState {
-    // actor: Addr,
+    // Addr is currently only used by child actors, so not yet exposed here.
     _drop_guard: Arc<DropGuard>,
 }
 
@@ -84,10 +84,8 @@ impl ReportState {
             hairpin_actor: hairpin::Client::new(netcheck, addr),
             outstanding_tasks: OutstandingTasks::default(),
         };
-        // let addr = actor.addr();
         let task = tokio::spawn(async move { actor.run().await });
         Self {
-            // actor: addr,
             _drop_guard: Arc::new(DropGuard {
                 handle: task.abort_handle(),
             }),
@@ -124,20 +122,6 @@ impl Addr {
             err
         })
     }
-
-    // /// Non-blocking send to the actor.
-    // fn try_send(&self, msg: Message) -> Result<(), mpsc::error::TrySendError<Message>> {
-    //     self.sender.try_send(msg).map_err(|err| {
-    //         match &err {
-    //             mpsc::error::TrySendError::Full(_) => {
-    //                 // TODO: metrics
-    //                 warn!("reportstate actor inbox full");
-    //             }
-    //             mpsc::error::TrySendError::Closed(_) => error!("netcheck actor lost"),
-    //         }
-    //         err
-    //     })
-    // }
 }
 
 /// Messages to send to the reportstate [`Actor`].
