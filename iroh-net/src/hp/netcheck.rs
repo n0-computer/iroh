@@ -19,7 +19,7 @@ use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrumen
 
 use crate::net::ip::to_canonical;
 
-use self::probe::{Probe, ProbeProto};
+use self::probe::ProbeProto;
 
 use super::derp::{DerpMap, DerpNode, UseIpv4, UseIpv6};
 use super::dns::DNS_RESOLVER;
@@ -330,50 +330,6 @@ pub(crate) struct Inflight {
     start: Instant,
     /// Response to send STUN results: latency of STUN response and the discovered address.
     s: sync::oneshot::Sender<(Duration, SocketAddr)>,
-}
-
-/// Errors for [`run_probe`].
-///
-/// The main purpose is to signal whether other probes in this probe set should still be
-/// run.  Recall that a probe set is normally a set of identical probes with delays,
-/// effectively creating retries, and the first successful probe of a probe set will cancel
-/// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
-/// the set or not.
-#[derive(Debug)]
-enum ProbeError {
-    /// Abort the current set.
-    AbortSet(anyhow::Error, Probe),
-    /// Continue the other probes in the set.
-    Error(anyhow::Error, Probe),
-}
-
-// TODO: move to reportcheck.rs probably
-#[derive(Debug)]
-struct ProbeReport {
-    /// Whether we can send IPv4 UDP packets.
-    ipv4_can_send: bool,
-    /// Whether we can send IPv6 UDP packets.
-    ipv6_can_send: bool,
-    /// Whether we can send ICMP packets.
-    icmpv4: bool,
-    /// The latency to the derp node.
-    delay: Option<Duration>,
-    /// The probe that generated this report.
-    probe: Probe,
-    /// The discovered public address.
-    addr: Option<SocketAddr>,
-}
-impl ProbeReport {
-    fn new(probe: Probe) -> Self {
-        ProbeReport {
-            probe,
-            ipv4_can_send: false,
-            ipv6_can_send: false,
-            icmpv4: false,
-            delay: None,
-            addr: None,
-        }
-    }
 }
 
 /// Messages to send to the [`Actor`].

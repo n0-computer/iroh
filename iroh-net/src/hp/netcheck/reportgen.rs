@@ -37,8 +37,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
-// TODO: move ProbeError and ProbeReport here
-use crate::hp::netcheck::{self, get_derp_addr, ProbeError, ProbeReport, Report};
+use crate::hp::netcheck::{self, get_derp_addr, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
 use crate::net::interfaces;
@@ -657,6 +656,51 @@ impl OutstandingTasks {
     fn all_done(&self) -> bool {
         !(self.probes || self.port_mapper || self.captive_task || self.hairpin)
     }
+}
+
+/// The success result of [`run_probe`].
+#[derive(Debug)]
+struct ProbeReport {
+    /// Whether we can send IPv4 UDP packets.
+    ipv4_can_send: bool,
+    /// Whether we can send IPv6 UDP packets.
+    ipv6_can_send: bool,
+    /// Whether we can send ICMP packets.
+    icmpv4: bool,
+    /// The latency to the derp node.
+    delay: Option<Duration>,
+    /// The probe that generated this report.
+    probe: Probe,
+    /// The discovered public address.
+    addr: Option<SocketAddr>,
+}
+
+impl ProbeReport {
+    fn new(probe: Probe) -> Self {
+        ProbeReport {
+            probe,
+            ipv4_can_send: false,
+            ipv6_can_send: false,
+            icmpv4: false,
+            delay: None,
+            addr: None,
+        }
+    }
+}
+
+/// Errors for [`run_probe`].
+///
+/// The main purpose is to signal whether other probes in this probe set should still be
+/// run.  Recall that a probe set is normally a set of identical probes with delays,
+/// effectively creating retries, and the first successful probe of a probe set will cancel
+/// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
+/// the set or not.
+#[derive(Debug)]
+enum ProbeError {
+    /// Abort the current set.
+    AbortSet(anyhow::Error, Probe),
+    /// Continue the other probes in the set.
+    Error(anyhow::Error, Probe),
 }
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
