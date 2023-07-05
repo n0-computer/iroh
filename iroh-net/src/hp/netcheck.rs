@@ -10,7 +10,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
-use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::task::AbortHandle;
@@ -19,7 +18,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
-use crate::util::MaybeFuture;
 
 use self::probe::{Probe, ProbeProto};
 
@@ -31,9 +29,6 @@ use super::stun;
 
 mod probe;
 mod reportgen;
-
-/// Fake DNS TLD used in tests for an invalid hostname.
-const DOT_INVALID: &str = ".invalid";
 
 // The various default timeouts for things.
 
@@ -50,12 +45,6 @@ const ICMP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 const ENOUGH_REGIONS: usize = 3;
-
-// Chosen semi-arbitrarily
-const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
-
-/// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
-const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
@@ -264,94 +253,6 @@ async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> 
     // // TODO: decide best timing heuristic here.
     // // Maybe the server should return the tcpinfo_rtt?
     // return result.ServerProcessing, ip, nil
-}
-
-/// Reports whether or not we think the system is behind a
-/// captive portal, detected by making a request to a URL that we know should
-/// return a "204 No Content" response and checking if that's what we get.
-///
-/// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
-    // If we have a preferred DERP region with more than one node, try
-    // that; otherwise, pick a random one not marked as "Avoid".
-    let preferred_derp = if preferred_derp.is_none()
-        || dm.regions.get(&preferred_derp.unwrap()).is_none()
-        || (preferred_derp.is_some()
-            && dm
-                .regions
-                .get(&preferred_derp.unwrap())
-                .unwrap()
-                .nodes
-                .is_empty())
-    {
-        let mut rids = Vec::with_capacity(dm.regions.len());
-        for (id, reg) in dm.regions.iter() {
-            if reg.avoid || reg.nodes.is_empty() {
-                continue;
-            }
-            rids.push(id);
-        }
-
-        if rids.is_empty() {
-            return Ok(false);
-        }
-
-        let i = (0..rids.len())
-            .choose(&mut rand::thread_rng())
-            .unwrap_or_default();
-        *rids[i]
-    } else {
-        preferred_derp.unwrap()
-    };
-
-    // Has a node, as we filtered out regions without nodes above.
-    let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
-
-    if node
-        .host_name
-        .host_str()
-        .map(|s| s.ends_with(&DOT_INVALID))
-        .unwrap_or_default()
-    {
-        // Don't try to connect to invalid hostnames. This occurred in tests:
-        // https://github.com/tailscale/tailscale/issues/6207
-        // TODO(bradfitz,andrew-d): how to actually handle this nicely?
-        return Ok(false);
-    }
-
-    let client = reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-
-    // Note: the set of valid characters in a challenge and the total
-    // length is limited; see is_challenge_char in bin/derper for more
-    // details.
-
-    let host_name = node.host_name.host_str().unwrap_or_default();
-    let challenge = format!("ts_{}", host_name);
-    let portal_url = format!("http://{}/generate_204", host_name);
-    let res = client
-        .request(reqwest::Method::GET, portal_url)
-        .header("X-Tailscale-Challenge", &challenge)
-        .send()
-        .await?;
-
-    let expected_response = format!("response {challenge}");
-    let is_valid_response = res
-        .headers()
-        .get("X-Tailscale-Response")
-        .map(|s| s.to_str().unwrap_or_default())
-        == Some(&expected_response);
-
-    info!(
-        "check_captive_portal url={} status_code={} valid_response={}",
-        res.url(),
-        res.status(),
-        is_valid_response,
-    );
-    let has_captive = res.status() != 204 || !is_valid_response;
-
-    Ok(has_captive)
 }
 
 async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {

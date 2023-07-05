@@ -25,6 +25,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use iroh_metrics::inc;
 use iroh_metrics::netcheck::NetcheckMetrics;
+use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
@@ -33,12 +34,22 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::hp::derp::{DerpMap, DerpNode};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
-use crate::hp::netcheck::{self, MaybeFuture, ProbeError, ProbeReport, Report};
+use crate::hp::netcheck::{self, ProbeError, ProbeReport, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
 use crate::net::interfaces;
+use crate::util::MaybeFuture;
 
 mod hairpin;
+
+/// Fake DNS TLD used in tests for an invalid hostname.
+const DOT_INVALID: &str = ".invalid";
+
+/// How long to await for a captive-portal result, chosen semi-arbitrarily.
+const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
+
+/// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
+const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -224,7 +235,7 @@ impl Actor {
         self.report.os_has_ipv6 = super::os_has_ipv6().await;
 
         // TODO: Update the port_mapper
-        let mut port_mapping = super::MaybeFuture::default();
+        let mut port_mapping = MaybeFuture::default();
         if !self.skip_external_network {
             if let Some(port_mapper) = self.port_mapper.clone() {
                 port_mapping.inner = Some(Box::pin(async move {
@@ -257,10 +268,10 @@ impl Actor {
             MaybeFuture {
                 inner: Some(Box::pin(async move {
                     // wait
-                    tokio::time::sleep(super::CAPTIVE_PORTAL_DELAY).await;
+                    tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
                     let captive_portal_check = tokio::time::timeout(
-                        super::CAPTIVE_PORTAL_TIMEOUT,
-                        super::check_captive_portal(&dm, preferred_derp),
+                        CAPTIVE_PORTAL_TIMEOUT,
+                        check_captive_portal(&dm, preferred_derp),
                     );
                     match captive_portal_check.await {
                         Ok(Ok(found)) => Some(found),
@@ -743,4 +754,92 @@ async fn run_probe(
 
     trace!(probe = ?probe, "probe successfull");
     Ok(result)
+}
+
+/// Reports whether or not we think the system is behind a
+/// captive portal, detected by making a request to a URL that we know should
+/// return a "204 No Content" response and checking if that's what we get.
+///
+/// The boolean return is whether we think we have a captive portal.
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
+    // If we have a preferred DERP region with more than one node, try
+    // that; otherwise, pick a random one not marked as "Avoid".
+    let preferred_derp = if preferred_derp.is_none()
+        || dm.regions.get(&preferred_derp.unwrap()).is_none()
+        || (preferred_derp.is_some()
+            && dm
+                .regions
+                .get(&preferred_derp.unwrap())
+                .unwrap()
+                .nodes
+                .is_empty())
+    {
+        let mut rids = Vec::with_capacity(dm.regions.len());
+        for (id, reg) in dm.regions.iter() {
+            if reg.avoid || reg.nodes.is_empty() {
+                continue;
+            }
+            rids.push(id);
+        }
+
+        if rids.is_empty() {
+            return Ok(false);
+        }
+
+        let i = (0..rids.len())
+            .choose(&mut rand::thread_rng())
+            .unwrap_or_default();
+        *rids[i]
+    } else {
+        preferred_derp.unwrap()
+    };
+
+    // Has a node, as we filtered out regions without nodes above.
+    let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
+
+    if node
+        .host_name
+        .host_str()
+        .map(|s| s.ends_with(&DOT_INVALID))
+        .unwrap_or_default()
+    {
+        // Don't try to connect to invalid hostnames. This occurred in tests:
+        // https://github.com/tailscale/tailscale/issues/6207
+        // TODO(bradfitz,andrew-d): how to actually handle this nicely?
+        return Ok(false);
+    }
+
+    let client = reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    // Note: the set of valid characters in a challenge and the total
+    // length is limited; see is_challenge_char in bin/derper for more
+    // details.
+
+    let host_name = node.host_name.host_str().unwrap_or_default();
+    let challenge = format!("ts_{}", host_name);
+    let portal_url = format!("http://{}/generate_204", host_name);
+    let res = client
+        .request(reqwest::Method::GET, portal_url)
+        .header("X-Tailscale-Challenge", &challenge)
+        .send()
+        .await?;
+
+    let expected_response = format!("response {challenge}");
+    let is_valid_response = res
+        .headers()
+        .get("X-Tailscale-Response")
+        .map(|s| s.to_str().unwrap_or_default())
+        == Some(&expected_response);
+
+    info!(
+        "check_captive_portal url={} status_code={} valid_response={}",
+        res.url(),
+        res.status(),
+        is_valid_response,
+    );
+    let has_captive = res.status() != 204 || !is_valid_response;
+
+    Ok(has_captive)
 }
