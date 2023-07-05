@@ -29,6 +29,7 @@ once_cell = "1.17.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.10"
+rand = "0.8"
 range-collections = "0.4.0"
 self_cell = "1.0.1"
 serde = { version = "1", features = ["derive"] }

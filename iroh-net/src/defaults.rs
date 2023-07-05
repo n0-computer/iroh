@@ -1,6 +1,14 @@
+//! Default values used in [`iroh-net`][`crate`]
 use std::collections::HashMap;
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+
+/// Hostname of the default Derp.
+pub const DEFAULT_DERP_HOSTNAME: &str = "derp.iroh.network";
+/// STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
+pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
+/// IPv4 of the default Derp.
+pub const DEFAULT_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(35, 175, 99, 113);
 
 pub fn default_derp_map() -> DerpMap {
     DerpMap {
@@ -13,12 +21,11 @@ pub fn default_derp_region() -> DerpRegion {
     let default_n0_derp = DerpNode {
         name: "default-1".into(),
         region_id: 1,
-        host_name: "https://derp.iroh.network".parse().unwrap(),
+        url: format!("https://{DEFAULT_DERP_HOSTNAME}").parse().unwrap(),
         stun_only: false,
-        stun_port: 3478,
-        ipv4: UseIpv4::Some([35, 175, 99, 113].into()),
+        stun_port: DEFAULT_DERP_STUN_PORT,
+        ipv4: UseIpv4::Some(DEFAULT_DERP_IPV4),
         ipv6: UseIpv6::None,
-        derp_port: 443,
         stun_test_ip: None,
     };
     DerpRegion {
