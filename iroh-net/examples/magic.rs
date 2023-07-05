@@ -52,20 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_map = match args.derp_url {
         None => default_derp_map(),
-        Some(url) => {
-            // TODO: This should be done by the DERP client.
-            let derp_port = match url.port() {
-                Some(port) => port,
-                None => match url.scheme() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => anyhow::bail!(
-                        "Invalid scheme in DERP URL, only http: and https: schemes are supported."
-                    ),
-                },
-            };
-            DerpMap::default_from_node(url, 3478, derp_port, UseIpv4::None, UseIpv6::None)
-        }
+        Some(url) => DerpMap::default_from_node(url, 3478, UseIpv4::None, UseIpv6::None),
     };
 
     let endpoint = MagicEndpoint::builder()
