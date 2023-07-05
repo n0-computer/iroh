@@ -42,7 +42,7 @@ impl MeshClients {
         }
     }
 
-    pub(crate) async fn mesh(&mut self) {
+    pub(crate) async fn mesh(&mut self) -> anyhow::Result<Vec<tokio::sync::oneshot::Receiver<()>>> {
         let addrs = match &self.mesh_addrs {
             MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
@@ -58,6 +58,7 @@ impl MeshClients {
                 urls
             }
         };
+        let mut meshed_once_recvs = Vec::new();
         for addr in addrs {
             let client = ClientBuilder::new()
                 .mesh_key(Some(self.mesh_key))
@@ -66,12 +67,18 @@ impl MeshClients {
                 .expect("will only fail if no `server_url` is present");
 
             let packet_forwarder_handler = self.packet_fwd.clone();
+            let (sender, recv) = tokio::sync::oneshot::channel();
             self.tasks.spawn(async move {
-                if let Err(e) = client.run_mesh_client(packet_forwarder_handler).await {
+                if let Err(e) = client
+                    .run_mesh_client(packet_forwarder_handler, Some(sender))
+                    .await
+                {
                     tracing::warn!("{e:?}");
                 }
             });
+            meshed_once_recvs.push(recv);
         }
+        Ok(meshed_once_recvs)
     }
 
     pub(crate) async fn shutdown(mut self) {
@@ -105,6 +112,14 @@ mod tests {
             .try_init()
             .ok();
 
+        for i in 0..10 {
+            tracing::info!("TEST_MESH_NETWORK: round {i}");
+            test_mesh_network_once().await?;
+        }
+        Ok(())
+    }
+
+    async fn test_mesh_network_once() -> Result<()> {
         let mesh_key: MeshKey = [1; 32];
         let a_key = SecretKey::generate();
         tracing::info!("derp server a: {:?}", a_key.public_key());
@@ -129,12 +144,23 @@ mod tests {
             .parse()
             .unwrap();
 
-        derp_server_a
+        let server_a_meshed = derp_server_a
             .re_mesh(MeshAddrs::Addrs(vec![b_url.clone()]))
             .await?;
-        derp_server_b
+        let server_b_meshed = derp_server_b
             .re_mesh(MeshAddrs::Addrs(vec![a_url.clone()]))
             .await?;
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            futures::future::join_all(server_a_meshed),
+        )
+        .await?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            futures::future::join_all(server_b_meshed),
+        )
+        .await?;
 
         let alice_key = SecretKey::generate();
         tracing::info!("client alice: {:?}", alice_key.public_key());
@@ -153,7 +179,7 @@ mod tests {
         // needs time for the mesh network to fully mesh
         // packets may get dropped the first go-around
         // this will loop until we get the first keepalive, message, which means
-        // there is really something wrong if we can't gt
+        // there is really something wrong if we can't get
         // send bob a message from alice
         let msg = "howdy, bob!";
         tracing::info!("send message from alice to bob");
