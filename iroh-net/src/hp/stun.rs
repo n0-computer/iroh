@@ -22,7 +22,7 @@ pub enum Error {
     /// STUN request is not a binding request when it should be.
     #[error("not binding")]
     NotBinding,
-    /// STUN packet is not a response when it should.
+    /// STUN packet is not a response when it should be.
     #[error("not success response")]
     NotSuccessResponse,
     /// STUN response has malformed attributes.
