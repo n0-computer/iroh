@@ -473,14 +473,9 @@ impl Actor {
         match probe_report.probe {
             Probe::Https { region, .. } => {
                 if let Some(delay) = probe_report.delay {
-                    let l = self
-                        .report
+                    self.report
                         .region_latency
-                        .entry(region.region_id)
-                        .or_insert(delay);
-                    if *l >= delay {
-                        *l = delay;
-                    }
+                        .update_region(region.region_id, delay);
                 }
             }
             Probe::Ipv4 { node, .. } | Probe::Ipv6 { node, .. } => {
@@ -503,10 +498,11 @@ impl Actor {
     /// Whether running this probe would still improve our report.
     fn probe_would_help(&mut self, probe: Probe, derp_node: DerpNode) -> bool {
         // If the probe is for a region we don't yet know about, that would help.
-        if !self
+        if self
             .report
             .region_latency
-            .contains_key(&derp_node.region_id)
+            .get(derp_node.region_id)
+            .is_none()
         {
             return true;
         }
@@ -548,7 +544,9 @@ impl Actor {
         debug!(node = %node.name, ?latency, "add udp node latency");
         self.report.udp = true;
 
-        super::update_latency(&mut self.report.region_latency, node.region_id, latency);
+        self.report
+            .region_latency
+            .update_region(node.region_id, latency);
 
         // Once we've heard from enough regions (3), start a timer to
         // give up on the other ones. The timer's duration is a
@@ -556,7 +554,7 @@ impl Actor {
         // incremental one. For incremental ones, wait for the
         // duration of the slowest region. For initial ones, double that.
         if self.report.region_latency.len() == ENOUGH_REGIONS {
-            let mut timeout = super::max_duration_value(&self.report.region_latency);
+            let mut timeout = self.report.region_latency.max_latency();
             if !self.incremental {
                 timeout *= 2;
             }
@@ -569,13 +567,17 @@ impl Actor {
 
         if let Some(ipp) = ipp {
             if ipp.is_ipv6() {
-                super::update_latency(&mut self.report.region_v6_latency, node.region_id, latency);
+                self.report
+                    .region_v6_latency
+                    .update_region(node.region_id, latency);
                 self.report.ipv6 = true;
                 self.report.global_v6 = Some(ipp);
                 // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
                 // who knows.
             } else if ipp.is_ipv4() {
-                super::update_latency(&mut self.report.region_v4_latency, node.region_id, latency);
+                self.report
+                    .region_v4_latency
+                    .update_region(node.region_id, latency);
                 self.report.ipv4 = true;
                 if self.report.global_v4.is_none() {
                     self.report.global_v4 = Some(ipp);

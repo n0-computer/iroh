@@ -60,11 +60,11 @@ pub struct Report {
     /// or 0 for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID
-    pub region_latency: HashMap<u16, Duration>,
+    pub region_latency: RegionLatencies,
     /// keyed by DERP Region ID
-    pub region_v4_latency: HashMap<u16, Duration>,
+    pub region_v4_latency: RegionLatencies,
     /// keyed by DERP Region ID
-    pub region_v6_latency: HashMap<u16, Duration>,
+    pub region_v6_latency: RegionLatencies,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddr>,
     /// `[ip]:port` of global IPv6
@@ -77,6 +77,49 @@ pub struct Report {
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
+    }
+}
+
+/// Latencies per DERP Region.
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub struct RegionLatencies(HashMap<u16, Duration>);
+
+impl RegionLatencies {
+    fn new() -> Self {
+        Default::default()
+    }
+
+    /// Updates a region's latency, if it is faster than before.
+    fn update_region(&mut self, region_id: u16, latency: Duration) {
+        let val = self.0.entry(region_id).or_insert(latency);
+        if latency < *val {
+            *val = latency;
+        }
+    }
+
+    /// Returns the maximum latency for all regions.
+    fn max_latency(&self) -> Duration {
+        self.0
+            .values()
+            .max()
+            .copied()
+            .unwrap_or_else(|| Duration::from_millis(100))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u16, Duration)> + '_ {
+        self.0.iter().map(|(k, v)| (*k, *v))
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn get(&self, index: u16) -> Option<Duration> {
+        self.0.get(&index).copied()
     }
 }
 
@@ -369,17 +412,6 @@ enum ProbeError {
     AbortSet(anyhow::Error, Probe),
     /// Continue the other probes in the set.
     Error(anyhow::Error, Probe),
-}
-
-fn update_latency(m: &mut HashMap<u16, Duration>, region_id: u16, d: Duration) {
-    let prev = m.entry(region_id).or_insert(d);
-    if d < *prev {
-        *prev = d;
-    }
-}
-
-fn max_duration_value(m: &HashMap<u16, Duration>) -> Duration {
-    m.values().max().cloned().unwrap_or_default()
 }
 
 // TODO: move to reportcheck.rs probably
@@ -763,7 +795,7 @@ impl Actor {
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
         // region ID => its best recent latency in last MAX_AGE
-        let mut best_recent = HashMap::new();
+        let mut best_recent = RegionLatencies::new();
 
         // chain the current report as we are still mutating it
         let prevs_iter = self
@@ -779,11 +811,8 @@ impl Actor {
                 to_remove.push(*t);
                 continue;
             }
-            for (region_id, d) in &pr.region_latency {
-                let bd = best_recent.entry(*region_id).or_insert(*d);
-                if d < bd {
-                    *bd = *d;
-                }
+            for (region_id, d) in pr.region_latency.iter() {
+                best_recent.update_region(region_id, d);
             }
         }
 
@@ -796,14 +825,14 @@ impl Actor {
         let mut best_any = Duration::default();
         let mut old_region_cur_latency = Duration::default();
         {
-            for (region_id, d) in &r.region_latency {
-                if *region_id == prev_derp {
-                    old_region_cur_latency = *d;
+            for (region_id, d) in r.region_latency.iter() {
+                if region_id == prev_derp {
+                    old_region_cur_latency = d;
                 }
-                let best = *best_recent.get(region_id).unwrap();
+                let best = best_recent.get(region_id).unwrap();
                 if r.preferred_derp == 0 || best < best_any {
                     best_any = best;
-                    r.preferred_derp = *region_id;
+                    r.preferred_derp = region_id;
                 }
             }
 
@@ -861,14 +890,14 @@ impl Actor {
             log += " derpdist=";
             let mut need_comma = false;
             for rid in &dm.region_ids() {
-                if let Some(d) = r.region_v4_latency.get(rid) {
+                if let Some(d) = r.region_v4_latency.get(*rid) {
                     if need_comma {
                         log += ",";
                     }
                     log += &format!("{}v4:{}", rid, d.as_millis());
                     need_comma = true;
                 }
-                if let Some(d) = r.region_v6_latency.get(rid) {
+                if let Some(d) = r.region_v6_latency.get(*rid) {
                     if need_comma {
                         log += ",";
                     }
@@ -988,7 +1017,7 @@ mod tests {
                 r.region_latency.len()
             );
             assert!(
-                r.region_latency.get(&1).is_some(),
+                r.region_latency.get(1).is_some(),
                 "expected key 1 in DERPLatency; got {:?}",
                 r.region_latency
             );
@@ -1060,7 +1089,7 @@ mod tests {
                 r.region_latency.len()
             );
             assert!(
-                r.region_latency.get(&1).is_some(),
+                r.region_latency.get(1).is_some(),
                 "expected key 1 in DERPLatency; got {:?}",
                 r.region_latency
             );
@@ -1149,6 +1178,7 @@ mod tests {
                 let region_id: u16 = s[1..].parse().unwrap();
                 report
                     .region_latency
+                    .0
                     .insert(region_id, Duration::from_secs(d));
             }
 

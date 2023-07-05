@@ -207,10 +207,11 @@ impl ProbePlan {
                     do6 = false;
                 }
                 let n = &reg.nodes[tr % reg.nodes.len()];
-                let mut prev_latency = last.region_latency[&reg.region_id] * 120 / 100;
-                if prev_latency.is_zero() {
-                    prev_latency = DEFAULT_ACTIVE_RETRANSMIT_TIME;
-                }
+                let prev_latency = last
+                    .region_latency
+                    .get(reg.region_id)
+                    .map(|l| l * 120 / 100)
+                    .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_TIME);
                 let mut delay = prev_latency * tr as u32;
                 if tr > 1 {
                     delay += Duration::from_millis(50) * tr as u32;
@@ -320,8 +321,8 @@ impl Deref for ProbePlan {
 fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
     let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
     prev.sort_by(|a, b| {
-        let da = last.region_latency.get(&a.region_id);
-        let db = last.region_latency.get(&b.region_id);
+        let da = last.region_latency.get(a.region_id);
+        let db = last.region_latency.get(b.region_id);
         if db.is_none() && da.is_some() {
             // Non-zero sorts before zero.
             return std::cmp::Ordering::Greater;

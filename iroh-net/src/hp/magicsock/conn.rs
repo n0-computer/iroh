@@ -1522,10 +1522,10 @@ impl Actor {
             preferred_derp: r.preferred_derp,
             link_type: None,
         };
-        for (rid, d) in &r.region_v4_latency {
+        for (rid, d) in r.region_v4_latency.iter() {
             ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
         }
-        for (rid, d) in &r.region_v6_latency {
+        for (rid, d) in r.region_v6_latency.iter() {
             ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
         }
 
