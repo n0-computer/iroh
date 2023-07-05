@@ -1,4 +1,4 @@
-//! The reportgen is responsible for generating a single netcheck report.
+//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -36,6 +36,7 @@ use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
 use crate::hp::netcheck::{self, MaybeFuture, ProbeError, ProbeReport, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
+use crate::net::interfaces;
 
 mod hairpin;
 
@@ -56,7 +57,6 @@ impl Client {
     pub(super) fn new(
         netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
-        plan: ProbePlan,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
         incremental: bool,
@@ -72,12 +72,11 @@ impl Client {
             msg_tx,
             msg_rx,
             netcheck: netcheck.clone(),
-            plan,
-            last: last_report,
+            last_report,
             port_mapper,
             skip_external_network,
             incremental,
-            derpmap,
+            derp_map: derpmap,
             stun_sock4,
             stun_sock6,
             report: Report::default(),
@@ -151,17 +150,15 @@ struct Actor {
     netcheck: super::Addr,
 
     // Provided state
-    /// Which probes to run.
-    plan: ProbePlan,
     /// The previous report, if it exists.
-    last: Option<Arc<Report>>,
+    last_report: Option<Arc<Report>>,
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
     skip_external_network: bool,
     /// Whether we're doing an incremental report.
     incremental: bool,
     /// The DERP configuration.
-    derpmap: DerpMap,
+    derp_map: DerpMap,
     /// Socket to send IPv4 STUN requests from.
     stun_sock4: Option<Arc<UdpSocket>>,
     /// Socket so send IPv6 STUN requests from.
@@ -185,7 +182,7 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "reportstate.actor", skip_all)]
+    #[instrument(name = "reportgen.actor", skip_all)]
     async fn run(&mut self) {
         match self.run_inner().await {
             Ok(_) => debug!("reportgen actor finished"),
@@ -218,9 +215,12 @@ impl Actor {
             skip_external_network=%self.skip_external_network,
             "reportstate actor starting",
         );
-        trace!(plan=%self.plan, "probe plan");
-        let start_time = Instant::now();
 
+        let if_state = interfaces::State::new().await;
+        let plan = ProbePlan::new(&self.derp_map, &if_state, self.last_report.as_deref());
+        trace!(%plan, "probe plan");
+
+        let start_time = Instant::now();
         self.report.os_has_ipv6 = super::os_has_ipv6().await;
 
         // TODO: Update the port_mapper
@@ -246,13 +246,13 @@ impl Actor {
 
         // Even if we're doing a non-incremental update, we may want to try our
         // preferred DERP region for captive portal detection. Save that, if we have it.
-        let preferred_derp = self.last.as_ref().map(|l| l.preferred_derp);
+        let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
 
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
         let mut captive_task = if !self.incremental {
-            let dm = self.derpmap.clone();
+            let dm = self.derp_map.clone();
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
                 inner: Some(Box::pin(async move {
@@ -280,7 +280,7 @@ impl Actor {
             MaybeFuture::default()
         };
 
-        let pinger = if self.plan.has_https_probes() {
+        let pinger = if plan.has_https_probes() {
             match Pinger::new().await {
                 Ok(pinger) => Some(pinger),
                 Err(err) => {
@@ -295,13 +295,13 @@ impl Actor {
         // A collection of futures running probe sets.
         let mut probes = FuturesUnordered::default();
 
-        for probe_set in self.plan.values() {
+        for probe_set in plan.values() {
             let mut set = FuturesUnordered::default();
             for probe in probe_set {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let node = super::named_node(&self.derpmap, probe.node());
+                let node = super::named_node(&self.derp_map, probe.node());
                 ensure!(node.is_some(), "missing named node {}", probe.node());
                 let node = node.unwrap().clone();
                 let probe = probe.clone();
@@ -417,7 +417,7 @@ impl Actor {
         self.netcheck
             .send(netcheck::Message::ReportReady {
                 report: Box::new(self.report.clone()),
-                derp_map: self.derpmap.clone(),
+                derp_map: self.derp_map.clone(),
             })
             .await?;
 
@@ -519,7 +519,7 @@ impl Actor {
         latency: Duration,
     ) {
         let node =
-            super::named_node(&self.derpmap, &derp_node).expect("derp node missing from derp map");
+            super::named_node(&self.derp_map, &derp_node).expect("derp node missing from derp map");
 
         debug!(node = %node.name, ?latency, "add udp node latency");
         self.report.udp = true;

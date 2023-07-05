@@ -18,12 +18,10 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::{
-    net::{interfaces, ip::to_canonical},
-    util::MaybeFuture,
-};
+use crate::net::ip::to_canonical;
+use crate::util::MaybeFuture;
 
-use self::probe::{Probe, ProbePlan, ProbeProto};
+use self::probe::{Probe, ProbeProto};
 
 use super::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use super::dns::DNS_RESOLVER;
@@ -781,19 +779,12 @@ impl Actor {
         }
         inc!(NetcheckMetrics::Reports);
 
-        // TODO: not sure we're allowed to await in this function...  We can make the
-        // probeplan inside the reportgen actor though.
-        let if_state = interfaces::State::new().await;
-        let last = self.reports.last.clone();
-        let plan = ProbePlan::new(&derp_map, &if_state, last.as_deref());
-
         let actor = reportgen::Client::new(
             self.addr(),
-            last.clone(),
-            plan,
+            self.reports.last.clone(),
             self.port_mapper.clone(),
             self.skip_external_network,
-            last.is_some(), // TODO: doesn't need to be passed
+            self.reports.last.is_some(), // TODO: doesn't need to be passed
             derp_map,
             stun_sock_v4,
             stun_sock_v6,
