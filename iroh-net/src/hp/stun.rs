@@ -178,13 +178,12 @@ pub mod test {
             let node = DerpNode {
                 name: format!("{region_id}a"),
                 region_id,
-                host_name: format!("http://{region_id}.invalid").parse().unwrap(),
+                url: format!("http://{region_id}.invalid").parse().unwrap(),
                 ipv4,
                 ipv6,
                 stun_port: port,
                 stun_only: true,
                 stun_test_ip: None,
-                derp_port: 0,
             };
             m.regions.insert(
                 region_id,

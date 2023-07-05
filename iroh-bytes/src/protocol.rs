@@ -55,6 +55,13 @@ impl RequestToken {
         Ok(Self { bytes })
     }
 
+    /// Generate a random 32 byte request token.
+    pub fn generate() -> Self {
+        Self {
+            bytes: rand::random::<[u8; 32]>().to_vec().into(),
+        }
+    }
+
     /// Returns a reference the token bytes.
     pub fn as_bytes(&self) -> &Bytes {
         &self.bytes
