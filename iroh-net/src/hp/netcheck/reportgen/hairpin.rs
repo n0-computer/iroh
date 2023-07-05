@@ -236,10 +236,10 @@ mod tests {
         // Hairpinning works by asking the hairpin actor to send a STUN request to our
         // discovered public address.  If the router returns it hairpinning works.  We
         // emulate this by binding a random socket which we pretend is our publicly
-        // discovered address.  The hairping actor will send it a request and we return it
+        // discovered address.  The hairpin actor will send it a request and we return it
         // via the inflight channel.
         let public_sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-        actor.start_check(public_sock.local_addr().unwrap());
+        actor.start_check(dbg!(public_sock.local_addr().unwrap()));
 
         // This bit is our dummy netcheck actor: it handles the inflight request and sends
         // back the STUN request once it arrives.

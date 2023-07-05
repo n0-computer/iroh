@@ -33,7 +33,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 use tokio::time::{self, Instant};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
@@ -515,7 +515,7 @@ impl Actor {
         // it's unnecessary.
         if !self.incremental {
             // Even if we're doing a non-incremental update, we may want to try our
-            // preferred DERP region for captive portal detection. Save that, if we have it.
+            // preferred DERP region for captive portal detection.
             let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
 
             let dm = self.derp_map.clone();
@@ -525,7 +525,8 @@ impl Actor {
                     tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_derp),
+                        check_captive_portal(&dm, preferred_derp)
+                            .instrument(debug_span!("captive-portal")),
                     );
                     match captive_portal_check.await {
                         Ok(Ok(found)) => Some(found),

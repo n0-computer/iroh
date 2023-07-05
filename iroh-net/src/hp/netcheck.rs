@@ -1296,6 +1296,4 @@ mod tests {
         task.abort();
         Ok(())
     }
-
-    // TODO: test captive task
 }
