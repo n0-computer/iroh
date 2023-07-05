@@ -158,7 +158,7 @@ enum Message {
     // TODO: Ideally we remove the need for this message and the logic is inverted: once we
     // get a probe result we cancel all probes that are no longer needed.  But for now it's
     // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Box<DerpNode>, oneshot::Sender<bool>),
+    ProbeWouldHelp(Probe, Arc<DerpNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -336,7 +336,7 @@ impl Actor {
                 self.outstanding_tasks.hairpin = false;
             }
             Message::ProbeWouldHelp(probe, derp_node, response_tx) => {
-                let res = self.probe_would_help(probe, *derp_node);
+                let res = self.probe_would_help(probe, derp_node);
                 if response_tx.send(res).is_err() {
                     debug!("probe dropped before ProbeWouldHelp response sent");
                 }
@@ -375,7 +375,7 @@ impl Actor {
     }
 
     /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, derp_node: DerpNode) -> bool {
+    fn probe_would_help(&mut self, probe: Probe, derp_node: Arc<DerpNode>) -> bool {
         // If the probe is for a region we don't yet know about, that would help.
         if self
             .report
@@ -571,7 +571,7 @@ impl Actor {
 
         // A collection of futures running probe sets.
         let probes = FuturesUnordered::default();
-        let mut derp_nodes_cache: BTreeMap<String, Box<DerpNode>> = BTreeMap::new();
+        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
 
         for probe_set in plan.values() {
             let mut set = FuturesUnordered::default();
@@ -587,7 +587,7 @@ impl Actor {
                             .derp_map
                             .named_node(&name)
                             .with_context(|| format!("missing named derp node {}", probe.node()))?;
-                        let node = Box::new(node.clone());
+                        let node = Arc::new(node.clone());
                         derp_nodes_cache.insert(name, node.clone());
                         node
                     }
@@ -712,7 +712,7 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
-    derp_node: Box<DerpNode>,
+    derp_node: Arc<DerpNode>,
     probe: Probe,
     netcheck: netcheck::Addr,
     pinger: Option<Pinger>,
