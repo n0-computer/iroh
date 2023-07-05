@@ -5,13 +5,10 @@
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use futures::Future;
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
@@ -85,6 +82,12 @@ pub struct Report {
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
+    // /// Whether UPnP appears present on the LAN, `None` means not checked.
+    // pub upnp: Option<bool>,
+    // /// Whether NAT-PMP appears present on the LAN, `None` means not checked.
+    // pub pmp: Option<bool>,
+    // /// Whether PCP appears present on the LAN, `None` means not checked.
+    // pub pcp: Option<bool>,
     /// or 0 for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID

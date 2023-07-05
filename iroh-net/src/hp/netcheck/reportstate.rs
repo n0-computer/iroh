@@ -242,13 +242,16 @@ impl Actor {
         // TODO: Update the port_mapper
         let mut port_mapping = super::MaybeFuture::default();
         if !self.skip_external_network {
-            if let Some(ref port_mapper) = self.port_mapper {
-                let port_mapper = port_mapper.clone();
+            if let Some(port_mapper) = self.port_mapper.clone() {
                 port_mapping.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
-                        Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
-                        Err(err) => {
-                            warn!("skipping port mapping: {:?}", err);
+                        Ok(Ok(res)) => Some(res),
+                        Ok(Err(err)) => {
+                            warn!("skipping port mapping: {err:?}");
+                            None
+                        }
+                        Err(recv_err) => {
+                            warn!("skipping port mapping: {recv_err:?}");
                             None
                         }
                     }
@@ -349,7 +352,6 @@ impl Actor {
                             continue;
                         }
                         Err(ProbeError::AbortSet(err, probe)) => {
-                            probe_proto = Some(probe.proto());
                             debug!(?probe, "probe set aborted: {:#}", err);
                             return Err(err);
                         }
@@ -383,18 +385,7 @@ impl Actor {
 
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
-                    match pm {
-                        Some((upnp, pmp, pcp)) => {
-                            self.report.upnp = Some(upnp);
-                            self.report.pmp = Some(pmp);
-                            self.report.pcp = Some(pcp);
-                        }
-                        None => {
-                            self.report.upnp = None;
-                            self.report.pmp = None;
-                            self.report.pcp = None;
-                        }
-                    }
+                    self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
                     trace!("portmapper future done");
