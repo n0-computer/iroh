@@ -27,7 +27,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
-use iroh_metrics::core::Core;
+use iroh_metrics::{core::Core, magicsock};
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum PrivateKey {
@@ -274,29 +274,16 @@ impl Gui {
 
     async fn update_counters(target: &ProgressBar) {
         if Core::is_enabled() {
-            let metrics = Core::get();
+            let metrics = Core::get()
+                .get_collector_as::<magicsock::Metrics>("Magicsock")
+                .unwrap();
             tracing::error!("metrics enabled");
-            let send_ipv4 = metrics.get_metric("Magicsock", "send_ipv4").await.unwrap();
-            let send_ipv4 = HumanBytes(send_ipv4.m_val_u64);
-            let send_ipv6 = metrics.get_metric("Magicsock", "send_ipv6").await.unwrap();
-            let send_ipv6 = HumanBytes(send_ipv6.m_val_u64);
-            let send_derp = metrics.get_metric("Magicsock", "send_derp").await.unwrap();
-            let send_derp = HumanBytes(send_derp.m_val_u64);
-            let recv_data_derp = metrics
-                .get_metric("Magicsock", "recv_data_derp")
-                .await
-                .unwrap();
-            let recv_data_derp = HumanBytes(recv_data_derp.m_val_u64);
-            let recv_data_ipv4 = metrics
-                .get_metric("Magicsock", "recv_data_ipv4")
-                .await
-                .unwrap();
-            let recv_data_ipv4 = HumanBytes(recv_data_ipv4.m_val_u64);
-            let recv_data_ipv6 = metrics
-                .get_metric("Magicsock", "recv_data_ipv6")
-                .await
-                .unwrap();
-            let recv_data_ipv6 = HumanBytes(recv_data_ipv6.m_val_u64);
+            let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
+            let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
+            let send_derp = HumanBytes(metrics.send_derp.get());
+            let recv_data_derp = HumanBytes(metrics.recv_data_derp.get());
+            let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
+            let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
             let text = format!(
                 r#"Counters
 

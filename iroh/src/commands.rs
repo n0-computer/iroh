@@ -292,40 +292,27 @@ pub fn init_metrics_collection(
     rt: &iroh_bytes::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     // doesn't start the server if the address is None
+
+    use iroh_metrics::core::Metric;
     if let Some(metrics_addr) = metrics_addr {
+        iroh_metrics::core::Core::init(|reg| {
+            let iroh_metrics = crate::metrics::Metrics::new(reg);
+            let magicsock_metrics = iroh_metrics::magicsock::Metrics::new(reg);
+            let netcheck_metrics = iroh_metrics::netcheck::Metrics::new(reg);
+            let portmap_metrics = iroh_metrics::portmap::Metrics::new(reg);
+            [
+                ("Iroh", Box::new(iroh_metrics) as Box<dyn Metric>),
+                ("MagicSocket", Box::new(magicsock_metrics)),
+                ("Netcheck", Box::new(netcheck_metrics)),
+                ("Portmatp", Box::new(portmap_metrics)),
+            ]
+            .into_iter()
+            .collect()
+        });
         return Some(rt.main().spawn(async move {
-            {
-                let (tx_iroh, rx_iroh) = tokio::sync::mpsc::channel(100);
-                let (tx_magic, rx_magic) = tokio::sync::mpsc::channel(100);
-                let (tx_netcheck, rx_netcheck) = tokio::sync::mpsc::channel(100);
-                let (tx_port, rx_port) = tokio::sync::mpsc::channel(100);
-
-                iroh_metrics::core::Core::init(|reg| {
-                    let iroh_metrics = crate::metrics::Metrics::new(reg);
-                    let magicsock_metrics = iroh_metrics::magicsock::Metrics::new(reg);
-                    let netcheck_metrics = iroh_metrics::netcheck::Metrics::new(reg);
-                    let portmap_metrics = iroh_metrics::portmap::Metrics::new(reg);
-
-                    iroh_metrics.run(rx_iroh);
-                    magicsock_metrics.run(rx_magic);
-                    netcheck_metrics.run(rx_netcheck);
-                    portmap_metrics.run(rx_port);
-
-                    [
-                        ("Iroh", tx_iroh),
-                        ("MagicSocket", tx_magic),
-                        ("Netcheck", tx_netcheck),
-                        ("Portmatp", tx_port),
-                    ]
-                    .into_iter()
-                    .collect()
-                });
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
             }
-            iroh_metrics::metrics::start_metrics_server(metrics_addr)
-                .await
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to start metrics server: {e}");
-                });
         }));
     }
     tracing::info!("Metrics server not started, no address provided");
