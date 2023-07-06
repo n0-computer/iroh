@@ -813,11 +813,11 @@ mod tests {
             .try_init()
             .ok();
         let mut cfg = Config::default();
-        cfg.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
+        cfg.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
         let (addr_send, addr_recv) = tokio::sync::oneshot::channel();
         let derper_task = tokio::spawn(
             async move {
-                let res = run(true, cfg, Some(addr_send)).await;
+                let res = run(false, cfg, Some(addr_send)).await;
                 if let Err(e) = res {
                     println!("error starting derp server {e}");
                 }
