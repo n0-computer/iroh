@@ -442,25 +442,28 @@ impl Actor {
         }
 
         if let Some(ipp) = ipp {
-            if ipp.is_ipv6() {
-                self.report
-                    .region_v6_latency
-                    .update_region(node.region_id, latency);
-                self.report.ipv6 = true;
-                self.report.global_v6 = Some(ipp);
-                // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
-                // who knows.
-            } else if ipp.is_ipv4() {
-                self.report
-                    .region_v4_latency
-                    .update_region(node.region_id, latency);
-                self.report.ipv4 = true;
-                if self.report.global_v4.is_none() {
-                    self.report.global_v4 = Some(ipp);
-                } else if self.report.global_v4 != Some(ipp) {
-                    self.report.mapping_varies_by_dest_ip = Some(true);
-                } else if self.report.mapping_varies_by_dest_ip.is_none() {
-                    self.report.mapping_varies_by_dest_ip = Some(false);
+            match ipp {
+                SocketAddr::V4(_) => {
+                    self.report
+                        .region_v4_latency
+                        .update_region(node.region_id, latency);
+                    self.report.ipv4 = true;
+                    if self.report.global_v4.is_none() {
+                        self.report.global_v4 = Some(ipp);
+                    } else if self.report.global_v4 != Some(ipp) {
+                        self.report.mapping_varies_by_dest_ip = Some(true);
+                    } else if self.report.mapping_varies_by_dest_ip.is_none() {
+                        self.report.mapping_varies_by_dest_ip = Some(false);
+                    }
+                }
+                SocketAddr::V6(_) => {
+                    self.report
+                        .region_v6_latency
+                        .update_region(node.region_id, latency);
+                    self.report.ipv6 = true;
+                    self.report.global_v6 = Some(ipp);
+                    // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
+                    // who knows.
                 }
             }
         }
