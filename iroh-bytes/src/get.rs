@@ -81,12 +81,14 @@ pub mod get_response_machine {
 
     use super::*;
 
+    use anyhow::anyhow;
     use bao_tree::io::{
         fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
         Leaf, Parent,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
+    use tokio::io::AsyncWriteExt;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -200,7 +202,15 @@ pub mod get_response_machine {
                 debug!("sending handshake");
                 let handshake = Handshake::new();
                 let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-                write_lp(&mut writer, used).await?;
+                debug_assert_eq!(
+                    used.len(),
+                    Handshake::POSTCARD_MAX_SIZE,
+                    "serialized handshake had unexpected size"
+                );
+                writer
+                    .write_all(used)
+                    .await
+                    .map_err(|e| anyhow!("failed to write handshake {:?}", e))?;
             }
 
             // 2. Send Request

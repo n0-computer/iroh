@@ -209,11 +209,23 @@ pub(crate) async fn read_lp(
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let mut reader = reader.take(size);
-    let size = usize::try_from(size).context("frame larger than usize")?;
-    if size > MAX_MESSAGE_SIZE {
+
+    let reader = reader.take(size);
+    read_fixed_size(reader, buffer, size).await
+}
+
+pub(crate) async fn read_fixed_size(
+    reader: impl AsyncRead + Unpin,
+    buffer: &mut BytesMut,
+    size: u64,
+) -> Result<Option<Bytes>> {
+    if size > MAX_MESSAGE_SIZE as u64 {
         bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
     }
+
+    let mut reader = reader.take(size);
+    let size = usize::try_from(size).context("frame larger than usize")?;
+
     buffer.reserve(size);
     loop {
         let r = reader.read_buf(buffer).await?;
