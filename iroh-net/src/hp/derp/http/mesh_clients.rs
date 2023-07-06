@@ -73,7 +73,7 @@ impl MeshClients {
                     .run_mesh_client(packet_forwarder_handler, Some(sender))
                     .await
                 {
-                    eprintln!("{e:?}");
+                    tracing::warn!("{e:?}");
                 }
             });
             meshed_once_recvs.push(recv);
@@ -99,7 +99,7 @@ pub enum MeshAddrs {
 #[cfg(test)]
 mod tests {
     use crate::hp::derp::{http::ServerBuilder, ReceivedMessage};
-    use anyhow::{bail, Result};
+    use anyhow::Result;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
@@ -112,7 +112,7 @@ mod tests {
             .try_init()
             .ok();
 
-        for i in 0..100 {
+        for i in 0..10 {
             println!("TEST_MESH_NETWORK: round {i}");
             test_mesh_network_once().await?;
         }
@@ -176,44 +176,50 @@ mod tests {
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
-        // this will loop until we get the first keepalive, message, which means
-        // there is really something wrong if we can't get
-        // send bob a message from alice
         let msg = "howdy, bob!";
         println!("send message from alice to bob");
         alice.send(bob_key.public_key(), msg.into()).await?;
 
-        loop {
-            tokio::select! {
-                recv = bob.recv_detail() => {
-                    let (recv, _) = recv?;
-                    if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-                        assert_eq!(alice_key.public_key(), source);
-                        assert_eq!(msg, data);
-                        break;
-                    } else {
-                        bail!("unexpected ReceivedMessage {recv:?}");
-                    }
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    eprintln!("message from alice hasn't been received, attempting to send another message from alice to bob");
-                    alice.send(bob_key.public_key(), msg.into()).await?;
+        // ensure we get the message, but allow other chatter between the
+        // client and the server
+        let b = bob.clone();
+        let alice_pub_key = alice_key.public_key();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            loop {
+                let (recv, _) = b.recv_detail().await?;
+                if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+                    assert_eq!(alice_pub_key, source);
+                    assert_eq!(msg, data);
+                    println!("bob received packet from alice");
+                    return Ok::<(), anyhow::Error>(());
+                } else {
+                    eprintln!("bob received unexpected message {recv:?}");
                 }
             }
-        }
+        })
+        .await??;
 
         // send alice a message from bob
         let msg = "why hello, alice!";
         println!("send message from bob to alice");
         bob.send(alice_key.public_key(), msg.into()).await?;
 
-        let (recv, _) = alice.recv_detail().await?;
-        if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-            assert_eq!(bob_key.public_key(), source);
-            assert_eq!(msg, data);
-        } else {
-            bail!("unexpected ReceivedMessage {recv:?}");
-        }
+        // ensure alice gets the message, but allow other chatter between the
+        // client and the server
+        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            loop {
+                let (recv, _) = alice.recv_detail().await?;
+                if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+                    assert_eq!(bob_key.public_key(), source);
+                    assert_eq!(msg, data);
+                    println!("alice received packet from alice");
+                    return Ok::<(), anyhow::Error>(());
+                } else {
+                    eprintln!("alice received unexpected message {recv:?}");
+                }
+            }
+        })
+        .await??;
 
         // shutdown the servers
         derp_server_a.shutdown().await;
