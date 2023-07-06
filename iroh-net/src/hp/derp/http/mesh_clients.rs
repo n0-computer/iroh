@@ -113,7 +113,7 @@ mod tests {
             .ok();
 
         for i in 0..10 {
-            tracing::info!("TEST_MESH_NETWORK: round {i}");
+            println!("TEST_MESH_NETWORK: round {i}");
             test_mesh_network_once().await?;
         }
         Ok(())

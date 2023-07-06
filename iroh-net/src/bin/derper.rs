@@ -764,6 +764,7 @@ async fn server_stun_listener(sock: UdpSocket) {
 mod tests {
     use super::*;
 
+    use std::net::Ipv4Addr;
     use std::time::Duration;
 
     use anyhow::Result;
@@ -812,11 +813,18 @@ mod tests {
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
-        let mut cfg = Config::default();
-        cfg.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+        // Binding to LOCALHOST to satisfy issues when binding to UNSPECIFIED in Windows for tests
+        // Binding to Ipv4 because, when binding to `IPv6::UNSPECIFIED`, it will also listen for
+        // IPv4 connections, but will not automatically do the same for `LOCALHOST`. In order to
+        // test STUN, which only listens on Ipv4, we must bind the whole derper to Ipv4::LOCALHOST.
+        let cfg = Config {
+            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            ..Default::default()
+        };
         let (addr_send, addr_recv) = tokio::sync::oneshot::channel();
         let derper_task = tokio::spawn(
             async move {
+                // dev mode will bind to IPv6::UNSPECIFIED, so setting it `false`
                 let res = run(false, cfg, Some(addr_send)).await;
                 if let Err(e) = res {
                     println!("error starting derp server {e}");
@@ -827,7 +835,6 @@ mod tests {
 
         let derper_addr = addr_recv.await?;
         let derper_str_url = format!("http://{}", derper_addr);
-        tracing::info!("!!!!!!!!!!!!!URL {derper_str_url}");
         let derper_url: Url = derper_str_url.parse().unwrap();
 
         // set up clients
@@ -886,7 +893,7 @@ mod tests {
 
         // run stun check
         let stun_addr: SocketAddr =
-            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 3478);
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 3478);
 
         let txid = stun::TransactionId::default();
         let req = stun::request(txid);
