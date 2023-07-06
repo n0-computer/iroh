@@ -77,10 +77,10 @@ pub struct DerpRegion {
     pub region_code: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Information on a specific derp server.
 ///
 /// Includes the region in which it can be found, as well as how to dial the server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpNode {
     /// The name of this derp server
     pub name: String,
@@ -104,8 +104,8 @@ pub struct DerpNode {
     pub ipv6: UseIpv6,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Whether we should use IPv4 when communicating with this derp server
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv4 {
     /// Indicates we do not have an IPv4 address, but the server may still
     /// be able to communicate over IPv4
@@ -123,8 +123,8 @@ impl UseIpv4 {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Whether we should use IPv6 when communicating with this derp server
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv6 {
     /// Indicates we do not have an IPv6 address, but the server may still
     /// be able to communicate over IPv6

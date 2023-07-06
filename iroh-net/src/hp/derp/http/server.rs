@@ -526,8 +526,8 @@ impl hyper::service::Service<Request<Body>> for DerpService {
     }
 }
 
+/// The hyper Service that servers the actual derp endpoints
 #[derive(Clone, Debug)]
-/// The hyper Service that
 struct DerpService(Arc<Inner>);
 
 type HyperFn = Box<
@@ -571,8 +571,8 @@ impl Inner {
     }
 }
 
-#[derive(Clone, derive_more::Debug)]
 /// TLS Certificate Authority acceptor.
+#[derive(Clone, derive_more::Debug)]
 pub enum TlsAcceptor {
     /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),

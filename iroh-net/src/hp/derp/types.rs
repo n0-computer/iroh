@@ -101,7 +101,7 @@ impl ServerInfo {
     }
 }
 
-/// A PacketForwarder is can forward a packet to the `dstkey` from the `srckey`.
+/// A PacketForwarder can forward a packet to the `dstkey` from the `srckey`.
 ///
 /// The main implementation of a PacketForwarder is the private struct ClientConnManager,
 /// which is the [super::server::Server] side representation of a [super::client::Client]

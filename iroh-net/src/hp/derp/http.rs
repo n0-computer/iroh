@@ -1,5 +1,7 @@
+//! An http specific Derp Client and Derp Server. Allows for using tls or non tls connection
+//! upgrades.
 mod client;
-pub(crate) mod mesh_clients;
+mod mesh_clients;
 mod server;
 
 pub use self::client::{Client, ClientBuilder, ClientError};

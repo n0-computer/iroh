@@ -581,8 +581,8 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
         .expect("fixed allocations")
 }
 
-#[derive(Debug)]
 /// Whether or not the underlying [tokio::net::TcpStream] is served over Tls
+#[derive(Debug)]
 pub enum MaybeTlsStream {
     /// A plain non-Tls [tokio::net::TcpStream]
     Plain(tokio::net::TcpStream),

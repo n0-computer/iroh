@@ -21,8 +21,9 @@ use super::{
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
     write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
 };
-#[derive(Debug)]
+
 /// The [super::server::Server] side representation of a [super::client::Client]'s connection
+#[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each Accept
     pub(crate) conn_num: usize,
@@ -73,8 +74,8 @@ pub(crate) struct ClientChannels {
 pub trait Io: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug {}
 impl<T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Io for T {}
 
+/// A builds a [ClientConnManager] from a [PublicKey] and an io connection.
 #[derive(Debug)]
-// TODO: Not really the way we usually think of a builder, clean this up
 pub struct ClientConnBuilder<P>
 where
     P: PacketForwarder,
@@ -205,15 +206,15 @@ impl ClientConnManager {
     }
 }
 
-/// Manages all the writes to this client. It periodically sends a `KEEP_ALIVE`
+/// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
 /// message to the client to keep the connection alive.
 ///
-/// Call `run` to start listening for instructions from the
-/// server or from the associated `ClientConnReader`. Once it hits its
-/// first write error or error receiving off a channel, it error an return.
+/// Call `run` to manage the input and output to and from the connection and the server.
+/// Once it hits its first write error or error receiving off a channel,
+/// it errors on return.
 /// If writes do not complete in the given `timeout`, it will also error.
 ///
-/// The `ClientConnWriter` can send the client:
+/// On the "write" side, the `ClientConnIo` can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame, informing the client a peer is gone from the network // TODO: is this
 ///  a mesh only thing?
@@ -221,19 +222,16 @@ impl ClientConnManager {
 ///
 /// If the client is a mesh client, it can also send updates about peers in the mesh.
 ///
-/// From ClientConnReader:
-///
-/// Responsible for reading frames from the client, parsing the frames, and sending
-/// the content to the correct location.
-///
-/// The `ClientConnReader` can:
-///     - receive a ping and notify the `ClientConnWriter` to write a pong back
-///     to the client
+/// On the "read" side, it can:
+///     - receive a ping and write a pong back
 ///     - notify the server to send a packet to another peer on behalf of the client
-///     - note whether the client is `preferred`  TODO: what is this?
+///     - note whether the client is `preferred`, aka this client is the preferred way
+///     to speak to the peer ID associated with that client.
 ///
-/// If the `ClientConnReader` `can_mesh` (is a trusted mesh peer), it can also:
-///     - tell the server to add the current client as a watcher TODO: what is a watcher?
+/// If the `ClientConnIo` `can_mesh` that means that the associated [Client] is connected to
+/// a derp [Server] that is apart of the same mesh network as this [Server]. It can:
+///     - tell the server to add the current client as a watcher, which means the server will
+///     update the client about any peers connecting to or disconnecting from the server
 ///     - tell the server to close a given peer
 ///     - tell the server to forward a packet from another peer.
 #[derive(Debug)]

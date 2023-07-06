@@ -87,8 +87,8 @@ impl MeshClients {
     }
 }
 
-#[derive(Debug, Clone)]
 /// The different ways to express the mesh network you want to join.
+#[derive(Debug, Clone)]
 pub enum MeshAddrs {
     /// Supply a `DerpMap` of all the derp servers you want to mesh with.
     DerpMap(DerpMap),

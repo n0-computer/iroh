@@ -36,68 +36,68 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
 
-#[derive(Debug, thiserror::Error)]
 /// Possible connection errors on the [Client]
+#[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("client is closed")]
     /// The client is closed
+    #[error("client is closed")]
     Closed,
-    #[error("no derp client")]
     /// There no underlying derp [super::client::Client] client exists for this http derp [Client]
+    #[error("no derp client")]
     NoClient,
-    #[error("error sending a packet")]
     /// There was an error sending a packet
+    #[error("error sending a packet")]
     Send,
-    #[error("error receiving a packet")]
     /// There was an error receiving a packet
+    #[error("error receiving a packet")]
     Receive,
-    #[error("connect timeout")]
     /// There was a connection timeout error
+    #[error("connect timeout")]
     ConnectTimeout,
-    #[error("DERP region is not available")]
     /// No derp nodes are available for the given region
+    #[error("DERP region is not available")]
     DerpRegionNotAvail,
-    #[error("no nodes available for {0}")]
     /// No derp nodes are availabe with that name
+    #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
-    #[error("no derp nodes found for {0}, only are stun_only nodes")]
     /// The derp node specified only allows STUN requests
+    #[error("no derp nodes found for {0}, only are stun_only nodes")]
     StunOnlyNodesFound(String),
-    #[error("dial error")]
     /// There was an error dialing
-    DialIO(#[from] std::io::Error),
     #[error("dial error")]
+    DialIO(#[from] std::io::Error),
     /// There was an error from the task doing the dialing
+    #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
-    #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
     /// Both IPv4 and IPv6 are disabled for this derp node
+    #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
     IPDisabled,
-    #[error("no local addr: {0}")]
     /// No local addresses exist
+    #[error("no local addr: {0}")]
     NoLocalAddr(String),
-    #[error("http connection error")]
     /// There was http [hyper::Error]
+    #[error("http connection error")]
     Hyper(#[from] hyper::Error),
-    #[error("unexpected status code: expected {0}, got {1}")]
     /// There was an unexpected status code
+    #[error("unexpected status code: expected {0}, got {1}")]
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
-    #[error("failed to upgrade connection: {0}")]
     /// The connection failed to upgrade
+    #[error("failed to upgrade connection: {0}")]
     Upgrade(String),
-    #[error("failed to build derp client: {0}")]
     /// The derp [super::client::Client] failed to build
+    #[error("failed to build derp client: {0}")]
     Build(String),
-    #[error("ping timeout")]
     /// The ping request timed out
+    #[error("ping timeout")]
     PingTimeout,
-    #[error("cannot acknowledge pings")]
     /// This [Client] cannot acknowledge pings
+    #[error("cannot acknowledge pings")]
     CannotAckPings,
-    #[error("invalid url: {0}")]
     /// The given [Url] is invalid
+    #[error("invalid url: {0}")]
     InvalidUrl(String),
-    #[error("dns: {0:?}")]
     /// There was an error with DNS resolution
+    #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
 
@@ -1004,8 +1004,8 @@ const PEERS_PRESENT_QUEUE: usize = 100;
 
 use tokio::sync::mpsc::{channel, Sender};
 
-#[derive(Debug)]
 /// A struct to track and log the peers available on the remote server
+#[derive(Debug)]
 struct PeersPresent {
     /// Periodic logging task
     actor_task: JoinHandle<()>,
@@ -1013,8 +1013,8 @@ struct PeersPresent {
     actor_channel: Sender<PeersPresentMsg>,
 }
 
-#[derive(Debug)]
 /// Message for the PeerPresent actor loop
+#[derive(Debug)]
 enum PeersPresentMsg {
     /// Add a peer
     PeerPresent(key::node::PublicKey),
