@@ -68,13 +68,14 @@ impl Cli {
                 single,
             } => {
                 let get = if let Some(ticket) = ticket {
-                    self::get::GetInteractive::Ticket {
-                        ticket,
-                        keylog: self.keylog,
-                        derp_map: config.derp_map(),
+                    self::get::GetInteractive {
+                        hash: ticket.hash(),
+                        opts: ticket.as_get_options(Keypair::generate()),
+                        token: ticket.token().cloned(),
+                        single: false,
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
-                    self::get::GetInteractive::Hash {
+                    self::get::GetInteractive {
                         hash: *hash.as_hash(),
                         opts: iroh_bytes::get::Options {
                             addrs,
