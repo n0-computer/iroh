@@ -1,3 +1,5 @@
+//! Utilities used in [`iroh-net`][`crate`]
+
 use std::{
     future::Future,
     pin::Pin,
@@ -41,6 +43,7 @@ pub struct CancelOnDrop {
 }
 
 impl CancelOnDrop {
+    /// Create a [`CancelOnDrop`] with a name and a handle to a task.
     pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
         CancelOnDrop { task_name, handle }
     }
@@ -56,6 +59,7 @@ impl Drop for CancelOnDrop {
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
 pub struct MaybeFuture<T> {
+    /// Future to be polled.
     pub inner: Option<T>,
 }
 

@@ -2,7 +2,9 @@
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates.
-
+//!
+//! Based on rust-libp2p/transports/tls/src/verifier.rs originally licensed under MIT by Parity
+//! Technologies (UK) Ltd.
 use std::sync::Arc;
 
 use super::{certificate, PeerId};

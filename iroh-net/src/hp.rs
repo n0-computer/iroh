@@ -1,3 +1,5 @@
+//! Utilities for hole punching.
+#[allow(missing_docs, rustdoc::broken_intra_doc_links)]
 pub mod derp;
 mod dns;
 pub mod magicsock;

@@ -1013,7 +1013,7 @@ struct EndpointState {
     /// Contains the TxID for the last incoming ping. This is
     /// used to de-dup incoming pings that we may see on both the raw disco
     /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
-    /// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
+    /// disco handling due to <https://github.com/tailscale/tailscale/issues/7078>.
     last_got_ping_tx_id: Option<stun::TransactionId>,
 
     /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.

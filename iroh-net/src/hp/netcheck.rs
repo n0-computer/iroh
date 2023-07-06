@@ -17,6 +17,7 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
+use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::net::ip::to_canonical;
 
 use self::probe::ProbeProto;
@@ -227,8 +228,8 @@ impl Client {
     /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_msg_sender`] in order for this function to receive the stun
+    /// traffic. Thus all stun packets received on those sockets should be passed to
+    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -263,7 +264,7 @@ impl Client {
 async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
-        port = 3478;
+        port = DEFAULT_DERP_STUN_PORT;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
@@ -948,7 +949,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("https://derp.iroh.network.", 3478)];
+        let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(

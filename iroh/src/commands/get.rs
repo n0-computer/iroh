@@ -10,7 +10,7 @@ use iroh_bytes::{
     cid::Blake3Cid,
     get::{
         self,
-        get_response_machine::{ConnectedNext, EndBlobNext},
+        get_response_machine::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
     provider::Ticket,
@@ -19,7 +19,7 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_io::{AsyncSliceWriter, FileAdapter};
-use iroh_net::hp::derp::DerpMap;
+use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
@@ -66,6 +66,21 @@ impl GetInteractive {
         }
     }
 
+    fn get_options(&self) -> get::Options {
+        match self {
+            GetInteractive::Ticket {
+                ticket,
+                keylog,
+                derp_map,
+            } => get::Options {
+                keylog: *keylog,
+                derp_map: derp_map.clone(),
+                ..ticket.as_get_options(Keypair::generate())
+            },
+            GetInteractive::Hash { opts, .. } => opts.clone(),
+        }
+    }
+
     fn new_request(&self, query: RangeSpecSeq) -> Request {
         GetRequest::new(self.hash(), query)
             .with_token(self.token().cloned())
@@ -95,15 +110,9 @@ impl GetInteractive {
         // collection info, in case we won't get a callback with is_root
         let collection_info = Some((1, 0));
 
-        let request = self.new_request(query);
-        let response = match self {
-            GetInteractive::Ticket {
-                ticket,
-                keylog,
-                derp_map,
-            } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
-            GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
-        };
+        let request = self.new_request(query).with_token(self.token().cloned());
+        let connection = get::dial(self.get_options()).await?;
+        let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -189,15 +198,9 @@ impl GetInteractive {
             Some((collection.len() as u64, 0))
         };
 
-        let request = self.new_request(query);
-        let response = match self {
-            GetInteractive::Ticket {
-                ticket,
-                keylog,
-                derp_map,
-            } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
-            GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
-        };
+        let request = self.new_request(query).with_token(self.token().cloned());
+        let connection = get::dial(self.get_options()).await?;
+        let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -365,15 +368,9 @@ impl GetInteractive {
         };
 
         let pb = make_download_pb();
-        let request = self.new_request(query);
-        let response = match self {
-            GetInteractive::Ticket {
-                ticket,
-                keylog,
-                derp_map,
-            } => get::run_ticket(&ticket, request, keylog, derp_map).await?,
-            GetInteractive::Hash { opts, .. } => get::run(request, opts).await?,
-        };
+        let request = self.new_request(query).with_token(self.token().cloned());
+        let connection = get::dial(self.get_options()).await?;
+        let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
