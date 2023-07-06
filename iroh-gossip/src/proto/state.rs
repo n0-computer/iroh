@@ -14,6 +14,24 @@ use super::PeerData;
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
 pub struct TopicId([u8; 32]);
 
+impl TopicId {
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for TopicId {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&[u8; 32]> for TopicId {
+    fn from(value: &[u8; 32]) -> Self {
+        Self(*value)
+    }
+}
+
 impl From<blake3::Hash> for TopicId {
     fn from(value: blake3::Hash) -> Self {
         Self(value.into())
