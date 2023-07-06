@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc::SyncSender,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use once_cell::sync::Lazy;
 use prometheus_client::{encoding::text::encode, registry::Registry};
@@ -13,7 +10,7 @@ pub static CORE: Lazy<Core> = Lazy::new(Core::default);
 pub struct Core {
     enabled: AtomicBool,
     registry: Mutex<Registry>,
-    metrics_map: RwLock<std::collections::HashMap<String, SyncSender<MMsg>>>,
+    metrics_map: RwLock<std::collections::HashMap<String, Sender<MMsg>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -48,14 +45,14 @@ impl Core {
         &self.registry
     }
 
-    pub async fn register_collector(&self, name: &str, sender: SyncSender<MMsg>) {
+    pub async fn register_collector(&self, name: &str, sender: Sender<MMsg>) {
         self.metrics_map
             .write()
             .await
             .insert(name.to_string(), sender);
     }
 
-    pub async fn get_collector(&self, name: &str) -> Option<SyncSender<MMsg>> {
+    pub async fn get_collector(&self, name: &str) -> Option<Sender<MMsg>> {
         self.metrics_map.read().await.get(name).cloned()
     }
 
@@ -65,13 +62,15 @@ impl Core {
         if let Some(coll) = c {
             let (tx, mut rx) = channel(1);
 
-            let _ = coll.send(MMsg {
-                m_type: MMsgType::Unknown,
-                m: metric.to_string(),
-                m_val_u64: 0,
-                m_val_f64: 0.0,
-                m_callback: Some(tx),
-            });
+            let _ = coll
+                .send(MMsg {
+                    m_type: MMsgType::Unknown,
+                    m: metric.to_string(),
+                    m_val_u64: 0,
+                    m_val_f64: 0.0,
+                    m_callback: Some(tx),
+                })
+                .await;
             return rx.recv().await;
         }
         None
@@ -148,16 +147,20 @@ where
     if CORE.is_enabled() {
         let cc = c.to_string();
         let mn = m.name().to_string();
-        tokio::task::spawn(async move {
+
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async move {
             match CORE.get_collector(&cc).await {
                 Some(sender) => {
-                    let _ = sender.send(MMsg {
-                        m_type: MMsgType::Record,
-                        m: mn,
-                        m_val_u64: v,
-                        m_val_f64: 0.0,
-                        m_callback: None,
-                    });
+                    let _ = sender
+                        .send(MMsg {
+                            m_type: MMsgType::Record,
+                            m: mn,
+                            m_val_u64: v,
+                            m_val_f64: 0.0,
+                            m_callback: None,
+                        })
+                        .await;
                 }
                 None => {
                     tracing::warn!("record: {} not found", cc);
@@ -179,21 +182,22 @@ where
     if CORE.is_enabled() {
         let cc = c.to_string();
         let mn = m.name().to_string();
-        tokio::task::spawn(async move {
-            match CORE.get_collector(&cc).await {
-                Some(sender) => {
-                    let _ = sender.send(MMsg {
+
+        match CORE.get_collector(&cc).await {
+            Some(sender) => {
+                let _ = sender
+                    .send(MMsg {
                         m_type: MMsgType::Observe,
                         m: mn,
                         m_val_u64: 0,
                         m_val_f64: v,
                         m_callback: None,
-                    });
-                }
-                None => {
-                    tracing::warn!("observe: {} not found", cc);
-                }
+                    })
+                    .await;
             }
-        });
+            None => {
+                tracing::warn!("observe: {} not found", cc);
+            }
+        }
     }
 }
