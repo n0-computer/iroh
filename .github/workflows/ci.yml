@@ -221,6 +221,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Cleanup Docker
+      continue-on-error: true
       run: |
         docker kill $(docker ps -q)
 
