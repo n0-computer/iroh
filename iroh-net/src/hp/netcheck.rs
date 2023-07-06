@@ -109,6 +109,15 @@ impl RegionLatencies {
         }
     }
 
+    /// Merges another [`RegionLatencies`] into this one.
+    ///
+    /// For each region the latency is updated using [`RegionLatencies::update_region`].
+    fn merge(&mut self, other: &RegionLatencies) {
+        for (region_id, latency) in other.iter() {
+            self.update_region(region_id, latency);
+        }
+    }
+
     /// Returns the maximum latency for all regions.
     fn max_latency(&self) -> Duration {
         self.0
@@ -714,9 +723,7 @@ impl Actor {
                 to_remove.push(*t);
                 continue;
             }
-            for (region_id, d) in pr.region_latency.iter() {
-                best_recent.update_region(region_id, d);
-            }
+            best_recent.merge(&pr.region_latency);
         }
 
         for t in to_remove {
