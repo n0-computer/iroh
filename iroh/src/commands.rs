@@ -6,12 +6,13 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use iroh::rpc_protocol::*;
 use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
-use crate::{config::Config, rpc_protocol::*};
+use crate::config::Config;
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
 
@@ -168,7 +169,7 @@ pub enum Commands {
         path: Option<PathBuf>,
         #[clap(long, short)]
         /// Listening address to bind to
-        #[clap(long, short, default_value_t = SocketAddr::from(crate::node::DEFAULT_BIND_ADDR))]
+        #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
