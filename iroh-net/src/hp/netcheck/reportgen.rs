@@ -84,7 +84,7 @@ impl Client {
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
         skip_external_network: bool,
-        derpmap: DerpMap,
+        derp_map: DerpMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
     ) -> Self {
@@ -101,7 +101,7 @@ impl Client {
             port_mapper,
             skip_external_network,
             incremental,
-            derp_map: derpmap,
+            derp_map,
             stun_sock4,
             stun_sock6,
             report: Report::default(),
