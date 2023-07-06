@@ -70,7 +70,7 @@ impl Cli {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
                         hash: ticket.hash(),
-                        opts: ticket.as_get_options(Keypair::generate()),
+                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
                         token: ticket.token().cloned(),
                         single: false,
                     }
