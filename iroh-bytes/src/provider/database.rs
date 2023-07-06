@@ -1,3 +1,7 @@
+//! The database used by the iroh node.
+//!
+//! Databases are key value stores that store data and associated outboard data
+//! for blake3 hashes, in addition to some metadata.
 use super::DbEntry;
 use crate::{
     provider::ValidateProgress,
@@ -36,10 +40,16 @@ pub const FNAME_PATHS: &str = "paths.bin";
 #[derive(Debug, Clone, Default)]
 pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
 
+/// An in memory implementation of [BaoMap] and [BaoReadonlyDb], useful for
+/// testing and short lived nodes.
 #[derive(Debug, Clone, Default)]
 pub struct InMemDatabase(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
 
 impl InMemDatabase {
+    /// Create a new [InMemDatabase] from a sequence of entries.
+    ///
+    /// Returns the database and a map of names to computed blake3 hashes.
+    /// In case of duplicate names, the last entry is used.
     pub fn new(
         entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
     ) -> (Self, BTreeMap<String, blake3::Hash>) {
@@ -62,6 +72,7 @@ impl InMemDatabase {
         (Self(Arc::new(res)), names)
     }
 
+    /// Insert a new entry into the database, and return the hash of the entry.
     pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
@@ -76,12 +87,14 @@ impl InMemDatabase {
         hash
     }
 
+    /// Get the bytes associated with a hash, if they exist.
     pub fn get(&self, hash: &Hash) -> Option<Bytes> {
         let entry = self.0.get(hash)?;
         Some(entry.1.clone())
     }
 }
 
+/// The [BaoMapEntry] implementation for [InMemDatabase].
 #[derive(Debug, Clone)]
 pub struct InMemDatabaseEntry {
     outboard: PreOrderMemOutboard<Bytes>,
@@ -140,11 +153,15 @@ impl BaoReadonlyDb for InMemDatabase {
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
 pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
+    /// The hash of the entry
     fn hash(&self) -> blake3::Hash;
+    /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    /// A future that resolves to a reader that can be used to read the data
     fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
 }
 
+/// The [BaoMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
 pub struct DbPair {
     hash: blake3::Hash,
@@ -158,8 +175,7 @@ impl BaoMapEntry<Database> for DbPair {
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
         async move {
-            let mut reader = self.entry.outboard_reader().await?;
-            let bytes = reader.read_to_end().await?;
+            let bytes = self.entry.outboard_reader().await?;
             let hash = self.hash;
             PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, bytes)
         }
@@ -615,10 +631,12 @@ impl Database {
         }
     }
 
+    /// Get the entry for a given hash.
     pub fn get(&self, key: &Hash) -> Option<DbEntry> {
         self.0.read().unwrap().get(key).cloned()
     }
 
+    /// Compute the union of this database with another.
     pub fn union_with(&self, db: HashMap<Hash, DbEntry>) {
         let mut inner = self.0.write().unwrap();
         for (k, v) in db {
