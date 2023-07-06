@@ -778,7 +778,7 @@ async fn test_token_passthrough() -> Result<()> {
             .bind(0)
             .await?;
         endpoint
-            .connect(peer_id, &iroh_bytes::P2P_ALPN, &addrs)
+            .connect(peer_id, &iroh_bytes::protocol::ALPN, &addrs)
             .await
             .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();

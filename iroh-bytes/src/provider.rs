@@ -11,15 +11,14 @@ use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
 use iroh_io::{AsyncSliceReaderExt, FileAdapter};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 use walkdir::WalkDir;
 
 use crate::blobs::Collection;
 use crate::protocol::{
-    read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec, Request, RequestToken,
-    VERSION,
+    read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::provider::database::BaoMapEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
@@ -310,30 +309,6 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
     })
 }
 
-/// Read and decode the handshake.
-///
-/// Will fail if there is an error while reading, there is a token mismatch, or no valid
-/// handshake was received.
-///
-/// When successful, the reader is still useable after this function and the buffer will be
-/// drained of any handshake data.
-pub async fn read_handshake<R: AsyncRead + Unpin>(
-    mut reader: R,
-    buffer: &mut BytesMut,
-) -> Result<()> {
-    let payload = read_lp(&mut reader, buffer)
-        .await?
-        .context("no valid handshake received")?;
-    let handshake: Handshake = postcard::from_bytes(&payload)?;
-    ensure!(
-        handshake.version == VERSION,
-        "expected version {} but got {}",
-        VERSION,
-        handshake.version
-    );
-    Ok(())
-}
-
 /// Read the request from the getter.
 ///
 /// Will fail if there is an error while reading, if the reader
@@ -504,21 +479,14 @@ pub async fn handle_connection<
 
 async fn handle_stream<D: BaoMap, E: EventSender>(
     db: D,
-    mut reader: quinn::RecvStream,
+    reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler<D>,
     authorization_handler: impl RequestAuthorizationHandler<D>,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
-    // 1. Read Handshake
-    debug!("reading handshake");
-    if let Err(e) = read_handshake(&mut reader, &mut in_buffer).await {
-        writer.notify_transfer_aborted();
-        return Err(e);
-    }
-
-    // 2. Decode the request.
+    // 1. Decode the request.
     debug!("reading request");
     let request = match read_request(reader, &mut in_buffer).await {
         Ok(r) => r,
@@ -528,7 +496,7 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
         }
     };
 
-    // 3. Authorize the request (may be a no-op)
+    // 2. Authorize the request (may be a no-op)
     debug!("authorizing request");
     if let Err(e) = authorization_handler
         .authorize(db.clone(), request.token().cloned(), &request)
