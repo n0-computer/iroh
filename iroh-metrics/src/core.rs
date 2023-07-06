@@ -146,7 +146,6 @@ where
     M: MetricType + std::fmt::Display,
 {
     if CORE.is_enabled() {
-        tracing::warn!("record: {}", c);
         let cc = c.to_string();
         let mn = m.name().to_string();
         tokio::task::spawn(async move {
@@ -178,7 +177,6 @@ where
     M: HistogramType + std::fmt::Display,
 {
     if CORE.is_enabled() {
-        tracing::warn!("observe: {}", c);
         let cc = c.to_string();
         let mn = m.name().to_string();
         tokio::task::spawn(async move {
