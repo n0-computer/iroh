@@ -229,7 +229,6 @@ impl Actor {
     /// - Creates a hairpin actor.
     /// - Creates a captive portal future.
     /// - Creates ProbeSet futures in a group of futures.
-    /// TODO: pinger
     /// - Runs a main loop:
     ///   - Drives all the above futures.
     ///   - Receives actor messages (sent by those futures).
