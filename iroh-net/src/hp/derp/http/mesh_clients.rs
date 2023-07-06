@@ -73,7 +73,7 @@ impl MeshClients {
                     .run_mesh_client(packet_forwarder_handler, Some(sender))
                     .await
                 {
-                    tracing::warn!("{e:?}");
+                    eprintln!("{e:?}");
                 }
             });
             meshed_once_recvs.push(recv);
@@ -112,7 +112,7 @@ mod tests {
             .try_init()
             .ok();
 
-        for i in 0..10 {
+        for i in 0..100 {
             println!("TEST_MESH_NETWORK: round {i}");
             test_mesh_network_once().await?;
         }
@@ -122,7 +122,7 @@ mod tests {
     async fn test_mesh_network_once() -> Result<()> {
         let mesh_key: MeshKey = [1; 32];
         let a_key = SecretKey::generate();
-        tracing::info!("derp server a: {:?}", a_key.public_key());
+        println!("derp server a: {:?}", a_key.public_key());
         let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(a_key))
             .mesh_key(Some(mesh_key))
@@ -130,7 +130,7 @@ mod tests {
             .await?;
 
         let b_key = SecretKey::generate();
-        tracing::info!("derp server b: {:?}", b_key.public_key());
+        println!("derp server b: {:?}", b_key.public_key());
         let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(b_key))
             .mesh_key(Some(mesh_key))
@@ -163,14 +163,14 @@ mod tests {
         .await??;
 
         let alice_key = SecretKey::generate();
-        tracing::info!("client alice: {:?}", alice_key.public_key());
+        println!("client alice: {:?}", alice_key.public_key());
         let alice = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
-        tracing::info!("client bob: {:?}", bob_key.public_key());
+        println!("client bob: {:?}", bob_key.public_key());
         let bob = ClientBuilder::new()
             .server_url(b_url)
             .build(bob_key.clone())?;
@@ -180,7 +180,7 @@ mod tests {
         // there is really something wrong if we can't get
         // send bob a message from alice
         let msg = "howdy, bob!";
-        tracing::info!("send message from alice to bob");
+        println!("send message from alice to bob");
         alice.send(bob_key.public_key(), msg.into()).await?;
 
         loop {
@@ -196,7 +196,7 @@ mod tests {
                     }
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    tracing::info!("attempting to send another message from alice to bob");
+                    eprintln!("message from alice hasn't been received, attempting to send another message from alice to bob");
                     alice.send(bob_key.public_key(), msg.into()).await?;
                 }
             }
@@ -204,7 +204,7 @@ mod tests {
 
         // send alice a message from bob
         let msg = "why hello, alice!";
-        tracing::info!("send message from bob to alice");
+        println!("send message from bob to alice");
         bob.send(alice_key.public_key(), msg.into()).await?;
 
         let (recv, _) = alice.recv_detail().await?;
