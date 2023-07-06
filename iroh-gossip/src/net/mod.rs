@@ -502,7 +502,7 @@ async fn connection_loop(
 
 #[cfg(test)]
 mod test {
-    use std::{net::SocketAddr, time::Duration};
+    use std::time::Duration;
 
     use iroh_net::{hp::derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
@@ -515,7 +515,7 @@ mod test {
         MagicEndpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .derp_map(Some(derp_map))
-            .bind(SocketAddr::new([127, 0, 0, 1].into(), 0))
+            .bind(0)
             .await
     }
 
@@ -662,8 +662,9 @@ mod test {
                     .spawn()
                     .await?;
 
-            let http_addr = server.addr();
-            println!("DERP listening on {:?}", http_addr);
+            let derp_addr = server.addr();
+            let derp_port = derp_addr.port();
+            println!("DERP listening on {:?}", derp_addr);
 
             let (stun_addr, stun_cleanup) = serve(stun_ip).await?;
             let m = DerpMap {
@@ -675,13 +676,11 @@ mod test {
                         nodes: vec![DerpNode {
                             name: "t1".into(),
                             region_id: 1,
-                            host_name: "http://127.0.0.1".parse().unwrap(),
+                            url: format!("http://127.0.0.1:{derp_port}").parse().unwrap(),
                             stun_only: false,
                             stun_port: stun_addr.port(),
                             ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                             ipv6: UseIpv6::None,
-
-                            derp_port: http_addr.port(),
                             stun_test_ip: Some(stun_addr.ip()),
                         }],
                         avoid: false,
