@@ -28,7 +28,7 @@ use tracing::{debug, error};
 pub use crate::util::Hash;
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
+use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
@@ -80,14 +80,12 @@ pub mod get_response_machine {
 
     use super::*;
 
-    use anyhow::anyhow;
     use bao_tree::io::{
         fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
         Leaf, Parent,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
-    use tokio::io::AsyncWriteExt;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -194,18 +192,7 @@ pub mod get_response_machine {
                 mut writer,
                 request,
             } = self;
-            // 1. Send Handshake
-            {
-                debug!("sending handshake");
-                let handshake = Handshake::new();
-                let used = handshake.to_bytes();
-                writer
-                    .write_all(&used)
-                    .await
-                    .map_err(|e| anyhow!("failed to write handshake {:?}", e))?;
-            }
-
-            // 2. Send Request
+            // 1. Send Request
             {
                 debug!("sending request");
                 // wrap the get request in a request so we can serialize it
@@ -213,7 +200,7 @@ pub mod get_response_machine {
                 write_lp(&mut writer, &request_bytes).await?;
             }
 
-            // 3. Finish writing before expecting a response
+            // 2. Finish writing before expecting a response
             let (mut writer, bytes_written) = writer.into_parts();
             writer.finish().await?;
 
@@ -619,7 +606,7 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
         .bind(0)
         .await?;
     endpoint
-        .connect(opts.peer_id, &crate::P2P_ALPN, &opts.addrs)
+        .connect(opts.peer_id, &crate::protocol::ALPN, &opts.addrs)
         .await
         .context("failed to connect to provider")
 }

@@ -88,7 +88,7 @@ where
     rt: Option<runtime::Handle>,
 }
 
-const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
+const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::protocol::ALPN];
 
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
@@ -354,7 +354,7 @@ where
                             continue;
                         }
                     };
-                    if alpn.as_bytes() == iroh_bytes::P2P_ALPN.as_ref() {
+                    if alpn.as_bytes() == iroh_bytes::protocol::ALPN.as_ref() {
                         let db = handler.inner.db.clone();
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
