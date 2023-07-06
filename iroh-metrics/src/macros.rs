@@ -90,7 +90,6 @@ macro_rules! make_metric_recorders {
         }
 
         paste::paste! {
-            use $crate::core::MetricsRecorder;
             $(
                 /// Define a metric for the module
                 pub const [<METRICS_CNT_ $name:snake:upper>]: &str = stringify!([<$name:snake>]);
@@ -116,56 +115,7 @@ macro_rules! make_metric_recorders {
                         )+
                     }
                 }
-
-                pub fn run(self, mut rx: tokio::sync::mpsc::Receiver<$crate::core::MMsg>) -> tokio::task::JoinHandle<()> {
-                    tokio::task::spawn(async move {
-                        while let Some(msg) = rx.recv().await {
-                            self.handle_message(msg).await;
-                        }
-                    })
-                }
-
-                pub(crate) async fn handle_message(&self, msg: $crate::core::MMsg) where Self: $crate::core::MetricsRecorder{
-                    match msg.m_callback {
-                        Some(cb) => {
-                            // TODO(arqu): this always assumes only counters
-                            match msg.m.as_str() {
-                                $(
-                                    [<METRICS_CNT_ $name:snake:upper>] => {
-                                        let x = self.[<$name:snake>].get();
-                                        let rm = $crate::core::MMsg {
-                                            m: msg.m,
-                                            m_type: $crate::core::MMsgType::Record,
-                                            m_val_u64: x,
-                                            m_val_f64: 0.0,
-                                            m_callback: None,
-                                        };
-                                        if let Err(err) = cb.send(rm).await {
-                                            tracing::error!("error sending message: {:?}", err);
-                                        }
-                                    }
-                                )+
-                                _ => {
-                                    tracing::error!("Unknown metric: {}", msg.m);
-                                }
-                            }
-                        }
-                        None => {
-                            match msg.m_type {
-                                $crate::core::MMsgType::Record => {
-                                    self.record(&msg.m, msg.m_val_u64);
-                                }
-                                $crate::core::MMsgType::Observe => {
-                                    self.observe(&msg.m, msg.m_val_f64);
-                                }
-                                $crate::core::MMsgType::Unknown => {
-                                    tracing::trace!("Unknown message type: {:?}", msg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+           }
 
             #[cfg(feature = "metrics")]
             impl $crate::core::MetricsRecorder for Metrics {
@@ -189,6 +139,13 @@ macro_rules! make_metric_recorders {
                 fn observe(&self, m: &str, _value: f64)
                 {
                     tracing::error!("observe ([<$module_name:snake>]): unknown metric {}", m);
+                }
+            }
+
+            #[cfg(feature = "metrics")]
+            impl $crate::core::Metric for Metrics {
+                fn as_any(&self) -> &dyn std::any::Any {
+                    self
                 }
             }
 

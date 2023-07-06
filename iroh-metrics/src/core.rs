@@ -1,37 +1,23 @@
-use std::collections::HashMap;
+use std::{any::Any, collections::HashMap};
 
 use once_cell::sync::OnceCell;
 use prometheus_client::{encoding::text::encode, registry::Registry};
-use tokio::sync::{mpsc::channel, mpsc::Sender};
 
 static CORE: OnceCell<Core> = OnceCell::new();
 
 #[derive(Debug, Default)]
 pub struct Core {
     registry: Registry,
-    metrics_map: HashMap<&'static str, Sender<MMsg>>,
+    metrics_map: HashMap<&'static str, Box<dyn Metric>>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct MMsg {
-    pub m_type: MMsgType,
-    pub m: String,
-    pub m_val_u64: u64,
-    pub m_val_f64: f64,
-    pub m_callback: Option<Sender<MMsg>>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub enum MMsgType {
-    #[default]
-    Unknown,
-    Record,
-    Observe,
+pub trait Metric: MetricsRecorder + 'static + Send + Sync + std::fmt::Debug {
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl Core {
     /// Must only be called once to init metrics.
-    pub fn init<F: FnOnce(&mut Registry) -> HashMap<&'static str, Sender<MMsg>>>(f: F) {
+    pub fn init<F: FnOnce(&mut Registry) -> HashMap<&'static str, Box<dyn Metric>>>(f: F) {
         let mut registry = Registry::default();
         let metrics_map = f(&mut registry);
 
@@ -54,28 +40,15 @@ impl Core {
         &self.registry
     }
 
-    pub fn get_collector(&self, name: &str) -> Option<Sender<MMsg>> {
-        self.metrics_map.get(name).cloned()
+    pub fn get_collector(&self, name: &str) -> Option<&dyn Metric> {
+        self.metrics_map.get(name).map(|t| t.as_ref())
     }
 
-    pub async fn get_metric(&self, collector: &str, metric: &str) -> Option<MMsg> {
-        let c = self.get_collector(collector);
-
-        if let Some(coll) = c {
-            let (tx, mut rx) = channel(1);
-
-            let _ = coll
-                .send(MMsg {
-                    m_type: MMsgType::Unknown,
-                    m: metric.to_string(),
-                    m_val_u64: 0,
-                    m_val_f64: 0.0,
-                    m_callback: Some(tx),
-                })
-                .await;
-            return rx.recv().await;
-        }
-        None
+    pub fn get_collector_as<T: Metric>(&self, name: &str) -> Option<&T> {
+        let t = self.metrics_map.get(name)?;
+        let t: &dyn Metric = t.as_ref();
+        let t: &dyn Any = t.as_any();
+        t.downcast_ref()
     }
 
     pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
@@ -138,28 +111,14 @@ where
     M: MetricType + std::fmt::Display,
 {
     if Core::is_enabled() {
-        let cc = c.to_string();
-        let mn = m.name().to_string();
-
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async move {
-            match Core::get().get_collector(&cc) {
-                Some(sender) => {
-                    let _ = sender
-                        .send(MMsg {
-                            m_type: MMsgType::Record,
-                            m: mn,
-                            m_val_u64: v,
-                            m_val_f64: 0.0,
-                            m_callback: None,
-                        })
-                        .await;
-                }
-                None => {
-                    tracing::warn!("record: {} not found", cc);
-                }
+        match Core::get().get_collector(c) {
+            Some(coll) => {
+                coll.record(m.name(), v);
             }
-        });
+            None => {
+                tracing::warn!("record: {} not found", c);
+            }
+        }
     }
 }
 
@@ -173,23 +132,12 @@ where
     M: HistogramType + std::fmt::Display,
 {
     if Core::is_enabled() {
-        let cc = c.to_string();
-        let mn = m.name().to_string();
-
-        match Core::get().get_collector(&cc) {
-            Some(sender) => {
-                let _ = sender
-                    .send(MMsg {
-                        m_type: MMsgType::Observe,
-                        m: mn,
-                        m_val_u64: 0,
-                        m_val_f64: v,
-                        m_callback: None,
-                    })
-                    .await;
+        match Core::get().get_collector(c) {
+            Some(coll) => {
+                coll.observe(m.name(), v);
             }
             None => {
-                tracing::warn!("observe: {} not found", cc);
+                tracing::warn!("observe: {} not found", c);
             }
         }
     }
