@@ -277,9 +277,7 @@ impl GossipActor {
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {
-                            // TODO: Remove pending messages?
                             warn!(me = ?me, peer = ?peer_id, "dial failed: {err}");
-                            self.handle_in_event(InEvent::PeerDisconnected(peer_id), Instant::now()).await.context(format!("dialer.next -> err {err} -> handle_in_event PeerDisconnected{peer_id:?}"))?
                         }
                     }
                 }
@@ -376,6 +374,9 @@ impl GossipActor {
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.endpoint();
         debug!(me = ?me, "handle in_event  {event:?}");
+        if let InEvent::PeerDisconnected(peer) = &event {
+            self.conn_send_tx.remove(&peer);
+        }
         let out = self.state.handle(event, now);
         for event in out {
             debug!(me = ?me, "handle out_event {event:?}");
@@ -422,7 +423,9 @@ impl GossipActor {
                         Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                         Ok(info) => {
                             let addrs = info.endpoints.iter().map(|ep| ep.addr).collect::<Vec<_>>();
+                            debug!("add known addrs for {peer}: {addrs:?}...");
                             self.endpoint.add_known_addrs(peer, &addrs).await?;
+                            debug!("add known addrs for {peer}: {addrs:?}... DONE");
                         }
                     }
                     // self.
