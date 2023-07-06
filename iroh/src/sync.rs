@@ -1,13 +1,20 @@
 //! Implementation of the iroh-sync protocol
 
-use anyhow::{bail, ensure, Result};
+use std::net::SocketAddr;
+
+use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
+use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{NamespaceId, Replica, ReplicaStore};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::debug;
 
 /// The ALPN identifier for the iroh-sync protocol
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
+
+mod live;
+pub use live::*;
 
 /// Sync Protocol
 ///
@@ -24,6 +31,24 @@ enum Message {
         message: iroh_sync::sync::ProtocolMessage,
     },
     Sync(iroh_sync::sync::ProtocolMessage),
+}
+
+pub async fn connect_and_sync(
+    endpoint: &MagicEndpoint,
+    doc: &Replica,
+    peer_id: PeerId,
+    derp_region: Option<u16>,
+    addrs: &[SocketAddr],
+) -> anyhow::Result<()> {
+    debug!("sync with peer {}: start", peer_id);
+    let connection = endpoint
+        .connect(peer_id, SYNC_ALPN, derp_region, addrs)
+        .await
+        .context("dial_and_sync")?;
+    let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
+    let res = run_alice(&mut send_stream, &mut recv_stream, &doc).await;
+    debug!("sync with peer {}: finish {:?}", peer_id, res);
+    res
 }
 
 /// Runs the initiator side of the sync protocol.
@@ -46,7 +71,7 @@ pub async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     // Sync message loop
 
     while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        println!("read {}", read.len());
+        debug!("read {}", read.len());
         let msg = postcard::from_bytes(&read)?;
         match msg {
             Message::Init { .. } => {
@@ -71,12 +96,13 @@ pub async fn handle_connection(
     replica_store: ReplicaStore,
 ) -> Result<()> {
     let connection = connecting.await?;
+    debug!("> connection established!");
     let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
 
     run_bob(&mut send_stream, &mut recv_stream, replica_store).await?;
     send_stream.finish().await?;
 
-    println!("done");
+    debug!("done");
 
     Ok(())
 }
@@ -91,7 +117,7 @@ pub async fn run_bob<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 
     let mut replica = None;
     while let Some(read) = iroh_bytes::protocol::read_lp(&mut *reader, &mut buffer).await? {
-        println!("read {}", read.len());
+        debug!("read {}", read.len());
         let msg = postcard::from_bytes(&read)?;
 
         match msg {
@@ -100,7 +126,7 @@ pub async fn run_bob<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 
                 match replica_store.get_replica(&namespace) {
                     Some(r) => {
-                        println!("starting sync for {}", namespace);
+                        debug!("starting sync for {}", namespace);
                         if let Some(msg) = r.sync_process_message(message) {
                             send_sync_message(writer, msg).await?;
                         } else {

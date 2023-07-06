@@ -45,6 +45,10 @@ impl Author {
         Author { priv_key, id }
     }
 
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        SigningKey::from_bytes(&bytes).into()
+    }
+
     pub fn id(&self) -> &AuthorId {
         &self.id
     }
@@ -64,6 +68,12 @@ pub struct AuthorId(VerifyingKey);
 impl Debug for AuthorId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "AuthorId({})", hex::encode(self.0.as_bytes()))
+    }
+}
+
+impl Display for AuthorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0.as_bytes()))
     }
 }
 
@@ -111,12 +121,30 @@ impl FromStr for Author {
     }
 }
 
+impl From<SigningKey> for Author {
+    fn from(priv_key: SigningKey) -> Self {
+        let id = AuthorId(priv_key.verifying_key());
+        Self { priv_key, id }
+    }
+}
+
+impl From<SigningKey> for Namespace {
+    fn from(priv_key: SigningKey) -> Self {
+        let id = NamespaceId(priv_key.verifying_key());
+        Self { priv_key, id }
+    }
+}
+
 impl Namespace {
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let priv_key = SigningKey::generate(rng);
         let id = NamespaceId(priv_key.verifying_key());
 
         Namespace { priv_key, id }
+    }
+
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        SigningKey::from_bytes(bytes).into()
     }
 
     pub fn id(&self) -> &NamespaceId {
@@ -190,16 +218,30 @@ impl ReplicaStore {
     }
 }
 
+/// TODO: Would potentially nice to pass a `&SignedEntry` reference, however that would make
+/// everything `!Send`.
+/// TODO: Not sure if the `Sync` requirement will be a problem for implementers. It comes from
+/// [parking_lot::RwLock] requiring `Sync`.
+pub type OnInsertCallback = Box<dyn Fn(InsertOrigin, SignedEntry) + Send + Sync + 'static>;
+
 #[derive(Debug, Clone)]
+pub enum InsertOrigin {
+    Local,
+    Sync,
+}
+
+#[derive(derive_more::Debug, Clone)]
 pub struct Replica {
     inner: Arc<RwLock<InnerReplica>>,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct InnerReplica {
     namespace: Namespace,
     peer: Peer<RecordIdentifier, SignedEntry, Store>,
     content: HashMap<Hash, Bytes>,
+    #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
+    on_insert: Vec<OnInsertCallback>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -334,8 +376,14 @@ impl Replica {
                 namespace,
                 peer: Peer::default(),
                 content: HashMap::default(),
+                on_insert: Default::default(),
             })),
         }
+    }
+
+    pub fn on_insert(&self, callback: OnInsertCallback) {
+        let mut inner = self.inner.write();
+        inner.on_insert.push(callback);
     }
 
     pub fn get_content(&self, hash: &Hash) -> Option<Bytes> {
@@ -366,7 +414,26 @@ impl Replica {
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
         let signed_entry = entry.sign(&inner.namespace, author);
-        inner.peer.put(id, signed_entry);
+        inner.peer.put(id, signed_entry.clone());
+        for cb in &inner.on_insert {
+            cb(InsertOrigin::Local, signed_entry.clone())
+        }
+    }
+
+    pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
+        let inner = self.inner.read();
+        let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
+        id
+    }
+
+    pub fn insert_remote_entry(&self, entry: SignedEntry) -> anyhow::Result<()> {
+        entry.verify()?;
+        let mut inner = self.inner.write();
+        inner.peer.put(entry.entry.id.clone(), entry.clone());
+        for cb in &inner.on_insert {
+            cb(InsertOrigin::Sync, entry.clone())
+        }
+        Ok(())
     }
 
     /// Gets all entries matching this key and author.
