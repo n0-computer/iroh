@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
 use crate::{
+    defaults::DEFAULT_DERP_STUN_PORT,
     net::{interfaces, ip::to_canonical},
     util::MaybeFuture,
 };
@@ -223,8 +224,8 @@ impl Client {
     /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_msg_sender`] in order for this function to receive the stun
+    /// traffic. Thus all stun packets received on those sockets should be passed to
+    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -323,7 +324,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
     if node
-        .host_name
+        .url
         .host_str()
         .map(|s| s.ends_with(&DOT_INVALID))
         .unwrap_or_default()
@@ -342,7 +343,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
 
-    let host_name = node.host_name.host_str().unwrap_or_default();
+    let host_name = node.url.host_str().unwrap_or_default();
     let challenge = format!("ts_{}", host_name);
     let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
@@ -413,7 +414,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
-        port = 3478;
+        port = DEFAULT_DERP_STUN_PORT;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
@@ -441,7 +442,7 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
         }
     }
 
-    match n.host_name.host() {
+    match n.url.host() {
         Some(url::Host::Domain(hostname)) => {
             async move {
                 debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
@@ -1742,7 +1743,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("https://derp.iroh.network.", 3478, 0)];
+        let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
@@ -1752,15 +1753,14 @@ mod tests {
                 nodes: stun_servers
                     .into_iter()
                     .enumerate()
-                    .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
+                    .map(|(i, (host_name, stun_port))| DerpNode {
                         name: format!("default-{}", i),
                         region_id: 1,
-                        host_name: host_name.parse().unwrap(),
+                        url: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
                         ipv4: UseIpv4::None,
                         ipv6: UseIpv6::None,
-                        derp_port,
                         stun_test_ip: None,
                     })
                     .collect(),

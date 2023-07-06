@@ -18,12 +18,14 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::blobs::Collection;
-use iroh_bytes::provider::database::{BaoMap, BaoMapEntry, BaoReadonlyDb};
-use iroh_bytes::provider::RequestAuthorizationHandler;
 use iroh_bytes::{
-    protocol::Closed,
-    provider::{CustomGetHandler, Database, ProvideProgress, Ticket, ValidateProgress},
+    blobs::Collection,
+    protocol::{Closed, Request, RequestToken},
+    provider::{
+        database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
+        CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, Ticket,
+        ValidateProgress,
+    },
     runtime,
     util::{Hash, Progress},
 };
@@ -54,7 +56,7 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+/// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
 pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
@@ -484,10 +486,10 @@ impl<D: BaoReadonlyDb> Node<D> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash, token: Option<RequestToken>) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs, None)
+        Ticket::new(hash, self.peer_id(), addrs, token)
     }
 
     /// Aborts the node.
@@ -758,6 +760,56 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
+/// Use a single token of opaque bytes to authorize all requests
+#[derive(Debug, Clone)]
+pub struct StaticTokenAuthHandler {
+    token: Option<RequestToken>,
+}
+
+impl StaticTokenAuthHandler {
+    pub fn new(token: Option<RequestToken>) -> Self {
+        Self { token }
+    }
+}
+
+impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
+    fn authorize(
+        &self,
+        _db: D,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        match &self.token {
+            None => async move {
+                if let Some(token) = token {
+                    anyhow::bail!(
+                        "no authorization handler defined, but token was provided: {:?}",
+                        token
+                    );
+                }
+                Ok(())
+            }
+            .boxed(),
+            Some(expect) => {
+                let expect = expect.clone();
+                async move {
+                    match token {
+                        Some(token) => {
+                            if token == expect {
+                                Ok(())
+                            } else {
+                                anyhow::bail!("invalid token")
+                            }
+                        }
+                        None => anyhow::bail!("no token provided"),
+                    }
+                }
+                .boxed()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::bail;
@@ -788,7 +840,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash).await.unwrap();
+        let ticket = node.ticket(hash, None).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

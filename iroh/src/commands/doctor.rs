@@ -13,6 +13,7 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh_bytes::tokio_util::ProgressWriter;
 use iroh_net::{
+    defaults::DEFAULT_DERP_STUN_PORT,
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
@@ -62,7 +63,7 @@ pub enum Commands {
         /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
         #[clap(long)]
         stun_host: Option<String>,
-        #[clap(long, default_value_t = 3478)]
+        #[clap(long, default_value_t = DEFAULT_DERP_STUN_PORT)]
         stun_port: u16,
     },
     Accept {
@@ -206,9 +207,9 @@ async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> a
 
     let dm = match stun_host {
         Some(host_name) => {
-            let host_name = host_name.parse()?;
+            let url = host_name.parse()?;
             // creating a derp map from host name and stun port
-            DerpMap::default_from_node(host_name, stun_port, 0, UseIpv4::None, UseIpv6::None)
+            DerpMap::default_from_node(url, stun_port, UseIpv4::None, UseIpv6::None)
         }
         None => config.derp_map().expect("derp map not configured"),
     };
@@ -444,12 +445,11 @@ async fn passive_side(connection: quinn::Connection) -> anyhow::Result<()> {
 }
 
 fn configure_local_derp_map() -> DerpMap {
-    let stun_port = 3478;
-    let host_name = "http://derp.invalid".parse().unwrap();
-    let derp_port = 3340;
+    let stun_port = DEFAULT_DERP_STUN_PORT;
+    let url = "http://derp.invalid:3340".parse().unwrap();
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
     let derp_ipv6 = UseIpv6::None;
-    DerpMap::default_from_node(host_name, stun_port, derp_port, derp_ipv4, derp_ipv6)
+    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6)
 }
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";

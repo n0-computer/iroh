@@ -1,8 +1,12 @@
 //! The client side API
 //!
-//! The main entry point is [`run`]. This function takes callbacks that will
-//! be invoked when blobs or collections are received. It is up to the caller
-//! to store the received data.
+//! To get data, create a connection using the `dial` function or use any quinn
+//! connection that was obtained in another way.
+//!
+//! Create a request describing the data you want to get.
+//!
+//! Then create a state machine using [get_response_machine::AtInitial::new] and
+//! drive it to completion by calling next on each state.
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
@@ -14,6 +18,7 @@ use bao_tree::io::DecodeResponseItem;
 use bao_tree::outboard::PreOrderMemOutboard;
 use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
+use iroh_net::tls::Keypair;
 use iroh_net::{hp::derp::DerpMap, tls::PeerId};
 use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
@@ -25,7 +30,6 @@ pub use crate::util::Hash;
 
 use crate::blobs::Collection;
 use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
-use crate::provider::Ticket;
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
@@ -33,13 +37,15 @@ use crate::IROH_BLOCK_SIZE;
 /// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// The addresses to connect to.
+    /// The keypair of the node
+    pub keypair: Keypair,
+    /// The addresses to connect to
     pub addrs: Vec<SocketAddr>,
-    /// The peer id to expect
+    /// The peer id to dial
     pub peer_id: PeerId,
-    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
+    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
-    /// The configuration of the derp services.
+    /// The configuration of the derp services
     pub derp_map: Option<DerpMap>,
 }
 
@@ -60,25 +66,6 @@ impl Stats {
         let data_len_bit = self.bytes_read * 8;
         data_len_bit as f64 / (1000. * 1000.) / self.elapsed.as_secs_f64()
     }
-}
-
-/// Gets a collection and all its blobs using a [`Ticket`].
-pub async fn run_ticket(
-    ticket: &Ticket,
-    request: AnyGetRequest,
-    keylog: bool,
-    derp_map: Option<DerpMap>,
-) -> Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::MagicEndpoint::dial_peer(
-        ticket.peer(),
-        &crate::P2P_ALPN,
-        ticket.addrs(),
-        derp_map,
-        keylog,
-    )
-    .await?;
-
-    Ok(run_connection(connection, request))
 }
 
 /// Finite state machine for get responses
@@ -617,28 +604,22 @@ pub mod get_response_machine {
     }
 }
 
-/// Dial a peer and run a get request
-pub async fn run(
-    request: AnyGetRequest,
-    opts: Options,
-) -> anyhow::Result<get_response_machine::AtInitial> {
-    let connection = iroh_net::MagicEndpoint::dial_peer(
-        opts.peer_id,
-        &crate::P2P_ALPN,
-        &opts.addrs,
-        opts.derp_map,
-        opts.keylog,
-    )
-    .await?;
-    Ok(run_connection(connection, request))
-}
-
-/// Do a get request and return a stream of responses
-pub fn run_connection(
-    connection: quinn::Connection,
-    request: AnyGetRequest,
-) -> get_response_machine::AtInitial {
-    get_response_machine::AtInitial::new(connection, request)
+/// Create a new endpoint and dial a peer, returning the connection
+///
+/// Note that this will create an entirely new endpoint, so it should be only
+/// used for short lived connections. If you want to connect to multiple peers,
+/// it is preferable to create an endpoint and use `connect` on the endpoint.
+pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
+    let endpoint = iroh_net::MagicEndpoint::builder()
+        .keypair(opts.keypair)
+        .derp_map(opts.derp_map)
+        .keylog(opts.keylog)
+        .bind(0)
+        .await?;
+    endpoint
+        .connect(opts.peer_id, &crate::P2P_ALPN, &opts.addrs)
+        .await
+        .context("failed to connect to provider")
 }
 
 /// Error when processing a response
