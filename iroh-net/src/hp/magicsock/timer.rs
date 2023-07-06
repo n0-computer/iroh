@@ -50,6 +50,7 @@ impl Timer {
         Timer { s, t }
     }
 
+    /// Reset the timer to stop after `d` has passed.
     pub async fn reset(&self, d: Duration) {
         self.s.send(d).await.ok();
     }

@@ -10,12 +10,14 @@ pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 /// IPv4 of the default Derp.
 pub const DEFAULT_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(35, 175, 99, 113);
 
+/// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
     DerpMap {
         regions: HashMap::from_iter([(1, default_derp_region())].into_iter()),
     }
 }
 
+/// Get the default [`DerpRegion`].
 pub fn default_derp_region() -> DerpRegion {
     // The default derper run by number0.
     let default_n0_derp = DerpNode {

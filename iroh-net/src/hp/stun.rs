@@ -1,3 +1,5 @@
+//! STUN packets sending and receiving.
+
 use std::net::SocketAddr;
 
 use stun_rs::{
@@ -11,23 +13,30 @@ pub use stun_rs::{
 
 use crate::net::ip::to_canonical;
 
+/// Errors that can occurr when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The STUN message could not be parsed or is otherwise invalid.
     #[error("invalid message")]
     InvalidMessage,
+    /// STUN request is not a binding request when it should be.
     #[error("not binding")]
     NotBinding,
+    /// STUN packet is not a response when it should be.
     #[error("not success response")]
     NotSuccessResponse,
+    /// STUN response has malformed attributes.
     #[error("malformed attributes")]
     MalformedAttrs,
+    /// STUN request didn't end in fingerprint.
     #[error("no fingerprint")]
     NoFingerprint,
+    /// STUN request had bogus fingerprint.
     #[error("invalid fingerprint")]
     InvalidFingerprint,
 }
 
-// Generates a binding request STUN packet.
+/// Generates a binding request STUN packet.
 pub fn request(tx: TransactionId) -> Vec<u8> {
     let fp = Fingerprint::default();
     let msg = StunMessageBuilder::new(methods::BINDING, MessageClass::Request)

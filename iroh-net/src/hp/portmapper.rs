@@ -27,6 +27,7 @@ const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 1
 /// Capacity of the channel to communicate with the long-running service.
 const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
 
+/// Output of a port mapping probe.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("portmap={{ UPnP: {upnp}, PMP: {pmp}, PCP: {pcp} }}")]
 pub struct ProbeOutput {
@@ -39,6 +40,7 @@ pub struct ProbeOutput {
 }
 
 impl ProbeOutput {
+    /// Indicates if all port mapping protocols are available.
     pub fn all_available(&self) -> bool {
         self.upnp && self.pcp && self.pmp
     }

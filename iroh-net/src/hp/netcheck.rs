@@ -71,6 +71,9 @@ const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 /// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// A netcheck report.
+///
+/// Can be obtained by calling [Client::get_report].
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
