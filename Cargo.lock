@@ -862,6 +862,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "0.99.17"
+source = "git+https://github.com/JelteF/derive_more#60ed1e7247e7cb085b57c309fade3bde29791017"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "0.99.17"
+source = "git+https://github.com/JelteF/derive_more#60ed1e7247e7cb085b57c309fade3bde29791017"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.23",
+ "unicode-xid",
+]
+
+[[package]]
 name = "derive_more_preview"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1706,14 +1725,17 @@ dependencies = [
  "clap",
  "config",
  "console",
+ "data-encoding",
  "derive_more_preview",
  "dirs-next",
  "duct",
+ "ed25519-dalek",
  "flume",
  "futures",
  "hex",
  "indicatif",
  "iroh-bytes",
+ "iroh-gossip",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
@@ -1721,6 +1743,7 @@ dependencies = [
  "multibase",
  "nix",
  "num_cpus",
+ "once_cell",
  "postcard",
  "quic-rpc",
  "quinn",
@@ -1735,6 +1758,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "walkdir",
 ]
 
@@ -1911,6 +1935,7 @@ dependencies = [
  "blake3",
  "bytes",
  "crossbeam",
+ "derive_more",
  "ed25519-dalek",
  "hex",
  "iroh-bytes",

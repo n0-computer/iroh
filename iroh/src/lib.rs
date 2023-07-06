@@ -6,6 +6,7 @@ pub use iroh_net as net;
 
 pub mod node;
 pub mod rpc_protocol;
+#[allow(missing_docs)]
 pub mod sync;
 pub mod util;
 
