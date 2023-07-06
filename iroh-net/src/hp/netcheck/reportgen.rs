@@ -833,11 +833,9 @@ async fn run_probe(
                     // and both IPv4 and IPv6 are available over TCP, it's basically
                     // random which fields end up getting set here.
                     // Since they're not needed, that's fine for now.
-                    if ip.is_ipv4() {
-                        result.ipv4_can_send = true
-                    }
-                    if ip.is_ipv6() {
-                        result.ipv6_can_send = true
+                    match ip {
+                        IpAddr::V4(_) => result.ipv4_can_send = true,
+                        IpAddr::V6(_) => result.ipv6_can_send = true,
                     }
                 }
                 Err(err) => {
