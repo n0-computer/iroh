@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     time::{Duration, Instant},
 };
 
@@ -77,11 +78,20 @@ pub enum Message<PA> {
     Gossip(plumtree::Message),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event<PA> {
     NeighborUp(PA),
     NeighborDown(PA),
     Received(Bytes),
+}
+impl<PA: fmt::Debug> fmt::Debug for Event<PA> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Received(msg) => write!(f, "Received(<{}>)", msg.len()),
+            Self::NeighborUp(peer) => write!(f, "NeighborUp({peer:?})"),
+            Self::NeighborDown(peer) => write!(f, "NeighborDown({peer:?})"),
+        }
+    }
 }
 
 impl<PA> From<hyparview::Event<PA>> for Event<PA> {
@@ -107,10 +117,19 @@ pub enum Timer<PA> {
     Gossip(plumtree::Timer),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Command<PA> {
     Join(PA),
     Broadcast(Bytes),
+}
+
+impl<PA: fmt::Debug> fmt::Debug for Command<PA> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Join(peer) => write!(f, "Join({peer:?})"),
+            Self::Broadcast(msg) => write!(f, "Broadcast(<{}>)", msg.len()),
+        }
+    }
 }
 
 impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {

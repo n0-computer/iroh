@@ -361,10 +361,9 @@ where
 
     fn insert_peer_info(&mut self, peer_info: PeerInfo<PA>, io: &mut impl IO<PA>) {
         let old = self.peer_data.remove(&peer_info.id);
-        if let Some(old) = old {
-            if old != peer_info.data {
-                io.push(OutEvent::PeerData(peer_info.id, peer_info.data.clone()));
-            }
+        let same = matches!(old, Some(old) if old == peer_info.data);
+        if !same {
+            io.push(OutEvent::PeerData(peer_info.id, peer_info.data.clone()));
         }
         self.peer_data.insert(peer_info.id, peer_info.data);
     }
