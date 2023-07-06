@@ -12,13 +12,13 @@ use bytes::Bytes;
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
-use tokio::task::AbortHandle;
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::net::ip::to_canonical;
+use crate::util::CancelOnDrop;
 
 use self::probe::ProbeProto;
 
@@ -164,19 +164,7 @@ pub struct Client {
     /// the actor will terminate.
     addr: Addr,
     /// Ensures the actor is terminated when the client is dropped.
-    _drop_guard: Arc<ClientDropGuard>,
-}
-
-#[derive(Debug)]
-struct ClientDropGuard {
-    task: AbortHandle,
-}
-
-impl Drop for ClientDropGuard {
-    fn drop(&mut self) {
-        debug!("netcheck actor finished");
-        self.task.abort();
-    }
+    _drop_guard: Arc<CancelOnDrop>,
 }
 
 #[derive(Debug)]
@@ -211,9 +199,7 @@ impl Client {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
         let task = tokio::spawn(async move { actor.run().await });
-        let drop_guard = ClientDropGuard {
-            task: task.abort_handle(),
-        };
+        let drop_guard = CancelOnDrop::new("netcheck actor", task.abort_handle());
         Ok(Client {
             addr,
             _drop_guard: Arc::new(drop_guard),

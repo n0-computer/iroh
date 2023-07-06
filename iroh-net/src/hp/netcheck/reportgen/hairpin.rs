@@ -20,12 +20,12 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::hp::netcheck::{self, reportgen, Inflight};
 use crate::hp::stun;
+use crate::util::CancelOnDrop;
 
 /// The amount of time we wait for a hairpinned packet to come back.
 const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
@@ -36,7 +36,7 @@ const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 #[derive(Debug, Clone)]
 pub(super) struct Client {
     addr: Addr,
-    _drop_guard: Arc<DropGuard>,
+    _drop_guard: Arc<CancelOnDrop>,
 }
 
 impl Client {
@@ -52,9 +52,7 @@ impl Client {
         let task = tokio::spawn(async move { actor.run().await });
         Self {
             addr,
-            _drop_guard: Arc::new(DropGuard {
-                handle: task.abort_handle(),
-            }),
+            _drop_guard: Arc::new(CancelOnDrop::new("hairpin actor", task.abort_handle())),
         }
     }
 
@@ -67,17 +65,6 @@ impl Client {
     /// Will do nothing if this actor is already finished or a check has already started.
     pub(super) fn start_check(&self, dst: SocketAddr) {
         self.addr.try_send(Message::StartCheck(dst)).ok();
-    }
-}
-
-#[derive(Debug)]
-struct DropGuard {
-    handle: AbortHandle,
-}
-
-impl Drop for DropGuard {
-    fn drop(&mut self) {
-        self.handle.abort()
     }
 }
 

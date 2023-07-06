@@ -31,7 +31,6 @@ use iroh_metrics::netcheck::NetcheckMetrics;
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::AbortHandle;
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
@@ -41,7 +40,7 @@ use crate::hp::netcheck::{self, get_derp_addr, Report};
 use crate::hp::ping::Pinger;
 use crate::hp::{portmapper, stun};
 use crate::net::interfaces;
-use crate::util::MaybeFuture;
+use crate::util::{CancelOnDrop, MaybeFuture};
 
 mod hairpin;
 
@@ -72,7 +71,7 @@ const ENOUGH_REGIONS: usize = 3;
 #[derive(Debug, Clone)]
 pub(super) struct Client {
     // Addr is currently only used by child actors, so not yet exposed here.
-    _drop_guard: Arc<DropGuard>,
+    _drop_guard: Arc<CancelOnDrop>,
 }
 
 impl Client {
@@ -111,21 +110,8 @@ impl Client {
         };
         let task = tokio::spawn(async move { actor.run().await });
         Self {
-            _drop_guard: Arc::new(DropGuard {
-                handle: task.abort_handle(),
-            }),
+            _drop_guard: Arc::new(CancelOnDrop::new("reportgen actor", task.abort_handle())),
         }
-    }
-}
-
-#[derive(Debug)]
-struct DropGuard {
-    handle: AbortHandle,
-}
-
-impl Drop for DropGuard {
-    fn drop(&mut self) {
-        self.handle.abort()
     }
 }
 
