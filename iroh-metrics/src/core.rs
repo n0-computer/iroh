@@ -1,16 +1,15 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use prometheus_client::{encoding::text::encode, registry::Registry};
-use tokio::sync::{mpsc::channel, mpsc::Sender, Mutex, RwLock};
+use tokio::sync::{mpsc::channel, mpsc::Sender};
 
-pub static CORE: Lazy<Core> = Lazy::new(Core::default);
+static CORE: OnceCell<Core> = OnceCell::new();
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Core {
-    enabled: AtomicBool,
-    registry: Mutex<Registry>,
-    metrics_map: RwLock<std::collections::HashMap<String, Sender<MMsg>>>,
+    registry: Registry,
+    metrics_map: HashMap<&'static str, Sender<MMsg>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,34 +29,37 @@ pub enum MMsgType {
     Observe,
 }
 
-impl Default for Core {
-    fn default() -> Self {
-        Core {
-            enabled: AtomicBool::new(false),
-            metrics_map: RwLock::new(std::collections::HashMap::new()),
-            registry: Mutex::new(Registry::default()),
-        }
-    }
-}
-
 impl Core {
-    pub fn registry(&self) -> &Mutex<Registry> {
+    /// Must only be called once to init metrics.
+    pub fn init<F: FnOnce(&mut Registry) -> HashMap<&'static str, Sender<MMsg>>>(f: F) {
+        let mut registry = Registry::default();
+        let metrics_map = f(&mut registry);
+
+        CORE.set(Core {
+            metrics_map,
+            registry,
+        })
+        .expect("must only be called once");
+    }
+
+    pub fn is_enabled() -> bool {
+        CORE.get().is_some()
+    }
+
+    pub fn get() -> &'static Self {
+        CORE.get().expect("must only be called after init")
+    }
+
+    pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
-    pub async fn register_collector(&self, name: &str, sender: Sender<MMsg>) {
-        self.metrics_map
-            .write()
-            .await
-            .insert(name.to_string(), sender);
-    }
-
-    pub async fn get_collector(&self, name: &str) -> Option<Sender<MMsg>> {
-        self.metrics_map.read().await.get(name).cloned()
+    pub fn get_collector(&self, name: &str) -> Option<Sender<MMsg>> {
+        self.metrics_map.get(name).cloned()
     }
 
     pub async fn get_metric(&self, collector: &str, metric: &str) -> Option<MMsg> {
-        let c = self.get_collector(collector).await;
+        let c = self.get_collector(collector);
 
         if let Some(coll) = c {
             let (tx, mut rx) = channel(1);
@@ -76,19 +78,10 @@ impl Core {
         None
     }
 
-    pub(crate) async fn encode(&self) -> Result<String, std::fmt::Error> {
+    pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
         let mut buf = String::new();
-        let reg = self.registry.lock().await;
-        encode(&mut buf, &reg)?;
+        encode(&mut buf, &self.registry)?;
         Ok(buf)
-    }
-
-    pub(crate) fn set_enabled(&self, enabled: bool) {
-        self.enabled.swap(enabled, Ordering::Relaxed);
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled.load(Ordering::Relaxed)
     }
 }
 
@@ -144,13 +137,13 @@ pub fn record<M>(c: &str, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
 {
-    if CORE.is_enabled() {
+    if Core::is_enabled() {
         let cc = c.to_string();
         let mn = m.name().to_string();
 
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async move {
-            match CORE.get_collector(&cc).await {
+            match Core::get().get_collector(&cc) {
                 Some(sender) => {
                     let _ = sender
                         .send(MMsg {
@@ -179,11 +172,11 @@ pub async fn observe<M>(c: &str, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
-    if CORE.is_enabled() {
+    if Core::is_enabled() {
         let cc = c.to_string();
         let mn = m.name().to_string();
 
-        match CORE.get_collector(&cc).await {
+        match Core::get().get_collector(&cc) {
             Some(sender) => {
                 let _ = sender
                     .send(MMsg {

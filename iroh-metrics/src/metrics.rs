@@ -36,12 +36,6 @@ use std::net::SocketAddr;
 #[allow(unused_imports)]
 pub use crate::macros::{inc, make_metric_recorders, observe, record};
 
-/// Enables metrics collection, otherwise all inc!, record! & observe! calls are no-ops
-#[cfg(feature = "metrics")]
-pub fn init_metrics() {
-    crate::core::CORE.set_enabled(true);
-}
-
 /// Start a server to serve the OpenMetrics endpoint.
 #[cfg(feature = "metrics")]
 pub async fn start_metrics_server(addr: SocketAddr) -> Result<(), Error> {
