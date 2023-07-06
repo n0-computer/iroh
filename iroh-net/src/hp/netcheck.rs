@@ -34,6 +34,15 @@ mod reportgen;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// The maximum latency of all regions, if none are found yet.
+///
+/// Normally the max latency of all regions is computed, but if we don't yet know any region
+/// latencies we return this as default.  This is the value of the initial STUN probe
+/// delays.  It is only used as time to wait for further latencies to arrive, which *should*
+/// never happen unless there already is at least one latency.  Yet here we are, defining a
+/// default which will never be used.
+const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
+
 /// A netcheck report.
 ///
 /// Can be obtained by calling [`Client::get_report`].
@@ -106,7 +115,7 @@ impl RegionLatencies {
             .values()
             .max()
             .copied()
-            .unwrap_or_else(|| Duration::from_millis(100))
+            .unwrap_or(DEFAULT_MAX_LATENCY)
     }
 
     /// Returns an iterator over all the regions and their latencies.
