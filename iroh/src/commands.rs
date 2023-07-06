@@ -296,7 +296,7 @@ pub fn init_metrics_collection(
     if let Some(metrics_addr) = metrics_addr {
         return Some(rt.main().spawn(async move {
             {
-                let (tx, rx) = std::sync::mpsc::sync_channel(100);
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
                 let mut reg = iroh_metrics::core::CORE.registry().lock().await;
                 let iroh_metrics = crate::metrics::Metrics::new(&mut reg);
                 iroh_metrics::core::CORE
@@ -304,21 +304,21 @@ pub fn init_metrics_collection(
                     .await;
                 iroh_metrics.run(rx);
 
-                let (tx, rx) = std::sync::mpsc::sync_channel(100);
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
                 let magicsock_metrics = iroh_metrics::magicsock::Metrics::new(&mut reg);
                 iroh_metrics::core::CORE
                     .register_collector("Magicsock", tx)
                     .await;
                 magicsock_metrics.run(rx);
 
-                let (tx, rx) = std::sync::mpsc::sync_channel(100);
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
                 let netcheck_metrics = iroh_metrics::netcheck::Metrics::new(&mut reg);
                 iroh_metrics::core::CORE
                     .register_collector("Netcheck", tx)
                     .await;
                 netcheck_metrics.run(rx);
 
-                let (tx, rx) = std::sync::mpsc::sync_channel(100);
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
                 let portmap_metrics = iroh_metrics::portmap::Metrics::new(&mut reg);
                 iroh_metrics::core::CORE
                     .register_collector("Portmap", tx)
