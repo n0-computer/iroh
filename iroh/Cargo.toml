@@ -27,6 +27,7 @@ iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 iroh-sync = { path = "../iroh-sync" }
+iroh-gossip = { path = "../iroh-gossip" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
@@ -52,6 +53,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 data-encoding = "2.4.0"
 url = { version = "2.4", features = ["serde"] }
 
+# Examples
+once_cell = { version = "1.18.0", optional = true }
+ed25519-dalek = { version = "=2.0.0-rc.3", features = ["serde", "rand_core"], optional = true }
+
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
@@ -60,6 +65,7 @@ flat-db = []
 mem-db = []
 iroh-collection = []
 test = []
+example-sync = ["cli", "ed25519-dalek", "once_cell"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -87,3 +93,7 @@ required-features = ["mem-db", "iroh-collection"]
 [[example]]
 name = "hello-world"
 required-features = ["mem-db"]
+
+[[example]]
+name = "sync"
+required-features = ["example-sync"]
