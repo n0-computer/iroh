@@ -20,7 +20,6 @@ use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
 use iroh_net::tls::Keypair;
 use iroh_net::{hp::derp::DerpMap, tls::PeerId};
-use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use std::path::{Path, PathBuf};
@@ -75,7 +74,7 @@ pub mod get_response_machine {
     use std::result;
 
     use crate::{
-        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
+        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter, HANDSHAKE_SIZE},
         tokio_util::ConcatenateSliceWriter,
     };
 
@@ -195,7 +194,7 @@ pub mod get_response_machine {
                 mut writer,
                 request,
             } = self;
-            let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+            let mut out_buffer = BytesMut::zeroed(1024);
 
             // 1. Send Handshake
             {
@@ -204,7 +203,7 @@ pub mod get_response_machine {
                 let used = postcard::to_slice(&handshake, &mut out_buffer)?;
                 debug_assert_eq!(
                     used.len(),
-                    Handshake::POSTCARD_MAX_SIZE,
+                    HANDSHAKE_SIZE,
                     "serialized handshake had unexpected size"
                 );
                 writer

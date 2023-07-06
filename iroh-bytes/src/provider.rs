@@ -10,7 +10,6 @@ use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
 use iroh_io::{AsyncSliceReaderExt, FileAdapter};
-use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, debug_span, warn};
@@ -20,7 +19,7 @@ use walkdir::WalkDir;
 use crate::blobs::Collection;
 use crate::protocol::{
     read_fixed_size, read_lp, write_lp, CustomGetRequest, GetRequest, Handshake, RangeSpec,
-    Request, RequestToken, VERSION,
+    Request, RequestToken, HANDSHAKE_SIZE, VERSION,
 };
 use crate::provider::database::BaoMapEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
@@ -319,7 +318,7 @@ pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
 /// When successful, the reader is still useable after this function and the buffer will be
 /// drained of any handshake data.
 pub async fn read_handshake<R: AsyncRead + Unpin>(reader: R, buffer: &mut BytesMut) -> Result<()> {
-    let payload = read_fixed_size(reader, buffer, Handshake::POSTCARD_MAX_SIZE as u64)
+    let payload = read_fixed_size(reader, buffer, HANDSHAKE_SIZE as u64)
         .await?
         .context("no valid handshake received")?;
 

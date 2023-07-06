@@ -6,7 +6,6 @@ use std::str::FromStr;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use derive_more::From;
-use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
@@ -22,10 +21,13 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 /// Protocol version
 pub const VERSION: u64 = 2;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Handshake {
     pub version: u64,
 }
+
+/// Serialized length of [Handshake].
+pub(crate) const HANDSHAKE_SIZE: usize = 1;
 
 impl Handshake {
     pub fn new() -> Self {
@@ -294,5 +296,19 @@ impl TryFrom<VarInt> for Closed {
             2 => Ok(Self::RequestReceived),
             val => Err(UnknownErrorCode(val)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handshake_ser() {
+        let handshake = Handshake::new();
+        let ser = postcard::to_stdvec(&handshake).unwrap();
+        assert_eq!(ser.len(), HANDSHAKE_SIZE);
+        let de: Handshake = postcard::from_bytes(&ser).unwrap();
+        assert_eq!(de, handshake);
     }
 }
