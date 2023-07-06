@@ -502,10 +502,8 @@ mod test {
             let peer_id_2 = ep2.peer_id();
             eprintln!("peer id 2 {peer_id_2}");
 
-            let mut tasks = tokio::task::JoinSet::new();
-
             let endpoint = ep1.clone();
-            tasks.spawn(async move {
+            let accept = tokio::task::spawn(async move {
                 let conn = endpoint.accept().await.expect("no connection");
                 let (peer_id, alpn, conn) = accept_conn(conn).await?;
                 assert_eq!(peer_id, peer_id_2);
@@ -521,18 +519,20 @@ mod test {
             });
 
             let endpoint = ep2.clone();
-            tasks.spawn(async move {
+            {
                 let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await?;
                 let (mut send, mut recv) = conn.open_bi().await?;
                 send.write_all(b"hello").await?;
                 send.finish().await?;
                 let m = recv.read_to_end(100).await?;
                 assert_eq!(&m, b"world");
-                anyhow::Ok(())
-            });
+            }
+
+            // Wait for the first set to finish.
+            accept.await??;
 
             let endpoint = ep2.clone();
-            tasks.spawn(async move {
+            let accept = tokio::task::spawn(async move {
                 let conn = endpoint.accept().await.expect("no connection");
                 let (peer_id, alpn, conn) = accept_conn(conn).await?;
                 assert_eq!(peer_id, peer_id_1);
@@ -548,19 +548,17 @@ mod test {
             });
 
             let endpoint = ep1.clone();
-            tasks.spawn(async move {
+            {
                 let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await?;
                 let (mut send, mut recv) = conn.open_bi().await?;
                 send.write_all(b"ola").await?;
                 send.finish().await?;
                 let m = recv.read_to_end(100).await?;
                 assert_eq!(&m, b"mundo");
-                anyhow::Ok(())
-            });
-
-            while let Some(t) = tasks.join_next().await {
-                t??;
             }
+
+            accept.await??;
+
             cleanup().await;
         }
 
