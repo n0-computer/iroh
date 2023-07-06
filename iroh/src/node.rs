@@ -22,11 +22,13 @@ use genawaiter::sync::Co;
 use iroh_bytes::blobs::Collection;
 use iroh_bytes::get::get_response_machine::{self, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
-use iroh_bytes::provider::database::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
+use iroh_bytes::provider::database::{
+    BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Database, Purpose, Vfs, VfsId,
+};
 use iroh_bytes::provider::{RequestAuthorizationHandler, ShareProgress};
 use iroh_bytes::{
-    protocol::Closed,
-    provider::{CustomGetHandler, Database, ProvideProgress, Ticket, ValidateProgress},
+    protocol::{Closed, Request, RequestToken},
+    provider::{CustomGetHandler, ProvideProgress, Ticket, ValidateProgress},
     runtime,
     util::{Hash, Progress},
 };
@@ -57,7 +59,7 @@ const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Default bind address for the node.
-/// 11204 is "iroh" in leetspeak https://simple.wikipedia.org/wiki/Leet
+/// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
 pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
@@ -487,10 +489,10 @@ impl<D: BaoReadonlyDb> Node<D> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash, token: Option<RequestToken>) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs, None)
+        Ticket::new(hash, self.peer_id(), addrs, token)
     }
 
     /// Aborts the node.
@@ -624,6 +626,36 @@ impl<D: BaoDb> RpcHandler<D> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
+    async fn get_bytes(
+        db: D,
+        outboard_id: VfsId<D>,
+        data_id: VfsId<D>,
+        conn: quinn::Connection,
+        msg: GetRequest,
+    ) -> anyhow::Result<()> {
+        let vfs = db.vfs();
+        let of = vfs.open_write(&outboard_id).await?;
+        let mut df = vfs.open_write(&data_id).await?;
+        let request = get_response_machine::AtInitial::new(
+            conn,
+            iroh_bytes::protocol::Request::Get(GetRequest::single(msg.hash)),
+        );
+        let next = request.next().await?;
+        let ConnectedNext::StartRoot(start) = next.next().await? else {
+        anyhow::bail!("expected StartRoot");
+    };
+        let end = start
+            .next()
+            .write_all_with_outboard(&mut Some(of), &mut df)
+            .await?;
+        let EndBlobNext::Closing(end) = end.next() else {
+        anyhow::bail!("expected Closing");
+    };
+        let _stats = end.next().await?;
+        db.insert(msg.hash, data_id, Some(outboard_id)).await?;
+        anyhow::Ok(())
+    }
+
     async fn share0(self, msg: ShareRequest, co: &Co<ShareProgress>) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let db = self.inner.db.clone();
@@ -633,8 +665,8 @@ impl<D: BaoDb> RpcHandler<D> {
             } else {
                 let vfs = db.vfs().clone();
                 let name_hint = msg.hash.as_bytes();
-                let data = vfs.create(name_hint, Purpose::Data).await?;
-                let outboard = vfs.create(name_hint, Purpose::Outboard).await?;
+                let data = vfs.create(name_hint, Purpose::Data, false).await?;
+                let outboard = vfs.create(name_hint, Purpose::Outboard, false).await?;
                 let conn = self
                     .inner
                     .endpoint
@@ -643,8 +675,8 @@ impl<D: BaoDb> RpcHandler<D> {
                 let hash = msg.hash;
                 local
                     .spawn_pinned(move || async move {
-                        let of = vfs.open_write(outboard.clone()).await?;
-                        let mut df = vfs.open_write(data.clone()).await?;
+                        let of = vfs.open_write(&outboard).await?;
+                        let mut df = vfs.open_write(&data).await?;
                         let request = get_response_machine::AtInitial::new(
                             conn,
                             iroh_bytes::protocol::Request::Get(GetRequest::single(msg.hash)),
@@ -823,10 +855,61 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
+/// Use a single token of opaque bytes to authorize all requests
+#[derive(Debug, Clone)]
+pub struct StaticTokenAuthHandler {
+    token: Option<RequestToken>,
+}
+
+impl StaticTokenAuthHandler {
+    pub fn new(token: Option<RequestToken>) -> Self {
+        Self { token }
+    }
+}
+
+impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
+    fn authorize(
+        &self,
+        _db: D,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        match &self.token {
+            None => async move {
+                if let Some(token) = token {
+                    anyhow::bail!(
+                        "no authorization handler defined, but token was provided: {:?}",
+                        token
+                    );
+                }
+                Ok(())
+            }
+            .boxed(),
+            Some(expect) => {
+                let expect = expect.clone();
+                async move {
+                    match token {
+                        Some(token) => {
+                            if token == expect {
+                                Ok(())
+                            } else {
+                                anyhow::bail!("invalid token")
+                            }
+                        }
+                        None => anyhow::bail!("no token provided"),
+                    }
+                }
+                .boxed()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
+    use iroh_bytes::provider::database::Database;
     use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
@@ -853,7 +936,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash).await.unwrap();
+        let ticket = node.ticket(hash, None).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

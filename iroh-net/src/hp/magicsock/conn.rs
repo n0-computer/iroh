@@ -261,7 +261,8 @@ impl Conn {
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
-        let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
+
+        let port_mapper = portmapper::Client::new().await;
 
         let Options {
             port,
@@ -278,8 +279,14 @@ impl Conn {
 
         let (pconn4, pconn6) = bind(port).await?;
         let port = pconn4.port();
-        port_mapper.set_local_port(port).await;
 
+        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
+        match port.try_into() {
+            Ok(non_zero_port) => {
+                port_mapper.update_local_port(non_zero_port);
+            }
+            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+        }
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -515,11 +522,6 @@ impl Conn {
         }
 
         Ok(())
-    }
-
-    #[instrument(skip_all, fields(self.name = %self.name))]
-    async fn on_port_map_changed(&self) {
-        self.re_stun("portmap-changed").await;
     }
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
@@ -833,6 +835,7 @@ impl Actor {
             HEARTBEAT_INTERVAL,
         );
         let mut endpoints_update_receiver = self.endpoints_update_state.running.subscribe();
+        let mut portmap_watcher = self.port_mapper.watch_external_address();
 
         loop {
             tokio::select! {
@@ -871,6 +874,12 @@ impl Actor {
                     trace!("tick: re_stun {:?}", tick);
                     self.re_stun("periodic").await;
                 }
+                Ok(()) = portmap_watcher.changed() => {
+                    trace!("tick: portmap changed");
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun("portmap_updated").await;
+                },
                 _ = endpoint_heartbeat_timer.tick() => {
                     trace!("tick: endpoint heartbeat {} endpoints", self.peer_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
@@ -921,7 +930,7 @@ impl Actor {
                 for (_, ep) in self.peer_map.endpoints_mut() {
                     ep.stop_and_reset();
                 }
-                self.port_mapper.close();
+                self.port_mapper.deactivate();
                 self.derp_actor_sender
                     .send(DerpActorMessage::Shutdown)
                     .await
@@ -1283,10 +1292,8 @@ impl Actor {
     /// to determine its public address.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
-        let mut portmap_ext = self
-            .port_mapper
-            .get_cached_mapping_or_start_creating_one()
-            .await;
+        self.port_mapper.procure_mapping();
+        let portmap_watcher = self.port_mapper.watch_external_address();
         let nr = self.update_net_info().await.context("update_net_info")?;
 
         // endpoint -> how it was found
@@ -1307,14 +1314,9 @@ impl Actor {
             };
         }
 
-        // If we didn't have a portmap earlier, maybe it's done by now.
-        if portmap_ext.is_none() {
-            portmap_ext = self
-                .port_mapper
-                .get_cached_mapping_or_start_creating_one()
-                .await;
-        }
-        if let Some(portmap_ext) = portmap_ext {
+        let maybe_port_mapped = *portmap_watcher.borrow();
+
+        if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
@@ -1506,14 +1508,13 @@ impl Actor {
         );
         self.no_v4_send = !r.ipv4_can_send;
 
+        let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
         let mut ni = cfg::NetInfo {
             derp_latency: Default::default(),
             mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
             hair_pinning: r.hair_pinning,
-            upnp: r.upnp,
-            pmp: r.pmp,
-            pcp: r.pcp,
-            have_port_map: self.port_mapper.have_mapping(),
+            portmap_probe: r.portmap_probe.clone(),
+            have_port_map,
             working_ipv6: Some(r.ipv6),
             os_has_ipv6: Some(r.os_has_ipv6),
             working_udp: Some(r.udp),
@@ -1756,8 +1757,14 @@ impl Actor {
             .context("rebind IPv4 failed")?;
 
         // reread, as it might have changed
-        let port = self.local_port_v4();
-        self.port_mapper.set_local_port(port).await;
+        // we can end up with a zero port if std::net::UdpSocket::socket_addr fails
+        match self.local_port_v4().try_into() {
+            Ok(non_zero_port) => self.port_mapper.update_local_port(non_zero_port),
+            Err(_zero_port) => {
+                // since the local port might still be the same, don't deactivate port mapping
+                debug!("Skipping port mapping on rebind with zero local port");
+            }
+        }
         let ipv4_addr = self.pconn4.local_addr()?;
 
         *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
@@ -2654,13 +2661,15 @@ pub(crate) mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "https://test-node.invalid".parse().unwrap(),
+                        // In test mode, the DERP client does not validate HTTPS certs, so the host
+                        // name is irrelevant, but the port is used.
+                        url: format!("https://test-node.invalid:{}", https_addr.port())
+                            .parse()
+                            .unwrap(),
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
-
-                        derp_port: https_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,

@@ -1,6 +1,9 @@
 //! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
+//!
+//! Based on rust-libp2p/transports/tls/src/certificate.rs originally licensed under MIT by Parity
+//! Technologies (UK) Ltd.
 
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use x509_parser::prelude::*;

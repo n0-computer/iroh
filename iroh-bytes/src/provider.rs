@@ -23,17 +23,14 @@ use crate::protocol::{
 };
 use crate::provider::database::BaoMapEntry;
 use crate::util::{canonicalize_path, Hash, Progress, RpcError};
+use database::{BaoMap, Database};
 
 pub mod collection;
 pub mod database;
 mod get;
 mod ticket;
 
-pub use database::Database;
-pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
-
-use self::database::BaoMap;
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -538,9 +535,15 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
         }
     };
 
-    authorization_handler
+    // 3. Authorize the request (may be a no-op)
+    debug!("authorizing request");
+    if let Err(e) = authorization_handler
         .authorize(db.clone(), request.token().cloned(), &request)
-        .await?;
+        .await
+    {
+        writer.notify_transfer_aborted();
+        return Err(e);
+    }
 
     match request {
         Request::Get(request) => handle_get(db, request, writer).await,

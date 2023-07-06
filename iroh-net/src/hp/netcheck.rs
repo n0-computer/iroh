@@ -7,14 +7,13 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use futures::{
     stream::{FuturesUnordered, StreamExt},
-    Future, FutureExt,
+    FutureExt,
 };
 use iroh_metrics::{inc, netcheck::NetcheckMetrics};
 use rand::seq::IteratorRandom;
@@ -27,7 +26,11 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::net::{interfaces, ip::to_canonical};
+use crate::{
+    defaults::DEFAULT_DERP_STUN_PORT,
+    net::{interfaces, ip::to_canonical},
+    util::MaybeFuture,
+};
 
 use self::probe::{Probe, ProbePlan, ProbeProto};
 
@@ -89,15 +92,8 @@ pub struct Report {
     /// Whether the router supports communicating between two local devices through the NATted
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
-    /// Whether UPnP appears present on the LAN.
-    /// None means not checked.
-    pub upnp: Option<bool>,
-    /// Whether NAT-PMP appears present on the LAN.
-    /// None means not checked.
-    pub pmp: Option<bool>,
-    /// Whether PCP appears present on the LAN.
-    /// None means not checked.
-    pub pcp: Option<bool>,
+    /// Probe indicating the presence of port mapping protocols on the LAN.
+    pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// or 0 for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID
@@ -113,13 +109,6 @@ pub struct Report {
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
-}
-
-impl Report {
-    /// Reports whether any of UPnP, PMP, or PCP are non-empty.
-    pub fn any_port_mapping_checked(&self) -> bool {
-        self.upnp.is_some() || self.pmp.is_some() || self.pcp.is_some()
-    }
 }
 
 impl fmt::Display for Report {
@@ -235,8 +224,8 @@ impl Client {
     /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
     /// STUN packets.  This function **will not read from the sockets**, as they may be
     /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic.  Thus all stun packets received on those sockets should be passed to
-    /// [`Client::get_msg_sender`] in order for this function to receive the stun
+    /// traffic. Thus all stun packets received on those sockets should be passed to
+    /// [`Client::receive_stun_packet`] in order for this function to receive the stun
     /// responses and function correctly.
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
@@ -335,7 +324,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
     if node
-        .host_name
+        .url
         .host_str()
         .map(|s| s.ends_with(&DOT_INVALID))
         .unwrap_or_default()
@@ -354,7 +343,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
 
-    let host_name = node.host_name.host_str().unwrap_or_default();
+    let host_name = node.url.host_str().unwrap_or_default();
     let challenge = format!("ts_{}", host_name);
     let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
@@ -425,7 +414,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> 
 async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     let mut port = n.stun_port;
     if port == 0 {
-        port = 3478;
+        port = DEFAULT_DERP_STUN_PORT;
     }
     if let Some(ip) = n.stun_test_ip {
         if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
@@ -453,7 +442,7 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
         }
     }
 
-    match n.host_name.host() {
+    match n.url.host() {
         Some(url::Host::Domain(hostname)) => {
             async move {
                 debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
@@ -497,7 +486,6 @@ struct ReportState {
     /// Doing a lite, follow-up netcheck
     incremental: bool,
     stop_probe: Arc<sync::Notify>,
-    wait_port_map: wg::AsyncWaitGroup,
     /// The report which will be returned.
     report: Arc<RwLock<Report>>,
     got_ep4: Option<SocketAddr>,
@@ -525,15 +513,18 @@ impl ReportState {
         debug!(port_mapper = %port_mapper.is_some(), %skip_external_network, "running report");
         self.report.write().await.os_has_ipv6 = os_has_ipv6().await;
 
-        let mut port_mapping = MaybeFuture::default();
+        let mut portmap_probe = MaybeFuture::default();
         if !skip_external_network {
-            if let Some(ref port_mapper) = port_mapper {
-                let port_mapper = port_mapper.clone();
-                port_mapping.inner = Some(Box::pin(async move {
+            if let Some(port_mapper) = port_mapper {
+                portmap_probe.inner = Some(Box::pin(async move {
                     match port_mapper.probe().await {
-                        Ok(res) => Some((res.upnp, res.pmp, res.pcp)),
-                        Err(err) => {
-                            warn!("skipping port mapping: {:?}", err);
+                        Ok(Ok(res)) => Some(res),
+                        Ok(Err(err)) => {
+                            warn!("skipping port mapping: {err:?}");
+                            None
+                        }
+                        Err(recv_err) => {
+                            warn!("skipping port mapping: {recv_err}");
                             None
                         }
                     }
@@ -639,21 +630,10 @@ impl ReportState {
                     debug!("STUN timer expired");
                     break;
                 },
-                pm = &mut port_mapping => {
+                pm = &mut portmap_probe => {
                     let mut report = self.report.write().await;
-                    match pm {
-                        Some((upnp, pmp, pcp)) => {
-                            report.upnp = Some(upnp);
-                            report.pmp = Some(pmp);
-                            report.pcp = Some(pcp);
-                        }
-                        None => {
-                            report.upnp = None;
-                            report.pmp = None;
-                            report.pcp = None;
-                        }
-                    }
-                    port_mapping.inner = None;
+                    report.portmap_probe = pm;
+                    portmap_probe.inner = None;
                 }
                 probe_report = probes.next() => {
                     match probe_report {
@@ -718,8 +698,10 @@ impl ReportState {
             self.report.write().await.hair_pinning = Some(hair_pin);
         }
 
-        if !skip_external_network && port_mapper.is_some() {
-            self.wait_port_map.wait().await;
+        if portmap_probe.inner.is_some() {
+            let probe_result = portmap_probe.await;
+            let mut report = self.report.write().await;
+            report.portmap_probe = probe_result;
             debug!("port_map done");
         }
 
@@ -1420,7 +1402,6 @@ impl Actor {
             pc4_hair: Arc::new(pc4_hair),
             hair_timeout: None,
             stop_probe: Arc::new(sync::Notify::new()),
-            wait_port_map: wg::AsyncWaitGroup::new(),
             report: Default::default(),
             got_ep4: None,
             timers: Default::default(),
@@ -1596,11 +1577,8 @@ impl Actor {
         }
         log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
         log += &format!(" hair={:?}", r.hair_pinning);
-        if r.any_port_mapping_checked() {
-            log += &format!(
-                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
-                r.upnp, r.pmp, r.pcp
-            );
+        if let Some(probe) = &r.portmap_probe {
+            log += &format!(" {}", probe);
         } else {
             log += " portmap=?";
         }
@@ -1712,29 +1690,6 @@ pub(crate) async fn os_has_ipv6() -> bool {
     udp.is_ok()
 }
 
-/// Resolves to pending if the inner is `None`.
-#[derive(Debug)]
-struct MaybeFuture<T> {
-    inner: Option<T>,
-}
-
-impl<T> Default for MaybeFuture<T> {
-    fn default() -> Self {
-        MaybeFuture { inner: None }
-    }
-}
-
-impl<T: Future + Unpin> Future for MaybeFuture<T> {
-    type Output = T::Output;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.inner {
-            Some(ref mut t) => Pin::new(t).poll(cx),
-            None => Poll::Pending,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1788,7 +1743,7 @@ mod tests {
             .await
             .context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("https://derp.iroh.network.", 3478, 0)];
+        let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let mut dm = DerpMap::default();
         dm.regions.insert(
@@ -1798,15 +1753,14 @@ mod tests {
                 nodes: stun_servers
                     .into_iter()
                     .enumerate()
-                    .map(|(i, (host_name, stun_port, derp_port))| DerpNode {
+                    .map(|(i, (host_name, stun_port))| DerpNode {
                         name: format!("default-{}", i),
                         region_id: 1,
-                        host_name: host_name.parse().unwrap(),
+                        url: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
                         ipv4: UseIpv4::None,
                         ipv6: UseIpv6::None,
-                        derp_port,
                         stun_test_ip: None,
                     })
                     .collect(),
@@ -1890,9 +1844,7 @@ mod tests {
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
-        r.upnp = None;
-        r.pmp = None;
-        r.pcp = None;
+        r.portmap_probe = None;
 
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.

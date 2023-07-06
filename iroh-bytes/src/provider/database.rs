@@ -15,8 +15,8 @@ use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, AsyncSliceWriter, FileAdapt
 use rand::Rng;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    fmt::{self, Debug},
-    fs::OpenOptions,
+    fmt,
+    fmt::Debug,
     io,
     path::{Path, PathBuf},
     result,
@@ -228,13 +228,18 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     ///
     /// `name_hint` is a hint for the internal name (base).
     /// `purpose` can also be used as a hint for the internal name (extension).
-    fn create(&self, name_hint: &[u8], purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>>;
+    fn create(
+        &self,
+        name_hint: &[u8],
+        purpose: Purpose,
+        temp: bool,
+    ) -> BoxFuture<'_, io::Result<Self::Id>>;
     /// open an internal handle for reading
-    fn open_read(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
+    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
     /// open an internal handle for writing
-    fn open_write(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>>;
+    fn open_write(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>>;
     /// delete an internal handle
-    fn delete(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<()>>;
+    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -257,7 +262,7 @@ impl Purpose {
     }
 }
 
-type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
+pub type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
 
 pub trait BaoDb: BaoReadonlyDb {
     /// The Vfs type to use
@@ -316,21 +321,30 @@ impl Vfs for LocalFs {
     type ReadRaw = FileAdapter;
     type WriteRaw = FileAdapter;
 
-    fn create(&self, name_hint: &[u8], purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
+    fn create(
+        &self,
+        name_hint: &[u8],
+        purpose: Purpose,
+        temporary: bool,
+    ) -> BoxFuture<'_, io::Result<Self::Id>> {
         let dir = std::env::temp_dir();
         let rand = rand::thread_rng().gen::<[u8; 16]>();
-        let name = hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + purpose.extension();
+        let temp = if temporary { ".temp" } else { "" };
+        let name =
+            hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + purpose.extension() + temp;
         let filename = dir.join(name);
         futures::future::ok(filename).boxed()
     }
 
-    fn open_read(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
+    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
+        let handle = handle.clone();
         FileAdapter::create(move || std::fs::File::open(handle.as_path())).boxed()
     }
 
-    fn open_write(&self, handle: PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
+    fn open_write(&self, handle: &PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
+        let handle = handle.clone();
         FileAdapter::create(move || {
-            OpenOptions::new()
+            std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(handle.as_path())
@@ -338,7 +352,8 @@ impl Vfs for LocalFs {
         .boxed()
     }
 
-    fn delete(&self, handle: Self::Id) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>> {
+        let handle = handle.clone();
         tokio::fs::remove_file(handle).boxed()
     }
 }

@@ -27,7 +27,7 @@ impl Collection {
         })
     }
 
-    /// Serialize this collection to a std Vec<u8>
+    /// Serialize this collection to a std `Vec<u8>`
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         Ok(postcard::to_stdvec(self)?)
     }

@@ -162,13 +162,12 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use std::time::Duration;
-
-    use iroh_bytes::provider::Database;
+    use iroh_bytes::provider::database::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
     };
+    use std::time::Duration;
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
