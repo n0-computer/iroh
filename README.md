@@ -60,6 +60,8 @@ a cli.
 
 # License
 
+Copyright 2023 N0, INC.
+
 This project is licensed under either of
 
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or

@@ -351,7 +351,7 @@ impl Client {
                 .and_then(|s| rustls::ServerName::try_from(s).ok());
         }
         if let Some(node) = node {
-            if let Some(host) = node.host_name.host_str() {
+            if let Some(host) = node.url.host_str() {
                 return rustls::ServerName::try_from(host).ok();
             }
         }
@@ -380,7 +380,7 @@ impl Client {
             return false;
         }
         if let Some(node) = node {
-            if node.host_name.scheme() == "http" {
+            if node.url.scheme() == "http" {
                 return false;
             }
         }
@@ -664,7 +664,7 @@ impl Client {
             UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
             _ => {
                 let host = node
-                    .host_name
+                    .url
                     .host()
                     .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
                 match host {
@@ -683,10 +683,16 @@ impl Client {
                 }
             }
         };
-        let port = if node.derp_port != 0 {
-            node.derp_port
-        } else {
-            443
+        let port = match node.url.port() {
+            Some(port) => port,
+            None => match node.url.scheme() {
+                "http" => 80,
+                "https" => 443,
+                _ => return Err(ClientError::InvalidUrl(
+                    "Invalid scheme in DERP hostname, only http: and https: schemes are supported."
+                        .into(),
+                )),
+            },
         };
         let dst = format!("{host}:{port}");
         debug!("dialing {}", dst);
@@ -1123,13 +1129,12 @@ mod tests {
             nodes: vec![DerpNode {
                 name: "test_node".to_string(),
                 region_id: 1,
-                host_name: "http://bad.url".parse().unwrap(),
+                url: "https://bad.url".parse().unwrap(),
                 stun_only: false,
                 stun_port: 0,
                 stun_test_ip: None,
                 ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
                 ipv6: UseIpv6::Disabled,
-                derp_port: 443,
             }],
             region_code: "test_region".to_string(),
         };

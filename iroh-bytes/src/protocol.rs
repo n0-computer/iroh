@@ -55,6 +55,13 @@ impl RequestToken {
         Ok(Self { bytes })
     }
 
+    /// Generate a random 32 byte request token.
+    pub fn generate() -> Self {
+        Self {
+            bytes: rand::random::<[u8; 32]>().to_vec().into(),
+        }
+    }
+
     /// Returns a reference the token bytes.
     pub fn as_bytes(&self) -> &Bytes {
         &self.bytes
@@ -89,11 +96,21 @@ pub enum Request {
 }
 
 impl Request {
+    /// Gets the request token.
     pub fn token(&self) -> Option<&RequestToken> {
         match self {
             Request::Get(get) => get.token(),
             Request::CustomGet(get) => get.token.as_ref(),
         }
+    }
+
+    /// Sets the request token and returns a new request.
+    pub fn with_token(mut self, value: Option<RequestToken>) -> Self {
+        match &mut self {
+            Request::Get(get) => get.token = value,
+            Request::CustomGet(get) => get.token = value,
+        }
+        self
     }
 }
 

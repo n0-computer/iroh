@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
-    defaults::default_derp_map,
+    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
     hp::derp::{DerpMap, UseIpv4, UseIpv6},
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
@@ -53,18 +53,7 @@ async fn main() -> anyhow::Result<()> {
     let derp_map = match args.derp_url {
         None => default_derp_map(),
         Some(url) => {
-            // TODO: This should be done by the DERP client.
-            let derp_port = match url.port() {
-                Some(port) => port,
-                None => match url.scheme() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => anyhow::bail!(
-                        "Invalid scheme in DERP URL, only http: and https: schemes are supported."
-                    ),
-                },
-            };
-            DerpMap::default_from_node(url, 3478, derp_port, UseIpv4::None, UseIpv6::None)
+            DerpMap::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
         }
     };
 

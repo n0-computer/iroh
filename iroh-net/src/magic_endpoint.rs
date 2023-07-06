@@ -1,3 +1,5 @@
+//! An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
+
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -153,6 +155,7 @@ fn make_server_config(
     Ok(server_config)
 }
 
+/// An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
@@ -166,35 +169,6 @@ impl MagicEndpoint {
     /// Build a MagicEndpoint
     pub fn builder() -> MagicEndpointBuilder {
         MagicEndpointBuilder::default()
-    }
-
-    /// Connect to a remote endpoint, creating an endpoint on the fly.
-    ///
-    /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
-    /// the remote endpoint, they can be specified and will be used to try and establish a direct
-    /// connection without involving a DERP server. If no addresses are specified, the endpoint
-    /// will try to dial the peer through the configured DERP servers.
-    ///
-    /// If *derp_map* is set, these DERP servers are used to discover the dialed peer by its
-    /// [`PeerId`], help establish the connection being an initial relay for traffic and assist in
-    /// holepunching.
-    ///
-    /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
-    /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
-    /// to be able to decrypt captured traffic for debugging purposes.
-    pub async fn dial_peer(
-        peer_id: PeerId,
-        alpn_protocol: &[u8],
-        known_addrs: &[SocketAddr],
-        derp_map: Option<DerpMap>,
-        keylog: bool,
-    ) -> anyhow::Result<quinn::Connection> {
-        let endpoint =
-            MagicEndpoint::bind(Keypair::generate(), 0, None, derp_map, None, keylog).await?;
-        endpoint
-            .connect(peer_id, alpn_protocol, known_addrs)
-            .await
-            .context("failed to connect to provider")
     }
 
     /// Create a quinn endpoint backed by a magicsock.

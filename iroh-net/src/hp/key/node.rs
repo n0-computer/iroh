@@ -1,3 +1,5 @@
+//! The private and public keys of a node.
+
 use std::{fmt::Debug, hash::Hash};
 
 use anyhow::{anyhow, ensure, Context, Result};
@@ -9,6 +11,7 @@ pub(crate) const PUBLIC_KEY_LENGTH: usize = KEY_SIZE;
 pub(crate) const SECRET_KEY_LENGTH: usize = KEY_SIZE;
 pub(crate) const NONCE_LEN: usize = 24;
 
+/// Public key of a node.
 #[derive(Clone, Eq)]
 pub struct PublicKey(crypto_box::PublicKey);
 
@@ -65,15 +68,18 @@ impl TryFrom<&[u8]> for PublicKey {
 }
 
 impl PublicKey {
+    /// Borrow the public key as bytes.
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_LENGTH] {
         self.0.as_bytes()
     }
 
+    /// Whether the public key is zero.
     pub fn is_zero(&self) -> bool {
         self.0.as_bytes() == &[0u8; PUBLIC_KEY_LENGTH]
     }
 }
 
+/// The private key of a node.
 #[derive(Clone)]
 pub struct SecretKey(crypto_box::SecretKey);
 
@@ -104,14 +110,17 @@ impl<'de> Deserialize<'de> for SecretKey {
 }
 
 impl SecretKey {
+    /// Generate a random [SecretKey].
     pub fn generate() -> Self {
         Self(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng))
     }
 
+    /// Get the [PublicKey] that corresponds to this [SecretKey].
     pub fn public_key(&self) -> PublicKey {
         self.0.public_key().into()
     }
 
+    /// Serialize the [SecretKey] to bytes.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
     }
@@ -126,8 +135,8 @@ impl SecretKey {
         crypto_box::ChaChaBox::new(&other.0, &self.0)
     }
 
-    // Creates a shared secret between the [`SecretKey`] and the given [`PublicKey`], and sealsthe
-    // provided cleartext.
+    /// Creates a shared secret between the [SecretKey] and the given [PublicKey], and seals the
+    /// provided cleartext.
     pub fn seal_to(&self, other: &PublicKey, cleartext: &[u8]) -> Vec<u8> {
         use crypto_box::aead::{Aead, AeadCore, OsRng};
 
@@ -142,8 +151,8 @@ impl SecretKey {
         res
     }
 
-    // Creates a shared secret between the [`SecretKey`] and the given [`PublicKey`], and opens the
-    // `seal`, returning the cleartext.
+    /// Creates a shared secret between the [SecretKey] and the given [PublicKey], and opens the
+    /// `seal`, returning the cleartext.
     pub fn open_from(&self, other: &PublicKey, seal: &[u8]) -> Result<Vec<u8>> {
         let shared_secret = self.shared_secret(other);
 

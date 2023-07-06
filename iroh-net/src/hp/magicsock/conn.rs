@@ -381,6 +381,7 @@ impl Conn {
         Ok(c)
     }
 
+    /// Retrieve information about known peers' endpoints in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
@@ -390,6 +391,7 @@ impl Conn {
         Ok(res)
     }
 
+    /// Query for the local endpoints discovered during the last endpoint discovery.
     pub async fn local_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
         let (s, r) = sync::oneshot::channel();
         self.actor_sender
@@ -399,6 +401,7 @@ impl Conn {
         Ok(res)
     }
 
+    /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(*self.local_addrs.read().unwrap())
     }
@@ -2661,13 +2664,15 @@ pub(crate) mod tests {
                     nodes: vec![DerpNode {
                         name: "t1".into(),
                         region_id: 1,
-                        host_name: "https://test-node.invalid".parse().unwrap(),
+                        // In test mode, the DERP client does not validate HTTPS certs, so the host
+                        // name is irrelevant, but the port is used.
+                        url: format!("https://test-node.invalid:{}", https_addr.port())
+                            .parse()
+                            .unwrap(),
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
                         ipv6: UseIpv6::None,
-
-                        derp_port: https_addr.port(),
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,
