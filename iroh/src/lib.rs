@@ -11,6 +11,7 @@ pub mod dial;
 pub mod get;
 pub mod node;
 pub mod rpc_protocol;
+#[allow(missing_docs)]
 pub mod sync;
 pub mod util;
 
