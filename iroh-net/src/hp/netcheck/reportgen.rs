@@ -242,12 +242,16 @@ impl Actor {
             "reportstate actor starting",
         );
 
-        let start_time = Instant::now();
         self.report.os_has_ipv6 = super::os_has_ipv6().await;
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
         let mut probes = self.prepare_probes_task().await?;
+
+        let total_timer = tokio::time::sleep(OVERALL_PROBE_TIMEOUT);
+        tokio::pin!(total_timer);
+        let probe_timer = tokio::time::sleep(STUN_PROBE_TIMEOUT);
+        tokio::pin!(probe_timer);
 
         loop {
             trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
@@ -255,15 +259,12 @@ impl Actor {
                 debug!("all tasks done");
                 break;
             }
-            let remaining_time = OVERALL_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
-            let remaining_probe_time = STUN_PROBE_TIMEOUT.saturating_sub(start_time.elapsed());
-
             tokio::select! {
-                _ = tokio::time::sleep(remaining_time) => {
+                _ = &mut total_timer => {
                     bail!("report timed out");
                 }
 
-                _ = tokio::time::sleep(remaining_probe_time) => {
+                _ = &mut probe_timer => {
                     debug!("probes timed out");
                     self.handle_abort_probes();
                 }
