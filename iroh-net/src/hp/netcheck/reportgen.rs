@@ -412,7 +412,7 @@ impl Actor {
         ipp: Option<SocketAddr>,
         latency: Duration,
     ) {
-        let Some(node) = self.derp_map.named_node(&derp_node) else {
+        let Some(node) = self.derp_map.find_by_name(&derp_node) else {
             warn!("derp node missing from derp map");
             return;
         };
@@ -583,7 +583,7 @@ impl Actor {
                         let name = probe.node().to_string();
                         let node = self
                             .derp_map
-                            .named_node(&name)
+                            .find_by_name(&name)
                             .with_context(|| format!("missing named derp node {}", probe.node()))?;
                         let node = Arc::new(node.clone());
                         derp_nodes_cache.insert(name, node.clone());
