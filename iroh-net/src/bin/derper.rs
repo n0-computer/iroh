@@ -309,10 +309,14 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cfg = Config::load(&cli).await?;
-    run(cli.dev, cfg).await
+    run(cli.dev, cfg, None).await
 }
 
-async fn run(dev_mode: bool, cfg: Config) -> Result<()> {
+async fn run(
+    dev_mode: bool,
+    cfg: Config,
+    addr_sender: Option<tokio::sync::oneshot::Sender<SocketAddr>>,
+) -> Result<()> {
     let (addr, tls_config) = if dev_mode {
         let port = if cfg.addr.port() != 443 {
             cfg.addr.port()
@@ -425,6 +429,12 @@ async fn run(dev_mode: bool, cfg: Config) -> Result<()> {
     } else {
         None
     };
+
+    if let Some(addr_sender) = addr_sender {
+        if let Err(e) = addr_sender.send(derp_server.addr()) {
+            bail!("Unable to send the local SocketAddr, the Sender was dropped - {e:?}");
+        }
+    }
 
     tokio::signal::ctrl_c().await?;
     // Shutdown all tasks
@@ -802,10 +812,12 @@ mod tests {
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
-        let cfg = Config::default();
+        let mut cfg = Config::default();
+        cfg.addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
+        let (addr_send, addr_recv) = tokio::sync::oneshot::channel();
         let derper_task = tokio::spawn(
             async move {
-                let res = run(true, cfg).await;
+                let res = run(true, cfg, Some(addr_send)).await;
                 if let Err(e) = res {
                     println!("error starting derp server {e}");
                 }
@@ -813,14 +825,16 @@ mod tests {
             .instrument(debug_span!("derper")),
         );
 
-        let derper_addr_str = "http://[::]:3340";
-        let derper_addr: Url = derper_addr_str.parse().unwrap();
+        let derper_addr = addr_recv.await?;
+        let derper_str_url = format!("http://{}", derper_addr);
+        tracing::info!("!!!!!!!!!!!!!URL {derper_str_url}");
+        let derper_url: Url = derper_str_url.parse().unwrap();
 
         // set up clients
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public_key();
         let client_a = ClientBuilder::new()
-            .server_url(derper_addr.clone())
+            .server_url(derper_url.clone())
             .build(a_secret_key)?;
         let connect_client = client_a.clone();
 
@@ -844,7 +858,7 @@ mod tests {
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public_key();
         let client_b = ClientBuilder::new()
-            .server_url(derper_addr)
+            .server_url(derper_url)
             .build(b_secret_key)?;
         client_b.connect().await?;
 
@@ -901,7 +915,7 @@ mod tests {
         tracing::info!("send request for homepage");
         let req = hyper::Request::builder()
             .method(hyper::Method::GET)
-            .uri(derper_addr_str)
+            .uri(derper_str_url.clone())
             .body(Body::empty())
             .unwrap();
 
@@ -920,7 +934,7 @@ mod tests {
         let challenge = "123az__.";
         let req = hyper::Request::builder()
             .method(hyper::Method::GET)
-            .uri(format!("{derper_addr_str}/generate_204"))
+            .uri(format!("{derper_str_url}/generate_204"))
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
             .body(Body::empty())
             .unwrap();
