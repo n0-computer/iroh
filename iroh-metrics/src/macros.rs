@@ -117,23 +117,15 @@ macro_rules! make_metric_recorders {
                     }
                 }
 
-                pub fn run(self, rx: std::sync::mpsc::Receiver<$crate::core::MMsg>) {
-                    tokio::task::spawn_blocking(move || {
-                        while true {
-                            let msg = rx.recv();
-                            match msg {
-                                Ok(msg) => {
-                                    self.handle_message(msg);
-                                }
-                                Err(e) => {
-                                    tracing::error!("error receiving message: {}", e);
-                                }
-                            }
+                pub fn run(self, mut rx: tokio::sync::mpsc::Receiver<$crate::core::MMsg>) -> tokio::task::JoinHandle<()> {
+                    tokio::task::spawn(async move {
+                        while let Some(msg) = rx.recv().await {
+                            self.handle_message(msg).await;
                         }
-                    });
+                    })
                 }
 
-                pub(crate) fn handle_message(&self, msg: $crate::core::MMsg) where Self: $crate::core::MetricsRecorder{
+                pub(crate) async fn handle_message(&self, msg: $crate::core::MMsg) where Self: $crate::core::MetricsRecorder{
                     match msg.m_callback {
                         Some(cb) => {
                             // TODO(arqu): this always assumes only counters
@@ -148,14 +140,9 @@ macro_rules! make_metric_recorders {
                                             m_val_f64: 0.0,
                                             m_callback: None,
                                         };
-                                        tokio::spawn(async move {
-                                            match cb.send(rm).await {
-                                                Ok(_) => {}
-                                                Err(e) => {
-                                                    tracing::error!("error sending message: {}", e);
-                                                }
-                                            };
-                                        });
+                                        if let Err(err) = cb.send(rm).await {
+                                            tracing::error!("error sending message: {:?}", err);
+                                        }
                                     }
                                 )+
                                 _ => {
