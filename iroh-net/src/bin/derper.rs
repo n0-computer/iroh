@@ -827,7 +827,7 @@ mod tests {
                 // dev mode will bind to IPv6::UNSPECIFIED, so setting it `false`
                 let res = run(false, cfg, Some(addr_send)).await;
                 if let Err(e) = res {
-                    println!("error starting derp server {e}");
+                    eprintln!("error starting derp server {e}");
                 }
             }
             .instrument(debug_span!("derper")),

@@ -153,14 +153,14 @@ mod tests {
 
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            futures::future::join_all(server_a_meshed),
+            futures::future::try_join_all(server_a_meshed),
         )
-        .await?;
+        .await??;
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            futures::future::join_all(server_b_meshed),
+            futures::future::try_join_all(server_b_meshed),
         )
-        .await?;
+        .await??;
 
         let alice_key = SecretKey::generate();
         tracing::info!("client alice: {:?}", alice_key.public_key());
@@ -176,8 +176,6 @@ mod tests {
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
-        // needs time for the mesh network to fully mesh
-        // packets may get dropped the first go-around
         // this will loop until we get the first keepalive, message, which means
         // there is really something wrong if we can't get
         // send bob a message from alice
