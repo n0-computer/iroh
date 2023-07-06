@@ -24,7 +24,7 @@ use iroh_gossip::{
     proto::{Event, TopicId},
 };
 use iroh_net::{
-    defaults::default_derp_map,
+    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
     hp::derp::{DerpMap, UseIpv4, UseIpv6},
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
@@ -49,9 +49,9 @@ struct Args {
     /// Set your nickname
     #[clap(short, long)]
     name: Option<String>,
-    /// Set the bind address for our socket. By default, a random port will be used.
-    #[clap(short, long)]
-    bind_addr: Option<SocketAddr>,
+    /// Set the bind port for our socket. By default, a random port will be used.
+    #[clap(short, long, default_value = "0")]
+    bind_port: u16,
     #[clap(subcommand)]
     command: Command,
 }
@@ -66,10 +66,6 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-
-    let bind_addr = args
-        .bind_addr
-        .unwrap_or_else(|| SocketAddr::new([127, 0, 0, 1].into(), 0));
 
     // parse or generate our keypair
     let keypair = match args.private_key {
@@ -106,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
             // trigger oneshot on the first endpoint update
             initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
         }))
-        .bind(bind_addr)
+        .bind(args.bind_port)
         .await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
@@ -332,7 +328,7 @@ fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
         None => "None".to_string(),
         Some(map) => {
             let regions = map.regions.iter().map(|(id, region)| {
-                let nodes = region.nodes.iter().map(|node| node.host_name.to_string());
+                let nodes = region.nodes.iter().map(|node| node.url.to_string());
                 (*id, nodes.collect::<Vec<_>>())
             });
             format!("{:?}", regions.collect::<Vec<_>>())
@@ -340,20 +336,9 @@ fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     }
 }
 fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
-    // TODO: this should be a one-liner
-    // will be solved by https://github.com/n0-computer/iroh/pull/1143
-    let derp_port = match url.port() {
-        Some(port) => port,
-        None => match url.scheme() {
-            "http" => 80,
-            "https" => 443,
-            _ => bail!("Invalid scheme in DERP URL, only http: and https: schemes are supported."),
-        },
-    };
     Ok(DerpMap::default_from_node(
         url,
-        3478,
-        derp_port,
+        DEFAULT_DERP_STUN_PORT,
         UseIpv4::None,
         UseIpv6::None,
     ))
