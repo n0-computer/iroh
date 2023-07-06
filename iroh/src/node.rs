@@ -9,6 +9,7 @@
 use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -626,85 +627,156 @@ impl<D: BaoDb> RpcHandler<D> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn get_bytes(
+    async fn create_file_pair(db: &D, hash: &Hash, temp: bool) -> io::Result<(VfsId<D>, VfsId<D>)> {
+        // use the hash as name hint
+        let name_hint = hash.as_bytes();
+        // create temp file for the data, using the hash as name hint
+        let data = db.vfs().create(name_hint, Purpose::Data, temp).await?;
+        // create temp file for the outboard, using the hash as name hint
+        let outboard = db.vfs().create(name_hint, Purpose::Outboard, temp).await?;
+        Ok((data, outboard))
+    }
+
+    async fn get(
         db: D,
-        outboard_id: VfsId<D>,
-        data_id: VfsId<D>,
         conn: quinn::Connection,
-        msg: GetRequest,
+        hash: Hash,
+        recursive: bool,
     ) -> anyhow::Result<()> {
-        let vfs = db.vfs();
-        let of = vfs.open_write(&outboard_id).await?;
-        let mut df = vfs.open_write(&data_id).await?;
+        if recursive {
+            Self::get_collection(db, conn, hash).await
+        } else {
+            Self::get_blob(db, conn, hash).await
+        }
+    }
+
+    async fn get_blob(db: D, conn: quinn::Connection, hash: Hash) -> anyhow::Result<()> {
+        let (data_id, outboard_id) = Self::create_file_pair(&db, &hash, true).await?;
+        let of = db.vfs().open_write(&outboard_id).await?;
+        let mut df = db.vfs().open_write(&data_id).await?;
         let request = get_response_machine::AtInitial::new(
             conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(msg.hash)),
+            iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
         );
-        let next = request.next().await?;
-        let ConnectedNext::StartRoot(start) = next.next().await? else {
-        anyhow::bail!("expected StartRoot");
-    };
-        let end = start
-            .next()
+        // create a new bidi stream
+        let connected = request.next().await?;
+        // next step. we have requested a single hash, so this must be StartRoot
+        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            anyhow::bail!("expected StartRoot");
+        };
+        // move to the header
+        let header = start.next();
+        // use the convenience method to write all to the two vfs objects
+        let end = header
             .write_all_with_outboard(&mut Some(of), &mut df)
             .await?;
+        // we have requested a single hash, so we must be at closing
         let EndBlobNext::Closing(end) = end.next() else {
-        anyhow::bail!("expected Closing");
-    };
+            anyhow::bail!("expected Closing");
+        };
+        // this closes the bidi stream. Do something with the stats?
         let _stats = end.next().await?;
-        db.insert(msg.hash, data_id, Some(outboard_id)).await?;
+        // actually store the data. it is up to the db to decide if it wants to
+        // rename the files or not.
+        db.insert(hash, data_id, Some(outboard_id)).await?;
+        anyhow::Ok(())
+    }
+
+    async fn get_collection(db: D, conn: quinn::Connection, root_hash: Hash) -> anyhow::Result<()> {
+        let vfs = db.vfs();
+        let request = get_response_machine::AtInitial::new(
+            conn,
+            iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
+        );
+        // create a new bidi stream
+        let connected = request.next().await?;
+        // next step. we have requested a single hash, so this must be StartRoot
+        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            anyhow::bail!("expected StartRoot");
+        };
+        // move to the header
+        let header = start.next();
+
+        // create a new file pair for the collection
+        let (data_id, outboard_id) = Self::create_file_pair(&db, &root_hash, true).await?;
+        // open the two vfs objects
+        let of = vfs.open_write(&outboard_id).await?;
+        let mut df = vfs.open_write(&data_id).await?;
+        // use the convenience method to write all to the two vfs objects
+        let end_root = header
+            .write_all_with_outboard(&mut Some(of), &mut df)
+            .await?;
+        // read the collection fully for now
+        let collection = db.vfs().open_read(&data_id).await?.read_to_end().await?;
+        let collection = Collection::from_bytes(&collection)?;
+        let children = collection
+            .blobs()
+            .iter()
+            .map(|b| b.hash)
+            .collect::<Vec<_>>();
+        // insert the root into the database
+        // this must be done after reading the collection, because db.insert might rename the underlying files
+        db.insert(root_hash, data_id.clone(), Some(outboard_id.clone()))
+            .await?;
+        let mut next = end_root.next();
+        // read all the children
+        let finishing = loop {
+            let start = match next {
+                EndBlobNext::MoreChildren(start) => start,
+                EndBlobNext::Closing(finish) => break finish,
+            };
+            let child_offset =
+                usize::try_from(start.child_offset()).context("child offset too large")?;
+            let child_hash = match children.get(child_offset) {
+                Some(blob) => *blob,
+                None => break start.finish(),
+            };
+            let header = start.next(child_hash);
+            // open the two vfs objects
+            let of = vfs.open_write(&outboard_id).await?;
+            let mut df = vfs.open_write(&data_id).await?;
+            // use the convenience method to write all to the two vfs objects
+            let end_blob = header
+                .write_all_with_outboard(&mut Some(of), &mut df)
+                .await?;
+            // insert the child into the database
+            db.insert(child_hash, data_id.clone(), Some(outboard_id.clone()));
+            next = end_blob.next();
+        };
+        // this closes the bidi stream. Do something with the stats?
+        let _stats = finishing.next().await?;
         anyhow::Ok(())
     }
 
     async fn share0(self, msg: ShareRequest, co: &Co<ShareProgress>) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let db = self.inner.db.clone();
-        if msg.single {
-            if false && self.inner.db.get(&msg.hash).is_some() {
-                co.yield_(ShareProgress::AllDone).await;
-            } else {
-                let vfs = db.vfs().clone();
-                let name_hint = msg.hash.as_bytes();
-                let data = vfs.create(name_hint, Purpose::Data, false).await?;
-                let outboard = vfs.create(name_hint, Purpose::Outboard, false).await?;
-                let conn = self
-                    .inner
-                    .endpoint
-                    .connect(msg.peer, &iroh_bytes::P2P_ALPN, &msg.addrs)
-                    .await?;
-                let hash = msg.hash;
-                local
-                    .spawn_pinned(move || async move {
-                        let of = vfs.open_write(&outboard).await?;
-                        let mut df = vfs.open_write(&data).await?;
-                        let request = get_response_machine::AtInitial::new(
-                            conn,
-                            iroh_bytes::protocol::Request::Get(GetRequest::single(msg.hash)),
-                        );
-                        let next = request.next().await?;
-                        let ConnectedNext::StartRoot(start) = next.next().await? else {
-                        anyhow::bail!("expected StartRoot");
-                    };
-                        let end = start
-                            .next()
-                            .write_all_with_outboard(&mut Some(of), &mut df)
-                            .await?;
-                        let EndBlobNext::Closing(end) = end.next() else {
-                        anyhow::bail!("expected Closing");
-                    };
-                        let _stats = end.next().await?;
-                        db.insert(hash, data, Some(outboard)).await?;
-                        anyhow::Ok(())
-                    })
-                    .await
-                    .unwrap()
-                    .unwrap();
-            }
-        } else {
-            co.yield_(ShareProgress::Abort(
-                anyhow::anyhow!("not implemented").into(),
-            ))
-            .await;
+        // true to force download even if we have the blobs
+        let force = true;
+        // check if we have all the blobs
+        if !force && msg.blobs.iter().all(|hash| db.get(hash).is_some()) {
+            return Ok(());
+        }
+        let conn = self
+            .inner
+            .endpoint
+            .connect(msg.peer, &iroh_bytes::P2P_ALPN, &msg.addrs)
+            .await?;
+        let blobs_iter = msg
+            .blobs
+            .into_iter()
+            .filter(|blob| force || db.get(blob).is_none())
+            .map(|blob| (blob, false));
+        let collections_iter = msg
+            .collections
+            .into_iter()
+            .map(|collection| (collection, true));
+        let all_iter = blobs_iter.chain(collections_iter);
+        for (hash, is_root) in all_iter {
+            let db = db.clone();
+            let conn = conn.clone();
+            let task = local.spawn_pinned(move || Self::get(db, conn, hash, is_root));
+            task.await??;
         }
         Ok(())
     }

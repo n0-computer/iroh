@@ -28,10 +28,11 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShareRequest {
-    pub hash: Hash,
-    pub single: bool,
+    pub blobs: Vec<Hash>,
+    pub collections: Vec<Hash>,
     pub peer: PeerId,
     pub addrs: Vec<SocketAddr>,
+    pub force: bool,
 }
 
 impl Msg<ProviderService> for ShareRequest {

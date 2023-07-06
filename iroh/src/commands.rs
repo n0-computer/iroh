@@ -60,20 +60,21 @@ impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
             Commands::Share {
-                hash,
-                single,
+                blob,
+                collection,
                 rpc_port,
                 peer,
-                addrs,
+                addr,
                 ..
             } => {
                 let client = make_rpc_client(rpc_port).await?;
                 let mut stream = client
                     .server_streaming(ShareRequest {
-                        hash: hash.0,
-                        single,
+                        blobs: blob.into_iter().map(|x| x.0).collect(),
+                        collections: collection.into_iter().map(|x| x.0).collect(),
                         peer,
-                        addrs,
+                        addrs: addr,
+                        force: true,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -263,14 +264,18 @@ pub enum Commands {
     },
     /// Fetch the data identified by HASH from a provider
     Share {
-        /// The hash to retrieve, as a Blake3 CID
-        hash: Blake3Cid,
+        /// Individual blobs retrieve, as a Blake3 CID
+        #[clap(long)]
+        blob: Vec<Blake3Cid>,
+        /// Collections to retrieve, as a Blake3 CID
+        #[clap(long)]
+        collection: Vec<Blake3Cid>,
         /// PeerId of the provider
         #[clap(long, short)]
         peer: PeerId,
         /// Addresses of the provider
         #[clap(long, short)]
-        addrs: Vec<SocketAddr>,
+        addr: Vec<SocketAddr>,
         /// base32-encoded Request token to use for authentication, if any
         #[clap(long)]
         token: Option<RequestToken>,
