@@ -322,7 +322,7 @@ pub async fn read_handshake<R: AsyncRead + Unpin>(reader: R, buffer: &mut BytesM
         .await?
         .context("no valid handshake received")?;
 
-    let handshake: Handshake = postcard::from_bytes(&payload)?;
+    let handshake = Handshake::from_bytes(&payload)?;
     ensure!(
         handshake.version == VERSION,
         "expected version {} but got {}",

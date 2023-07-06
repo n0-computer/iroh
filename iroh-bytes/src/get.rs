@@ -74,7 +74,7 @@ pub mod get_response_machine {
     use std::result;
 
     use crate::{
-        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter, HANDSHAKE_SIZE},
+        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
         tokio_util::ConcatenateSliceWriter,
     };
 
@@ -194,20 +194,13 @@ pub mod get_response_machine {
                 mut writer,
                 request,
             } = self;
-            let mut out_buffer = BytesMut::zeroed(1024);
-
             // 1. Send Handshake
             {
                 debug!("sending handshake");
                 let handshake = Handshake::new();
-                let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-                debug_assert_eq!(
-                    used.len(),
-                    HANDSHAKE_SIZE,
-                    "serialized handshake had unexpected size"
-                );
+                let used = handshake.to_bytes();
                 writer
-                    .write_all(used)
+                    .write_all(&used)
                     .await
                     .map_err(|e| anyhow!("failed to write handshake {:?}", e))?;
             }

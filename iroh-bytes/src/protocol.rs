@@ -21,17 +21,49 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 /// Protocol version
 pub const VERSION: u64 = 2;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+/// The magic number, sent in the handshake.
+/// 8 bytes long
+const HANDSHAKE_MAGIC: &str = "IROH💾";
+const HANDSHAKE_MAGIC_LEN: usize = HANDSHAKE_MAGIC.as_bytes().len();
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Handshake {
     pub version: u64,
 }
 
 /// Serialized length of [Handshake].
-pub(crate) const HANDSHAKE_SIZE: usize = 1;
+pub(crate) const HANDSHAKE_SIZE: usize = HANDSHAKE_MAGIC_LEN + 8;
+
+impl Default for Handshake {
+    fn default() -> Self {
+        Self { version: VERSION }
+    }
+}
 
 impl Handshake {
     pub fn new() -> Self {
-        Self { version: VERSION }
+        Self::default()
+    }
+
+    /// Serializes the [Handshake] into its byte representation.
+    pub fn to_bytes(&self) -> [u8; HANDSHAKE_SIZE] {
+        let mut out = [0u8; HANDSHAKE_SIZE];
+        out[..HANDSHAKE_MAGIC_LEN].copy_from_slice(HANDSHAKE_MAGIC.as_bytes());
+        out[HANDSHAKE_MAGIC_LEN..].copy_from_slice(&self.version.to_le_bytes());
+
+        out
+    }
+
+    /// Parse the given bytes into a [Handshake].
+    pub fn from_bytes(source: impl AsRef<[u8]>) -> Result<Self> {
+        let source: &[u8] = source.as_ref();
+        let bytes: [u8; HANDSHAKE_SIZE] = source.try_into()?;
+        ensure!(
+            &bytes[..HANDSHAKE_MAGIC_LEN] == HANDSHAKE_MAGIC.as_bytes(),
+            "invalid magic number"
+        );
+        let version = u64::from_le_bytes(bytes[HANDSHAKE_MAGIC_LEN..].try_into()?);
+        Ok(Handshake { version })
     }
 }
 
@@ -306,9 +338,11 @@ mod tests {
     #[test]
     fn test_handshake_ser() {
         let handshake = Handshake::new();
-        let ser = postcard::to_stdvec(&handshake).unwrap();
+        let ser = handshake.to_bytes();
         assert_eq!(ser.len(), HANDSHAKE_SIZE);
-        let de: Handshake = postcard::from_bytes(&ser).unwrap();
+        let de = Handshake::from_bytes(ser).unwrap();
         assert_eq!(de, handshake);
+
+        assert_eq!(HANDSHAKE_SIZE, 16);
     }
 }
