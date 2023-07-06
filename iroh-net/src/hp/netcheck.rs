@@ -34,6 +34,9 @@ mod reportgen;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// A netcheck report.
+///
+/// Can be obtained by calling [`Client::get_report`].
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
@@ -106,6 +109,7 @@ impl RegionLatencies {
             .unwrap_or_else(|| Duration::from_millis(100))
     }
 
+    /// Returns an iterator over all the regions and their latencies.
     pub fn iter(&self) -> impl Iterator<Item = (u16, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (*k, *v))
     }
