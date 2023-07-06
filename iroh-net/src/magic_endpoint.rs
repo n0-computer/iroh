@@ -502,19 +502,10 @@ mod test {
             let peer_id_2 = ep2.peer_id();
             eprintln!("peer id 2 {peer_id_2}");
 
-            let endpoint = ep2.clone();
-            let p2_connect = tokio::spawn(async move {
-                let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await?;
-                let (mut send, mut recv) = conn.open_bi().await?;
-                send.write_all(b"hello").await?;
-                send.finish().await?;
-                let m = recv.read_to_end(100).await?;
-                assert_eq!(&m, b"world");
-                anyhow::Ok(())
-            });
+            let mut tasks = tokio::task::JoinSet::new();
 
             let endpoint = ep1.clone();
-            let p1_accept = tokio::spawn(async move {
+            tasks.spawn(async move {
                 let conn = endpoint.accept().await.expect("no connection");
                 let (peer_id, alpn, conn) = accept_conn(conn).await?;
                 assert_eq!(peer_id, peer_id_2);
@@ -529,19 +520,19 @@ mod test {
                 anyhow::Ok(())
             });
 
-            let endpoint = ep1.clone();
-            let p1_connect = tokio::spawn(async move {
-                let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await?;
+            let endpoint = ep2.clone();
+            tasks.spawn(async move {
+                let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await?;
                 let (mut send, mut recv) = conn.open_bi().await?;
-                send.write_all(b"ola").await?;
+                send.write_all(b"hello").await?;
                 send.finish().await?;
                 let m = recv.read_to_end(100).await?;
-                assert_eq!(&m, b"mundo");
+                assert_eq!(&m, b"world");
                 anyhow::Ok(())
             });
 
             let endpoint = ep2.clone();
-            let p2_accept = tokio::spawn(async move {
+            tasks.spawn(async move {
                 let conn = endpoint.accept().await.expect("no connection");
                 let (peer_id, alpn, conn) = accept_conn(conn).await?;
                 assert_eq!(peer_id, peer_id_1);
@@ -556,12 +547,20 @@ mod test {
                 anyhow::Ok(())
             });
 
-            p1_accept.await??;
-            p2_connect.await??;
+            let endpoint = ep1.clone();
+            tasks.spawn(async move {
+                let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await?;
+                let (mut send, mut recv) = conn.open_bi().await?;
+                send.write_all(b"ola").await?;
+                send.finish().await?;
+                let m = recv.read_to_end(100).await?;
+                assert_eq!(&m, b"mundo");
+                anyhow::Ok(())
+            });
 
-            p2_accept.await??;
-            p1_connect.await??;
-
+            while let Some(t) = tasks.join_next().await {
+                t??;
+            }
             cleanup().await;
         }
 
