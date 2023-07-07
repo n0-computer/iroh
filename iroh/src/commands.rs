@@ -297,7 +297,7 @@ pub fn init_metrics_collection(
     use iroh_metrics::core::Metric;
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg| {
-            let iroh_metrics = crate::metrics::Metrics::new(reg);
+            let iroh_metrics = iroh::metrics::Metrics::new(reg);
             let magicsock_metrics = iroh_metrics::magicsock::Metrics::new(reg);
             let netcheck_metrics = iroh_metrics::netcheck::Metrics::new(reg);
             let portmap_metrics = iroh_metrics::portmap::Metrics::new(reg);

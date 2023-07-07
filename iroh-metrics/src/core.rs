@@ -5,13 +5,19 @@ use prometheus_client::{encoding::text::encode, registry::Registry};
 
 static CORE: OnceCell<Core> = OnceCell::new();
 
+/// Core is the base metrics struct.
+/// It manages the mapping between the metrics name and the actual metrics.
+/// It also carries a single prometheus registry to be used by all metrics.
 #[derive(Debug, Default)]
 pub struct Core {
     registry: Registry,
     metrics_map: HashMap<&'static str, Box<dyn Metric>>,
 }
 
+/// MetricsRecorder is the interface to be implemented by the metrics.
 pub trait Metric: MetricsRecorder + 'static + Send + Sync + std::fmt::Debug {
+    /// as_any returns a reference to the underlying metric
+    /// and allows for downcasting.
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -30,18 +36,23 @@ impl Core {
         .expect("must only be called once");
     }
 
+    /// Returns a reference to the core metrics.
     pub fn get() -> Option<&'static Self> {
         CORE.get()
     }
 
+    /// Returns a reference to the prometheus registry.
     pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
+    /// Returns a reference to the mapped metrics instance.
     pub fn get_collector(&self, name: &str) -> Option<&dyn Metric> {
         self.metrics_map.get(name).map(|t| t.as_ref())
     }
 
+    /// Returns a reference to the mapped metrics instance
+    /// and attempts to downcast it to the given type.
     pub fn get_collector_as<T: Metric>(&self, name: &str) -> Option<&T> {
         let t = self.metrics_map.get(name)?;
         let t: &dyn Metric = t.as_ref();

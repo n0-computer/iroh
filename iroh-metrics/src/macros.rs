@@ -7,10 +7,12 @@ macro_rules! make_metric_recorders {
             #[allow(unused_imports)]
             use prometheus_client::metrics::counter::*;
 
+            /// Define the metrics for the module
             #[cfg(feature = "metrics")]
             #[derive(Default, Debug, Clone)]
                 pub struct Metrics {
                     $(
+                        /// macro generated metric
                         pub [<$name:snake>]: $type,
                     )+
                 }
@@ -33,6 +35,7 @@ macro_rules! make_metric_recorders {
 
             #[cfg(feature = "metrics")]
             impl Metrics {
+                /// Create a new metrics object with the given registry
                 pub fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
                     let sub_registry = registry.sub_registry_with_prefix(stringify!([<$module_name:snake>]));
 

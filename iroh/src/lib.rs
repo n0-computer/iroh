@@ -7,10 +7,6 @@ pub use iroh_net as net;
 pub mod node;
 pub mod rpc_protocol;
 
-#[cfg(feature = "cli")]
-pub mod commands;
-#[cfg(feature = "cli")]
-pub mod config;
-
+/// Expose metrics module
 #[cfg(feature = "metrics")]
 pub mod metrics;
