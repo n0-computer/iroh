@@ -16,9 +16,8 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::core::MRecorder;
 //! use iroh_metrics::magicsock::{Metrics, MagicsockMetrics};
-//! use iroh_metrics::{core::{Core, Metric}, inc, record};
+//! use iroh_metrics::core::{MRecorder, Core, Metric};
 //!
 //! # tokio_test::block_on(async {
 //! Core::init(|reg| {
@@ -27,8 +26,9 @@
 //!        Box::new(Metrics::new(reg)) as Box<dyn Metric>
 //!    )].into_iter().collect()
 //! });
-//! iroh_metrics::record!(MagicsockMetrics::NumDerpConnsAdded, 2);
-//! iroh_metrics::inc!(MagicsockMetrics::NumDerpConnsAdded);
+//!
+//! MagicsockMetrics::NumDerpConnsAdded.record(2);
+//! MagicsockMetrics::NumDerpConnsAdded.inc();
 //! })
 //! ```
 
@@ -39,7 +39,7 @@ use std::net::SocketAddr;
 
 // Expose the macros in this crate.
 #[allow(unused_imports)]
-pub use crate::macros::{inc, make_metric_recorders, observe, record};
+pub use crate::macros::make_metric_recorders;
 
 /// Start a server to serve the OpenMetrics endpoint.
 #[cfg(feature = "metrics")]

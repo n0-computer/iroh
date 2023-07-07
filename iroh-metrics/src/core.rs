@@ -88,6 +88,11 @@ pub trait MRecorder {
     /// Recording is for single-value metrics, each recorded metric represents a metric
     /// value.
     fn record(&self, value: u64);
+
+    /// Records a value of `+1`.
+    fn inc(&self) {
+        self.record(1);
+    }
 }
 
 /// Interface to observe metrics.
@@ -125,7 +130,7 @@ where
 /// Observing is for distribution metrics, when multiple observations are combined in a
 /// single metric value.
 #[allow(dead_code)]
-pub async fn observe<M>(c: &str, m: M, v: f64)
+pub fn observe<M>(c: &str, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
