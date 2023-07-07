@@ -158,7 +158,7 @@ struct Config {
     private_key: key::node::SecretKey,
     /// Server listen address.
     ///
-    /// Defaults to [::]:443.
+    /// Defaults to `[::]:443`.
     ///
     /// If the port address is 443, the derper will issue a warning if it is started
     /// without a `tls` config.

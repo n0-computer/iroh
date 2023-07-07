@@ -22,7 +22,7 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 pub const ALPN: [u8; 13] = *b"/iroh-bytes/2";
 
 /// Maximum size of a request token, matches a browser cookie max size:
-/// https://datatracker.ietf.org/doc/html/rfc2109#section-6.3
+/// <https://datatracker.ietf.org/doc/html/rfc2109#section-6.3>.
 const MAX_REQUEST_TOKEN_SIZE: usize = 4096;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, From)]
