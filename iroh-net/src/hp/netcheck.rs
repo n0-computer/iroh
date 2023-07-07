@@ -532,7 +532,11 @@ impl Actor {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
-            warn!("ignoring RunCheck request; [`reportgen::Actor`] already running");
+            response_tx
+                .send(Err(anyhow!(
+                    "ignoring RunCheck request: reportgen actor already running"
+                )))
+                .ok();
             return;
         }
 
