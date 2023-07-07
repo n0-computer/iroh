@@ -107,6 +107,8 @@ impl Client {
             report: Report::default(),
             hairpin_actor: hairpin::Client::new(netcheck, addr),
             outstanding_tasks: OutstandingTasks::default(),
+            cached_derp_nodes: Default::default(),
+            pinger: None,
         };
         let task = tokio::spawn(async move { actor.run().await });
         Self {
@@ -140,11 +142,6 @@ impl Addr {
 enum Message {
     /// Set the hairpinning availability in the report.
     HairpinResult(bool),
-    /// Check whether executing a probe would still help.
-    // TODO: Ideally we remove the need for this message and the logic is inverted: once we
-    // get a probe result we cancel all probes that are no longer needed.  But for now it's
-    // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Arc<DerpNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -181,6 +178,11 @@ struct Actor {
     report: Report,
     /// The hairping actor.
     hairpin_actor: hairpin::Client,
+
+    /// Derp nodes that have been used to start a probe so far.
+    cached_derp_nodes: BTreeMap<String, Arc<DerpNode>>,
+    /// Pinger to use in Https probes if necessary.
+    pinger: Option<Pinger>,
     /// Which tasks the reportgen actor is still waiting on.
     ///
     /// This is essentially the summary of all the work the reportgen actor is doing.
@@ -231,7 +233,8 @@ impl Actor {
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
-        let mut probes = self.prepare_probes_task().await?;
+        let mut probe_delays = self.prepare_probe_delays().await;
+        let mut active_probes = FuturesUnordered::default();
 
         let total_timer = tokio::time::sleep(OVERALL_PROBE_TIMEOUT);
         tokio::pin!(total_timer);
@@ -262,14 +265,49 @@ impl Actor {
                     trace!("portmapper future done");
                 }
 
-                // Drive the probes.
-                set_result = probes.next(), if self.outstanding_tasks.probes => {
-                    match set_result {
-                        Some(Ok(report)) => self.handle_probe_report(report),
-                        Some(Err(_)) => (),
-                        None => self.handle_abort_probes(),
+                // drive the probe delays to get the next probe that should be executed
+                maybe_next_probe = probe_delays.next(), if self.outstanding_tasks.probes => {
+                    match maybe_next_probe {
+                        None => {
+                            // all probes run
+                            // TODO(@divma): prob have to do more here
+                            self.outstanding_tasks.probes = true;
+                        }
+                        Some(probe) => {
+                            let derp_node = self.get_derp_node(&probe)?;
+                            // check if the probe is still useful
+                            if !self.probe_would_help(&probe, &derp_node) {
+                                // TODO(@divma): this is an AbortSet error, don't understand why
+                                // but ok. -> need to abort the rest of the probes.
+                            } else {
+                                let probe_task = self.prepare_probe_task(probe, derp_node);
+                                active_probes.push(Box::pin(probe_task));
+                            }
+                        }
                     }
                 }
+
+                // drive the active probes
+                Some(probe_result) = active_probes.next(), if self.outstanding_tasks.probes => {
+                    match probe_result {
+                        Ok(probe_report) => {
+                            self.handle_probe_report(probe_report);
+                        }
+                        Err(e) => {
+                            // TODO(@divma): do stuff
+                        }
+
+                    }
+                }
+
+                // Drive the probes.
+                // set_result = probes.next(), if self.outstanding_tasks.probes => {
+                //     match set_result {
+                //         Some(Ok(report)) => self.handle_probe_report(report),
+                //         Some(Err(_)) => (),
+                //         None => self.handle_abort_probes(),
+                //     }
+                // }
 
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
@@ -289,12 +327,12 @@ impl Actor {
             }
         }
 
-        if !probes.is_empty() {
+        if !active_probes.is_empty() {
             debug!(
                 "aborting {} probe sets, already have enough reports",
-                probes.len()
+                active_probes.len()
             );
-            drop(probes);
+            drop(active_probes);
         }
 
         debug!("Sending report to netcheck actor");
@@ -317,12 +355,6 @@ impl Actor {
             Message::HairpinResult(works) => {
                 self.report.hair_pinning = Some(works);
                 self.outstanding_tasks.hairpin = false;
-            }
-            Message::ProbeWouldHelp(probe, derp_node, response_tx) => {
-                let res = self.probe_would_help(probe, derp_node);
-                if response_tx.send(res).is_err() {
-                    debug!("probe dropped before ProbeWouldHelp response sent");
-                }
             }
             Message::AbortProbes => {
                 self.handle_abort_probes();
@@ -357,8 +389,26 @@ impl Actor {
         self.report.icmpv4 = probe_report.icmpv4;
     }
 
+    /// Queries the derp node of the given [Probe] from the cached nodes, or gets it (and cache it)
+    /// from the derm map.
+    fn get_derp_node(&mut self, probe: &Probe) -> Result<Arc<DerpNode>> {
+        match self.cached_derp_nodes.get(probe.node()).cloned() {
+            None => {
+                let name = probe.node().to_string();
+                let node = self
+                    .derp_map
+                    .find_by_name(&name)
+                    .with_context(|| format!("missing named derp node {}", probe.node()))?;
+                let node = Arc::new(node.clone());
+                self.cached_derp_nodes.insert(name, node.clone());
+                Ok(node)
+            }
+            Some(node) => Ok(node),
+        }
+    }
+
     /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, derp_node: Arc<DerpNode>) -> bool {
+    fn probe_would_help(&mut self, probe: &Probe, derp_node: &DerpNode) -> bool {
         // If the probe is for a region we don't yet know about, that would help.
         if self
             .report
@@ -536,6 +586,53 @@ impl Actor {
         }
     }
 
+    /// Creates a [ProbePlan] and prepares the task that emits the [Probe]s acording to the delays
+    /// indicted in the plan. If required, it also returns the necessary [Pinger].
+    async fn prepare_probe_delays(
+        &mut self,
+    ) -> FuturesUnordered<Pin<Box<impl Future<Output = Probe>>>> {
+        let if_state = interfaces::State::new().await;
+        let plan = ProbePlan::new(&self.derp_map, &if_state, self.last_report.as_deref());
+        trace!(%plan, "probe plan");
+
+        self.pinger = if plan.has_https_probes() {
+            match Pinger::new().await {
+                Ok(pinger) => Some(pinger),
+                Err(err) => {
+                    debug!("failed to create pinger: {err:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // NOTE: the key is ignored in practice, only used for display?
+        let delayed_probes = plan
+            .into_delayed_probes()
+            .map(|delayed_probe| Box::pin(delayed_probe.get_probe()))
+            .collect();
+
+        delayed_probes
+    }
+
+    /// Once a probe is ready to be executed, this function is called to prepare the task that runs
+    /// the probe.
+    fn prepare_probe_task(
+        &self,
+        probe: Probe,
+        derp_node: Arc<DerpNode>,
+    ) -> impl Future<Output = Result<ProbeReport, ProbeError>> {
+        let stun_sock4 = self.stun_sock4.clone();
+        let stun_sock6 = self.stun_sock6.clone();
+        let netcheck = self.netcheck.clone();
+        let pinger = self.pinger.clone();
+
+        // TODO(@divma): this fn ended up being extremely simply lol
+        run_probe(stun_sock4, stun_sock6, derp_node, probe, netcheck, pinger)
+    }
+
+    /*
     /// Prepares the future which will run all the probes as per generated ProbePlan.
     async fn prepare_probes_task(
         &mut self,
@@ -624,7 +721,7 @@ impl Actor {
         self.outstanding_tasks.probes = true;
 
         Ok(probes)
-    }
+    }*/
 }
 
 /// Tasks on which the reportgen [`Actor`] is still waiting.
@@ -696,7 +793,6 @@ enum ProbeError {
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "debug", skip_all, fields(probe = %probe))]
 async fn run_probe(
-    reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
     derp_node: Arc<DerpNode>,
@@ -704,29 +800,7 @@ async fn run_probe(
     netcheck: netcheck::Addr,
     pinger: Option<Pinger>,
 ) -> Result<ProbeReport, ProbeError> {
-    if !probe.delay().is_zero() {
-        debug!("delaying probe");
-        tokio::time::sleep(probe.delay()).await;
-    }
-    debug!("starting probe");
-
-    let (would_help_tx, would_help_rx) = oneshot::channel();
-    reportstate
-        .send(Message::ProbeWouldHelp(
-            probe.clone(),
-            derp_node.clone(),
-            would_help_tx,
-        ))
-        .await
-        .map_err(|err| ProbeError::AbortSet(err.into(), probe.clone()))?;
-    if !would_help_rx.await.map_err(|_| {
-        ProbeError::AbortSet(anyhow!("ReportCheck actor dropped sender"), probe.clone())
-    })? {
-        return Err(ProbeError::AbortSet(
-            anyhow!("ReportCheck says probe set no longer useful"),
-            probe,
-        ));
-    }
+    debug!("starting probe {probe}");
 
     let derp_addr = get_derp_addr(&derp_node, probe.proto())
         .await

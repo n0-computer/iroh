@@ -35,52 +35,36 @@ pub enum ProbeProto {
     Https,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum Probe {
+    #[display("IPv4 to {node}")]
     Ipv4 {
-        /// When the probe is started, relative to the time that `get_report` is called.
-        /// One probe in each `ProbePlan` should have a delay of 0. Non-zero values
-        /// are for retries on UDP loss or timeout.
-        delay: Duration,
-
         /// The name of the node name. DERP node names are globally
         /// unique so there's no region ID.
         node: String,
     },
-    Ipv6 {
-        delay: Duration,
-        node: String,
-    },
-    Https {
-        delay: Duration,
-        node: String,
-        region: DerpRegion,
-    },
+    #[display("IPv6 to {node}")]
+    Ipv6 { node: String },
+    #[display("Https to {node} {}", region.region_code)]
+    Https { node: String, region: DerpRegion },
 }
 
-impl fmt::Display for Probe {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Probe::Ipv4 { delay, node } => write!(f, "Ipv4 after {delay:?} to {node}"),
-            Probe::Ipv6 { delay, node } => write!(f, "Ipv6 after {delay:?} to {node}"),
-            Probe::Https {
-                delay,
-                node,
-                region,
-            } => write!(f, "Https after {delay:?} to {node} {}", region.region_code),
-        }
+#[derive(Debug, Clone, derive_more::Display)]
+#[display("{probe} after {delay:?}")]
+pub struct DelayedProbe {
+    delay: Duration,
+    probe: Probe,
+}
+
+impl DelayedProbe {
+    pub async fn get_probe(self) -> Probe {
+        let DelayedProbe { delay, probe } = self;
+        tokio::time::sleep(delay).await;
+        probe
     }
 }
 
 impl Probe {
-    pub fn delay(&self) -> Duration {
-        match self {
-            Probe::Ipv4 { delay, .. } | Probe::Ipv6 { delay, .. } | Probe::Https { delay, .. } => {
-                *delay
-            }
-        }
-    }
-
     pub fn proto(&self) -> ProbeProto {
         match self {
             Probe::Ipv4 { .. } => ProbeProto::Ipv4,
@@ -126,7 +110,7 @@ impl Probe {
 /// Read the code for the gory details, but this gives you enough of a feel for how they
 /// work to use a probe plan.
 #[derive(Debug, Default, Clone)]
-pub struct ProbePlan(HashMap<String, Vec<Probe>>);
+pub struct ProbePlan(HashMap<String, Vec<DelayedProbe>>);
 
 impl fmt::Display for ProbePlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -143,6 +127,9 @@ impl fmt::Display for ProbePlan {
 }
 
 impl ProbePlan {
+    pub fn into_delayed_probes(self) -> impl Iterator<Item = DelayedProbe> {
+        self.0.into_values().flat_map(|set| set.into_iter())
+    }
     pub fn has_https_probes(&self) -> bool {
         self.keys().any(|k| k.ends_with("https"))
     }
@@ -217,23 +204,25 @@ impl ProbePlan {
                     delay += Duration::from_millis(50) * tr as u32;
                 }
                 if do4 {
-                    p4.push(Probe::Ipv4 {
+                    p4.push(DelayedProbe {
                         delay,
-                        node: n.name.clone(),
+                        probe: Probe::Ipv4 {
+                            node: n.name.clone(),
+                        },
                     });
                 }
                 if do6 {
-                    p6.push(Probe::Ipv6 {
-                        delay,
+                    let probe = Probe::Ipv6 {
                         node: n.name.clone(),
-                    });
+                    };
+                    p6.push(DelayedProbe { delay, probe });
                 }
                 if dohttps {
-                    https.push(Probe::Https {
-                        delay,
+                    let probe = Probe::Https {
                         region: reg.clone(),
                         node: n.name.clone(),
-                    });
+                    };
+                    https.push(DelayedProbe { delay, probe });
                 }
             }
             if !p4.is_empty() {
@@ -275,23 +264,23 @@ impl ProbePlan {
                 let have_v4 = if_state.have_v4 && node_might4(n);
                 let have_v6 = if_state.have_v6 && node_might6(n);
                 if have_v4 {
-                    p4.push(Probe::Ipv4 {
-                        delay,
+                    let probe = Probe::Ipv4 {
                         node: n.name.clone(),
-                    });
+                    };
+                    p4.push(DelayedProbe { delay, probe });
                 }
                 if have_v6 {
-                    p6.push(Probe::Ipv6 {
-                        delay,
+                    let probe = Probe::Ipv6 {
                         node: n.name.clone(),
-                    })
+                    };
+                    p6.push(DelayedProbe { delay, probe })
                 }
                 if region_has_derp_node(reg) || (!have_v6 && !have_v4) {
-                    https.push(Probe::Https {
-                        delay,
+                    let probe = Probe::Https {
                         region: reg.clone(),
                         node: n.name.clone(),
-                    });
+                    };
+                    https.push(DelayedProbe { delay, probe });
                 }
             }
             if !p4.is_empty() {
@@ -310,7 +299,7 @@ impl ProbePlan {
 }
 
 impl Deref for ProbePlan {
-    type Target = HashMap<String, Vec<Probe>>;
+    type Target = HashMap<String, Vec<DelayedProbe>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
