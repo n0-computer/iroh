@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
+use iroh_net::hp::derp::DerpMap;
 use iroh_net::tls::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 
@@ -95,13 +96,13 @@ impl Ticket {
     }
 
     /// Convert this ticket into a [`get::Options`], adding the given keypair.
-    pub fn as_get_options(&self, keypair: Keypair) -> get::Options {
+    pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> get::Options {
         get::Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),
             keypair,
             keylog: true,
-            derp_map: None,
+            derp_map,
         }
     }
 }

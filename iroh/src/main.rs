@@ -2,11 +2,15 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use iroh::{
+use tracing_subscriber::{prelude::*, EnvFilter};
+
+mod commands;
+mod config;
+
+use crate::{
     commands::{init_metrics_collection, Cli},
     config::{iroh_config_path, Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
-use tracing_subscriber::{prelude::*, EnvFilter};
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()

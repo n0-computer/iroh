@@ -104,7 +104,10 @@ impl Server {
     }
 
     /// Mesh the server to a new `derp_map`
-    pub async fn re_mesh(&mut self, mesh_addrs: MeshAddrs) -> Result<()> {
+    pub async fn re_mesh(
+        &mut self,
+        mesh_addrs: MeshAddrs,
+    ) -> Result<Vec<tokio::sync::oneshot::Receiver<()>>> {
         let (mesh_key, server_key, packet_fwd) = if let Some(server) = &self.server {
             let mesh_key = if let Some(key) = server.mesh_key() {
                 key
@@ -123,9 +126,9 @@ impl Server {
 
         let mut mesh_clients = MeshClients::new(mesh_key, server_key, mesh_addrs, packet_fwd);
 
-        mesh_clients.mesh().await;
+        let recvs = mesh_clients.mesh().await?;
         self.mesh_clients = Some(mesh_clients);
-        Ok(())
+        Ok(recvs)
     }
 }
 
@@ -395,7 +398,11 @@ impl ServerState {
 
         // start meshing
         let mesh_clients = if let Some(mut mesh_clients) = self.mesh_clients {
-            mesh_clients.mesh().await;
+            // There are cases in the wild where certain
+            // servers will be down & unable to be reached
+            // so we do not wait for all meshing to complete
+            // back as successfull before running the server
+            let _ = mesh_clients.mesh().await?;
             Some(mesh_clients)
         } else {
             None

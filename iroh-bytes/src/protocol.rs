@@ -6,7 +6,6 @@ use std::str::FromStr;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use derive_more::From;
-use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
@@ -19,19 +18,8 @@ use crate::util::Hash;
 /// Maximum message size is limited to 100MiB for now.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
-/// Protocol version
-pub const VERSION: u64 = 2;
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub(crate) struct Handshake {
-    pub version: u64,
-}
-
-impl Handshake {
-    pub fn new() -> Self {
-        Self { version: VERSION }
-    }
-}
+/// The ALPN used with quic for the iroh bytes protocol.
+pub const ALPN: [u8; 13] = *b"/iroh-bytes/2";
 
 /// Maximum size of a request token, matches a browser cookie max size:
 /// https://datatracker.ietf.org/doc/html/rfc2109#section-6.3
@@ -214,11 +202,23 @@ pub(crate) async fn read_lp(
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let mut reader = reader.take(size);
-    let size = usize::try_from(size).context("frame larger than usize")?;
-    if size > MAX_MESSAGE_SIZE {
+
+    let reader = reader.take(size);
+    read_fixed_size(reader, buffer, size).await
+}
+
+pub(crate) async fn read_fixed_size(
+    reader: impl AsyncRead + Unpin,
+    buffer: &mut BytesMut,
+    size: u64,
+) -> Result<Option<Bytes>> {
+    if size > MAX_MESSAGE_SIZE as u64 {
         bail!("Incoming message exceeds MAX_MESSAGE_SIZE");
     }
+
+    let mut reader = reader.take(size);
+    let size = usize::try_from(size).context("frame larger than usize")?;
+
     buffer.reserve(size);
     loop {
         let r = reader.read_buf(buffer).await?;

@@ -21,9 +21,6 @@ pub use iroh_net as net;
 
 use bao_tree::BlockSize;
 
-/// The ALPN protocol used for the iroh blob sync protocol
-pub const P2P_ALPN: [u8; 9] = *b"n0/iroh/1";
-
 /// Block size used by iroh, 2^4*1024 = 16KiB
 pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
     Some(bs) => bs,

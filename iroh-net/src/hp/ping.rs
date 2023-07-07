@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
 
+/// Allows sending ICMP echo requests to a host in order to determine network latency.
+/// Will gracefully handle both IPv4 and IPv6.
 #[derive(Debug, Clone)]
 pub struct Pinger(Arc<Inner>);
 
@@ -23,6 +25,7 @@ struct Inner {
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Pinger {
+    /// Create a new [Pinger].
     pub async fn new() -> Result<Self> {
         let client_v4 = Client::new(&Config::builder().kind(ICMP::V4).build())
             .context("failed creating IPv4 pinger")?;
@@ -35,6 +38,7 @@ impl Pinger {
         })))
     }
 
+    /// Send a ping request with asociated data, returning the perceived latency.
     pub async fn send(&self, addr: IpAddr, data: &[u8]) -> Result<Duration> {
         let client = match addr {
             IpAddr::V4(_) => &self.0.client_v4,
