@@ -250,7 +250,7 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Docs
-      run: cargo doc --workspace --all-features --no-deps
+      run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
     runs-on: ubuntu-latest

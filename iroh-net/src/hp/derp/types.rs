@@ -69,7 +69,7 @@ pub(crate) struct ClientInfo {
     /// Optionally specifies a pre-shared key used by trusted clients.
     /// It's required to subscribe to the connection list and forward
     /// packets. It's empty for regular users.
-    /// TODO: this is a string in the go-impl, using an Option<array> here
+    /// TODO: this is a string in the go-impl, using an `Option<array>` here
     /// to satisfy postcard's `MaxSize` trait
     pub(crate) mesh_key: Option<MeshKey>,
     /// Whether the client declares it's able to ack pings
