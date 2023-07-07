@@ -273,8 +273,8 @@ impl Gui {
     }
 
     async fn update_counters(target: &ProgressBar) {
-        if Core::is_enabled() {
-            let metrics = Core::get()
+        if let Some(core) = Core::get() {
+            let metrics = core
                 .get_collector_as::<magicsock::Metrics>("Magicsock")
                 .unwrap();
             tracing::error!("metrics enabled");

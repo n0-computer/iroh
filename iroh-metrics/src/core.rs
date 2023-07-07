@@ -17,6 +17,8 @@ pub trait Metric: MetricsRecorder + 'static + Send + Sync + std::fmt::Debug {
 
 impl Core {
     /// Must only be called once to init metrics.
+    ///
+    /// Panics if called a second time.
     pub fn init<F: FnOnce(&mut Registry) -> HashMap<&'static str, Box<dyn Metric>>>(f: F) {
         let mut registry = Registry::default();
         let metrics_map = f(&mut registry);
@@ -28,12 +30,8 @@ impl Core {
         .expect("must only be called once");
     }
 
-    pub fn is_enabled() -> bool {
-        CORE.get().is_some()
-    }
-
-    pub fn get() -> &'static Self {
-        CORE.get().expect("must only be called after init")
+    pub fn get() -> Option<&'static Self> {
+        CORE.get()
     }
 
     pub fn registry(&self) -> &Registry {
@@ -110,8 +108,8 @@ pub fn record<M>(c: &str, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
 {
-    if Core::is_enabled() {
-        match Core::get().get_collector(c) {
+    if let Some(core) = Core::get() {
+        match core.get_collector(c) {
             Some(coll) => {
                 coll.record(m.name(), v);
             }
@@ -131,8 +129,8 @@ pub async fn observe<M>(c: &str, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
-    if Core::is_enabled() {
-        match Core::get().get_collector(c) {
+    if let Some(core) = Core::get() {
+        match core.get_collector(c) {
             Some(coll) => {
                 coll.observe(m.name(), v);
             }

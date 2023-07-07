@@ -27,8 +27,9 @@ fn make_handler(
     // This closure accepts a request and responds with the OpenMetrics encoding of our metrics.
     move |_req: Request<Body>| {
         Box::pin(async move {
-            Core::get()
-                .encode()
+            let core = Core::get()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
+            core.encode()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
                 .map(|r| {
                     let body = Body::from(r);
