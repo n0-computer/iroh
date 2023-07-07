@@ -1,3 +1,7 @@
+//! Metrics library for iroh
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+
+/// Expose macros
 pub mod macros;
 pub mod metrics;
 
@@ -8,6 +12,9 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
+/// Expose magicsock metrics
 pub mod magicsock;
+/// Expose netcheck metrics
 pub mod netcheck;
+/// Expose portmap metrics
 pub mod portmap;
