@@ -1,6 +1,6 @@
 use struct_iterable::Iterable;
 
-use crate::core::{Metric, Counter};
+use crate::core::{Counter, Metric};
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]
@@ -19,14 +19,16 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            stun_packets_dropped: Counter::new("Incoming STUN packets dropped due to a full receiving queue."),
+            stun_packets_dropped: Counter::new(
+                "Incoming STUN packets dropped due to a full receiving queue.",
+            ),
             stun_packets_sent_ipv4: Counter::new("Number of IPv4 STUN packets sent"),
             stun_packets_sent_ipv6: Counter::new("Number of IPv6 STUN packets sent"),
             stun_packets_recv_ipv4: Counter::new("Number of IPv4 STUN packets received"),
             stun_packets_recv_ipv6: Counter::new("Number of IPv6 STUN packets received"),
             reports: Counter::new("Number of reports executed by netcheck, including full reports"),
             reports_full: Counter::new("Number of full reports executed by netcheck"),
-            reports_error: Counter::new("Number of executed reports resulting in an error")
+            reports_error: Counter::new("Number of executed reports resulting in an error"),
         }
     }
 }
