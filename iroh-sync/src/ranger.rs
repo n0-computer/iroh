@@ -160,7 +160,7 @@ impl<K, V> MessagePart<K, V> {
     pub fn values(&self) -> Option<&[(K, V)]> {
         match self {
             MessagePart::RangeFingerprint(_) => None,
-            MessagePart::RangeItem(RangeItem { values, .. }) => Some(&values),
+            MessagePart::RangeItem(RangeItem { values, .. }) => Some(values),
         }
     }
 }
@@ -180,7 +180,7 @@ where
 {
     /// Construct the initial message.
     fn init<S: Store<K, V>>(store: &S, limit: Option<&Range<K>>) -> Self {
-        let x = store.get_first().clone();
+        let x = store.get_first();
         let range = Range::new(x.clone(), x);
         let fingerprint = store.get_fingerprint(&range, limit);
         let part = MessagePart::RangeFingerprint(RangeFingerprint { range, fingerprint });
@@ -332,7 +332,7 @@ where
         };
 
         loop {
-            if filter(&next.0) {
+            if filter(next.0) {
                 return Some(next);
             }
 
@@ -432,7 +432,7 @@ where
                     self.store
                         .get_range(range.clone(), self.limit.clone())
                         .into_iter()
-                        .filter(|(k, _)| values.iter().find(|(vk, _)| &vk == k).is_none())
+                        .filter(|(k, _)| !values.iter().any(|(vk, _)| &vk == k))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
                 )
@@ -816,7 +816,7 @@ mod tests {
                     hex::encode(&self.key)
                 };
                 f.debug_struct("Multikey")
-                    .field("author", &hex::encode(&self.author))
+                    .field("author", &hex::encode(self.author))
                     .field("key", &key)
                     .finish()
             }
@@ -1236,8 +1236,8 @@ mod tests {
 
     #[test]
     fn test_div_ceil() {
-        assert_eq!(div_ceil(1, 1), 1 / 1);
-        assert_eq!(div_ceil(2, 1), 2 / 1);
+        assert_eq!(div_ceil(1, 1), 1);
+        assert_eq!(div_ceil(2, 1), 2);
         assert_eq!(div_ceil(4, 2), 4 / 2);
 
         assert_eq!(div_ceil(3, 2), 2);

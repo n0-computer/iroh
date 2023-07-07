@@ -46,7 +46,7 @@ pub async fn connect_and_sync(
         .await
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice(&mut send_stream, &mut recv_stream, &doc).await;
+    let res = run_alice(&mut send_stream, &mut recv_stream, doc).await;
     debug!("sync with peer {}: finish {:?}", peer_id, res);
     res
 }

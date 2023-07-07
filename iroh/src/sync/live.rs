@@ -15,7 +15,7 @@ use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{InsertOrigin, Replica, SignedEntry};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, task::JoinError};
-use tracing::error;
+use tracing::{debug, error};
 
 const CHANNEL_CAP: usize = 8;
 
@@ -120,15 +120,12 @@ impl Actor {
 
         Self {
             gossip,
-            // replica,
             endpoint,
-            // gossip_stream: gossip_subscription,
             insert_entry_rx: insert_rx,
             insert_entry_tx: insert_tx,
             to_actor_rx,
             sync_state: Default::default(),
             pending_syncs: Default::default(),
-            // initial_peers,
             pending_joins: Default::default(),
             docs: Default::default(),
             subscription: sub,
@@ -191,10 +188,10 @@ impl Actor {
             let endpoint = self.endpoint.clone();
             let doc = doc.clone();
             async move {
-                println!("> connect and sync with {peer}");
+                debug!("sync with {peer}");
                 // TODO: Make sure that the peer is dialable.
                 let res = connect_and_sync(&endpoint, &doc, peer, None, &[]).await;
-                println!("> sync with {peer} done: {res:?}");
+                debug!("> synced with {peer}: {res:?}");
                 (topic, peer, res)
             }
             .boxed()
@@ -203,7 +200,7 @@ impl Actor {
     }
 
     async fn insert_doc(&mut self, doc: Replica, initial_peers: Vec<PeerSource>) -> Result<()> {
-        let peer_ids: Vec<PeerId> = initial_peers.iter().map(|p| p.peer_id.clone()).collect();
+        let peer_ids: Vec<PeerId> = initial_peers.iter().map(|p| p.peer_id).collect();
         let topic: TopicId = doc.namespace().as_bytes().into();
         // join gossip for the topic to receive and send message
         // let gossip = self.gossip.clone();
@@ -221,7 +218,7 @@ impl Actor {
         doc.on_insert(Box::new(move |origin, entry| {
             // only care for local inserts, otherwise we'd do endless gossip loops
             if let InsertOrigin::Local = origin {
-                insert_entry_tx.send((topic, entry.clone())).ok();
+                insert_entry_tx.send((topic, entry)).ok();
             }
         }));
         self.docs.insert(topic, doc);
