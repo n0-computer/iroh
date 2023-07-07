@@ -455,9 +455,6 @@ struct Actor {
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
     /// The [`reportgen::Actor`] currently generating a report.
-    ///
-    /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut
-    /// down if it was started.  The finished report is sent on the channel.
     current_report_run: Option<ReportRun>,
 }
 
