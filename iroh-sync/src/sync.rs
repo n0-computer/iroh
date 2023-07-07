@@ -46,7 +46,7 @@ impl Author {
     }
 
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
-        SigningKey::from_bytes(&bytes).into()
+        SigningKey::from_bytes(bytes).into()
     }
 
     pub fn id(&self) -> &AuthorId {
@@ -358,7 +358,7 @@ impl<'a> Iterator for RangeIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.iter.next()?;
         loop {
-            if self.matches(&next.0) {
+            if self.matches(next.0) {
                 let (k, values) = next;
                 let (_, v) = values.last_key_value()?;
                 return Some((k, v));
@@ -441,7 +441,7 @@ impl Replica {
         let inner = self.inner.read();
         inner
             .peer
-            .get(&RecordIdentifier::new(key, &inner.namespace.id(), author))
+            .get(&RecordIdentifier::new(key, inner.namespace.id(), author))
             .cloned()
     }
 
