@@ -11,7 +11,7 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, trace};
 
-use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
+use iroh_metrics::{core::MRecorder, portmap::PortmapMetrics as Metrics};
 
 use crate::util;
 
@@ -198,7 +198,7 @@ impl Probe {
         let pmp_probing_task = async { None };
 
         if upnp_probing_task.inner.is_some() {
-            inc!(Metrics::UpnpProbes);
+            Metrics::UpnpProbes.inc();
         }
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
@@ -261,7 +261,7 @@ impl Probe {
             last_pmp,
         } = probe;
         if last_upnp_gateway_addr.is_some() {
-            inc!(Metrics::UpnpAvailable);
+            Metrics::UpnpAvailable.inc();
             let new_gateway = last_upnp_gateway_addr
                 .as_ref()
                 .map(|(addr, _last_seen)| addr);
@@ -270,7 +270,7 @@ impl Probe {
                 .as_ref()
                 .map(|(addr, _last_seen)| addr);
             if new_gateway != old_gateway {
-                inc!(Metrics::UpnpGatewayUpdated);
+                Metrics::UpnpGatewayUpdated.inc();
                 debug!(
                     "upnp gateway changed {:?} -> {:?}",
                     old_gateway
@@ -426,7 +426,7 @@ impl Service {
             }
             Err(e) => {
                 debug!("failed to get a port mapping {e}");
-                inc!(Metrics::MappingFailures)
+                Metrics::MappingFailures.inc();
             }
         }
     }
@@ -446,7 +446,7 @@ impl Service {
     async fn update_local_port(&mut self, local_port: Option<NonZeroU16>) {
         // ignore requests to update the local port in a way that does not produce a change
         if local_port != self.local_port {
-            inc!(Metrics::LocalPortUpdates);
+            Metrics::LocalPortUpdates.inc();
             let old_port = std::mem::replace(&mut self.local_port, local_port);
 
             // clear the current mapping task if any
@@ -484,7 +484,7 @@ impl Service {
 
     fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
         if let Some(local_port) = self.local_port {
-            inc!(Metrics::MappingAttempts);
+            Metrics::MappingAttempts.inc();
             let local_ip = match default_net::interface::get_local_ipaddr() {
                 Some(std::net::IpAddr::V4(ip))
                     if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() =>
@@ -529,7 +529,7 @@ impl Service {
                     // we don't care if the requester is no longer there
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
-                    inc!(Metrics::ProbesStarted);
+                    Metrics::ProbesStarted.inc();
                     let handle = tokio::spawn(async move { Probe::new(probe_output).await });
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));

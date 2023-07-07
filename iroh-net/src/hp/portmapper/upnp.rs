@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use igd::aio as aigd;
 
-use iroh_metrics::{inc, portmap::PortmapMetrics as Metrics};
+use iroh_metrics::{core::MRecorder, portmap::PortmapMetrics as Metrics};
 use tracing::debug;
 
 pub use aigd::Gateway;
@@ -123,7 +123,7 @@ impl Mapping {
 
 /// Searches for UPnP gateways.
 pub async fn probe_available() -> Option<Gateway> {
-    inc!(Metrics::UpnpProbes);
+    Metrics::UpnpProbes.inc();
     match aigd::search_gateway(igd::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
@@ -132,7 +132,7 @@ pub async fn probe_available() -> Option<Gateway> {
     {
         Ok(gateway) => Some(gateway),
         Err(e) => {
-            inc!(Metrics::UpnpProbesFailed);
+            Metrics::UpnpProbesFailed.inc();
             debug!("upnp probe failed: {e}");
             None
         }
