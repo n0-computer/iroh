@@ -2,6 +2,8 @@ use std::{collections::HashMap, fmt, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
+use futures::stream::Stream;
+use genawaiter::sync::{Co, Gen};
 use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -144,11 +146,28 @@ impl GossipHandle {
     }
 
     /// Subscribe to all events published on topics that you joined.
-    pub async fn subscribe_all(&self) -> anyhow::Result<broadcast::Receiver<(TopicId, Event)>> {
+    ///
+    /// Note that this method takes self by value. Usually you would clone the [GossipHandle]
+    /// before.
+    pub fn subscribe_all(self) -> impl Stream<Item = anyhow::Result<(TopicId, Event)>> {
+        Gen::new(|co| async move {
+            if let Err(cause) = self.subscribe_all0(&co).await {
+                co.yield_(Err(cause)).await
+            }
+        })
+    }
+
+    async fn subscribe_all0(
+        &self,
+        co: &Co<anyhow::Result<(TopicId, Event)>>,
+    ) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::SubscribeAll(tx)).await?;
-        let res = rx.await.map_err(|_| anyhow!("subscribe_tx dropped"))??;
-        Ok(res)
+        let mut res = rx.await.map_err(|_| anyhow!("subscribe_tx dropped"))??;
+        loop {
+            let event = res.recv().await?;
+            co.yield_(Ok(event)).await;
+        }
     }
 
     /// Pass an incoming [quinn::Connection] to the gossip actor.
@@ -161,6 +180,10 @@ impl GossipHandle {
         Ok(())
     }
 
+    /// Set info on our local endpoints.
+    ///
+    /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
+    /// to us.
     pub fn update_endpoints(
         &self,
         endpoints: &[iroh_net::hp::cfg::Endpoint],
