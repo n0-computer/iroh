@@ -36,13 +36,13 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
 
-/// Possible connection errors on the [Client]
+/// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     /// The client is closed
     #[error("client is closed")]
     Closed,
-    /// There no underlying derp [super::client::Client] client exists for this http derp [Client]
+    /// There no underlying derp [`super::client::Client`] client exists for this http derp [`Client`]
     #[error("no derp client")]
     NoClient,
     /// There was an error sending a packet
@@ -75,7 +75,7 @@ pub enum ClientError {
     /// No local addresses exist
     #[error("no local addr: {0}")]
     NoLocalAddr(String),
-    /// There was http [hyper::Error]
+    /// There was http [`hyper::Error`]
     #[error("http connection error")]
     Hyper(#[from] hyper::Error),
     /// There was an unexpected status code
@@ -84,16 +84,16 @@ pub enum ClientError {
     /// The connection failed to upgrade
     #[error("failed to upgrade connection: {0}")]
     Upgrade(String),
-    /// The derp [super::client::Client] failed to build
+    /// The derp [`super::client::Client`] failed to build
     #[error("failed to build derp client: {0}")]
     Build(String),
     /// The ping request timed out
     #[error("ping timeout")]
     PingTimeout,
-    /// This [Client] cannot acknowledge pings
+    /// This [`Client`] cannot acknowledge pings
     #[error("cannot acknowledge pings")]
     CannotAckPings,
-    /// The given [Url] is invalid
+    /// The given [`Url`] is invalid
     #[error("invalid url: {0}")]
     InvalidUrl(String),
     /// There was an error with DNS resolution
@@ -182,7 +182,7 @@ impl std::fmt::Debug for ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// Create a new [ClientBuilder]
+    /// Create a new [`ClientBuilder`]
     pub fn new() -> Self {
         Self::default()
     }
@@ -217,14 +217,14 @@ impl ClientBuilder {
         self
     }
 
-    /// Enable this [Client] to acknowledge pings.
+    /// Enable this [`Client`] to acknowledge pings.
     pub fn can_ack_pings(mut self, can: bool) -> Self {
         self.can_ack_pings = can;
         self
     }
 
     /// Indicate this client is the preferred way to communicate
-    /// to the peer with this client's [key::node::PublicKey]
+    /// to the peer with this client's [`key::node::PublicKey`]
     pub fn is_preferred(mut self, is: bool) -> Self {
         self.is_preferred = is;
         self
@@ -236,13 +236,13 @@ impl ClientBuilder {
         self
     }
 
-    /// Build this [Client] with a [MeshKey], and allow it to mesh
+    /// Build this [`Client`] with a [`MeshKey`], and allow it to mesh
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
         self
     }
 
-    /// Build the [Client]
+    /// Build the [`Client`]
     ///
     /// Will error if there is no region or no url set.
     pub fn build(self, key: key::node::SecretKey) -> anyhow::Result<Client> {
@@ -266,7 +266,7 @@ impl ClientBuilder {
         })
     }
 
-    /// The expected [key::node::PublicKey] of the [super::server::Server] we are connecting to.
+    /// The expected [`key::node::PublicKey`] of the [`super::server::Server`] we are connecting to.
     pub fn server_public_key(mut self, server_public_key: key::node::PublicKey) -> Self {
         self.server_public_key = Some(server_public_key);
         self

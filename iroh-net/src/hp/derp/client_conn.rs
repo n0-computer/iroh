@@ -22,10 +22,10 @@ use super::{
     write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
 };
 
-/// The [super::server::Server] side representation of a [super::client::Client]'s connection
+/// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
-    /// Static after construction, process-wide unique counter, incremented each Accept
+    /// Static after construction, process-wide unique counter, incremented each time we accept  
     pub(crate) conn_num: usize,
 
     // TODO: in the go impl, we have a ptr to the server & use that ptr to update stats
@@ -45,14 +45,14 @@ pub(crate) struct ClientConnManager {
     // replace_limiter: RateLimiter,
     io_handle: JoinHandle<Result<()>>,
 
-    /// Channels that allow the ClientConnManager (and the Server) to send
+    /// Channels that allow the [`ClientConnManager`] (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
-    /// [`ClientConnWriter`].
+    /// [`ClientConnIo`].
     pub(crate) client_channels: ClientChannels,
 }
 
 /// Channels that the [`ClientConnManager`] uses to communicate with the
-/// [`ClientConnWriter`] to forward the client:
+/// [`ClientConnIo`] to forward the client:
 ///  - information about a peer leaving the network (This should only happen for peers that this
 ///  client was previously communciating with)
 ///  - forwarded packets (if they are mesh client)
@@ -74,7 +74,7 @@ pub(crate) struct ClientChannels {
 pub trait Io: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug {}
 impl<T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Io for T {}
 
-/// A builds a [ClientConnManager] from a [PublicKey] and an io connection.
+/// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
 #[derive(Debug)]
 pub struct ClientConnBuilder<P>
 where
@@ -111,7 +111,7 @@ where
 impl ClientConnManager {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
-    /// Call `shutdown` to close the read and write loops before dropping the ClientConnManager
+    /// Call [`ClientConnManager::shutdown`] to close the read and write loops before dropping the [`ClientConnManager`]
     #[allow(clippy::too_many_arguments)]
     pub fn new<P>(
         key: PublicKey,
@@ -191,7 +191,7 @@ impl ClientConnManager {
         }
     }
 
-    /// Shutdown the `ClientConnManager` reader and writer loops and closes the "actual" connection.
+    /// Shutdown the [`ClientConnManager`] reader and writer loops and closes the "actual" connection.
     ///
     /// Logs any shutdown errors as warnings.
     pub async fn shutdown(self) {
@@ -214,10 +214,10 @@ impl ClientConnManager {
 /// it errors on return.
 /// If writes do not complete in the given `timeout`, it will also error.
 ///
-/// On the "write" side, the `ClientConnIo` can send the client:
+/// On the "write" side, the [`ClientConnIo`] can send the client:
 ///  - a KEEP_ALIVE frame
-///  - a PEER_GONE frame, informing the client a peer is gone from the network // TODO: is this
-///  a mesh only thing?
+///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
+///  is gone from the network
 ///  - packets from other peers
 ///
 /// If the client is a mesh client, it can also send updates about peers in the mesh.
@@ -228,10 +228,12 @@ impl ClientConnManager {
 ///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the peer ID associated with that client.
 ///
-/// If the `ClientConnIo` `can_mesh` that means that the associated [Client] is connected to
-/// a derp [Server] that is apart of the same mesh network as this [Server]. It can:
-///     - tell the server to add the current client as a watcher, which means the server will
-///     update the client about any peers connecting to or disconnecting from the server
+/// If the `ClientConnIo` `can_mesh` that means that the associated [`super::client::Client`] is connected to
+/// a derp [`super::server::Server`] that is apart of the same mesh network as this [`super::server::Server`]. It can:
+///     - tell the server to add the current client as a watcher. This cause the server
+///     to inform that client when peers join and leave the network:
+///         - PEER_GONE frames inform the client a peer is gone from the network
+///         - PEER_PRESENT frames inform the client a peer has joined the network
 ///     - tell the server to close a given peer
 ///     - tell the server to forward a packet from another peer.
 #[derive(Debug)]
@@ -256,7 +258,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     /// Used by `reschedule_mesh_update` to reschedule additional mesh_updates
     mesh_update_s: mpsc::Sender<Vec<PeerConnState>>,
 
-    /// PublicKey of this client
+    /// [`PublicKey`] of this client
     key: PublicKey,
 
     /// Channels used to communicate with the server about actions
@@ -265,8 +267,6 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
-    /// This is the only "shared" information between the `ClientConnReader` and
-    /// `ClientConnManager`.
     // TODO: I'm taking a chance & using an atomic here rather
     // than passing this through the server to update manually on the connection... although we
     // might find that the alternative is better, once I have a better idea of how this is supposed
@@ -337,7 +337,7 @@ where
         }
     }
 
-    /// Send  `FrameType::KeepAlive`, does not flush
+    /// Send  [`FrameType::KeepAlive`], does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {

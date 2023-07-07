@@ -52,11 +52,10 @@ pub struct InnerClient {
     writer_task: Mutex<Option<JoinHandle<Result<()>>>>,
     /// The reader connected to the server
     reader: Mutex<tokio::io::ReadHalf<Box<dyn Io + Send + Sync + 'static>>>,
-    /// Public key of the server we are connected to
+    /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
 }
 
-// TODO: I believe that any of these that error should actually trigger a shut down of the client
 impl Client {
     /// Sends a packet to the node identified by `dstkey`
     ///
@@ -139,21 +138,21 @@ impl Client {
         Ok(())
     }
 
-    /// The local address that the [Client] is listening on.
+    /// The local address that the [`Client`] is listening on.
     pub async fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr)
     }
 
-    /// Whether or not this [Client] is closed.
+    /// Whether or not this [`Client`] is closed.
     ///
-    /// The [Client] is considered closed if the write side of the client is no longer running.
+    /// The [`Client`] is considered closed if the write side of the client is no longer running.
     pub async fn is_closed(&self) -> bool {
         self.inner.writer_task.lock().await.is_none()
     }
 
     /// Reads a messages from a DERP server.
     ///
-    /// The returned message may alias memory owned by the [`Client`]; if
+    /// The returned message may alias memory owned by the [`Client`]; it
     /// should only be accessed until the next call to [`Client`].
     ///
     /// Once it returns an error, the [`Client`] is dead forever.
@@ -269,7 +268,7 @@ impl Client {
 
     /// Close the client
     ///
-    /// Shuts down the write loop directly and marks the client as closed. The `ClientReader` will
+    /// Shuts down the write loop directly and marks the client as closed. The [`Client`] will
     /// check if the client is closed before attempting to read from it.
     pub async fn close(&self) {
         let mut writer_task = self.inner.writer_task.lock().await;
@@ -296,13 +295,13 @@ impl Client {
         }
     }
 
-    /// The [PublicKey] of the [super::server::Server] this [Client] is connected with.
+    /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
     pub fn server_public_key(self) -> PublicKey {
         self.inner.server_public_key.clone()
     }
 }
 
-/// The kinds of messages we can send to the Server
+/// The kinds of messages we can send to the [`super::server::Server`]
 #[derive(Debug)]
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
@@ -329,7 +328,7 @@ enum ClientWriterMessage {
 /// Call [`ClientWriter::run`] to listen for messages to send to the client.
 /// Should be used by the [`Client`]
 ///
-/// Shutsdown when you send a `ClientWriterMessage::Shutdown`, or if there is an error writing to
+/// Shutsdown when you send a [`ClientWriterMessage::Shutdown`], or if there is an error writing to
 /// the server.
 struct ClientWriter<W: AsyncWrite + Unpin + Send + 'static> {
     recv_msgs: mpsc::Receiver<ClientWriterMessage>,
@@ -380,7 +379,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
     }
 }
 
-/// The Builder returns a [`Client`] starts a [`ClientWriter] run task.
+/// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
 pub struct ClientBuilder<W>
 where
     W: AsyncWrite + Send + Unpin + 'static,
@@ -427,8 +426,8 @@ where
         self
     }
 
-    // Set the expected server_public_key. If this is not what is sent by the server, it is an
-    // error.
+    // Set the expected server_public_key. If this is not what is sent by the
+    // [`super::server::Server`], it is an error.
     pub fn server_public_key(mut self, key: Option<PublicKey>) -> Self {
         self.server_public_key = key;
         self
@@ -542,19 +541,19 @@ pub(crate) async fn recv_server_key<R: AsyncRead + Unpin>(mut reader: R) -> Resu
     get_key_from_slice(&buf[magic_len..expected_frame_len])
 }
 
-// errors if `frame_len` is less than the expected key size
+// errors if `frame_len` is less than the expected [`PUBLIC_KEY_LENGTH`]
 fn get_key_from_slice(payload: &[u8]) -> Result<PublicKey> {
     Ok(<[u8; PUBLIC_KEY_LENGTH]>::try_from(payload)?.into())
 }
 
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [Client] from the [super::server::Server].
+/// The type of message received by the [`Client`] from the [`super::server::Server`].
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
-        /// The [PublicKey] of the packet sender.
+        /// The [`PublicKey`] of the packet sender.
         source: PublicKey,
-        /// The received packet bytes. It aliases the memory passed to Client.Recv.
+        /// The received packet bytes. It aliases the memory passed to [`Client::recv`].
         #[debug(skip)]
         data: Bytes, // TODO: ref
     },
@@ -569,21 +568,20 @@ pub enum ReceivedMessage {
         ///
         /// Zero means unspecified. There might be a limit, but the client need not try to respect it.
         token_bucket_bytes_per_second: usize,
-        /// TokenBucketBytesBurst is how many bytes the server will
-        /// allow to burst, temporarily violating
-        /// TokenBucketBytesPerSecond.
+        /// How many bytes the server will allow in one burst, temporarily violating
+        /// `token_bucket_bytes_per_second`.
         ///
-        /// Zero means unspecified. There might be a limit, but the client need not try to respect it.
+        /// Zero means unspecified. There might be a limit, but the [`Client`] need not try to respect it.
         token_bucket_bytes_burst: usize,
     },
     /// Request from a client or server to reply to the
-    /// other side with a PongMessage with the given payload.
+    /// other side with a [`ReceivedMessage::Pong`] with the given payload.
     Ping([u8; 8]),
-    /// Reply to a Ping from a client or server
-    /// with the payload sent previously in a Ping.
+    /// Reply to a [`ReceivedMessage::Ping`] from a client or server
+    /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// A one-way empty message from server to client, just to
-    /// keep the connection alive. It's like a Ping, but doesn't solicit
+    /// keep the connection alive. It's like a [ReceivedMessage::Ping], but doesn't solicit
     /// a reply from the client.
     KeepAlive,
     /// A one-way message from server to client, declaring the connection health state.
@@ -592,7 +590,7 @@ pub enum ReceivedMessage {
         ///
         /// If `None` means the connection is healthy again.
         ///
-        /// The default condition is healthy, so the server doesn't broadcast a HealthMessage
+        /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
         /// until a problem exists.
         problem: Option<String>,
     },

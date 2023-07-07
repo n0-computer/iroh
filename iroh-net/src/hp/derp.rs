@@ -13,8 +13,6 @@
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
-/// An http specific Derp Client and Derp Server. Allows for using tls or non tls connection
-/// upgrades.
 pub mod http;
 mod map;
 mod server;
@@ -141,8 +139,7 @@ enum FrameType {
 
     /// Sent from server to client for the server to declare that it's restarting.
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
-    /// and how long to try total. See [`SERVER_RESTARTING_MESSAGE`] for
-    /// more details on how the client should interpret them.
+    /// and how long to try total.
     Restarting = 15,
     /// 32B src pub key + 32B dst pub key + packet bytes
     ForwardPacket = 16,
