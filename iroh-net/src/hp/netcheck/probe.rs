@@ -98,8 +98,8 @@ impl Probe {
 ///
 /// Generated probe plans have the following shape:
 ///
-/// - Each probe **set** is single identical probe, but multiple tries with delayed starts.
-///   When the first one succeeds, the remainder of the set is cancelled.
+/// - Each probe **set** runs a single identical probe, but with multiple tries with delayed
+///   starts.  When the first one succeeds, the remainder of the set is cancelled.
 ///
 /// - Sets of each probe type are generated for each DERP node in the derpmap.
 ///
