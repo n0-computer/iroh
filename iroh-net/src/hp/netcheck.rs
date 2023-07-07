@@ -366,12 +366,12 @@ pub(crate) enum Message {
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
-    /// A report produced by the reportgen actor.
+    /// A report produced by the [`reportgen::Actor`].
     ReportReady {
         report: Box<Report>,
         derp_map: DerpMap,
     },
-    /// The reportgen actor failed to produce a report.
+    /// The [`reportgen::Actor`] failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
     StunPacket {
@@ -454,7 +454,7 @@ struct Actor {
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    /// The reportgen actor currently generating a report.
+    /// The [`reportgen::Actor`] currently generating a report.
     ///
     /// The [`tokio_util::sync::DropGuard`] is to ensure the local STUN listener is shut
     /// down if it was started.  The finished report is sent on the channel.
@@ -535,7 +535,7 @@ impl Actor {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
-            warn!("ignoring RunCheck request; reportgen actor already running");
+            warn!("ignoring RunCheck request; [`reportgen::Actor`] already running");
             return;
         }
 
@@ -810,7 +810,7 @@ impl Actor {
 /// State the netcheck actor needs for an in-progress report generation.
 #[derive(Debug)]
 struct ReportRun {
-    /// The handle of the reportgen actor, cancels the actor on drop.
+    /// The handle of the [`reportgen::Actor`], cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Drop guard to optionally kill workers started by netcheck to support reportgen.
     _drop_guard: tokio_util::sync::DropGuard,

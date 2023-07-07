@@ -181,9 +181,9 @@ struct Actor {
     report: Report,
     /// The hairping actor.
     hairpin_actor: hairpin::Client,
-    /// Which tasks the reportgen actor is still waiting on.
+    /// Which tasks the [`reportgen::Actor`] is still waiting on.
     ///
-    /// This is essentially the summary of all the work the reportgen actor is doing.
+    /// This is essentially the summary of all the work the [`reportgen::Actor`] is doing.
     outstanding_tasks: OutstandingTasks,
 }
 
