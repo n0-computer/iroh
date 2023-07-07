@@ -884,15 +884,31 @@ impl Client {
     /// network changes of that derp server. As peers connect to and disconnect
     /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
     /// then and and remove that derp server as a `PacketForwarder` respectfully.
+    ///
+    /// If you pass in a `meshed_once` sender, it will send the first
+    /// time we return successfully from `watch_connection_changes`, indicating
+    /// that the given server is aware that this client exists and wants to
+    /// track network changes
+    ///
+    /// This `meshed_once` sender is typically used for aligning the mesh network
+    /// during tests.
     pub async fn run_mesh_client(
         self,
         packet_forwarder_handler: PacketForwarderHandler<Client>,
+        mut meshed_once: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<()> {
         // connect to the remote server & request to watching the remote's state changes
         let own_key = self.public_key();
         loop {
             let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
-                Ok(key) => key,
+                Ok(key) => {
+                    if let Some(sender) = meshed_once.take() {
+                        if let Err(e) = sender.send(()) {
+                            bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
+                        }
+                    }
+                    key
+                }
                 Err(e) => {
                     tracing::warn!("error connecting to derp server {e}");
                     tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
@@ -1191,11 +1207,15 @@ mod tests {
         let mesh_client_key = mesh_client.public_key();
         tracing::info!("mesh client public key: {mesh_client_key:?}");
 
+        let (send, recv) = tokio::sync::oneshot::channel();
         // spawn a task to run the mesh client
-        let mesh_task =
-            tokio::spawn(
-                async move { mesh_client.run_mesh_client(packet_forwarder_handler).await },
-            );
+        let mesh_task = tokio::spawn(async move {
+            mesh_client
+                .run_mesh_client(packet_forwarder_handler, Some(send))
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), recv).await??;
 
         // create another client that will become a normal peer for the derp server
         let normal_client = ClientBuilder::new()

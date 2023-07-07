@@ -2370,6 +2370,8 @@ impl Display for SendAddr {
 }
 
 /// A simple iterator to group [`Transmit`]s by destination.
+///
+/// [`Transmit`]: quinn_udp::Transmit
 struct TransmitIter<'a> {
     transmits: &'a [quinn_udp::Transmit],
     offset: usize,

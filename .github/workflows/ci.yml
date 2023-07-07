@@ -9,6 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.65"
 
 jobs:
@@ -220,6 +221,11 @@ jobs:
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cleanup Docker
+      continue-on-error: true
+      run: |
+        docker kill $(docker ps -q)
+
     - name: Install cross
       # See https://github.com/cross-rs/cross/issues/1222
       run: cargo install cross --git https://github.com/cross-rs/cross
@@ -228,7 +234,7 @@ jobs:
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=4
+      run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
     name: Checking fmt and docs
@@ -244,7 +250,7 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Docs
-      run: cargo doc
+      run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
     runs-on: ubuntu-latest

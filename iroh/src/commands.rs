@@ -6,12 +6,13 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use iroh::rpc_protocol::*;
 use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
 
-use crate::{config::Config, rpc_protocol::*};
+use crate::config::Config;
 
 use self::provide::{ProvideOptions, ProviderRpcPort};
 
@@ -37,7 +38,7 @@ pub mod validate;
 /// commands.
 ///
 /// The get mode retrieves data from the provider, for this it needs the hash, provider
-/// address and PeerID as well as an authentication code.  The get-ticket subcommand is a
+/// address and PeerID as well as an authentication code.  The get --ticket option is a
 /// shortcut to provide all this information conveniently in a single ticket.
 #[derive(Parser, Debug, Clone)]
 #[clap(version)]
@@ -62,36 +63,33 @@ impl Cli {
                 hash,
                 peer,
                 addrs,
+                ticket,
                 token,
                 out,
                 single,
             } => {
-                let get = self::get::GetInteractive::Hash {
-                    hash: *hash.as_hash(),
-                    opts: iroh_bytes::get::Options {
-                        addrs,
-                        peer_id: peer,
-                        keylog: self.keylog,
-                        derp_map: config.derp_map(),
-                        keypair: Keypair::generate(),
-                    },
-                    token,
-                    single,
-                };
-                tokio::select! {
-                    biased;
-                    res = get.get_interactive(out) => res,
-                    _ = tokio::signal::ctrl_c() => {
-                        println!("Ending transfer early...");
-                        Ok(())
+                let get = if let Some(ticket) = ticket {
+                    self::get::GetInteractive {
+                        hash: ticket.hash(),
+                        opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
+                        token: ticket.token().cloned(),
+                        single: false,
                     }
-                }
-            }
-            Commands::GetTicket { out, ticket } => {
-                let get = self::get::GetInteractive::Ticket {
-                    ticket,
-                    keylog: self.keylog,
-                    derp_map: config.derp_map(),
+                } else if let (Some(peer), Some(hash)) = (peer, hash) {
+                    self::get::GetInteractive {
+                        hash: *hash.as_hash(),
+                        opts: iroh_bytes::get::Options {
+                            addrs,
+                            peer_id: peer,
+                            keylog: self.keylog,
+                            derp_map: config.derp_map(),
+                            keypair: Keypair::generate(),
+                        },
+                        token,
+                        single,
+                    }
+                } else {
+                    anyhow::bail!("Either ticket or hash and peer must be specified")
                 };
                 tokio::select! {
                     biased;
@@ -171,7 +169,7 @@ pub enum Commands {
         path: Option<PathBuf>,
         #[clap(long, short)]
         /// Listening address to bind to
-        #[clap(long, short, default_value_t = SocketAddr::from(crate::node::DEFAULT_BIND_ADDR))]
+        #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
         addr: SocketAddr,
         /// RPC port, set to "disabled" to disable RPC
         #[clap(long, default_value_t = ProviderRpcPort::Enabled(DEFAULT_RPC_PORT))]
@@ -220,10 +218,16 @@ pub enum Commands {
     /// Fetch the data identified by HASH from a provider
     Get {
         /// The hash to retrieve, as a Blake3 CID
-        hash: Blake3Cid,
+        #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
+        hash: Option<Blake3Cid>,
         /// PeerId of the provider
-        #[clap(long, short)]
-        peer: PeerId,
+        #[clap(
+            long,
+            short,
+            conflicts_with = "ticket",
+            required_unless_present = "ticket"
+        )]
+        peer: Option<PeerId>,
         /// Addresses of the provider
         #[clap(long, short)]
         addrs: Vec<SocketAddr>,
@@ -233,21 +237,13 @@ pub enum Commands {
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
+        #[clap(conflicts_with_all = &["hash", "peer", "addrs", "token"])]
+        /// Ticket containing everything to retrieve the data from a provider.
+        #[clap(long)]
+        ticket: Option<Ticket>,
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
-    },
-    /// Fetch data from a provider using a ticket.
-    ///
-    /// The ticket contains all hash, authentication and connection information to connect
-    /// to the provider.  It is a simpler, but slightly less flexible alternative to the
-    /// `get` subcommand.
-    GetTicket {
-        /// Directory in which to save the file(s), defaults to writing to STDOUT
-        #[clap(long, short)]
-        out: Option<PathBuf>,
-        /// Ticket containing everything to retrieve the data from a provider.
-        ticket: Ticket,
     },
     /// List listening addresses of the provider.
     Addresses {

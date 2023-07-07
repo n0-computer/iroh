@@ -13,30 +13,21 @@ use iroh_bytes::{
         get_response_machine::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
-    provider::Ticket,
     tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter},
     util::pathbuf_from_name,
     Hash,
 };
 use iroh_io::{AsyncSliceWriter, FileAdapter};
-use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum GetInteractive {
-    Ticket {
-        ticket: Ticket,
-        keylog: bool,
-        derp_map: Option<DerpMap>,
-    },
-    Hash {
-        hash: Hash,
-        opts: get::Options,
-        token: Option<RequestToken>,
-        single: bool,
-    },
+pub struct GetInteractive {
+    pub hash: Hash,
+    pub opts: get::Options,
+    pub token: Option<RequestToken>,
+    pub single: bool,
 }
 
 /// Write the given data.
@@ -45,57 +36,21 @@ pub fn write(data: impl AsRef<str>) {
 }
 
 impl GetInteractive {
-    pub fn hash(&self) -> Hash {
-        match self {
-            GetInteractive::Ticket { ticket, .. } => ticket.hash(),
-            GetInteractive::Hash { hash, .. } => *hash,
-        }
-    }
-
-    fn token(&self) -> Option<&RequestToken> {
-        match self {
-            GetInteractive::Ticket { ticket, .. } => ticket.token(),
-            GetInteractive::Hash { token, .. } => token.as_ref(),
-        }
-    }
-
-    pub fn single(&self) -> bool {
-        match self {
-            GetInteractive::Ticket { .. } => false,
-            GetInteractive::Hash { single, .. } => *single,
-        }
-    }
-
-    fn get_options(&self) -> get::Options {
-        match self {
-            GetInteractive::Ticket {
-                ticket,
-                keylog,
-                derp_map,
-            } => get::Options {
-                keylog: *keylog,
-                derp_map: derp_map.clone(),
-                ..ticket.as_get_options(Keypair::generate())
-            },
-            GetInteractive::Hash { opts, .. } => opts.clone(),
-        }
-    }
-
     fn new_request(&self, query: RangeSpecSeq) -> Request {
-        GetRequest::new(self.hash(), query)
-            .with_token(self.token().cloned())
+        GetRequest::new(self.hash, query)
+            .with_token(self.token.clone())
             .into()
     }
 
     /// Get a single file.
     async fn get_to_file_single(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
-        let hash = self.hash();
+        let hash = self.hash;
         write(format!("Fetching: {}", Blake3Cid::new(hash)));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
 
         let name = Blake3Cid::new(hash).to_string();
         // range I am missing for the 1 file I am downloading
-        let range = get::get_missing_range(&self.hash(), name.as_str(), &temp_dir, &out_dir)?;
+        let range = get::get_missing_range(&self.hash, name.as_str(), &temp_dir, &out_dir)?;
         if range.is_all() {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
@@ -110,8 +65,8 @@ impl GetInteractive {
         // collection info, in case we won't get a callback with is_root
         let collection_info = Some((1, 0));
 
-        let request = self.new_request(query).with_token(self.token().cloned());
-        let connection = get::dial(self.get_options()).await?;
+        let request = self.new_request(query).with_token(self.token.clone());
+        let connection = get::dial(self.opts).await?;
         let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
@@ -183,10 +138,10 @@ impl GetInteractive {
 
     /// Get into a file or directory
     async fn get_to_dir_multi(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
-        let hash = self.hash();
+        let hash = self.hash;
         write(format!("Fetching: {}", Blake3Cid::new(hash)));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-        let (query, collection) = get::get_missing_ranges(self.hash(), &out_dir, &temp_dir)?;
+        let (query, collection) = get::get_missing_ranges(self.hash, &out_dir, &temp_dir)?;
         let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
 
         let pb = make_download_pb();
@@ -198,8 +153,8 @@ impl GetInteractive {
             Some((collection.len() as u64, 0))
         };
 
-        let request = self.new_request(query).with_token(self.token().cloned());
-        let connection = get::dial(self.get_options()).await?;
+        let request = self.new_request(query).with_token(self.token.clone());
+        let connection = get::dial(self.opts).await?;
         let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
@@ -336,9 +291,8 @@ impl GetInteractive {
 
     /// Get into a file or directory
     async fn get_to_dir(self, out_dir: PathBuf) -> Result<()> {
-        let single = self.single();
         let temp_dir = out_dir.join(".iroh-tmp");
-        if single {
+        if self.single {
             self.get_to_file_single(out_dir, temp_dir).await
         } else {
             self.get_to_dir_multi(out_dir, temp_dir).await
@@ -355,11 +309,9 @@ impl GetInteractive {
 
     /// Get to stdout, no resume possible.
     async fn get_to_stdout(self) -> Result<()> {
-        let hash = self.hash();
-        let single = self.single();
-        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("Fetching: {}", Blake3Cid::new(self.hash)));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-        let query = if single {
+        let query = if self.single {
             // just get the entire first item
             RangeSpecSeq::new([RangeSet2::all()])
         } else {
@@ -368,15 +320,15 @@ impl GetInteractive {
         };
 
         let pb = make_download_pb();
-        let request = self.new_request(query).with_token(self.token().cloned());
-        let connection = get::dial(self.get_options()).await?;
+        let request = self.new_request(query).with_token(self.token.clone());
+        let connection = get::dial(self.opts).await?;
         let response = get_response_machine::AtInitial::new(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
         anyhow::bail!("expected root to be present");
     };
-        let stats = if single {
+        let stats = if self.single {
             get_to_stdout_single(curr).await?
         } else {
             get_to_stdout_multi(curr, pb.clone()).await?

@@ -6,6 +6,10 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use iroh::{
+    node::{Node, StaticTokenAuthHandler},
+    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
+};
 use iroh_bytes::{
     protocol::RequestToken,
     provider::{Database, FNAME_PATHS},
@@ -14,11 +18,7 @@ use iroh_bytes::{
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
-use crate::{
-    config::iroh_data_root,
-    node::{Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
-};
+use crate::config::iroh_data_root;
 
 use super::{
     add::{aggregate_add_response, print_add_response},
@@ -186,7 +186,7 @@ fn make_rpc_endpoint(
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        crate::node::make_server_config(
+        iroh::node::make_server_config(
             keypair,
             MAX_RPC_STREAMS,
             MAX_RPC_CONNECTIONS,

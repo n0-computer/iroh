@@ -20,7 +20,6 @@ use bao_tree::{ByteNum, ChunkNum};
 use bytes::BytesMut;
 use iroh_net::tls::Keypair;
 use iroh_net::{hp::derp::DerpMap, tls::PeerId};
-use postcard::experimental::max_size::MaxSize;
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use std::path::{Path, PathBuf};
@@ -29,7 +28,7 @@ use tracing::{debug, error};
 pub use crate::util::Hash;
 
 use crate::blobs::Collection;
-use crate::protocol::{write_lp, AnyGetRequest, Handshake, RangeSpecSeq};
+use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
 use crate::tokio_util::{TrackingReader, TrackingWriter};
 use crate::util::pathbuf_from_name;
 use crate::IROH_BLOCK_SIZE;
@@ -193,17 +192,7 @@ pub mod get_response_machine {
                 mut writer,
                 request,
             } = self;
-            let mut out_buffer = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
-
-            // 1. Send Handshake
-            {
-                debug!("sending handshake");
-                let handshake = Handshake::new();
-                let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-                write_lp(&mut writer, used).await?;
-            }
-
-            // 2. Send Request
+            // 1. Send Request
             {
                 debug!("sending request");
                 // wrap the get request in a request so we can serialize it
@@ -211,7 +200,7 @@ pub mod get_response_machine {
                 write_lp(&mut writer, &request_bytes).await?;
             }
 
-            // 3. Finish writing before expecting a response
+            // 2. Finish writing before expecting a response
             let (mut writer, bytes_written) = writer.into_parts();
             writer.finish().await?;
 
@@ -617,7 +606,7 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
         .bind(0)
         .await?;
     endpoint
-        .connect(opts.peer_id, &crate::P2P_ALPN, &opts.addrs)
+        .connect(opts.peer_id, &crate::protocol::ALPN, &opts.addrs)
         .await
         .context("failed to connect to provider")
 }

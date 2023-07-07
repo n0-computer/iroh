@@ -4,9 +4,8 @@ use anyhow::Result;
 use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use iroh::rpc_protocol::ValidateRequest;
 use iroh_bytes::{cid::Blake3Cid, provider::ValidateProgress, Hash};
-
-use crate::rpc_protocol::ValidateRequest;
 
 use super::make_rpc_client;
 

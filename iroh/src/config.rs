@@ -153,6 +153,7 @@ pub fn iroh_data_root() -> Result<PathBuf> {
 }
 
 /// Path that leads to a file in the iroh data directory.
+#[allow(dead_code)]
 pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_data_root()?.join(file_name);
     Ok(path)
@@ -169,6 +170,7 @@ pub fn iroh_data_path(file_name: &Path) -> Result<PathBuf> {
 /// | Linux    | `$XDG_CACHE_HOME`/iroh or `$HOME`/.cache/iroh | /home/.cache/iroh                        |
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
+#[allow(dead_code)]
 pub fn iroh_cache_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_CACHE_DIR") {
         return Ok(PathBuf::from(val));
@@ -180,6 +182,7 @@ pub fn iroh_cache_root() -> Result<PathBuf> {
 }
 
 /// Path that leads to a file in the iroh cache directory.
+#[allow(dead_code)]
 pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_cache_root()?.join(file_name);
     Ok(path)

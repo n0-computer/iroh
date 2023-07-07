@@ -749,7 +749,7 @@ pub(super) struct PacketizeIter<I: Iterator, const N: usize> {
 
 impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
     /// Create a new new PacketizeIter from something that can be turned into an
-    /// iterator of slices, like a Vec<Bytes>.
+    /// iterator of slices, like a `Vec<Bytes>`.
     pub(super) fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
         Self {
             iter: iter.into_iter().peekable(),
