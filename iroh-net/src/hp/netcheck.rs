@@ -117,6 +117,8 @@ impl RegionLatencies {
     }
 
     /// Returns the maximum latency for all regions.
+    ///
+    /// If there are not yet any latencies this will return [`DEFAULT_MAX_LATENCY`].
     fn max_latency(&self) -> Duration {
         self.0
             .values()
