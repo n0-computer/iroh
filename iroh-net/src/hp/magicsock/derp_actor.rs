@@ -7,7 +7,7 @@ use std::{
 
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
-use iroh_metrics::{core::MRecorder, magicsock::MagicsockMetrics};
+use iroh_metrics::{core::Metric, magicsock::Metrics as MagicsockMetrics};
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -271,11 +271,11 @@ impl DerpActor {
         for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
             match derp_client.send(peer.clone(), packet).await {
                 Ok(_) => {
-                    MagicsockMetrics::SendDerp.record(total_bytes);
+                    MagicsockMetrics::with_metric(|m| m.send_derp.inc_by(total_bytes));
                 }
                 Err(err) => {
                     warn!("derp.send: failed {:?}", err);
-                    MagicsockMetrics::SendDerpError.inc();
+                    MagicsockMetrics::with_metric(|m| m.send_derp_error.inc());
                 }
             }
         }
@@ -368,7 +368,7 @@ impl DerpActor {
 
         self.active_derp.insert(region_id, ad);
 
-        MagicsockMetrics::NumDerpConnsAdded.inc();
+        MagicsockMetrics::with_metric(|m| m.num_derp_conns_added.inc());
         self.log_active_derp();
 
         if let Some(ref f) = self.conn.on_derp_active {
@@ -483,7 +483,7 @@ impl DerpActor {
             c.close().await;
             cancel.cancel();
 
-            MagicsockMetrics::NumDerpConnsRemoved.inc();
+            MagicsockMetrics::with_metric(|m| m.num_derp_conns_removed.inc());
         }
     }
 

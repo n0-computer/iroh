@@ -277,9 +277,7 @@ impl Gui {
 
     async fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
-            let metrics = core
-                .get_collector_as::<magicsock::Metrics>("Magicsock")
-                .unwrap();
+            let metrics = core.get_collector::<magicsock::Metrics>().unwrap();
             tracing::error!("metrics enabled");
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());

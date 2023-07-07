@@ -15,7 +15,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_metrics::{core::MRecorder, magicsock::MagicsockMetrics};
+use iroh_metrics::{core::Metric, magicsock::Metrics as MagicsockMetrics};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -597,10 +597,10 @@ impl AsyncUdpSocket for Conn {
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
-        MagicsockMetrics::SendData.record(bytes_total as _);
+        MagicsockMetrics::with_metric(|m| m.send_data.inc_by(bytes_total as _));
 
         if self.is_closed() {
-            MagicsockMetrics::SendDataNetworkDown.record(bytes_total as _);
+            MagicsockMetrics::with_metric(|m| m.send_data_network_down.inc_by(bytes_total as _));
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
@@ -694,13 +694,13 @@ impl AsyncUdpSocket for Conn {
 
                             match source {
                                 NetworkSource::Derp => {
-                                    MagicsockMetrics::RecvDataDerp.record(bytes.len() as _);
+                                    MagicsockMetrics::with_metric(|m| m.recv_data_derp.inc_by(bytes.len() as _));
                                 }
                                 NetworkSource::Ipv4 => {
-                                    MagicsockMetrics::RecvDataIpv4.record(bytes.len() as _);
+                                    MagicsockMetrics::with_metric(|m| m.recv_data_ipv4.inc_by(bytes.len() as _));
                                 }
                                 NetworkSource::Ipv6 => {
-                                    MagicsockMetrics::RecvDataIpv6.record(bytes.len() as _);
+                                    MagicsockMetrics::with_metric(|m| m.recv_data_ipv6.inc_by(bytes.len() as _));
                                 }
                             }
                             trace!(
@@ -1221,7 +1221,7 @@ impl Actor {
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn re_stun(&mut self, why: &'static str) {
-        MagicsockMetrics::ReStunCalls.inc();
+        MagicsockMetrics::with_metric(|m| m.re_stun_calls.inc());
 
         if self.endpoints_update_state.is_running() {
             if Some(why) != self.endpoints_update_state.want_update {
@@ -1242,7 +1242,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn update_endpoints(&mut self, why: &'static str) {
-        MagicsockMetrics::UpdateEndpoints.inc();
+        MagicsockMetrics::with_metric(|m| m.update_endpoints.inc());
 
         debug!("starting endpoint update ({})", why);
         if self.no_v4_send && !self.conn.is_closed() {
@@ -1560,7 +1560,7 @@ impl Actor {
                 return true;
             }
             if my_derp != 0 && derp_num != 0 {
-                MagicsockMetrics::DerpHomeChange.inc();
+                MagicsockMetrics::with_metric(|m| m.derp_home_change.inc());
             }
             self.conn.set_my_derp(derp_num);
 
@@ -1713,7 +1713,7 @@ impl Actor {
 
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
     async fn rebind_all(&mut self) {
-        MagicsockMetrics::RebindCalls.inc();
+        MagicsockMetrics::with_metric(|m| m.rebind_calls.inc());
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
             debug!("{:?}", err);
             return;
@@ -1817,9 +1817,9 @@ impl Actor {
 
         let is_derp = dst.is_derp();
         if is_derp {
-            MagicsockMetrics::SendDiscoDerp.inc();
+            MagicsockMetrics::with_metric(|m| m.send_disco_derp.inc());
         } else {
-            MagicsockMetrics::SendDiscoUdp.inc();
+            MagicsockMetrics::with_metric(|m| m.send_disco_udp.inc());
         }
 
         let pkt = disco::encode_message(&self.conn.public_key, seal);
@@ -1833,19 +1833,19 @@ impl Actor {
             Ok(_n) => {
                 debug!("disco: sent message to {}", dst);
                 if is_derp {
-                    MagicsockMetrics::SentDiscoDerp.inc();
+                    MagicsockMetrics::with_metric(|m| m.sent_disco_derp.inc());
                 } else {
-                    MagicsockMetrics::SentDiscoUdp.inc();
+                    MagicsockMetrics::with_metric(|m| m.sent_disco_udp.inc());
                 }
                 match msg {
                     disco::Message::Ping(_) => {
-                        MagicsockMetrics::SentDiscoPing.inc();
+                        MagicsockMetrics::with_metric(|m| m.sent_disco_ping.inc());
                     }
                     disco::Message::Pong(_) => {
-                        MagicsockMetrics::SentDiscoPong.inc();
+                        MagicsockMetrics::with_metric(|m| m.sent_disco_pong.inc());
                     }
                     disco::Message::CallMeMaybe(_) => {
-                        MagicsockMetrics::SentDiscoCallMeMaybe.inc();
+                        MagicsockMetrics::with_metric(|m| m.sent_disco_call_me_maybe.inc());
                     }
                 }
                 Ok(true)
@@ -1949,7 +1949,7 @@ impl Actor {
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
                 self.conn.public_key, sender, payload,
             );
-            MagicsockMetrics::RecvDiscoBadKey.inc();
+            MagicsockMetrics::with_metric(|m| m.recv_disco_bad_key.inc());
             return true;
         }
         let payload = payload.unwrap();
@@ -1963,22 +1963,22 @@ impl Actor {
             // understand. Not even worth logging about, lest it
             // be too spammy for old clients.
 
-            MagicsockMetrics::RecvDiscoBadParse.inc();
+            MagicsockMetrics::with_metric(|m| m.recv_disco_bad_parse.inc());
             return true;
         }
 
         let dm = dm.unwrap();
         let is_derp = src.is_derp();
         if is_derp {
-            MagicsockMetrics::RecvDiscoDerp.inc();
+            MagicsockMetrics::with_metric(|m| m.recv_disco_derp.inc());
         } else {
-            MagicsockMetrics::RecvDiscoUdp.inc();
+            MagicsockMetrics::with_metric(|m| m.recv_disco_udp.inc());
         }
 
         debug!("got disco message: {:?}", dm);
         match dm {
             disco::Message::Ping(ping) => {
-                MagicsockMetrics::RecvDiscoPing.inc();
+                MagicsockMetrics::with_metric(|m| m.recv_disco_ping.inc());
                 // if we get here we got a valid ping from an unknown sender
                 // so insert an endpoint for them
                 if unknown_sender {
@@ -1993,7 +1993,7 @@ impl Actor {
                 true
             }
             disco::Message::Pong(pong) => {
-                MagicsockMetrics::RecvDiscoPong.inc();
+                MagicsockMetrics::with_metric(|m| m.recv_disco_pong.inc());
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
                     let (_, insert) = ep
                         .handle_pong_conn(&self.conn.public_key, &pong, di, src)
@@ -2005,7 +2005,7 @@ impl Actor {
                 true
             }
             disco::Message::CallMeMaybe(cm) => {
-                MagicsockMetrics::RecvDiscoCallMeMaybe.inc();
+                MagicsockMetrics::with_metric(|m| m.recv_disco_call_me_maybe.inc());
                 if !is_derp || derp_node_src.is_none() {
                     // CallMeMaybe messages should only come via DERP.
                     debug!("[unexpected] CallMeMaybe packets should only come via DERP");
@@ -2014,7 +2014,7 @@ impl Actor {
                 let node_key = derp_node_src.unwrap();
                 match self.peer_map.endpoint_for_node_key_mut(&node_key) {
                     None => {
-                        MagicsockMetrics::RecvDiscoCallMeMaybeBadDisco.inc();
+                        MagicsockMetrics::with_metric(|m| m.recv_disco_call_me_maybe_bad_disco.inc());
                         debug!(
                             "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
                             sender, node_key,
@@ -2235,9 +2235,9 @@ impl Actor {
             .map(|x| x.contents.len() as u64)
             .sum();
         if addr.is_ipv6() {
-            MagicsockMetrics::SendIpv6.record(total_bytes);
+            MagicsockMetrics::with_metric(|m| m.send_ipv6.inc_by(total_bytes));
         } else {
-            MagicsockMetrics::SendIpv4.record(total_bytes);
+            MagicsockMetrics::with_metric(|m| m.send_ipv4.inc_by(total_bytes));
         }
 
         debug!("sent {} packets to {}", sum, addr);

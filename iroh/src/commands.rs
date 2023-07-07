@@ -292,24 +292,17 @@ pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    // doesn't start the server if the address is None
-
     use iroh_metrics::core::Metric;
+
+    // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
-        iroh_metrics::core::Core::init(|reg| {
-            let iroh_metrics = iroh::metrics::Metrics::new(reg);
-            let magicsock_metrics = iroh_metrics::magicsock::Metrics::new(reg);
-            let netcheck_metrics = iroh_metrics::netcheck::Metrics::new(reg);
-            let portmap_metrics = iroh_metrics::portmap::Metrics::new(reg);
-            [
-                ("Iroh", Box::new(iroh_metrics) as Box<dyn Metric>),
-                ("MagicSocket", Box::new(magicsock_metrics)),
-                ("Netcheck", Box::new(netcheck_metrics)),
-                ("Portmatp", Box::new(portmap_metrics)),
-            ]
-            .into_iter()
-            .collect()
+        iroh_metrics::core::Core::init(|reg, metrics| {
+            metrics.insert(iroh::metrics::Metrics::new(reg));
+            metrics.insert(iroh_metrics::magicsock::Metrics::new(reg));
+            metrics.insert(iroh_metrics::netcheck::Metrics::new(reg));
+            metrics.insert(iroh_metrics::portmap::Metrics::new(reg));
         });
+
         return Some(rt.main().spawn(async move {
             if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
                 eprintln!("Failed to start metrics server: {e}");

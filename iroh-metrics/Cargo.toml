@@ -17,6 +17,8 @@ once_cell = "1.17.0"
 paste = "1.0.12"
 tracing = "0.1"
 hyper = { version = "0.14.25", features = ["server", "client", "http1", "tcp"] }
+erased_set = "0.7"
+struct_iterable = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }

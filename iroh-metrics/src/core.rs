@@ -1,7 +1,9 @@
-use std::{any::Any, collections::HashMap};
-
+use erased_set::ErasedSyncSet;
 use once_cell::sync::OnceCell;
+#[cfg(feature = "metrics")]
 use prometheus_client::{encoding::text::encode, registry::Registry};
+#[cfg(not(feature = "metrics"))]
+type Registry = ();
 
 static CORE: OnceCell<Core> = OnceCell::new();
 
@@ -10,30 +12,129 @@ static CORE: OnceCell<Core> = OnceCell::new();
 /// It also carries a single prometheus registry to be used by all metrics.
 #[derive(Debug, Default)]
 pub struct Core {
+    #[cfg(feature = "metrics")]
     registry: Registry,
-    metrics_map: HashMap<&'static str, Box<dyn Metric>>,
+    metrics_map: ErasedSyncSet,
+}
+/// Open Metrics [`Counter`] to measure discrete events.
+///
+/// Single monotonically increasing value metric.
+#[derive(Debug, Clone)]
+pub struct Counter {
+    /// The actual prometheus counter.
+    #[cfg(feature = "metrics")]
+    pub counter: prometheus_client::metrics::counter::Counter,
+    /// What this counter measures.
+    pub description: &'static str,
 }
 
-/// MetricsRecorder is the interface to be implemented by the metrics.
-pub trait Metric: MetricsRecorder + 'static + Send + Sync + std::fmt::Debug {
-    /// as_any returns a reference to the underlying metric
-    /// and allows for downcasting.
-    fn as_any(&self) -> &dyn Any;
+impl Counter {
+    /// Constructs a new counter, based on the given `description`.
+    pub fn new(description: &'static str) -> Self {
+        Counter {
+            #[cfg(feature = "metrics")]
+            counter: Default::default(),
+            description,
+        }
+    }
+
+    /// Increase the [`Counter`] by 1, returning the previous value.
+    pub fn inc(&self) -> u64 {
+        #[cfg(feature = "metrics")]
+        {
+            self.counter.inc()
+        }
+        #[cfg(not(feature = "metrics"))]
+        0
+    }
+
+    /// Increase the [`Counter`] by `u64`, returning the previous value.
+    pub fn inc_by(&self, v: u64) -> u64 {
+        #[cfg(feature = "metrics")]
+        {
+            self.counter.inc_by(v)
+        }
+        #[cfg(not(feature = "metrics"))]
+        0
+    }
+
+    /// Get the current value of the [`Counter`].
+    pub fn get(&self) -> u64 {
+        #[cfg(feature = "metrics")]
+        {
+            self.counter.get()
+        }
+        #[cfg(not(feature = "metrics"))]
+        0
+    }
+}
+
+/// Description of a group of metrics.
+pub trait Metric:
+    Default + struct_iterable::Iterable + Sized + std::fmt::Debug + 'static + Send + Sync
+{
+    /// Initializes this metric group.
+    #[cfg(feature = "metrics")]
+    fn new(registry: &mut prometheus_client::registry::Registry) -> Self {
+        let sub_registry = registry.sub_registry_with_prefix(Self::name());
+
+        let this = Self::default();
+        for (metric, counter) in this.iter() {
+            if let Some(counter) = counter.downcast_ref::<Counter>() {
+                sub_registry.register(metric, counter.description, counter.counter.clone());
+            }
+        }
+        this
+    }
+
+    /// Initializes this metric group.
+    #[cfg(not(feature = "metrics"))]
+    fn new(_: ()) -> Self {
+        Self::default()
+    }
+
+    /// The name of this metric group.
+    fn name() -> &'static str;
+
+    /// Access to this metrics group to record a metric.
+    /// Only records if this metric is registered in the global registry.
+    #[cfg(feature = "metrics")]
+    fn with_metric<T, F: FnOnce(&Self) -> T>(f: F) {
+        Self::try_get().map(f);
+    }
+
+    /// Access to this metrics group to record a metric.
+    #[cfg(not(feature = "metrics"))]
+    fn with_metric<T, F: FnOnce(&Self) -> T>(f: F) {
+        // nothing to do
+    }
+
+    /// Attempts to get the current metric from the global registry.
+    fn try_get() -> Option<&'static Self> {
+        Core::get().and_then(|c| c.get_collector::<Self>())
+    }
 }
 
 impl Core {
     /// Must only be called once to init metrics.
     ///
     /// Panics if called a second time.
-    pub fn init<F: FnOnce(&mut Registry) -> HashMap<&'static str, Box<dyn Metric>>>(f: F) {
+    pub fn init<F: FnOnce(&mut Registry, &mut ErasedSyncSet)>(f: F) {
+        Self::try_init(f).expect("must only be called once");
+    }
+
+    /// Trieds to init the metrics.
+    pub fn try_init<F: FnOnce(&mut Registry, &mut ErasedSyncSet)>(f: F) -> std::io::Result<()> {
         let mut registry = Registry::default();
-        let metrics_map = f(&mut registry);
+        let mut metrics_map = ErasedSyncSet::new();
+        f(&mut registry, &mut metrics_map);
 
         CORE.set(Core {
             metrics_map,
+            #[cfg(feature = "metrics")]
             registry,
         })
-        .expect("must only be called once");
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "already set"))
     }
 
     /// Returns a reference to the core metrics.
@@ -42,24 +143,17 @@ impl Core {
     }
 
     /// Returns a reference to the prometheus registry.
+    #[cfg(feature = "metrics")]
     pub fn registry(&self) -> &Registry {
         &self.registry
     }
 
     /// Returns a reference to the mapped metrics instance.
-    pub fn get_collector(&self, name: &str) -> Option<&dyn Metric> {
-        self.metrics_map.get(name).map(|t| t.as_ref())
+    pub fn get_collector<T: Metric>(&self) -> Option<&T> {
+        self.metrics_map.get::<T>()
     }
 
-    /// Returns a reference to the mapped metrics instance
-    /// and attempts to downcast it to the given type.
-    pub fn get_collector_as<T: Metric>(&self, name: &str) -> Option<&T> {
-        let t = self.metrics_map.get(name)?;
-        let t: &dyn Metric = t.as_ref();
-        let t: &dyn Any = t.as_any();
-        t.downcast_ref()
-    }
-
+    #[cfg(feature = "metrics")]
     pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
         let mut buf = String::new();
         encode(&mut buf, &self.registry)?;
@@ -77,82 +171,4 @@ pub trait MetricType {
 pub trait HistogramType {
     /// Returns the name of the metric
     fn name(&self) -> &'static str;
-}
-
-/// Definition of the base metrics collection interfaces.
-///
-/// Instances imlementing the MetricsRecorder are expected to have a defined mapping between
-/// types for the respective modules.
-pub trait MetricsRecorder {
-    /// Records a metric for any point in time metric (e.g. counter, gauge, etc.)
-    fn record(&self, m: &str, value: u64);
-    /// Observes a metric for any metric over time (e.g. histogram, summary, etc.)
-    fn observe(&self, m: &str, value: f64);
-}
-
-/// Interface to record metrics.
-///
-/// Helps expose the record interface when using metrics as a library
-pub trait MRecorder {
-    /// Records a value for the metric.
-    ///
-    /// Recording is for single-value metrics, each recorded metric represents a metric
-    /// value.
-    fn record(&self, value: u64);
-
-    /// Records a value of `+1`.
-    fn inc(&self) {
-        self.record(1);
-    }
-}
-
-/// Interface to observe metrics.
-///
-/// Helps expose the observe interface when using metrics as a library.
-pub trait MObserver {
-    /// Observes a value for the metric.
-    ///
-    /// Observing is for distribution metrics, when multiple observations are combined in a
-    /// single metric value.
-    fn observe(&self, value: f64);
-}
-
-/// Internal wrapper to record metrics only if the core is enabled.
-///
-/// Recording is for single-value metrics, each recorded metric represents a metric value.
-pub fn record<M>(c: &str, m: M, v: u64)
-where
-    M: MetricType + std::fmt::Display,
-{
-    if let Some(core) = Core::get() {
-        match core.get_collector(c) {
-            Some(coll) => {
-                coll.record(m.name(), v);
-            }
-            None => {
-                tracing::warn!("record: {} not found", c);
-            }
-        }
-    }
-}
-
-/// Internal wrapper to observe metrics only if the core is enabled.
-///
-/// Observing is for distribution metrics, when multiple observations are combined in a
-/// single metric value.
-#[allow(dead_code)]
-pub fn observe<M>(c: &str, m: M, v: f64)
-where
-    M: HistogramType + std::fmt::Display,
-{
-    if let Some(core) = Core::get() {
-        match core.get_collector(c) {
-            Some(coll) => {
-                coll.observe(m.name(), v);
-            }
-            None => {
-                tracing::warn!("observe: {} not found", c);
-            }
-        }
-    }
 }
