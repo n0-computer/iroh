@@ -6,10 +6,10 @@
 //!
 //! To enable metrics collection, call `init_metrics()` before starting the service.
 //!
-//! - To record a **gauge** ( or a **counter**), use the [`record`] macro with a value.
+//! - To record a **gauge** ( or a **counter**), use the [`crate::core::MRecorder::record`] macro with a value.
 //!   Don't use gauges though.
-//! - To increment a **counter** by 1, use the [`inc`] macro.
-//! - For **histograms** (or **summaries**, but don't use those either) use the [`observe`]
+//! - To increment a **counter** by 1, use the [`crate::core::MRecorder::inc`] macro.
+//! - For **histograms** (or **summaries**, but don't use those either) use the [`crate::core::MObserver::observe`]
 //!   macro with a value.
 //!
 //! To expose the metrics, start the metrics service with `start_metrics_server()`.
@@ -22,7 +22,7 @@
 //! # tokio_test::block_on(async {
 //! Core::init(|reg| {
 //!    [(
-//!        "Magiscock",
+//!        "Magicsock",
 //!        Box::new(Metrics::new(reg)) as Box<dyn Metric>
 //!    )].into_iter().collect()
 //! });
