@@ -15,7 +15,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
     FutureExt,
 };
-use iroh_metrics::{core::MRecorder, netcheck::NetcheckMetrics};
+use iroh_metrics::{inc, netcheck::Metrics as NetcheckMetrics};
 use rand::seq::IteratorRandom;
 use tokio::{
     net::UdpSocket,
@@ -215,7 +215,7 @@ impl Client {
                 from_addr: src,
             })
         {
-            NetcheckMetrics::StunPacketsDropped.inc();
+            inc!(NetcheckMetrics, stun_packets_dropped);
             warn!("dropping stun packet from {}", src);
         }
     }
@@ -909,7 +909,7 @@ async fn run_probe(
         Probe::Ipv4 { .. } => {
             if let Some(ref pc4) = pc4 {
                 let n = pc4.send_to(&req, addr).await;
-                NetcheckMetrics::StunPacketsSentIpv4.inc();
+                inc!(NetcheckMetrics, stun_packets_sent_ipv4);
                 debug!(%addr, send_res=?n, %txid, "sending probe IPV4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
@@ -926,7 +926,7 @@ async fn run_probe(
         Probe::Ipv6 { .. } => {
             if let Some(ref pc6) = pc6 {
                 let n = pc6.send_to(&req, addr).await;
-                NetcheckMetrics::StunPacketsSentIpv6.inc();
+                inc!(NetcheckMetrics, stun_packets_sent_ipv6);
                 debug!(%addr, snd_res=?n, %txid, "sending probe IPV6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
@@ -1329,14 +1329,14 @@ impl Actor {
                 }
                 Err(err) => {
                     warn!("generate report timed out: {:?}", err);
-                    NetcheckMetrics::ReportsError.inc();
+                    inc!(NetcheckMetrics, reports_error);
                     addr.send(ActorMessage::ReportAborted)
                         .await
                         .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
                 }
                 Ok(Err(err)) => {
                     warn!("failed to generate report: {:?}", err);
-                    NetcheckMetrics::ReportsError.inc();
+                    inc!(NetcheckMetrics, reports_error);
                     addr.send(ActorMessage::ReportAborted)
                         .await
                         .unwrap_or_else(|_| error!("netcheck.report_state: netcheck actor lost"));
@@ -1391,9 +1391,9 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-            NetcheckMetrics::ReportsFull.inc();
+            inc!(NetcheckMetrics, reports_full);
         }
-        NetcheckMetrics::Reports.inc();
+        inc!(NetcheckMetrics, reports);
 
         let last = self.reports.last.clone();
         let plan = ProbePlan::new(dm, &if_state, last.as_deref());
@@ -1437,8 +1437,12 @@ impl Actor {
         }
 
         match &src {
-            SocketAddr::V4(_) => NetcheckMetrics::StunPacketsRecvIpv4.inc(),
-            SocketAddr::V6(_) => NetcheckMetrics::StunPacketsRecvIpv6.inc(),
+            SocketAddr::V4(_) => {
+                inc!(NetcheckMetrics, stun_packets_recv_ipv4);
+            }
+            SocketAddr::V6(_) => {
+                inc!(NetcheckMetrics, stun_packets_recv_ipv6);
+            }
         }
 
         match stun::parse_response(pkt) {
