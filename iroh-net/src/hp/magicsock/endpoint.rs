@@ -878,7 +878,7 @@ pub struct AddrLatency {
 ///
 /// - The peers's public key, aka `PeerId` or "node_key".  This is static and never changes,
 ///   however a peer could be added when this is not yet known.  To set this after creation
-///   use [`PeerMap::store_node_key_mapping`].
+///   use [`PeerMap::set_node_key_for_ip_port`].
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the peer moves around on the internet
