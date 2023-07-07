@@ -9,7 +9,7 @@
 
 use std::{fmt, str::FromStr};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use clap::Parser;
 use ed25519_dalek::SigningKey;
 use iroh::sync::{LiveSync, PeerSource, SYNC_ALPN};
@@ -81,32 +81,45 @@ async fn run(args: Args) -> anyhow::Result<()> {
     };
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
-    // init a cell that will hold our gossip handle to be used in endpoint callbacks
-    let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
-    // init a channel that will emit once the initial endpoints of our local node are discovered
-    let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
-
     // build our magic endpoint
-    let gossip_cell_clone = gossip_cell.clone();
-    let endpoint = MagicEndpoint::builder()
-        .keypair(keypair.clone())
-        .alpns(vec![GOSSIP_ALPN.to_vec(), SYNC_ALPN.to_vec()])
-        .derp_map(derp_map)
-        .on_endpoints(Box::new(move |endpoints| {
-            // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
-            if let Some(gossip) = gossip_cell_clone.get() {
-                gossip.update_endpoints(endpoints).ok();
-            }
-            // trigger oneshot on the first endpoint update
-            initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
-        }))
-        .bind(args.bind_port)
-        .await?;
-    println!("> our peer id: {}", endpoint.peer_id());
+    let (endpoint, gossip, initial_endpoints) = {
+        // init a cell that will hold our gossip handle to be used in endpoint callbacks
+        let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+        // init a channel that will emit once the initial endpoints of our local node are discovered
+        let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
 
-    // wait for a first endpoint update so that we know about at least one of our addrs
-    let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-    // println!("> our endpoints: {initial_endpoints:?}");
+        let endpoint = MagicEndpoint::builder()
+            .keypair(keypair.clone())
+            .alpns(vec![GOSSIP_ALPN.to_vec(), SYNC_ALPN.to_vec()])
+            .derp_map(derp_map)
+            .on_endpoints({
+                let gossip_cell = gossip_cell.clone();
+                Box::new(move |endpoints| {
+                    // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                    if let Some(gossip) = gossip_cell.get() {
+                        gossip.update_endpoints(endpoints).ok();
+                    }
+                    // trigger oneshot on the first endpoint update
+                    initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
+                })
+            })
+            .bind(args.bind_port)
+            .await?;
+
+        // create the gossip protocol
+        let gossip = {
+            let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+            // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
+            gossip_cell.set(gossip.clone()).unwrap();
+            gossip
+        };
+        // wait for a first endpoint update so that we know about at least one of our addrs
+        let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
+        // pass our initial endpoints to the gossip protocol
+        gossip.update_endpoints(&initial_endpoints)?;
+        (endpoint, gossip, initial_endpoints)
+    };
+    println!("> our peer id: {}", endpoint.peer_id());
 
     let (topic, peers) = match &args.command {
         Command::Open { doc_name } => {
@@ -124,6 +137,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     };
 
+    // println!("> our endpoints: {initial_endpoints:?}");
     let our_ticket = {
         // add our local endpoints to the ticket and print it for others to join
         let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
@@ -136,16 +150,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Ticket { peers, topic }
     };
     println!("> ticket to join us: {our_ticket}");
-
-    // create the gossip protocol
-    let gossip = {
-        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
-        // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-        gossip_cell.set(gossip.clone()).unwrap();
-        // pass our initial peer println to the gossip protocol
-        gossip.update_endpoints(&initial_endpoints)?;
-        gossip
-    };
 
     // create the sync doc and store
     let (store, author, doc) = create_document(topic, &keypair)?;
@@ -163,7 +167,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     std::thread::spawn(move || input_loop(line_tx));
 
     // create the live syncer
-    let mut sync_handle = LiveSync::spawn(endpoint.clone(), gossip.clone(), doc.clone(), peers);
+    let sync_handle = LiveSync::spawn(endpoint.clone(), gossip.clone());
+    sync_handle.sync_doc(doc.clone(), peers.clone()).await?;
 
     // do some logging
     doc.on_insert(Box::new(move |origin, entry| {
@@ -173,15 +178,18 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // process stdin lines
     println!("> read to accept commands: set <key> <value> | get <key> | ls | exit");
     while let Some(text) = line_rx.recv().await {
-        let mut parts = text.split(' ');
-        match [parts.next(), parts.next(), parts.next()] {
-            [Some("set"), Some(key), Some(value)] => {
-                let key = key.to_string();
-                let value = value.to_string();
+        let cmd = match Cmd::from_str(&text) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                println!("> failed to parse command: {}", err);
+                continue;
+            }
+        };
+        match cmd {
+            Cmd::Set { key, value } => {
                 doc.insert(&key, &author, value);
             }
-            [Some("get"), Some(key), None] => {
-                // TODO: we need a way to get all filtered by key from all authors
+            Cmd::Get { key } => {
                 let mut entries = doc
                     .all()
                     .into_iter()
@@ -190,23 +198,46 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     println!("{} -> {}", fmt_entry(&entry), fmt_content(&doc, &entry));
                 }
             }
-            [Some("ls"), None, None] => {
+            Cmd::Ls => {
                 let all = doc.all();
                 println!("> {} entries", all.len());
                 for (_id, entry) in all {
                     println!("{} -> {}", fmt_entry(&entry), fmt_content(&doc, &entry));
                 }
             }
-            [Some("exit"), None, None] => {
+            Cmd::Exit => {
                 let res = sync_handle.cancel().await?;
                 println!("syncer closed with {res:?}");
                 break;
             }
-            _ => println!("> invalid command"),
         }
     }
 
     Ok(())
+}
+
+pub enum Cmd {
+    Set { key: String, value: String },
+    Get { key: String },
+    Ls,
+    Exit,
+}
+impl FromStr for Cmd {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split(' ');
+        match [parts.next(), parts.next(), parts.next()] {
+            [Some("set"), Some(key), Some(value)] => Ok(Self::Set {
+                key: key.into(),
+                value: value.into(),
+            }),
+            [Some("get"), Some(key), None] => Ok(Self::Get { key: key.into() }),
+            [Some("ls"), None, None] => Ok(Self::Ls),
+            [Some("exit"), None, None] => Ok(Self::Exit),
+            _ => Err(anyhow!("invalid command")),
+        }
+    }
 }
 
 fn create_document(
@@ -237,7 +268,7 @@ async fn endpoint_loop(
             )),
         };
         if let Err(err) = res {
-            tracing::error!("connection for {alpn} errored: {err:?}");
+            println!("> connection for {alpn} closed, reason: {err}");
         }
     }
     Ok(())
@@ -295,16 +326,16 @@ impl FromStr for Ticket {
 fn fmt_entry(entry: &SignedEntry) -> String {
     let id = entry.entry().id();
     let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
-    let hash = entry.entry().record().content_hash();
     let author = fmt_hash(id.author().as_bytes());
-    let fmt_hash = fmt_hash(hash.as_bytes());
-    format!("@{author}: {key} = {fmt_hash}")
+    let hash = entry.entry().record().content_hash();
+    let hash = fmt_hash(hash.as_bytes());
+    format!("@{author}: {key} = {hash}")
 }
 fn fmt_content(doc: &Replica, entry: &SignedEntry) -> String {
     let hash = entry.entry().record().content_hash();
     let content = doc.get_content(hash);
     let content = content
-        .map(|content| String::from_utf8(content.into()).unwrap())
+        .map(|content| String::from_utf8(content.into()).unwrap_or_else(|_| "<bad content>".into()))
         .unwrap_or_else(|| "<missing content>".into());
     content
 }
