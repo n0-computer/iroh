@@ -17,11 +17,16 @@
 //! # Example:
 //! ```rust
 //! use iroh_metrics::core::MRecorder;
-//! use iroh_metrics::magicsock::MagicsockMetrics;
-//! use iroh_metrics::{metrics::init_metrics, inc, record};
+//! use iroh_metrics::magicsock::{Metrics, MagicsockMetrics};
+//! use iroh_metrics::{core::{Core, Metric}, inc, record};
 //!
 //! # tokio_test::block_on(async {
-//! init_metrics();
+//! Core::init(|reg| {
+//!    [(
+//!        "Magiscock",
+//!        Box::new(Metrics::new(reg)) as Box<dyn Metric>
+//!    )].into_iter().collect()
+//! });
 //! iroh_metrics::record!(MagicsockMetrics::NumDerpConnsAdded, 2);
 //! iroh_metrics::inc!(MagicsockMetrics::NumDerpConnsAdded);
 //! })
