@@ -30,8 +30,6 @@ use super::stun;
 mod probe;
 mod reportgen;
 
-// The various default timeouts for things.
-
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// The maximum latency of all regions, if none are found yet.
