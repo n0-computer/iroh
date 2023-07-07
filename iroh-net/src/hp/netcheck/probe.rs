@@ -35,8 +35,9 @@ pub enum ProbeProto {
     Https,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum Probe {
+    #[display("Ipv4 after {delay:?} to {node}")]
     Ipv4 {
         /// When the probe is started, relative to the time that `get_report` is called.
         /// One probe in each `ProbePlan` should have a delay of 0. Non-zero values
@@ -47,29 +48,14 @@ pub enum Probe {
         /// unique so there's no region ID.
         node: String,
     },
-    Ipv6 {
-        delay: Duration,
-        node: String,
-    },
+    #[display("Ipv6 after {delay:?} to {node}")]
+    Ipv6 { delay: Duration, node: String },
+    #[display("Https after {delay:?} to {node} {}", region.region_code)]
     Https {
         delay: Duration,
         node: String,
         region: DerpRegion,
     },
-}
-
-impl fmt::Display for Probe {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Probe::Ipv4 { delay, node } => write!(f, "Ipv4 after {delay:?} to {node}"),
-            Probe::Ipv6 { delay, node } => write!(f, "Ipv6 after {delay:?} to {node}"),
-            Probe::Https {
-                delay,
-                node,
-                region,
-            } => write!(f, "Https after {delay:?} to {node} {}", region.region_code),
-        }
-    }
 }
 
 impl Probe {
