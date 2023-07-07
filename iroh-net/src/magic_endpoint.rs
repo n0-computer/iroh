@@ -399,7 +399,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use futures::future::BoxFuture;
 
     use super::{accept_conn, MagicEndpoint};
