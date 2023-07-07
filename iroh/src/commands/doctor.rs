@@ -63,9 +63,11 @@ pub enum Commands {
         /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
         #[clap(long)]
         stun_host: Option<String>,
+        /// The port of the STUN server.
         #[clap(long, default_value_t = DEFAULT_DERP_STUN_PORT)]
         stun_port: u16,
     },
+    /// Wait for incoming requests from iroh doctor connect
     Accept {
         /// Our own private key, in hex. If not specified, the locally configured key will be used.
         #[clap(long, default_value_t = PrivateKey::Local)]
@@ -83,6 +85,7 @@ pub enum Commands {
         #[clap(long)]
         local_derper: bool,
     },
+    /// Connect to an iroh doctor accept node.
     Connect {
         /// hex peer id of the node to connect to
         dial: String,
