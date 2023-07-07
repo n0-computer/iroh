@@ -151,7 +151,7 @@ enum Message {
 
 /// The reportstate actor.
 ///
-/// This actor starts, generates a single reports and exits.
+/// This actor starts, generates a single report and exits.
 #[derive(Debug)]
 struct Actor {
     /// The sender of the message channel, so we can give out [`Addr`].
