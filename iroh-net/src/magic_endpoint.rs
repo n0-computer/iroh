@@ -400,7 +400,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
 
 // TODO: Reenable when not flaky
 // https://github.com/n0-computer/iroh/issues/1183
-// #[cfg(test)]
+// #[cfg(tests)]
 // mod test {
 //     use futures::future::BoxFuture;
 
