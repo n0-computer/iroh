@@ -16,17 +16,15 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::magicsock;
+//! use iroh_metrics::{magicsock, inc, inc_by};
 //! use iroh_metrics::core::{Core, Metric};
 //!
 //! Core::init(|reg, metrics| {
 //!     metrics.insert(magicsock::Metrics::new(reg));
 //! });
 //!
-//! magicsock::Metrics::with_metric(|m| {
-//!     m.num_derp_conns_added.inc_by(2);
-//!     m.num_derp_conns_added.inc();
-//! });
+//! inc_by!(magicsock::Metrics, num_derp_conns_added, 2);
+//! inc!(magicsock::Metrics, num_derp_conns_added);
 //! ```
 
 #[cfg(feature = "metrics")]
