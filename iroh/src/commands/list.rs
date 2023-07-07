@@ -2,9 +2,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::HumanBytes;
+use iroh::rpc_protocol::{ListBlobsRequest, ListCollectionsRequest};
 use iroh_bytes::cid::Blake3Cid;
-
-use crate::rpc_protocol::{ListBlobsRequest, ListCollectionsRequest};
 
 use super::{make_rpc_client, DEFAULT_RPC_PORT};
 
