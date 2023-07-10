@@ -9,12 +9,12 @@ use crate::hp::{
 
 use super::Client;
 
-/// Spawns, connects, and manages special `derp::http::Clients`.
+/// Spawns, connects, and manages special [`crate::hp::derp::http::Client`].
 ///
 /// These clients handled incoming network update notifications from remote
-/// `derp::http::Server`s. These servers are used as `PacketForwarder`s for
+/// [`super::Server`]s. These servers are used as [`crate::hp::derp::PacketForwarder`]s for
 /// peers to which we are not directly connected.
-/// A `mesh_key` is used to ensure the remote server belongs to the same mesh network.
+/// A [`crate::hp::derp::MeshKey`] is used to ensure the remote server belongs to the same mesh network.
 #[derive(Debug)]
 pub(crate) struct MeshClients {
     tasks: JoinSet<()>,
@@ -87,12 +87,12 @@ impl MeshClients {
     }
 }
 
-#[derive(Debug, Clone)]
 /// The different ways to express the mesh network you want to join.
+#[derive(Debug, Clone)]
 pub enum MeshAddrs {
-    /// Supply a `DerpMap` of all the derp servers you want to mesh with.
+    /// Supply a [`DerpMap`] of all the derp servers you want to mesh with.
     DerpMap(DerpMap),
-    /// Supply a list of `Url`s of all the derp server you want to mesh with.
+    /// Supply a list of [`Url`]s of all the derp server you want to mesh with.
     Addrs(Vec<Url>),
 }
 

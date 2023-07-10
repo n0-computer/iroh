@@ -39,6 +39,10 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A DERP server.
 ///
+/// Responsible for managing connections to derp [`super::client::Client`]s, sending/forwarding packets
+/// from one client to another, meshing with other derp servers through mesh
+/// [`super::client::Client`]s, and updating those mesh clients when peers connect and disconnect
+/// from the network.
 #[derive(Debug)]
 pub struct Server<P>
 where
@@ -57,7 +61,7 @@ where
     mesh_key: Option<MeshKey>,
     /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
     meta_cert: Vec<u8>,
-    /// Channel on which to communicate to the `ServerActor`
+    /// Channel on which to communicate to the [`ServerActor`]
     server_channel: mpsc::Sender<ServerMessage<P>>,
     /// When true, the server has been shutdown.
     closed: bool,
@@ -66,7 +70,7 @@ where
     server_info: ServerInfo,
     /// Server loop handler
     loop_handler: JoinHandle<Result<()>>,
-    /// Done token, forces a hard shutdown. To gracefully shutdown, use `Server::close`
+    /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     cancel: CancellationToken,
     // TODO: stats collection
     // Counters:
@@ -169,6 +173,7 @@ where
         }
     }
 
+    /// Whether or not the derp [Server] is closed.
     pub fn is_closed(&self) -> bool {
         self.closed
     }
@@ -224,7 +229,9 @@ where
         }
     }
 
-    pub fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
+    /// Used by a mesh [`super::client::Client`] to add a meshed derp [`Server`] as a [`PacketForwarder`] for the given
+    /// [`PublicKey`]
+    pub(crate) fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::AddPacketForwarder {
                 key: client_key,
@@ -237,7 +244,9 @@ where
         Ok(())
     }
 
-    pub fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
+    /// Used by a mesh [`super::client::Client`] remove a meshed derp [`Server`] as a [`PacketForwarder`] for the given
+    /// [`PublicKey`]
+    pub(crate) fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
         self.server_channel
             .try_send(ServerMessage::RemovePacketForwarder(client_key))
             .map_err(|e| match e {
@@ -542,7 +551,7 @@ where
     }
 }
 
-/// Initializes `the Server` with a self-signed x509 cert
+/// Initializes the [`Server`] with a self-signed x509 cert
 /// encoding this server's public key and protocol version. "cmd/derp_server
 /// then sends this after the Let's Encrypt leaf + intermediate certs after
 /// the ServerHello (encrypted in TLS 1.3, not that is matters much).
@@ -576,9 +585,12 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
         .expect("fixed allocations")
 }
 
+/// Whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
 #[derive(Debug)]
 pub enum MaybeTlsStream {
+    /// A plain non-Tls [`tokio::net::TcpStream`]
     Plain(tokio::net::TcpStream),
+    /// A Tls wrapped [`tokio::net::TcpStream`]
     Tls(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
     #[cfg(test)]
     Test(tokio::io::DuplexStream),
