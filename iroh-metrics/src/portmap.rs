@@ -1,21 +1,55 @@
-super::make_metric_recorders! {
-    Portmap,
+use struct_iterable::Iterable;
 
+use crate::core::{Counter, Metric};
+
+/// Enum of metrics for the module
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+pub struct Metrics {
     /*
      * General port mapping metrics
      */
-    ProbesStarted:          Counter: "Number of probing tasks started.",
-    LocalPortUpdates:       Counter: "Number of updates to the local port.",
-    MappingAttempts:        Counter: "Number of mapping tasks started.",
-    MappingFailures:        Counter: "Number of failed mapping tasks",
-    ExternalAddressUpdated: Counter: "Number of times the external address obtained via port mapping was updated.",
+    pub probes_started: Counter,
+    pub local_port_updates: Counter,
+    pub mapping_attempts: Counter,
+    pub mapping_failures: Counter,
+    pub external_address_updated: Counter,
 
     /*
      * UPnP metrics
      */
-    UpnpProbes:             Counter: "Number of UPnP probes executed.",
-    UpnpProbesFailed:       Counter: "Number of failed Upnp probes",
-    UpnpAvailable:          Counter: "Number of UPnP probes that found it available.",
-    UpnpGatewayUpdated:     Counter: "Number of UPnP probes that resulted in a gateway different to the previous one.",
+    pub upnp_probes: Counter,
+    pub upnp_probes_failed: Counter,
+    pub upnp_available: Counter,
+    pub upnp_gateway_updated: Counter,
+}
 
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            probes_started: Counter::new("Number of probing tasks started."),
+            local_port_updates: Counter::new("Number of updates to the local port."),
+            mapping_attempts: Counter::new("Number of mapping tasks started."),
+            mapping_failures: Counter::new("Number of failed mapping tasks"),
+            external_address_updated: Counter::new(
+                "Number of times the external address obtained via port mapping was updated.",
+            ),
+
+            /*
+             * UPnP metrics
+             */
+            upnp_probes: Counter::new("Number of UPnP probes executed."),
+            upnp_probes_failed: Counter::new("Number of failed Upnp probes"),
+            upnp_available: Counter::new("Number of UPnP probes that found it available."),
+            upnp_gateway_updated: Counter::new(
+                "Number of UPnP probes that resulted in a gateway different to the previous one.",
+            ),
+        }
+    }
+}
+
+impl Metric for Metrics {
+    fn name() -> &'static str {
+        "Portmap"
+    }
 }

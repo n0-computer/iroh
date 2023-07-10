@@ -1,52 +1,118 @@
-super::make_metric_recorders! {
-    Magicsock,
+use struct_iterable::Iterable;
 
-    NumDerpConnsAdded:  Counter: "num_derp_conns added",
-    NumDerpConnsRemoved:  Counter: "num_derp_conns removed",
+use crate::core::{Counter, Metric};
 
-    RebindCalls:     Counter: "rebind_calls",
-    ReStunCalls:     Counter: "restun_calls",
-    UpdateEndpoints: Counter: "update_endpoints",
+/// Enum of metrics for the module
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Iterable)]
+pub struct Metrics {
+    pub num_derp_conns_added: Counter,
+    pub num_derp_conns_removed: Counter,
+
+    pub rebind_calls: Counter,
+    pub re_stun_calls: Counter,
+    pub update_endpoints: Counter,
 
     // Sends (data or disco)
-    SendDerpQueued:      Counter: "send_derp_queued",
-    SendDerpErrorChan:   Counter: "send_derp_error_chan",
-    SendDerpErrorClosed: Counter: "send_derp_error_closed",
-    SendDerpErrorQueue:  Counter: "send_derp_error_queue",
-    SendIpv4:            Counter: "send_ipv4",
-    SendIpv4Error:       Counter: "send_ipv4_error",
-    SendIpv6:            Counter: "send_ipv6",
-    SendIpv6Error:       Counter: "send_ipv6_error",
-    SendDerp:            Counter: "send_derp",
-    SendDerpError:       Counter: "send_derp_error",
+    pub send_derp_queued: Counter,
+    pub send_derp_error_chan: Counter,
+    pub send_derp_error_closed: Counter,
+    pub send_derp_error_queue: Counter,
+    pub send_ipv4: Counter,
+    pub send_ipv4_error: Counter,
+    pub send_ipv6: Counter,
+    pub send_ipv6_error: Counter,
+    pub send_derp: Counter,
+    pub send_derp_error: Counter,
 
-     // Data packets (non-disco)
-    SendData:            Counter: "send_data",
-    SendDataNetworkDown: Counter: "send_data_network_down",
-    RecvDataDerp:        Counter: "recv_data_derp",
-    RecvDataIpv4:        Counter: "recv_data_ipv4",
-    RecvDataIpv6:        Counter: "recv_data_ipv6",
+    // Data packets (non-disco)
+    pub send_data: Counter,
+    pub send_data_network_down: Counter,
+    pub recv_data_derp: Counter,
+    pub recv_data_ipv4: Counter,
+    pub recv_data_ipv6: Counter,
 
-     // Disco packets
-    SendDiscoUdp:         Counter: "disco_send_udp",
-    SendDiscoDerp:        Counter: "disco_send_derp",
-    SentDiscoUdp:         Counter: "disco_sent_udp",
-    SentDiscoDerp:        Counter: "disco_sent_derp",
-    SentDiscoPing:        Counter: "disco_sent_ping",
-    SentDiscoPong:        Counter: "disco_sent_pong",
-    SentDiscoCallMeMaybe: Counter: "disco_sent_callmemaybe",
-    RecvDiscoBadPeer:     Counter: "disco_recv_bad_peer",
-    RecvDiscoBadKey:      Counter: "disco_recv_bad_key",
-    RecvDiscoBadParse:    Counter: "disco_recv_bad_parse",
+    // Disco packets
+    pub send_disco_udp: Counter,
+    pub send_disco_derp: Counter,
+    pub sent_disco_udp: Counter,
+    pub sent_disco_derp: Counter,
+    pub sent_disco_ping: Counter,
+    pub sent_disco_pong: Counter,
+    pub sent_disco_call_me_maybe: Counter,
+    pub recv_disco_bad_peer: Counter,
+    pub recv_disco_bad_key: Counter,
+    pub recv_disco_bad_parse: Counter,
 
-    RecvDiscoUdp:                 Counter: "disco_recv_udp",
-    RecvDiscoDerp:                Counter: "disco_recv_derp",
-    RecvDiscoPing:                Counter: "disco_recv_ping",
-    RecvDiscoPong:                Counter: "disco_recv_pong",
-    RecvDiscoCallMeMaybe:         Counter: "disco_recv_callmemaybe",
-    RecvDiscoCallMeMaybeBadNode:  Counter: "disco_recv_callmemaybe_bad_node",
-    RecvDiscoCallMeMaybeBadDisco: Counter: "disco_recv_callmemaybe_bad_disco",
+    pub recv_disco_udp: Counter,
+    pub recv_disco_derp: Counter,
+    pub recv_disco_ping: Counter,
+    pub recv_disco_pong: Counter,
+    pub recv_disco_call_me_maybe: Counter,
+    pub recv_disco_call_me_maybe_bad_node: Counter,
+    pub recv_disco_call_me_maybe_bad_disco: Counter,
 
     // How many times our DERP home region DI has changed from non-zero to a different non-zero.
-    DerpHomeChange: Counter: "derp_home_change"
+    pub derp_home_change: Counter,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            num_derp_conns_added: Counter::new("num_derp_conns added"),
+            num_derp_conns_removed: Counter::new("num_derp_conns removed"),
+
+            rebind_calls: Counter::new("rebind_calls"),
+            re_stun_calls: Counter::new("restun_calls"),
+            update_endpoints: Counter::new("update_endpoints"),
+
+            // Sends (data or disco)
+            send_derp_queued: Counter::new("send_derp_queued"),
+            send_derp_error_chan: Counter::new("send_derp_error_chan"),
+            send_derp_error_closed: Counter::new("send_derp_error_closed"),
+            send_derp_error_queue: Counter::new("send_derp_error_queue"),
+            send_ipv4: Counter::new("send_ipv4"),
+            send_ipv4_error: Counter::new("send_ipv4_error"),
+            send_ipv6: Counter::new("send_ipv6"),
+            send_ipv6_error: Counter::new("send_ipv6_error"),
+            send_derp: Counter::new("send_derp"),
+            send_derp_error: Counter::new("send_derp_error"),
+
+            // Data packets (non-disco)
+            send_data: Counter::new("send_data"),
+            send_data_network_down: Counter::new("send_data_network_down"),
+            recv_data_derp: Counter::new("recv_data_derp"),
+            recv_data_ipv4: Counter::new("recv_data_ipv4"),
+            recv_data_ipv6: Counter::new("recv_data_ipv6"),
+
+            // Disco packets
+            send_disco_udp: Counter::new("disco_send_udp"),
+            send_disco_derp: Counter::new("disco_send_derp"),
+            sent_disco_udp: Counter::new("disco_sent_udp"),
+            sent_disco_derp: Counter::new("disco_sent_derp"),
+            sent_disco_ping: Counter::new("disco_sent_ping"),
+            sent_disco_pong: Counter::new("disco_sent_pong"),
+            sent_disco_call_me_maybe: Counter::new("disco_sent_callmemaybe"),
+            recv_disco_bad_peer: Counter::new("disco_recv_bad_peer"),
+            recv_disco_bad_key: Counter::new("disco_recv_bad_key"),
+            recv_disco_bad_parse: Counter::new("disco_recv_bad_parse"),
+
+            recv_disco_udp: Counter::new("disco_recv_udp"),
+            recv_disco_derp: Counter::new("disco_recv_derp"),
+            recv_disco_ping: Counter::new("disco_recv_ping"),
+            recv_disco_pong: Counter::new("disco_recv_pong"),
+            recv_disco_call_me_maybe: Counter::new("disco_recv_callmemaybe"),
+            recv_disco_call_me_maybe_bad_node: Counter::new("disco_recv_callmemaybe_bad_node"),
+            recv_disco_call_me_maybe_bad_disco: Counter::new("disco_recv_callmemaybe_bad_disco"),
+
+            // How many times our DERP home region DI has changed from non-zero to a different non-zero.
+            derp_home_change: Counter::new("derp_home_change"),
+        }
+    }
+}
+
+impl Metric for Metrics {
+    fn name() -> &'static str {
+        "Magicsock"
+    }
 }
