@@ -65,6 +65,7 @@ impl Cli {
                 rpc_port,
                 peer,
                 addr,
+                force,
                 ..
             } => {
                 let client = make_rpc_client(rpc_port).await?;
@@ -282,12 +283,12 @@ pub enum Commands {
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
-        /// True to download a single blob, false (default) to download a collection and its children.
-        #[clap(long, default_value_t = false)]
-        single: bool,
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
+        /// Force download even if the data is already present
+        #[clap(long, default_value_t = true)]
+        force: bool,
     },
     /// Fetch data from a provider using a ticket.
     ///
