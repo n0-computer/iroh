@@ -14,7 +14,6 @@
 
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -33,10 +32,10 @@ const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 /// Handle to the hairpin actor.
 ///
 /// Dropping it will abort the actor.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct Client {
     addr: Addr,
-    _drop_guard: Arc<CancelOnDrop>,
+    _drop_guard: CancelOnDrop,
 }
 
 impl Client {
@@ -52,7 +51,7 @@ impl Client {
         let task = tokio::spawn(async move { actor.run().await });
         Self {
             addr,
-            _drop_guard: Arc::new(CancelOnDrop::new("hairpin actor", task.abort_handle())),
+            _drop_guard: CancelOnDrop::new("hairpin actor", task.abort_handle()),
         }
     }
 

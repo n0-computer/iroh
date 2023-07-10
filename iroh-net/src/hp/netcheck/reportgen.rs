@@ -68,10 +68,10 @@ const ENOUGH_REGIONS: usize = 3;
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
 /// Dropping this will cancel the actor and stop the report generation.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct Client {
     // Addr is currently only used by child actors, so not yet exposed here.
-    _drop_guard: Arc<CancelOnDrop>,
+    _drop_guard: CancelOnDrop,
 }
 
 impl Client {
@@ -110,7 +110,7 @@ impl Client {
         };
         let task = tokio::spawn(async move { actor.run().await });
         Self {
-            _drop_guard: Arc::new(CancelOnDrop::new("reportgen actor", task.abort_handle())),
+            _drop_guard: CancelOnDrop::new("reportgen actor", task.abort_handle()),
         }
     }
 }
