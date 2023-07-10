@@ -181,9 +181,9 @@ struct Actor {
     report: Report,
     /// The hairping actor.
     hairpin_actor: hairpin::Client,
-    /// Which tasks the [`reportgen::Actor`] is still waiting on.
+    /// Which tasks the [`Actor`] is still waiting on.
     ///
-    /// This is essentially the summary of all the work the [`reportgen::Actor`] is doing.
+    /// This is essentially the summary of all the work the [`Actor`] is doing.
     outstanding_tasks: OutstandingTasks,
 }
 
@@ -391,7 +391,7 @@ impl Actor {
     /// Updates the report to note that node's latency and discovered address from STUN.
     ///
     /// Since this is only called for STUN probes, in other words [`Probe::Ipv4`] and
-    /// [`Prove::Ipv6`], *ipp` is always `Some`.
+    /// [`Probe::Ipv6`], *ipp` is always `Some`.
     fn add_stun_addr_latency(
         &mut self,
         derp_node: String,

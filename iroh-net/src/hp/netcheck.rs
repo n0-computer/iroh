@@ -355,7 +355,7 @@ pub(crate) enum Message {
         /// Socket to send IPv4 STUN probes from.
         ///
         /// Responses are never read from this socket, they must be passed in via the
-        /// [`ActorMessage::StunPacket`] message since the socket is also used to receive
+        /// [`Message::StunPacket`] message since the socket is also used to receive
         /// other packets from in the magicsocket (`Conn`).
         ///
         /// If not provided this will attempt to bind a suitable socket itself.
@@ -367,12 +367,12 @@ pub(crate) enum Message {
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
-    /// A report produced by the [`reportgen::Actor`].
+    /// A report produced by the [`reportgen`] actor.
     ReportReady {
         report: Box<Report>,
         derp_map: DerpMap,
     },
-    /// The [`reportgen::Actor`] failed to produce a report.
+    /// The [`reportgen`] actor failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
     StunPacket {
@@ -432,7 +432,7 @@ struct Actor {
     receiver: mpsc::Receiver<Message>,
     /// The sender side of the messages channel.
     ///
-    /// This allows creating new [`ActorAddr`]s from the actor.
+    /// This allows creating new [`Addr`]s from the actor.
     sender: mpsc::Sender<Message>,
     /// A collection of previously generated reports.
     ///
@@ -455,7 +455,7 @@ struct Actor {
     ///
     /// This is used to complete the STUN probe when receiving STUN packets.
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    /// The [`reportgen::Actor`] currently generating a report.
+    /// The [`reportgen`] actor currently generating a report.
     current_report_run: Option<ReportRun>,
 }
 
@@ -520,7 +520,7 @@ impl Actor {
         }
     }
 
-    /// Starts a check run as requested by the [`ActorMessage::RunCheck`] message.
+    /// Starts a check run as requested by the [`Message::RunCheck`] message.
     ///
     /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
     /// itself.  This is not ideal since really you want to send STUN probes from the
@@ -617,7 +617,7 @@ impl Actor {
         }
     }
 
-    /// Handles [`ActorMessage::StunPacket`].
+    /// Handles [`Message::StunPacket`].
     ///
     /// If there are currently no in-flight stun requests registerd this is dropped,
     /// otherwise forwarded to the probe.
@@ -670,7 +670,7 @@ impl Actor {
         }
     }
 
-    /// Handles [`ActorMessage::InFlightStun`].
+    /// Handles [`Message::InFlightStun`].
     ///
     /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
     /// [`Actor::handle_stun_packet`] can forward packets correctly.
@@ -816,7 +816,7 @@ impl Actor {
 /// State the netcheck actor needs for an in-progress report generation.
 #[derive(Debug)]
 struct ReportRun {
-    /// The handle of the [`reportgen::Actor`], cancels the actor on drop.
+    /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Drop guard to optionally kill workers started by netcheck to support reportgen.
     _drop_guard: tokio_util::sync::DropGuard,
