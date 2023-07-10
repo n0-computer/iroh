@@ -34,6 +34,7 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    /// Creates a new ticket.
     pub fn new(
         hash: Hash,
         peer: PeerId,
@@ -94,6 +95,7 @@ impl Ticket {
         (hash, peer, addrs, token)
     }
 
+    /// Convert this ticket into a [`get::Options`], adding the given keypair.
     pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> get::Options {
         get::Options {
             peer_id: self.peer,

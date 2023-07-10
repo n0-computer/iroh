@@ -29,10 +29,12 @@ impl fmt::Debug for HttpAdapter {
 }
 
 impl HttpAdapter {
+    /// Creates a new [`HttpAdapter`] from a URL
     pub async fn new(url: Url) -> io::Result<Self> {
         Self::with_opts(url, Default::default()).await
     }
 
+    /// Creates a new [`HttpAdapter`] from a URL and options
     pub async fn with_opts(url: Url, opts: http_adapter::Opts) -> io::Result<Self> {
         let client = reqwest::Client::new();
 
@@ -120,6 +122,7 @@ pub mod http_adapter {
     use super::*;
 
     newtype_future!(
+        /// The future returned by [`HttpAdapter::read_at`]
         ReadAtFuture,
         LocalBoxFuture<'a, io::Result<Bytes>>,
         io::Result<Bytes>
@@ -132,6 +135,7 @@ pub mod http_adapter {
     }
 
     newtype_future!(
+        /// The future returned by [`HttpAdapter::len`]
         LenFuture,
         LocalBoxFuture<'a, io::Result<u64>>,
         io::Result<u64>

@@ -1,7 +1,14 @@
+//! A newtype wrapper for a blake3 hash that has a Display and FromStr
+//! implementation that conforms to the [cid](https://github.com/multiformats/cid) spec.
 use std::{fmt, str::FromStr};
 
 use crate::util::Hash;
 
+/// A newtype wrapper for a blake3 hash that has a Display and FromStr
+/// implementation that conforms to the [cid](https://github.com/multiformats/cid) spec.
+///
+/// Note that this is not a full cid implementation, it only supports the blake3 hash
+/// function and the raw codec.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Blake3Cid(pub Hash);
@@ -14,14 +21,17 @@ const CID_PREFIX: [u8; 4] = [
 ];
 
 impl Blake3Cid {
+    /// Wrap a hash as a cid.
     pub fn new(hash: Hash) -> Self {
         Blake3Cid(hash)
     }
 
+    /// Get the hash from the cid.
     pub fn as_hash(&self) -> &Hash {
         &self.0
     }
 
+    /// Get the cid as bytes.
     pub fn as_bytes(&self) -> [u8; 36] {
         let hash = self.0.as_bytes();
         let mut res = [0u8; 36];
@@ -30,6 +40,13 @@ impl Blake3Cid {
         res
     }
 
+    /// Try to create a blake3 cid from cid bytes.
+    ///
+    /// This will only work if the prefix is the following:
+    /// - version 1
+    /// - raw codec
+    /// - blake3 hash function
+    /// - 32 byte hash size
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         anyhow::ensure!(
             bytes.len() == 36,
