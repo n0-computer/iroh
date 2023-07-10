@@ -52,9 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_map = match args.derp_url {
         None => default_derp_map(),
-        Some(url) => {
-            DerpMap::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
-        }
+        Some(url) => DerpMap::default_from_url(url),
     };
 
     let endpoint = MagicEndpoint::builder()
