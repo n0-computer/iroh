@@ -654,7 +654,7 @@ impl<D: BaoDb> RpcHandler<D> {
         let (data_id, outboard_id) = Self::create_file_pair(&db, &hash, true).await?;
         let of = db.vfs().open_write(&outboard_id).await?;
         let mut df = db.vfs().open_write(&data_id).await?;
-        let request = get_response_machine::AtInitial::new(
+        let request = get_response_machine::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
         );
@@ -684,7 +684,7 @@ impl<D: BaoDb> RpcHandler<D> {
 
     async fn get_collection(db: D, conn: quinn::Connection, root_hash: Hash) -> anyhow::Result<()> {
         let vfs = db.vfs();
-        let request = get_response_machine::AtInitial::new(
+        let request = get_response_machine::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
         );
