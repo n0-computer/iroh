@@ -78,6 +78,12 @@ impl DerpMap {
     }
 }
 
+impl From<Url> for DerpMap {
+    fn from(url: Url) -> Self {
+        Self::default_from_url(url)
+    }
+}
+
 impl fmt::Display for DerpMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
