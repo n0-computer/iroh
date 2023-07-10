@@ -18,6 +18,7 @@ use crate::util;
 use mapping::CurrentMapping;
 
 mod mapping;
+mod pcp;
 mod upnp;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
