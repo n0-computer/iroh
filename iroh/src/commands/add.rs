@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::rpc_protocol::ProvideRequest;
-use iroh_bytes::{cid::Blake3Cid, provider::ProvideProgress, Hash};
+use iroh_bytes::{provider::ProvideProgress, Hash};
 
 use crate::commands::make_rpc_client;
 
@@ -105,7 +105,7 @@ pub fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     }
     println!("Total: {}", HumanBytes(total_size));
     println!();
-    println!("Collection: {}", Blake3Cid::new(hash));
+    println!("Collection: {}", hash);
 }
 
 #[derive(Debug)]

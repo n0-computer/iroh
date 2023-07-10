@@ -7,7 +7,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::rpc_protocol::*;
-use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
+use iroh_bytes::{protocol::RequestToken, provider::Ticket, runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
@@ -77,7 +77,7 @@ impl Cli {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
-                        hash: *hash.as_hash(),
+                        hash,
                         opts: iroh_bytes::get::Options {
                             addrs,
                             peer_id: peer,
@@ -219,7 +219,7 @@ pub enum Commands {
     Get {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
-        hash: Option<Blake3Cid>,
+        hash: Option<Hash>,
         /// PeerId of the provider
         #[clap(
             long,

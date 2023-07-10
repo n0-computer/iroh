@@ -1625,6 +1625,7 @@ dependencies = [
  "clap",
  "config",
  "console",
+ "data-encoding",
  "derive_more",
  "dirs-next",
  "duct",
