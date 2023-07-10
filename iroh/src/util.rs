@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use bao_tree::{outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
-use iroh_bytes::{blobs::Collection, protocol::RangeSpecSeq, util::pathbuf_from_name, Hash};
+use iroh_bytes::{blobs::Collection, protocol::RangeSpecSeq, util::io::pathbuf_from_name, Hash};
 use range_collections::RangeSet2;
 
 /// Get missing range for a single file, given a temp and target directory

@@ -15,8 +15,8 @@ use iroh_bytes::{
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
     util::{
-        io::{ConcatenateSliceWriter, ProgressSliceWriter},
-        pathbuf_from_name,
+        io::{pathbuf_from_name, ConcatenateSliceWriter},
+        progress::ProgressSliceWriter,
     },
     Hash,
 };

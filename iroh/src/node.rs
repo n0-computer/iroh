@@ -27,7 +27,7 @@ use iroh_bytes::{
         ValidateProgress,
     },
     runtime,
-    util::{Hash, Progress},
+    util::{progress::Progress, Hash},
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
