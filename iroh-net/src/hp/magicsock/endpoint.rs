@@ -878,7 +878,7 @@ pub struct AddrLatency {
 ///
 /// - The peers's public key, aka `PeerId` or "node_key".  This is static and never changes,
 ///   however a peer could be added when this is not yet known.  To set this after creation
-///   use [`PeerMap::store_node_key_mapping`].
+///   use [`PeerMap::set_node_key_for_ip_port`].
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the peer moves around on the internet
@@ -1013,7 +1013,7 @@ struct EndpointState {
     /// Contains the TxID for the last incoming ping. This is
     /// used to de-dup incoming pings that we may see on both the raw disco
     /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
-    /// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
+    /// disco handling due to <https://github.com/tailscale/tailscale/issues/7078>.
     last_got_ping_tx_id: Option<stun::TransactionId>,
 
     /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.

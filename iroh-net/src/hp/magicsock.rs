@@ -13,5 +13,5 @@ pub use self::conn::{Callbacks, Conn, Options};
 pub use self::endpoint::EndpointInfo;
 pub use self::timer::Timer;
 
-#[cfg(test)]
-pub(crate) use conn::tests as conn_tests;
+// #[cfg(test)]
+// pub(crate) use conn::tests as conn_tests;

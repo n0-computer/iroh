@@ -1,3 +1,5 @@
+//! An http specific Derp Client and Derp Server. Allows for using tls or non tls connection
+//! upgrades.
 mod client;
 mod mesh_clients;
 mod server;

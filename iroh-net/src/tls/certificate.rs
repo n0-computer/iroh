@@ -97,17 +97,21 @@ pub struct P2pExtension {
     signature: super::Signature,
 }
 
+/// An error that occurs during certificate generation.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub struct GenError(#[from] rcgen::RcgenError);
 
+/// An error that occurs during certificate parsing.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub struct ParseError(#[from] pub(crate) webpki::Error);
 
+/// An error that occurs during signature verification.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub struct VerificationError(#[from] pub(crate) webpki::Error);
+
 /// Internal function that only parses but does not verify the certificate.
 ///
 /// Useful for testing but unsuitable for production.

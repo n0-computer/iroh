@@ -9,12 +9,12 @@ use crate::hp::{
 
 use super::Client;
 
-/// Spawns, connects, and manages special `derp::http::Clients`.
+/// Spawns, connects, and manages special [`crate::hp::derp::http::Client`].
 ///
 /// These clients handled incoming network update notifications from remote
-/// `derp::http::Server`s. These servers are used as `PacketForwarder`s for
+/// [`super::Server`]s. These servers are used as [`crate::hp::derp::PacketForwarder`]s for
 /// peers to which we are not directly connected.
-/// A `mesh_key` is used to ensure the remote server belongs to the same mesh network.
+/// A [`crate::hp::derp::MeshKey`] is used to ensure the remote server belongs to the same mesh network.
 #[derive(Debug)]
 pub(crate) struct MeshClients {
     tasks: JoinSet<()>,
@@ -42,7 +42,7 @@ impl MeshClients {
         }
     }
 
-    pub(crate) async fn mesh(&mut self) {
+    pub(crate) async fn mesh(&mut self) -> anyhow::Result<Vec<tokio::sync::oneshot::Receiver<()>>> {
         let addrs = match &self.mesh_addrs {
             MeshAddrs::Addrs(urls) => urls.to_owned(),
             MeshAddrs::DerpMap(derp_map) => {
@@ -58,6 +58,7 @@ impl MeshClients {
                 urls
             }
         };
+        let mut meshed_once_recvs = Vec::new();
         for addr in addrs {
             let client = ClientBuilder::new()
                 .mesh_key(Some(self.mesh_key))
@@ -66,12 +67,18 @@ impl MeshClients {
                 .expect("will only fail if no `server_url` is present");
 
             let packet_forwarder_handler = self.packet_fwd.clone();
+            let (sender, recv) = tokio::sync::oneshot::channel();
             self.tasks.spawn(async move {
-                if let Err(e) = client.run_mesh_client(packet_forwarder_handler).await {
+                if let Err(e) = client
+                    .run_mesh_client(packet_forwarder_handler, Some(sender))
+                    .await
+                {
                     tracing::warn!("{e:?}");
                 }
             });
+            meshed_once_recvs.push(recv);
         }
+        Ok(meshed_once_recvs)
     }
 
     pub(crate) async fn shutdown(mut self) {
@@ -80,19 +87,19 @@ impl MeshClients {
     }
 }
 
-#[derive(Debug, Clone)]
 /// The different ways to express the mesh network you want to join.
+#[derive(Debug, Clone)]
 pub enum MeshAddrs {
-    /// Supply a `DerpMap` of all the derp servers you want to mesh with.
+    /// Supply a [`DerpMap`] of all the derp servers you want to mesh with.
     DerpMap(DerpMap),
-    /// Supply a list of `Url`s of all the derp server you want to mesh with.
+    /// Supply a list of [`Url`]s of all the derp server you want to mesh with.
     Addrs(Vec<Url>),
 }
 
 #[cfg(test)]
 mod tests {
     use crate::hp::derp::{http::ServerBuilder, ReceivedMessage};
-    use anyhow::{bail, Result};
+    use anyhow::Result;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
@@ -105,9 +112,17 @@ mod tests {
             .try_init()
             .ok();
 
+        for i in 0..10 {
+            println!("TEST_MESH_NETWORK: round {i}");
+            test_mesh_network_once().await?;
+        }
+        Ok(())
+    }
+
+    async fn test_mesh_network_once() -> Result<()> {
         let mesh_key: MeshKey = [1; 32];
         let a_key = SecretKey::generate();
-        tracing::info!("derp server a: {:?}", a_key.public_key());
+        println!("derp server a: {:?}", a_key.public_key());
         let mut derp_server_a = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(a_key))
             .mesh_key(Some(mesh_key))
@@ -115,7 +130,7 @@ mod tests {
             .await?;
 
         let b_key = SecretKey::generate();
-        tracing::info!("derp server b: {:?}", b_key.public_key());
+        println!("derp server b: {:?}", b_key.public_key());
         let mut derp_server_b = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(b_key))
             .mesh_key(Some(mesh_key))
@@ -129,67 +144,82 @@ mod tests {
             .parse()
             .unwrap();
 
-        derp_server_a
+        let server_a_meshed = derp_server_a
             .re_mesh(MeshAddrs::Addrs(vec![b_url.clone()]))
             .await?;
-        derp_server_b
+        let server_b_meshed = derp_server_b
             .re_mesh(MeshAddrs::Addrs(vec![a_url.clone()]))
             .await?;
 
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            futures::future::try_join_all(server_a_meshed),
+        )
+        .await??;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            futures::future::try_join_all(server_b_meshed),
+        )
+        .await??;
+
         let alice_key = SecretKey::generate();
-        tracing::info!("client alice: {:?}", alice_key.public_key());
+        println!("client alice: {:?}", alice_key.public_key());
         let alice = ClientBuilder::new()
             .server_url(a_url)
             .build(alice_key.clone())?;
         let _ = alice.connect().await?;
 
         let bob_key = SecretKey::generate();
-        tracing::info!("client bob: {:?}", bob_key.public_key());
+        println!("client bob: {:?}", bob_key.public_key());
         let bob = ClientBuilder::new()
             .server_url(b_url)
             .build(bob_key.clone())?;
         let _ = bob.connect().await?;
 
-        // needs time for the mesh network to fully mesh
-        // packets may get dropped the first go-around
-        // this will loop until we get the first keepalive, message, which means
-        // there is really something wrong if we can't gt
-        // send bob a message from alice
         let msg = "howdy, bob!";
-        tracing::info!("send message from alice to bob");
+        println!("send message from alice to bob");
         alice.send(bob_key.public_key(), msg.into()).await?;
 
-        loop {
-            tokio::select! {
-                recv = bob.recv_detail() => {
-                    let (recv, _) = recv?;
-                    if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-                        assert_eq!(alice_key.public_key(), source);
-                        assert_eq!(msg, data);
-                        break;
-                    } else {
-                        bail!("unexpected ReceivedMessage {recv:?}");
-                    }
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    tracing::info!("attempting to send another message from alice to bob");
-                    alice.send(bob_key.public_key(), msg.into()).await?;
+        // ensure we get the message, but allow other chatter between the
+        // client and the server
+        let b = bob.clone();
+        let alice_pub_key = alice_key.public_key();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            loop {
+                let (recv, _) = b.recv_detail().await?;
+                if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+                    assert_eq!(alice_pub_key, source);
+                    assert_eq!(msg, data);
+                    println!("bob received packet from alice");
+                    return Ok::<(), anyhow::Error>(());
+                } else {
+                    eprintln!("bob received unexpected message {recv:?}");
                 }
             }
-        }
+        })
+        .await??;
 
         // send alice a message from bob
         let msg = "why hello, alice!";
-        tracing::info!("send message from bob to alice");
+        println!("send message from bob to alice");
         bob.send(alice_key.public_key(), msg.into()).await?;
 
-        let (recv, _) = alice.recv_detail().await?;
-        if let ReceivedMessage::ReceivedPacket { source, data } = recv {
-            assert_eq!(bob_key.public_key(), source);
-            assert_eq!(msg, data);
-        } else {
-            bail!("unexpected ReceivedMessage {recv:?}");
-        }
+        // ensure alice gets the message, but allow other chatter between the
+        // client and the server
+        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            loop {
+                let (recv, _) = alice.recv_detail().await?;
+                if let ReceivedMessage::ReceivedPacket { source, data } = recv {
+                    assert_eq!(bob_key.public_key(), source);
+                    assert_eq!(msg, data);
+                    println!("alice received packet from alice");
+                    return Ok::<(), anyhow::Error>(());
+                } else {
+                    eprintln!("alice received unexpected message {recv:?}");
+                }
+            }
+        })
+        .await??;
 
         // shutdown the servers
         derp_server_a.shutdown().await;

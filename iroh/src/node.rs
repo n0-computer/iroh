@@ -92,7 +92,7 @@ where
     rt: Option<runtime::Handle>,
 }
 
-const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::P2P_ALPN];
+const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::protocol::ALPN];
 
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
@@ -162,6 +162,7 @@ where
         }
     }
 
+    /// Configures a custom authorization handler.
     pub fn custom_auth_handler<A2: RequestAuthorizationHandler<D>>(
         self,
         auth_handler: A2,
@@ -358,7 +359,7 @@ where
                             continue;
                         }
                     };
-                    if alpn.as_bytes() == iroh_bytes::P2P_ALPN.as_ref() {
+                    if alpn.as_bytes() == iroh_bytes::protocol::ALPN.as_ref() {
                         let db = handler.inner.db.clone();
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
@@ -439,6 +440,7 @@ struct NodeInner<D> {
 /// Events emitted by the [`Node`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Events from the iroh-bytes transfer protocol.
     ByteProvide(iroh_bytes::provider::Event),
 }
 
@@ -760,7 +762,7 @@ impl<D: BaoDb> RpcHandler<D> {
         let conn = self
             .inner
             .endpoint
-            .connect(msg.peer, &iroh_bytes::P2P_ALPN, &msg.addrs)
+            .connect(msg.peer, &iroh_bytes::protocol::ALPN, &msg.addrs)
             .await?;
         let blobs_iter = msg
             .blobs
@@ -934,6 +936,10 @@ pub struct StaticTokenAuthHandler {
 }
 
 impl StaticTokenAuthHandler {
+    /// Creates a new handler with provided token.
+    ///
+    /// The single static token provided can be used to authorise all the requests.  If it
+    /// is `None` no authorisation is performed and all requests are allowed.
     pub fn new(token: Option<RequestToken>) -> Self {
         Self { token }
     }
