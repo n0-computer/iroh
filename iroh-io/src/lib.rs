@@ -72,6 +72,7 @@ pub trait AsyncSliceReader {
     fn len(&mut self) -> Self::LenFuture<'_>;
 }
 
+/// Extension trait for [AsyncSliceReader].
 pub trait AsyncSliceReaderExt: AsyncSliceReader {
     /// Read the entire resource into a [bytes::Bytes] buffer, if possible.
     fn read_to_end(&mut self) -> Self::ReadAtFuture<'_> {

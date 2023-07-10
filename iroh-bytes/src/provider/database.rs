@@ -15,7 +15,7 @@ use futures::{
     future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, FileAdapter};
+use iroh_io::{AsyncSliceReader, FileAdapter};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt, io,
