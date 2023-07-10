@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use iroh_metrics::{inc, netcheck::NetcheckMetrics};
+use iroh_metrics::inc;
+use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};

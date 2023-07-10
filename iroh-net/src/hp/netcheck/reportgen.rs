@@ -27,7 +27,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use iroh_metrics::inc;
-use iroh_metrics::netcheck::NetcheckMetrics;
+use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
@@ -757,7 +757,7 @@ async fn run_probe(
         Probe::Ipv4 { .. } => {
             if let Some(ref sock) = stun_sock4 {
                 let n = sock.send_to(&req, derp_addr).await;
-                inc!(NetcheckMetrics::StunPacketsSentIpv4);
+                inc!(NetcheckMetrics, stun_packets_sent_ipv4);
                 debug!(%derp_addr, send_res=?n, %txid, "sending probe Ipv4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
@@ -774,7 +774,7 @@ async fn run_probe(
         Probe::Ipv6 { .. } => {
             if let Some(ref pc6) = stun_sock6 {
                 let n = pc6.send_to(&req, derp_addr).await;
-                inc!(NetcheckMetrics::StunPacketsSentIpv6);
+                inc!(NetcheckMetrics, stun_packets_sent_ipv6);
                 debug!(%derp_addr, snd_res=?n, %txid, "sending probe Ipv6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
