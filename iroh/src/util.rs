@@ -1,4 +1,4 @@
-//! Path utilities for iroh
+//! utilities for iroh
 use std::path::{Path, PathBuf};
 
 use bao_tree::{outboard::PreOrderMemOutboard, ByteNum, ChunkNum};

@@ -25,6 +25,7 @@ iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
+range-collections = { version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
@@ -41,14 +42,13 @@ indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
 num_cpus = { version = "1.15.0", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
-range-collections = { version = "0.4.0", optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "range-collections", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
+cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
 test = []
 
