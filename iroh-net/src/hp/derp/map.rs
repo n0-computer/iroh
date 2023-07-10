@@ -26,13 +26,6 @@ impl DerpMap {
         ids
     }
 
-    /// Creates a new [`DerpMap`] with a Derp server configured from a single URL.
-    ///
-    /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    pub fn default_from_url(url: Url) -> Self {
-        Self::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
-    }
-
     /// Creates a new [`DerpMap`] with a single Derp server configured.
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
@@ -79,8 +72,11 @@ impl DerpMap {
 }
 
 impl From<Url> for DerpMap {
+    /// Creates a new [`DerpMap`] with a Derp server configured from a single URL.
+    ///
+    /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     fn from(url: Url) -> Self {
-        Self::default_from_url(url)
+        Self::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
     }
 }
 

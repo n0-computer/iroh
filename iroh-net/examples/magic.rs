@@ -4,7 +4,6 @@ use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::default_derp_map,
-    hp::derp::DerpMap,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -52,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_map = match args.derp_url {
         None => default_derp_map(),
-        Some(url) => DerpMap::default_from_url(url),
+        Some(url) => url.into(),
     };
 
     let endpoint = MagicEndpoint::builder()
