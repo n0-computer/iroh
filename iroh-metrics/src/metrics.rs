@@ -6,11 +6,8 @@
 //!
 //! To enable metrics collection, call `init_metrics()` before starting the service.
 //!
-//! - To record a **gauge** ( or a **counter**), use the [`crate::core::MRecorder::record`] macro with a value.
-//!   Don't use gauges though.
-//! - To increment a **counter** by 1, use the [`crate::core::MRecorder::inc`] macro.
-//! - For **histograms** (or **summaries**, but don't use those either) use the [`crate::core::MObserver::observe`]
-//!   macro with a value.
+//! - To increment a **counter**, use the [`crate::inc`] macro with a value.
+//! - To increment a **counter** by 1, use the [`crate::inc_by`] macro.
 //!
 //! To expose the metrics, start the metrics service with `start_metrics_server()`.
 //!
