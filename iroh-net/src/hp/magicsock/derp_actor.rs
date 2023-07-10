@@ -360,15 +360,21 @@ impl DerpActor {
             reader: ReaderState::new(region_id, cancel, dc.clone()),
         };
 
-        // Make sure we can establish a connection.
-        if let Err(err) = dc.connect().await {
-            // TODO: what to do?
-            warn!("failed to connect to derp server: {:?}", err);
-        }
-
+        // Insert, to make sure we do not attempt to double connect.
         self.active_derp.insert(region_id, ad);
 
+        // Kickoff a connection establishment in the background
+        let dc_spawn = dc.clone();
+        tokio::task::spawn(async move {
+            // Make sure we can establish a connection.
+            if let Err(err) = dc_spawn.connect().await {
+                // TODO: what to do?
+                warn!("failed to connect to derp server: {:?}", err);
+            }
+        });
+
         inc!(MagicsockMetrics, num_derp_conns_added);
+
         self.log_active_derp();
 
         if let Some(ref f) = self.conn.on_derp_active {
