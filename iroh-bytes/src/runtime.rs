@@ -2,6 +2,7 @@
 //! tokio runtime and a set of single threaded runtimes.
 use std::sync::Arc;
 
+/// A handle to the iroh runtime
 #[derive(Debug, Clone)]
 pub struct Handle {
     inner: Arc<HandleInner>,
@@ -27,10 +28,12 @@ impl Handle {
         ))
     }
 
+    /// Get a handle to the main tokio runtime
     pub fn main(&self) -> &tokio::runtime::Handle {
         &self.inner.rt
     }
 
+    /// Get a handle to the thread pool for single threaded executors
     pub fn local_pool(&self) -> &tokio_util::task::LocalPoolHandle {
         &self.inner.tpc
     }

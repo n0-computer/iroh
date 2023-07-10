@@ -3,6 +3,7 @@
 //! This crate is a collection of tools to establish connectivity between peers.  At
 //! the high level [`MagicEndpoint`] is used to establish a QUIC connection with
 //! authenticated peers, relaying and holepunching support.
+
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 

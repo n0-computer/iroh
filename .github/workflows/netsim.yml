@@ -51,11 +51,27 @@ jobs:
       run: |
         cargo build --profile optimized-release --workspace --all-features
 
+    - name: Detect chuck branch
+      if: github.event_name == 'issue_comment'
+      id: detect_chuck_branch
+      shell: bash
+      run: |
+        a='${{ github.event.comment.body }}'
+        if [[ $a == '/netsim branch'* ]];
+        then
+          a=$(echo "$a" | tr '\n' ' ' | tr -s " " | cut -d ' ' -f3)
+          branch="$a"
+          echo "CHUCK_BRANCH=$branch" >> ${GITHUB_ENV}
+        else
+          echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
+        fi
+
     - name: Fetch and build chuck
+      shell: bash  
       run: |
         cd ..
         rm -rf chuck
-        git clone https://github.com/n0-computer/chuck.git
+        git clone --single-branch --branch ${{ env.CHUCK_BRANCH }} https://github.com/n0-computer/chuck.git
         cd chuck
         cargo build --release
     

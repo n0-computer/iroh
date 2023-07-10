@@ -34,6 +34,7 @@ pub struct RequestToken {
 }
 
 impl RequestToken {
+    /// Creates a new request token from bytes.
     pub fn new(bytes: impl Into<Bytes>) -> Result<Self> {
         let bytes: Bytes = bytes.into();
         ensure!(
@@ -107,7 +108,9 @@ impl Request {
 /// Custom request handlers will receive this struct destructured into
 /// handler arguments
 pub struct CustomGetRequest {
+    /// The optional request token
     pub token: Option<RequestToken>,
+    /// The opaque request data
     pub data: Bytes,
 }
 
@@ -157,10 +160,12 @@ impl GetRequest {
         }
     }
 
+    /// Set the request token
     pub fn with_token(self, token: Option<RequestToken>) -> Self {
         Self { token, ..self }
     }
 
+    /// Get the request token
     pub fn token(&self) -> Option<&RequestToken> {
         self.token.as_ref()
     }
@@ -252,11 +257,12 @@ pub enum Closed {
 }
 
 impl Closed {
+    /// The close reason as bytes. This is a valid utf8 string describing the reason.
     pub fn reason(&self) -> &'static [u8] {
         match self {
-            Closed::StreamDropped => &b"stream dropped"[..],
-            Closed::ProviderTerminating => &b"provider terminating"[..],
-            Closed::RequestReceived => &b"request received"[..],
+            Closed::StreamDropped => b"stream dropped",
+            Closed::ProviderTerminating => b"provider terminating",
+            Closed::RequestReceived => b"request received",
         }
     }
 }

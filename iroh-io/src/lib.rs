@@ -31,6 +31,9 @@
 //! In general it is assumed that readers are cheap, so in case of an error you can
 //! always get a new reader. Also, if you need concurrent access to the same resource,
 //! create multiple readers.
+
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+
 use bytes::Bytes;
 use futures::{future::Either, Future};
 use std::io;
@@ -69,6 +72,7 @@ pub trait AsyncSliceReader {
     fn len(&mut self) -> Self::LenFuture<'_>;
 }
 
+/// Extension trait for [AsyncSliceReader].
 pub trait AsyncSliceReaderExt: AsyncSliceReader {
     /// Read the entire resource into a [bytes::Bytes] buffer, if possible.
     fn read_to_end(&mut self) -> Self::ReadAtFuture<'_> {

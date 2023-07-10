@@ -29,6 +29,7 @@ impl Hash {
         Hash(val)
     }
 
+    /// Bytes of the hash.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
@@ -61,6 +62,7 @@ impl Hash {
         Ok(Self::from(hash))
     }
 
+    /// Convert the hash to a hex string.
     pub fn to_hex(&self) -> String {
         self.0.to_hex().to_string()
     }
@@ -322,9 +324,12 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
     }
 }
 
+/// Update from a [`ProgressReader`].
 #[derive(Debug, Clone, Copy)]
-pub enum ProgressReaderUpdate {
+pub(crate) enum ProgressReaderUpdate {
+    /// A progress event containing the current offset.
     Progress(u64),
+    /// The reader has been dropped.
     Done,
 }
 
@@ -341,26 +346,31 @@ impl<T> Clone for Progress<T> {
 }
 
 impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
+    /// Create a new progress sender.
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
 
+    /// Create a no-op progress sender.
     pub fn none() -> Self {
         Self(None)
     }
 
+    /// Try to send a message.
     pub fn try_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.try_send(msg).ok();
         }
     }
 
+    /// Block until the message is sent.
     pub fn blocking_send(&self, msg: T) {
         if let Some(progress) = &self.0 {
             progress.blocking_send(msg).ok();
         }
     }
 
+    /// Send a message
     pub async fn send(&self, msg: T) -> anyhow::Result<()> {
         if let Some(progress) = &self.0 {
             progress.send(msg).await?;
@@ -385,6 +395,7 @@ pub struct NonSend {
 }
 
 impl NonSend {
+    /// Create a new non-sendable marker.
     #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {

@@ -7,7 +7,7 @@ use hyper::{
 
 use tracing::info;
 
-use super::core::CORE;
+use crate::core::Core;
 
 /// Start a HTTP server to report metrics.
 pub async fn run(metrics_addr: SocketAddr) -> Result<(), Error> {
@@ -27,15 +27,14 @@ fn make_handler(
     // This closure accepts a request and responds with the OpenMetrics encoding of our metrics.
     move |_req: Request<Body>| {
         Box::pin(async move {
-            CORE.encode()
+            let core = Core::get()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "metrics disabled"))?;
+            core.encode()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
                 .map(|r| {
                     let body = Body::from(r);
                     Response::builder()
-                        .header(
-                            hyper::header::CONTENT_TYPE,
-                            "application/openmetrics-text; version=1.0.0; charset=utf-8",
-                        )
+                        .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
                         .body(body)
                         .expect("Failed to build response")
                 })
