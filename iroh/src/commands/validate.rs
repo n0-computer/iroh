@@ -5,7 +5,7 @@ use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::rpc_protocol::ValidateRequest;
-use iroh_bytes::{cid::Blake3Cid, provider::ValidateProgress, Hash};
+use iroh_bytes::{provider::ValidateProgress, Hash};
 
 use super::make_rpc_client;
 
@@ -91,7 +91,7 @@ impl ValidateProgressState {
         let msg = if let Some(path) = path {
             path.display().to_string()
         } else {
-            format!("outboard {}", Blake3Cid(hash))
+            format!("outboard {}", hash)
         };
         pb.set_message(msg);
         pb.set_position(0);
