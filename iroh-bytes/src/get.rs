@@ -15,6 +15,7 @@ use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use crate::util::Hash;
 use anyhow::{Context, Result};
 use bao_tree::io::error::DecodeError;
 use bao_tree::io::DecodeResponseItem;
