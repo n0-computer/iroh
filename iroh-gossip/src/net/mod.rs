@@ -397,7 +397,7 @@ impl GossipActor {
         let me = *self.state.endpoint();
         debug!(me = ?me, "handle in_event  {event:?}");
         if let InEvent::PeerDisconnected(peer) = &event {
-            self.conn_send_tx.remove(&peer);
+            self.conn_send_tx.remove(peer);
         }
         let out = self.state.handle(event, now);
         for event in out {
