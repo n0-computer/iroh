@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
-    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
-    hp::derp::{DerpMap, UseIpv4, UseIpv6},
+    defaults::default_derp_map,
+    hp::derp::DerpMap,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
