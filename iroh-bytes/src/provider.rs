@@ -112,18 +112,35 @@ pub enum Event {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ValidateProgress {
     /// started validating
-    Starting { total: u64 },
+    Starting {
+        /// The total number of entries to validate
+        total: u64,
+    },
     /// We started validating an entry
     Entry {
+        /// a new unique id for this entry
         id: u64,
+        /// the hash of the entry
         hash: Hash,
+        /// the path of the entry on the local file system
         path: Option<PathBuf>,
+        /// the size of the entry
         size: u64,
     },
     /// We got progress ingesting item `id`
-    Progress { id: u64, offset: u64 },
+    Progress {
+        /// the unique id of the entry
+        id: u64,
+        /// the offset of the progress, in bytes
+        offset: u64,
+    },
     /// We are done with `id`
-    Done { id: u64, error: Option<String> },
+    Done {
+        /// the unique id of the entry
+        id: u64,
+        /// an error if we failed to validate the entry
+        error: Option<String>,
+    },
     /// We are done with the whole operation
     AllDone,
     /// We got an error and need to abort
@@ -134,14 +151,36 @@ pub enum ValidateProgress {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ProvideProgress {
     /// An item was found with name `name`, from now on referred to via `id`
-    Found { name: String, id: u64, size: u64 },
+    Found {
+        /// a new unique id for this entry
+        id: u64,
+        /// the name of the entry
+        name: String,
+        /// the size of the entry in bytes
+        size: u64,
+    },
     /// We got progress ingesting item `id`
-    Progress { id: u64, offset: u64 },
+    Progress {
+        /// the unique id of the entry
+        id: u64,
+        /// the offset of the progress, in bytes
+        offset: u64,
+    },
     /// We are done with `id`, and the hash is `hash`
-    Done { id: u64, hash: Hash },
+    Done {
+        /// the unique id of the entry
+        id: u64,
+        /// the hash of the entry
+        hash: Hash,
+    },
     /// We are done with the whole operation
-    AllDone { hash: Hash },
-    /// We got an error and need to abort
+    AllDone {
+        /// the hash of the created collection
+        hash: Hash,
+    },
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
     Abort(RpcError),
 }
 
@@ -236,10 +275,12 @@ pub enum DbEntry {
 }
 
 impl DbEntry {
+    /// True if this is an entry that is stored externally.
     pub fn is_external(&self) -> bool {
         matches!(self, DbEntry::External { .. })
     }
 
+    /// Path to the external data, or `None` if this is an internal entry.
     pub fn blob_path(&self) -> Option<&Path> {
         match self {
             DbEntry::External { path, .. } => Some(path),
@@ -247,6 +288,7 @@ impl DbEntry {
         }
     }
 
+    /// Get the outboard data for this entry, as a `Bytes`.
     pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
         futures::future::ok(match self {
             DbEntry::External { outboard, .. } => outboard.clone(),
@@ -413,10 +455,15 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender>(
     Ok(SentStatus::Sent)
 }
 
+/// Trait for sending events.
 pub trait EventSender: Clone + Send + 'static {
+    /// Send an event.
+    ///
+    /// Returns `None` if the event was sent successfully, or `Some(event)` if the event could not be sent.
     fn send(&self, event: Event) -> Option<Event>;
 }
 
+/// Handle a single connection.
 pub async fn handle_connection<
     D: BaoMap,
     C: CustomGetHandler<D>,
@@ -536,6 +583,7 @@ async fn handle_custom_get<E: EventSender, D: BaoMap>(
     handle_get(db, request, writer).await
 }
 
+/// Handle a single standard get request.
 pub async fn handle_get<D: BaoMap, E: EventSender>(
     db: D,
     request: GetRequest,
@@ -620,12 +668,16 @@ impl<E: EventSender> ResponseWriter<E> {
     }
 }
 
+/// Status  of a send operation
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SentStatus {
+    /// The requested data was sent
     Sent,
+    /// The requested data was not found
     NotFound,
 }
 
+/// Send a
 pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
     db: &D,
     name: Hash,
@@ -656,6 +708,7 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
+/// Data for a blob
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobData {
     /// Outboard data from bao.

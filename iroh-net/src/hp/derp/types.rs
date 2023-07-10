@@ -69,8 +69,6 @@ pub(crate) struct ClientInfo {
     /// Optionally specifies a pre-shared key used by trusted clients.
     /// It's required to subscribe to the connection list and forward
     /// packets. It's empty for regular users.
-    /// TODO: this is a string in the go-impl, using an Option<array> here
-    /// to satisfy postcard's `MaxSize` trait
     pub(crate) mesh_key: Option<MeshKey>,
     /// Whether the client declares it's able to ack pings
     pub(crate) can_ack_pings: bool,
@@ -101,7 +99,13 @@ impl ServerInfo {
     }
 }
 
+/// A `PacketForwarder` can forward a packet to the `dstkey` from the `srckey`.
+///
+/// The main implementation of a `PacketForwarder` is the private struct `ClientConnManager`,
+/// which is the [`super::server::Server`] side representation of a [`super::client::Client`]
+/// connection.
 pub trait PacketForwarder: Send + Sync + 'static {
+    /// Forward a packet from the `srckey` to the `dstkey`
     fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: Bytes);
 }
 

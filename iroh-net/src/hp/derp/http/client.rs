@@ -36,46 +36,67 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
 
+/// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
+    /// The client is closed
     #[error("client is closed")]
     Closed,
+    /// There no underlying derp [`super::client::Client`] client exists for this http derp [`Client`]
     #[error("no derp client")]
     NoClient,
+    /// There was an error sending a packet
     #[error("error sending a packet")]
     Send,
+    /// There was an error receiving a packet
     #[error("error receiving a packet")]
     Receive,
+    /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
+    /// No derp nodes are available for the given region
     #[error("DERP region is not available")]
     DerpRegionNotAvail,
+    /// No derp nodes are availabe with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
+    /// The derp node specified only allows STUN requests
     #[error("no derp nodes found for {0}, only are stun_only nodes")]
     StunOnlyNodesFound(String),
+    /// There was an error dialing
     #[error("dial error")]
     DialIO(#[from] std::io::Error),
+    /// There was an error from the task doing the dialing
     #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
+    /// Both IPv4 and IPv6 are disabled for this derp node
     #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
     IPDisabled,
+    /// No local addresses exist
     #[error("no local addr: {0}")]
     NoLocalAddr(String),
+    /// There was http [`hyper::Error`]
     #[error("http connection error")]
     Hyper(#[from] hyper::Error),
+    /// There was an unexpected status code
     #[error("unexpected status code: expected {0}, got {1}")]
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
+    /// The connection failed to upgrade
     #[error("failed to upgrade connection: {0}")]
     Upgrade(String),
+    /// The derp [`super::client::Client`] failed to build
     #[error("failed to build derp client: {0}")]
     Build(String),
+    /// The ping request timed out
     #[error("ping timeout")]
     PingTimeout,
+    /// This [`Client`] cannot acknowledge pings
     #[error("cannot acknowledge pings")]
     CannotAckPings,
+    /// The given [`Url`] is invalid
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
 }
@@ -161,6 +182,7 @@ impl std::fmt::Debug for ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Create a new [`ClientBuilder`]
     pub fn new() -> Self {
         Self::default()
     }
@@ -195,26 +217,34 @@ impl ClientBuilder {
         self
     }
 
+    /// Enable this [`Client`] to acknowledge pings.
     pub fn can_ack_pings(mut self, can: bool) -> Self {
         self.can_ack_pings = can;
         self
     }
 
+    /// Indicate this client is the preferred way to communicate
+    /// to the peer with this client's [`key::node::PublicKey`]
     pub fn is_preferred(mut self, is: bool) -> Self {
         self.is_preferred = is;
         self
     }
 
+    /// Indicates this client is a prober
     pub fn is_prober(mut self, is: bool) -> Self {
         self.is_prober = is;
         self
     }
 
+    /// Build this [`Client`] with a [`MeshKey`], and allow it to mesh
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
         self
     }
 
+    /// Build the [`Client`]
+    ///
+    /// Will error if there is no region or no url set.
     pub fn build(self, key: key::node::SecretKey) -> anyhow::Result<Client> {
         anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
         Ok(Client {
@@ -236,6 +266,7 @@ impl ClientBuilder {
         })
     }
 
+    /// The expected [`key::node::PublicKey`] of the [`super::server::Server`] we are connecting to.
     pub fn server_public_key(mut self, server_public_key: key::node::PublicKey) -> Self {
         self.server_public_key = Some(server_public_key);
         self
@@ -973,8 +1004,8 @@ const PEERS_PRESENT_QUEUE: usize = 100;
 
 use tokio::sync::mpsc::{channel, Sender};
 
-#[derive(Debug)]
 /// A struct to track and log the peers available on the remote server
+#[derive(Debug)]
 struct PeersPresent {
     /// Periodic logging task
     actor_task: JoinHandle<()>,
@@ -982,8 +1013,8 @@ struct PeersPresent {
     actor_channel: Sender<PeersPresentMsg>,
 }
 
-#[derive(Debug)]
 /// Message for the PeerPresent actor loop
+#[derive(Debug)]
 enum PeersPresentMsg {
     /// Add a peer
     PeerPresent(key::node::PublicKey),

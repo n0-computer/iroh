@@ -27,7 +27,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
-use iroh_metrics::core::CORE;
+use iroh_metrics::{core::Core, magicsock};
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum PrivateKey {
@@ -276,15 +276,15 @@ impl Gui {
     }
 
     fn update_counters(target: &ProgressBar) {
-        let metrics = &CORE;
-        if metrics.is_enabled() {
-            let mm = metrics.magicsock_metrics();
-            let send_ipv4 = HumanBytes(mm.send_ipv4.get());
-            let send_ipv6 = HumanBytes(mm.send_ipv6.get());
-            let send_derp = HumanBytes(mm.send_derp.get());
-            let recv_data_derp = HumanBytes(mm.recv_data_derp.get());
-            let recv_data_ipv4 = HumanBytes(mm.recv_data_ipv4.get());
-            let recv_data_ipv6 = HumanBytes(mm.recv_data_ipv6.get());
+        if let Some(core) = Core::get() {
+            let metrics = core.get_collector::<magicsock::Metrics>().unwrap();
+            tracing::error!("metrics enabled");
+            let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
+            let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
+            let send_derp = HumanBytes(metrics.send_derp.get());
+            let recv_data_derp = HumanBytes(metrics.recv_data_derp.get());
+            let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
+            let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
             let text = format!(
                 r#"Counters
 

@@ -224,7 +224,7 @@ impl Client {
             payload,
             from_addr: src,
         }) {
-            inc!(NetcheckMetrics::StunPacketsDropped);
+            inc!(NetcheckMetrics, stun_packets_dropped);
             warn!("dropping stun packet from {}", src);
         }
     }
@@ -461,7 +461,7 @@ struct Actor {
 impl Actor {
     /// Creates a new actor.
     ///
-    /// This does not start the actor, see [`Actor::main`] for this.  You should not
+    /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
     fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
@@ -580,9 +580,9 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-            inc!(NetcheckMetrics::ReportsFull);
+            inc!(NetcheckMetrics, reports_full);
         }
-        inc!(NetcheckMetrics::Reports);
+        inc!(NetcheckMetrics, reports);
 
         let actor = reportgen::Client::new(
             self.addr(),
@@ -616,7 +616,7 @@ impl Actor {
         }
     }
 
-    /// Handles [`ActorMesage::StunPacket`].
+    /// Handles [`ActorMessage::StunPacket`].
     ///
     /// If there are currently no in-flight stun requests registerd this is dropped,
     /// otherwise forwarded to the probe.
@@ -627,8 +627,12 @@ impl Actor {
         }
 
         match &src {
-            SocketAddr::V4(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv4),
-            SocketAddr::V6(_) => inc!(NetcheckMetrics::StunPacketsRecvIpv6),
+            SocketAddr::V4(_) => {
+                inc!(NetcheckMetrics, stun_packets_recv_ipv4);
+            }
+            SocketAddr::V6(_) => {
+                inc!(NetcheckMetrics, stun_packets_recv_ipv6);
+            }
         }
 
         match stun::parse_response(pkt) {

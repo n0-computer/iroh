@@ -12,6 +12,7 @@ use url::Url;
 /// Configuration of all the Derp servers that can be used.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
+    /// A map of the different region IDs to the [`DerpRegion`] information
     pub regions: HashMap<u16, DerpRegion>,
 }
 
@@ -74,35 +75,52 @@ impl fmt::Display for DerpMap {
 /// A geographic region running DERP relay node(s).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpRegion {
-    /// A unique integer for a geographic region.
+    /// A unique integer for a geographic region
     pub region_id: u16,
+    /// A list of [`DerpNode`]s in this region
     pub nodes: Vec<DerpNode>,
+    /// Whether or not to avoid this region
     pub avoid: bool,
+    /// The region-specific string identifier
     pub region_code: String,
 }
 
+/// Information on a specific derp server.
+///
+/// Includes the region in which it can be found, as well as how to dial the server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerpNode {
+    /// The name of this derp server
     pub name: String,
+    /// The numeric region ID
     pub region_id: u16,
+    /// The [`Url`] where this derp server can be dialed
     pub url: Url,
+    /// Whether this derp server should only be used for STUN requests
     pub stun_only: bool,
+    /// The stun port of the derp server
     pub stun_port: u16,
+    /// Optional stun-specific IP address
     pub stun_test_ip: Option<IpAddr>,
     /// Optionally forces an IPv4 address to use, instead of using DNS.
-    /// If `None`, A record(s) from DNS lookups of HostName are used.
-    /// If `Disabled`, IPv4 is not used;
+    /// If [`UseIpv4::None`], A record(s) from DNS lookups of HostName are used.
+    /// If [`UseIpv4::Disabled`], IPv4 is not used;
     pub ipv4: UseIpv4,
     /// Optionally forces an IPv6 address to use, instead of using DNS.
-    /// If `None`, A record(s) from DNS lookups of HostName are used.
-    /// If `Disabled`, IPv6 is not used;
+    /// If [`UseIpv6::None`], A record(s) from DNS lookups of HostName are used.
+    /// If [`UseIpv6::Disabled`], IPv6 is not used;
     pub ipv6: UseIpv6,
 }
 
+/// Whether we should use IPv4 when communicating with this derp server
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv4 {
+    /// Indicates we do not have an IPv4 address, but the server may still
+    /// be able to communicate over IPv4 by resolving the hostname over DNS
     None,
+    /// Do not attempt to contact the derp server using IPv4
     Disabled,
+    /// The IPv4 address of the derp server
     Some(Ipv4Addr),
 }
 
@@ -113,10 +131,15 @@ impl UseIpv4 {
     }
 }
 
+/// Whether we should use IPv6 when communicating with this derp server
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UseIpv6 {
+    /// Indicates we do not have an IPv6 address, but the server may still
+    /// be able to communicate over IPv6 by resolving the hostname over DNS
     None,
+    /// Do not attempt to contact the derp server using IPv6
     Disabled,
+    /// The IPv6 address of the derp server
     Some(Ipv6Addr),
 }
 

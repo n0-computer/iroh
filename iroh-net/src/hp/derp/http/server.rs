@@ -70,7 +70,7 @@ where
     conn_handler.accept(io).await
 }
 
-/// A Derp Server handler. Created using `Server::Builder::spawn`, it starts a derp server
+/// A Derp Server handler. Created using [`ServerBuilder::spawn`], it starts a derp server
 /// listening over HTTP or HTTPS.
 #[derive(Debug)]
 pub struct Server {
@@ -103,7 +103,7 @@ impl Server {
         self.addr
     }
 
-    /// Mesh the server to a new `derp_map`
+    /// Mesh this server to a new list of derp servers.
     pub async fn re_mesh(
         &mut self,
         mesh_addrs: MeshAddrs,
@@ -145,7 +145,7 @@ pub struct TlsConfig {
 ///
 /// Defaults to handling "derp" requests on the "/derp" endpoint.
 ///
-/// If no `SecretKey` is provided, it is assumed that you will provide a `derp_override` function
+/// If no [`SecretKey`] is provided, it is assumed that you will provide a `derp_override` function
 /// that handles requests to the derp endpoint. Not providing a `derp_override` in this case will
 /// result in an error on `spawn`.
 #[derive(derive_more::Debug)]
@@ -160,10 +160,10 @@ pub struct ServerBuilder {
     /// Optional MeshKey for this server. When it exists it will ensure that This
     /// server will only mesh with other servers with the same key.
     mesh_key: Option<MeshKey>,
-    /// Optional MeshAddrs that details the other derp servers this server should
+    /// Optional [`MeshAddrs`] that details the other derp servers this server should
     /// attempt to mesh with.
     /// Having a `mesh_depers` but no `mesh_key` when attempting to `spawn` a
-    /// `Server` results in an error.
+    /// [`Server`] results in an error.
     mesh_derpers: Option<MeshAddrs>,
     /// Optional tls configuration/TlsAcceptor combination.
     ///
@@ -188,6 +188,7 @@ pub struct ServerBuilder {
 }
 
 impl ServerBuilder {
+    /// Create a new [ServerBuilder]
     pub fn new(addr: SocketAddr) -> Self {
         Self {
             secret_key: None,
@@ -203,22 +204,22 @@ impl ServerBuilder {
         }
     }
 
-    /// The SecretKey identity for this derp server. When set to `None`, the builder assumes
+    /// The [`SecretKey`] identity for this derp server. When set to `None`, the builder assumes
     /// you do not want to run a derp service.
     pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
         self.secret_key = secret_key;
         self
     }
 
-    /// The MeshKey for the mesh network this server belongs to.
+    /// The [`MeshKey`] for the mesh network this server belongs to.
     pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
         self.mesh_key = mesh_key;
         self
     }
 
-    /// The `MessAddrs` describing the different derpers this server should
-    /// attempt to mesh with. If `MeshAddrs` exists on the `ServerBuilder`,
-    /// but no `MeshKey`, `ServerBuilder::spawn` will error.
+    /// The [`MeshAddrs`] describing the different derpers this server should
+    /// attempt to mesh with. If [`MeshAddrs`] exists on the [`ServerBuilder`],
+    /// but no [`MeshKey`], [`ServerBuilder::spawn`] will error.
     pub fn mesh_derpers(mut self, mesh_addrs: Option<MeshAddrs>) -> Self {
         self.mesh_derpers = mesh_addrs;
         self
@@ -247,7 +248,7 @@ impl ServerBuilder {
         self
     }
 
-    /// Handle the derp endpoint in a custom way. This is required if no `SecretKey` was provided
+    /// Handle the derp endpoint in a custom way. This is required if no [`SecretKey`] was provided
     /// to the builder.
     pub fn derp_override(mut self, handler: HyperFn) -> Self {
         self.derp_override = Some(handler);
@@ -341,7 +342,7 @@ impl ServerBuilder {
 }
 
 #[derive(Debug)]
-pub struct ServerState {
+struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
     server: Option<crate::hp::derp::server::Server<HttpClient>>,
@@ -351,7 +352,7 @@ pub struct ServerState {
 
 impl ServerState {
     // Binds a TCP listener on `addr` and handles content using HTTPS.
-    // Returns the local `SocketAddr` on which the server is listening.
+    // Returns the local [`SocketAddr`] on which the server is listening.
     async fn serve(self) -> Result<Server> {
         let listener = TcpListener::bind(&self.addr)
             .await
@@ -525,8 +526,8 @@ impl hyper::service::Service<Request<Body>> for DerpService {
     }
 }
 
+/// The hyper Service that servers the actual derp endpoints
 #[derive(Clone, Debug)]
-/// The hyper Service that
 struct DerpService(Arc<Inner>);
 
 type HyperFn = Box<
@@ -547,7 +548,7 @@ struct Inner {
 /// Action to take when a connection is made at the derp endpoint.`
 #[derive(derive_more::Debug)]
 enum DerpHandler {
-    /// Pass the connection to a ClientConnHandler to get added to the derp server. The default.
+    /// Pass the connection to a [`ClientConnHandler`] to get added to the derp server. The default.
     ConnHandler(ClientConnHandler<crate::hp::derp::http::Client>),
     /// Return some static response. Used when the http(s) should be running, but the derp portion
     /// of the server is disabled.
@@ -570,8 +571,8 @@ impl Inner {
     }
 }
 
-#[derive(Clone, derive_more::Debug)]
 /// TLS Certificate Authority acceptor.
+#[derive(Clone, derive_more::Debug)]
 pub enum TlsAcceptor {
     /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),
