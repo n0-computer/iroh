@@ -1820,6 +1820,8 @@ dependencies = [
  "webpki",
  "webpki-roots 0.23.1",
  "wg",
+ "widestring",
+ "windows",
  "wmi",
  "x509-parser",
  "zeroize",

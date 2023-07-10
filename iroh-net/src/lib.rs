@@ -13,6 +13,7 @@ pub mod magic_endpoint;
 pub mod net;
 pub mod tls;
 pub mod util;
+pub mod firewall;
 
 pub use magic_endpoint::MagicEndpoint;
 
