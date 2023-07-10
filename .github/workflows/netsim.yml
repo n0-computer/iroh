@@ -54,17 +54,20 @@ jobs:
     - name: Detect chuck branch
       if: github.event_name == 'issue_comment'
       id: detect_chuck_branch
+      shell: bash
       run: |
         a='${{ github.event.comment.body }}'
-        branch="main"
         if [[ $a == '/netsim branch'* ]];
         then
           a=$(echo "$a" | tr '\n' ' ' | tr -s " " | cut -d ' ' -f3)
           branch="$a"
+          echo "CHUCK_BRANCH=$branch" >> ${GITHUB_ENV}
+        else
+          echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
         fi
-        echo "CHUCK_BRANCH=$branch" >> ${GITHUB_ENV}
 
     - name: Fetch and build chuck
+      shell: bash  
       run: |
         cd ..
         rm -rf chuck
