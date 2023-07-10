@@ -1,9 +1,10 @@
-use std::{collections::HashMap, ops::Deref, time::Duration};
+use std::collections::HashMap;
+use std::fmt;
+use std::ops::Deref;
+use std::time::Duration;
 
-use crate::{
-    hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
-    net::interfaces,
-};
+use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::net::interfaces;
 
 use super::Report;
 
@@ -34,8 +35,9 @@ pub enum ProbeProto {
     Https,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum Probe {
+    #[display("Ipv4 after {delay:?} to {node}")]
     Ipv4 {
         /// When the probe is started, relative to the time that `get_report` is called.
         /// One probe in each `ProbePlan` should have a delay of 0. Non-zero values
@@ -46,10 +48,9 @@ pub enum Probe {
         /// unique so there's no region ID.
         node: String,
     },
-    Ipv6 {
-        delay: Duration,
-        node: String,
-    },
+    #[display("Ipv6 after {delay:?} to {node}")]
+    Ipv6 { delay: Duration, node: String },
+    #[display("Https after {delay:?} to {node} {}", region.region_code)]
     Https {
         delay: Duration,
         node: String,
@@ -58,10 +59,10 @@ pub enum Probe {
 }
 
 impl Probe {
-    pub fn delay(&self) -> &Duration {
+    pub fn delay(&self) -> Duration {
         match self {
             Probe::Ipv4 { delay, .. } | Probe::Ipv6 { delay, .. } | Probe::Https { delay, .. } => {
-                delay
+                *delay
             }
         }
     }
@@ -94,8 +95,38 @@ impl Probe {
 /// A set of probes is done once either one of the probes completes, or
 /// the next probe to run wouldn't yield any new information not
 /// already discovered by any previous probe in any set.
+///
+/// Generated probe plans have the following shape:
+///
+/// - Each probe **set** runs a single identical probe, but with multiple tries with delayed
+///   starts.  When the first one succeeds, the remainder of the set is cancelled.
+///
+/// - Sets of each probe type are generated for each DERP node in the derpmap.
+///
+/// Some factors will adjust the sets generated:
+///
+/// - The protocols supported by the host, e.g. IPv4, IPv6.
+/// - The derpmap.
+/// - The previous success and failure of probes.
+///
+/// Read the code for the gory details, but this gives you enough of a feel for how they
+/// work to use a probe plan.
 #[derive(Debug, Default, Clone)]
 pub struct ProbePlan(HashMap<String, Vec<Probe>>);
+
+impl fmt::Display for ProbePlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ProbePlan {{")?;
+        for (name, probe_set) in self.0.iter() {
+            writeln!(f, r#"    ProbeSet("{name}") {{"#)?;
+            for probe in probe_set {
+                writeln!(f, "        {probe},")?;
+            }
+            writeln!(f, "    }}")?;
+        }
+        writeln!(f, "}}")
+    }
+}
 
 impl ProbePlan {
     pub fn has_https_probes(&self) -> bool {
@@ -162,10 +193,11 @@ impl ProbePlan {
                     do6 = false;
                 }
                 let n = &reg.nodes[tr % reg.nodes.len()];
-                let mut prev_latency = last.region_latency[&reg.region_id] * 120 / 100;
-                if prev_latency.is_zero() {
-                    prev_latency = DEFAULT_ACTIVE_RETRANSMIT_TIME;
-                }
+                let prev_latency = last
+                    .region_latency
+                    .get(reg.region_id)
+                    .map(|l| l * 120 / 100)
+                    .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_TIME);
                 let mut delay = prev_latency * tr as u32;
                 if tr > 1 {
                     delay += Duration::from_millis(50) * tr as u32;
@@ -204,6 +236,17 @@ impl ProbePlan {
         plan
     }
 
+    /// Creates an initial probe plan.
+    ///
+    /// Consisting of the following probe sets, these sets are repeated for each DERP
+    /// region:
+    ///
+    /// - A set of 3 IPv4 STUN probes, each probe having an increased delay.
+    /// - A set of 3 IPv6 STUN probes, each probe having an increased delay.
+    /// - A set of 3 HTTP probes, each probe having an increased delay.
+    ///
+    /// Some probes may be skipped, e.g. if the host has no IPv6 no IPv6 probes will be
+    /// created.
     fn new_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbePlan {
         let mut plan = ProbePlan::default();
 
@@ -264,8 +307,8 @@ impl Deref for ProbePlan {
 fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
     let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
     prev.sort_by(|a, b| {
-        let da = last.region_latency.get(&a.region_id);
-        let db = last.region_latency.get(&b.region_id);
+        let da = last.region_latency.get(a.region_id);
+        let db = last.region_latency.get(b.region_id);
         if db.is_none() && da.is_some() {
             // Non-zero sorts before zero.
             return std::cmp::Ordering::Greater;
