@@ -1,12 +1,8 @@
 //! Utility functions and types.
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    fmt::{self, Display},
-    result,
-    str::FromStr,
-};
+use std::{fmt, result, str::FromStr};
 use thiserror::Error;
 pub mod io;
 pub mod progress;
@@ -27,7 +23,35 @@ impl Hash {
         self.0.as_bytes()
     }
 
-    /// Hex string of the hash.
+    /// Get the cid as bytes.
+    pub fn as_cid_bytes(&self) -> [u8; 36] {
+        let hash = self.0.as_bytes();
+        let mut res = [0u8; 36];
+        res[0..4].copy_from_slice(&CID_PREFIX);
+        res[4..36].copy_from_slice(hash);
+        res
+    }
+
+    /// Try to create a blake3 cid from cid bytes.
+    ///
+    /// This will only work if the prefix is the following:
+    /// - version 1
+    /// - raw codec
+    /// - blake3 hash function
+    /// - 32 byte hash size
+    pub fn from_cid_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == 36,
+            "invalid cid length, expected 36, got {}",
+            bytes.len()
+        );
+        anyhow::ensure!(bytes[0..4] == CID_PREFIX, "invalid cid prefix");
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&bytes[4..36]);
+        Ok(Self::from(hash))
+    }
+
+    /// Convert the hash to a hex string.
     pub fn to_hex(&self) -> String {
         self.0.to_hex().to_string()
     }
@@ -69,12 +93,18 @@ impl Ord for Hash {
     }
 }
 
-impl Display for Hash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = data_encoding::BASE32_NOPAD
-            .encode(self.0.as_bytes())
-            .to_ascii_lowercase();
-        write!(f, "{text}")
+impl fmt::Display for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // result will be 58 bytes plus prefix
+        let mut res = [b'b'; 59];
+        // write the encoded bytes
+        data_encoding::BASE32_NOPAD.encode_mut(&self.as_cid_bytes(), &mut res[1..]);
+        // convert to string, this is guaranteed to succeed
+        let t = std::str::from_utf8_mut(res.as_mut()).unwrap();
+        // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
+        t.make_ascii_lowercase();
+        // write the str, no allocations
+        f.write_str(t)
     }
 }
 
@@ -82,22 +112,28 @@ impl FromStr for Hash {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut arr = [0u8; 32];
-        let val = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?; // todo: use a custom error type
-        ensure!(
-            val.len() == 32,
-            "invalid byte length, expected 32, got {}",
-            val.len()
-        );
-        ensure!(
-            val.len() == 32,
-            "invalid byte length, expected 32, got {}",
-            val.len()
-        );
-        arr.copy_from_slice(&val);
-        let hash = blake3::Hash::from(arr);
-
-        Ok(Hash(hash))
+        let sb = s.as_bytes();
+        if sb.len() == 59 && sb[0] == b'b' {
+            // this is a base32 encoded cid, we can decode it directly
+            let mut t = [0u8; 58];
+            t.copy_from_slice(&sb[1..]);
+            // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
+            std::str::from_utf8_mut(t.as_mut())
+                .unwrap()
+                .make_ascii_uppercase();
+            // decode the bytes
+            let mut res = [0u8; 36];
+            data_encoding::BASE32_NOPAD
+                .decode_mut(&t, &mut res)
+                .map_err(|_e| anyhow::anyhow!("invalid base32"))?;
+            // convert to cid, this will check the prefix
+            Self::from_cid_bytes(&res)
+        } else {
+            // if we want to support all the weird multibase prefixes, we have no choice
+            // but to use the multibase crate
+            let (_base, bytes) = multibase::decode(s)?;
+            Self::from_cid_bytes(bytes.as_ref())
+        }
     }
 }
 
@@ -140,6 +176,13 @@ impl<'de> de::Visitor<'de> for HashVisitor {
 impl MaxSize for Hash {
     const POSTCARD_MAX_SIZE: usize = 32;
 }
+
+const CID_PREFIX: [u8; 4] = [
+    0x01, // version
+    0x55, // raw codec
+    0x1e, // hash function, blake3
+    0x20, // hash size, 32 bytes
+];
 
 /// A serializable error type for use in RPC responses.
 #[derive(Serialize, Deserialize, Debug, Error)]

@@ -8,7 +8,6 @@ use indicatif::{
 use iroh::util::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh_bytes::{
     blobs::Collection,
-    cid::Blake3Cid,
     get::{
         self,
         get_response_machine::{self, ConnectedNext, EndBlobNext},
@@ -48,10 +47,10 @@ impl GetInteractive {
     /// Get a single file.
     async fn get_to_file_single(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
         let hash = self.hash;
-        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("Fetching: {}", hash));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
 
-        let name = Blake3Cid::new(hash).to_string();
+        let name = hash.to_string();
         // range I am missing for the 1 file I am downloading
         let range = get_missing_range(&self.hash, name.as_str(), &temp_dir, &out_dir)?;
         if range.is_all() {
@@ -142,7 +141,7 @@ impl GetInteractive {
     /// Get into a file or directory
     async fn get_to_dir_multi(self, out_dir: PathBuf, temp_dir: PathBuf) -> Result<()> {
         let hash = self.hash;
-        write(format!("Fetching: {}", Blake3Cid::new(hash)));
+        write(format!("Fetching: {}", hash));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let (query, collection) = get_missing_ranges(self.hash, &out_dir, &temp_dir)?;
         let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
@@ -312,7 +311,7 @@ impl GetInteractive {
 
     /// Get to stdout, no resume possible.
     async fn get_to_stdout(self) -> Result<()> {
-        write(format!("Fetching: {}", Blake3Cid::new(self.hash)));
+        write(format!("Fetching: {}", self.hash));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let query = if self.single {
             // just get the entire first item
