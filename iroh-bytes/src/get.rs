@@ -26,10 +26,8 @@ use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tracing::{debug, error};
 
-pub use crate::util::Hash;
-
 use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
-use crate::tokio_util::{TrackingReader, TrackingWriter};
+use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
 /// Options for the client
@@ -74,7 +72,7 @@ pub mod get_response_machine {
 
     use crate::{
         protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
-        tokio_util::ConcatenateSliceWriter,
+        util::io::ConcatenateSliceWriter,
     };
 
     use super::*;

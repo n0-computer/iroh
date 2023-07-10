@@ -14,8 +14,10 @@ use iroh_bytes::{
         get_response_machine::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
-    tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter},
-    util::pathbuf_from_name,
+    util::{
+        io::{ConcatenateSliceWriter, ProgressSliceWriter},
+        pathbuf_from_name,
+    },
     Hash,
 };
 use iroh_io::{AsyncSliceWriter, FileAdapter};
