@@ -279,7 +279,7 @@ impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
 
 /// Update from a [`ProgressReader`].
 #[derive(Debug, Clone, Copy)]
-pub enum ProgressReaderUpdate {
+pub(crate) enum ProgressReaderUpdate {
     /// A progress event containing the current offset.
     Progress(u64),
     /// The reader has been dropped.
