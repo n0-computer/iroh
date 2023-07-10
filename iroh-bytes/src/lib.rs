@@ -4,7 +4,6 @@
 #![recursion_limit = "256"]
 
 pub mod blobs;
-pub mod cid;
 pub mod get;
 pub mod progress;
 pub mod protocol;
