@@ -67,7 +67,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = get_response_machine::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -155,7 +155,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = get_response_machine::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -322,7 +322,7 @@ impl GetInteractive {
         let pb = make_download_pb();
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = get_response_machine::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {

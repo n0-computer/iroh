@@ -5,8 +5,11 @@
 //!
 //! Create a request describing the data you want to get.
 //!
-//! Then create a state machine using [get_response_machine::AtInitial::new] and
+//! Then create a state machine using [get_response_machine::start] and
 //! drive it to completion by calling next on each state.
+//!
+//! For some states you have to provide additional arguments when calling next,
+//! or you can choose to finish early.
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
@@ -93,6 +96,11 @@ pub mod get_response_machine {
             #[covariant]
             dependent: NonEmptyRequestRangeSpecIter,
         }
+    }
+
+    /// The entry point of the get response machine
+    pub fn start(connection: quinn::Connection, request: AnyGetRequest) -> AtInitial {
+        AtInitial::new(connection, request)
     }
 
     /// Owned iterator for the ranges in a request
