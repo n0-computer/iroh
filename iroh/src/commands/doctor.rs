@@ -260,7 +260,7 @@ impl Gui {
         let counters2 = counters.clone();
         let counter_task = tokio::spawn(async move {
             loop {
-                Self::update_counters(&counters2).await;
+                Self::update_counters(&counters2);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -275,7 +275,7 @@ impl Gui {
         }
     }
 
-    async fn update_counters(target: &ProgressBar) {
+    fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
             let metrics = core.get_collector::<magicsock::Metrics>().unwrap();
             tracing::error!("metrics enabled");
