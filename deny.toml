@@ -25,8 +25,3 @@ license-files = [
 ignore = [
        "RUSTSEC-2020-0168", # mach is unmaintained
 ]
-
-[sources]
-allow-git = [
-          "https://github.com/JelteF/derive_more", # see #1035
-]
