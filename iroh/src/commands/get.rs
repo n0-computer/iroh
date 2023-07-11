@@ -5,15 +5,18 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
+use iroh::util::{get_data_path, get_missing_range, get_missing_ranges};
 use iroh_bytes::{
     blobs::Collection,
     get::{
         self,
-        get_response_machine::{self, ConnectedNext, EndBlobNext},
+        fsm::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
-    tokio_util::{ConcatenateSliceWriter, ProgressSliceWriter},
-    util::pathbuf_from_name,
+    util::{
+        io::{pathbuf_from_name, ConcatenateSliceWriter},
+        progress::ProgressSliceWriter,
+    },
     Hash,
 };
 use iroh_io::{AsyncSliceWriter, FileAdapter};
@@ -49,7 +52,7 @@ impl GetInteractive {
 
         let name = hash.to_string();
         // range I am missing for the 1 file I am downloading
-        let range = get::get_missing_range(&self.hash, name.as_str(), &temp_dir, &out_dir)?;
+        let range = get_missing_range(&self.hash, name.as_str(), &temp_dir, &out_dir)?;
         if range.is_all() {
             tokio::fs::create_dir_all(&temp_dir)
                 .await
@@ -66,7 +69,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -140,7 +143,7 @@ impl GetInteractive {
         let hash = self.hash;
         write(format!("Fetching: {}", hash));
         write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-        let (query, collection) = get::get_missing_ranges(self.hash, &out_dir, &temp_dir)?;
+        let (query, collection) = get_missing_ranges(self.hash, &out_dir, &temp_dir)?;
         let collection = collection.map(|x| x.into_inner()).unwrap_or_default();
 
         let pb = make_download_pb();
@@ -154,7 +157,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -176,7 +179,7 @@ impl GetInteractive {
                     collection.total_entries(),
                     collection.total_blobs_size(),
                 )?;
-                tokio::fs::write(get::get_data_path(&temp_dir, hash), collection_data).await?;
+                tokio::fs::write(get_data_path(&temp_dir, hash), collection_data).await?;
                 (curr.next(), collection.into_inner())
             }
             ConnectedNext::StartChild(start_child) => {
@@ -321,7 +324,7 @@ impl GetInteractive {
         let pb = make_download_pb();
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::AtInitial::new(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
@@ -344,7 +347,7 @@ impl GetInteractive {
     }
 }
 
-async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
+async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats> {
     let curr = curr.next();
     let mut writer = ConcatenateSliceWriter::new(tokio::io::stdout());
     let curr = curr.write_all(&mut writer).await?;
@@ -354,10 +357,7 @@ async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> R
     Ok(curr.next().await?)
 }
 
-async fn get_to_stdout_multi(
-    curr: get::get_response_machine::AtStartRoot,
-    pb: ProgressBar,
-) -> Result<get::Stats> {
+async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
     let (mut next, collection) = {
         let curr = curr.next();
         let (curr, collection_data) = curr.concatenate_into_vec().await?;

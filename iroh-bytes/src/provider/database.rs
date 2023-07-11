@@ -5,7 +5,7 @@
 use super::DbEntry;
 use crate::{
     provider::ValidateProgress,
-    util::{validate_bao, BaoValidationError},
+    util::io::{validate_bao, BaoValidationError},
     Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};

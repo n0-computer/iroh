@@ -16,7 +16,7 @@ use tracing::{trace, trace_span};
 
 use crate::blobs::{Blob, Collection};
 use crate::protocol::MAX_MESSAGE_SIZE;
-use crate::util::{Progress, ProgressReader, ProgressReaderUpdate};
+use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
 use crate::{Hash, IROH_BLOCK_SIZE};
 
 use super::{DataSource, DbEntry, ProvideProgress};
