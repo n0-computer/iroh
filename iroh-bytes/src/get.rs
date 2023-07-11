@@ -68,7 +68,7 @@ impl Stats {
 /// Finite state machine for get responses
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
-pub mod get_response_machine {
+pub mod fsm {
     use std::result;
 
     use crate::{

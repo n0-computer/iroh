@@ -20,7 +20,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
     blobs::{Blob, Collection},
-    get::{self, get_response_machine, get_response_machine::ConnectedNext, Stats},
+    get::{self, fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{
         self, create_collection, database::InMemDatabase, CustomGetHandler, DataSource, Database,
@@ -427,7 +427,7 @@ async fn test_blob_reader_partial() -> Result<()> {
 
     let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
         let connection = get::dial(get_options(peer_id, node_addr)).await.unwrap();
-        let response = get_response_machine::start(connection, GetRequest::all(hash).into());
+        let response = fsm::start(connection, GetRequest::all(hash).into());
         // connect
         let connected = response.next().await.unwrap();
         // send the request
@@ -530,8 +530,8 @@ async fn run_get_request(
     request: AnyGetRequest,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
     let connection = get::dial(opts).await?;
-    let initial = get_response_machine::start(connection, request);
-    use get_response_machine::*;
+    let initial = fsm::start(connection, request);
+    use fsm::*;
     let mut items = BTreeMap::new();
     let connected = initial.next().await?;
     println!("I am connected");
@@ -667,7 +667,7 @@ async fn test_custom_request_blob() {
             data: Bytes::from(&b"hello"[..]),
         });
         let connection = get::dial(get_options(peer_id, addrs)).await?;
-        let response = get_response_machine::start(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
         let header = start.next();

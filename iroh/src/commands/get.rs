@@ -10,7 +10,7 @@ use iroh_bytes::{
     blobs::Collection,
     get::{
         self,
-        get_response_machine::{self, ConnectedNext, EndBlobNext},
+        fsm::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
     util::{
@@ -69,7 +69,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::start(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -157,7 +157,7 @@ impl GetInteractive {
 
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::start(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         if let Some((count, missing_bytes)) = collection_info {
@@ -324,7 +324,7 @@ impl GetInteractive {
         let pb = make_download_pb();
         let request = self.new_request(query).with_token(self.token.clone());
         let connection = get::dial(self.opts).await?;
-        let response = get_response_machine::start(connection, request);
+        let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
@@ -347,7 +347,7 @@ impl GetInteractive {
     }
 }
 
-async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> Result<get::Stats> {
+async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats> {
     let curr = curr.next();
     let mut writer = ConcatenateSliceWriter::new(tokio::io::stdout());
     let curr = curr.write_all(&mut writer).await?;
@@ -358,7 +358,7 @@ async fn get_to_stdout_single(curr: get::get_response_machine::AtStartRoot) -> R
 }
 
 async fn get_to_stdout_multi(
-    curr: get::get_response_machine::AtStartRoot,
+    curr: get::fsm::AtStartRoot,
     pb: ProgressBar,
 ) -> Result<get::Stats> {
     let (mut next, collection) = {
