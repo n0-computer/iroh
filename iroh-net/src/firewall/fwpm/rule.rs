@@ -1,55 +1,65 @@
-use anyhow::{Context, Result};
+
 use widestring::U16CString;
-use windows::Win32::{
-    Foundation::{GUID, HANDLE, WIN32_ERROR},
-    NetworkManagement::WindowsFilteringPlatform::{
-        FwpmEngineClose0, FwpmEngineOpen0, FwpmProviderAdd0, FwpmSublyerAdd0, FWPM_DISPLAY_DATA0,
-        FWPM_PROVIDER0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC, FWPM_SUBLAYER0, FWP_MATCH_TYPE,
+use windows::{
+    core::{GUID, PWSTR},
+    Win32::{
+        NetworkManagement::WindowsFilteringPlatform::{FWPM_DISPLAY_DATA0,
+            FWPM_PROVIDER0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC, FWPM_SUBLAYER0,
+            FWP_ACTION_FLAG_CALLOUT, FWP_ACTION_FLAG_NON_TERMINATING, FWP_ACTION_FLAG_TERMINATING,
+            FWP_BYTE_ARRAY16, FWP_BYTE_ARRAY16_TYPE, FWP_BYTE_ARRAY6, FWP_BYTE_ARRAY6_TYPE,
+            FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0,
+            FWP_DATA_TYPE, FWP_DOUBLE, FWP_FLOAT, FWP_INT16, FWP_INT32, FWP_INT64, FWP_INT8,
+            FWP_MATCH_TYPE, FWP_RANGE0, FWP_RANGE_TYPE, FWP_SECURITY_DESCRIPTOR_TYPE, FWP_SID,
+            FWP_TOKEN_ACCESS_INFORMATION_TYPE, FWP_TOKEN_INFORMATION, FWP_TOKEN_INFORMATION_TYPE,
+            FWP_UINT16, FWP_UINT32, FWP_UINT64, FWP_UINT8, FWP_UNICODE_STRING_TYPE,
+            FWP_V4_ADDR_AND_MASK, FWP_V4_ADDR_MASK, FWP_V6_ADDR_AND_MASK, FWP_V6_ADDR_MASK,
+        },
+        Security::SID,
+        System::Rpc::RPC_C_AUTHN_WINNT,
     },
-    System::Rpc::RPC_C_AUTHN_WINNT,
 };
 
 /// Wrapper around `FWPM_FILTER0`
 pub struct Rule {
     /// The unique identifier for this rule.
-    id: GUID,
+    pub id: GUID,
     /// The kernel ID for this rule.
-    kernel_id: u64,
+    pub kernel_id: u64,
     /// A short descriptive name.
-    name: U16CString,
+    pub name: U16CString,
     /// Longer description of the rule.
-    description: U16CString,
+    pub description: U16CString,
     /// The ID of the layer in which the rule runs.
-    layer: GUID,
+    pub layer: GUID,
     /// The ID of the sublayer in which the rule runs.
-    sublayer: GUID,
+    pub sublayer: GUID,
     /// The priority of the rule relative to other rules in its sublayer.
-    weight: u64,
+    pub weight: u64,
     /// Conditions are the tests which must pass for this rule to apply to a packet.
-    conditions: Vec<FilterCondition>,
+    pub conditions: Vec<FilterCondition>,
     /// The action to take on matching packets.
-    action: Action,
+    pub action: Action,
     /// The ID of the callout to invoke. Only valid if `action` is `Action::CalloutTerminating`,
     /// or `Action::CalloutInspection``, or `Action::CalloutUnknown`.
-    callout: Option<GUID>,
+    pub callout: Option<GUID>,
     /// If set, indicates that a callout action to a callout ID that isn't registered should
     /// be translated into an `Action::Permit`, rather than an `Action::Block`. Only relevant if
     /// `action` is `Action::CalloutTerminating` or `Action::CalloutUnknown`.
-    permit_if_missing: bool,
+    pub permit_if_missing: bool,
     /// If set, indicates that the action type is hard and cannot be overridden except by a Veto.
-    hard_action: bool,
+    pub hard_action: bool,
     /// ndicates whether the rule is preserved across restarts of the filtering engine.
-    persistent: bool,
+    pub persistent: bool,
     /// Indicates that this rule applies only during early
     /// boot, before the filtering engine fully starts and hands off to the normal runtime rules.
-    boot_time: bool,
+    pub boot_time: bool,
     /// Optionally identifies the Provider that manages this rule.
-    provider: Option<GUID>,
+    pub provider: Option<GUID>,
     /// Optional opaque data that can be held on behalf of the Provider.
-    provider_data: Option<Vec<u8>>,
+    pub provider_data: Option<Vec<u8>>,
     /// Indicates whether the rule is currently disabled due
     /// to its provider being associated with an inactive Windows service.
-    disabled: bool,
+    pub disabled: bool,
 }
 
 /// An action the filtering system can execute.
@@ -66,10 +76,7 @@ pub enum Action {
     /// Invoke a callout that always returns block or permit.
     CalloutTerminating = 0x00000003 | FWP_ACTION_FLAG_CALLOUT | FWP_ACTION_FLAG_TERMINATING,
     /// Invoke a callout that never returns block or permit.
-    CalloutInspection = 0x00000004
-        | FWP_ACTION_FLAG_CALLOUT
-        | FWP_ACTION_FLAG_NON_TERMINATING
-        | FWP_ACTION_CALLOUT_UNKNOWN,
+    CalloutInspection = 0x00000004 | FWP_ACTION_FLAG_CALLOUT | FWP_ACTION_FLAG_NON_TERMINATING,
     /// Invoke a callout that may return block or permit.
     CalloutUnknown = 0x00000005 | FWP_ACTION_FLAG_CALLOUT,
 }
@@ -83,11 +90,11 @@ pub struct FilterCondition {
     /// GUID of the field to be tested.
     ///
     /// See <https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-> for available values.
-    field_key: GUID,
+    pub field_key: GUID,
     /// Specifies the type of match to be performed.
-    match_type: MatchType,
+    pub match_type: MatchType,
     /// Contains the value to match the field against.
-    condition_value: ConditionValue,
+    pub condition_value: ConditionValue,
 }
 
 /// Wrapper around `FWP_MATCH_TYPE`
@@ -208,53 +215,57 @@ impl ConditionValue {
 
         let typ = self.fwp_data_type();
         let value = match self {
-            Uint8(val) => FWP_CONDITION_VALUE0_0 { uint8: val },
-            Uint16(val) => FWP_CONDITION_VALUE0_0 { uint16: val },
-            Uint32(val) => FWP_CONDITION_VALUE0_0 { uint32: val },
-            Uint64(val) => FWP_CONDITION_VALUE0_0 { uint64: &mut val },
-            Int8(val) => FWP_CONDITION_VALUE0_0 { int8: val },
-            Int16(val) => FWP_CONDITION_VALUE0_0 { int16: val },
-            Int32(val) => FWP_CONDITION_VALUE0_0 { int32: val },
-            Int64(val) => FWP_CONDITION_VALUE0_0 { int64: &mut val },
-            Float(val) => FWP_CONDITION_VALUE0_0 { float32: val },
-            Double64(val) => FWP_CONDITION_VALUE0_0 { double64: &mut val },
-            ByteArray16(val) => FWP_CONDITION_VALUE0_0 {
-                byteArray16: &mut val,
+            Uint8(val) => FWP_CONDITION_VALUE0_0 { uint8: *val },
+            Uint16(val) => FWP_CONDITION_VALUE0_0 { uint16: *val },
+            Uint32(val) => FWP_CONDITION_VALUE0_0 { uint32: *val },
+            Uint64(val) => FWP_CONDITION_VALUE0_0 { uint64: &mut *val },
+            Int8(val) => FWP_CONDITION_VALUE0_0 { int8: *val },
+            Int16(val) => FWP_CONDITION_VALUE0_0 { int16: *val },
+            Int32(val) => FWP_CONDITION_VALUE0_0 { int32: *val },
+            Int64(val) => FWP_CONDITION_VALUE0_0 { int64: &mut *val },
+            Float(val) => FWP_CONDITION_VALUE0_0 { float32: *val },
+            Double64(val) => FWP_CONDITION_VALUE0_0 {
+                double64: &mut *val,
             },
-            ByteBlob(val) => FWP_CONDITION_VALUE0_0 { byteBlob: &mut val },
-            Sid(val) => FWP_CONDITION_VALUE0_0 { sid: &mut val },
-            Sd(val) => FWP_CONDITION_VALUE0_0 { sd: &mut val },
+            ByteArray16(val) => FWP_CONDITION_VALUE0_0 {
+                byteArray16: &mut *val,
+            },
+            ByteBlob(val) => FWP_CONDITION_VALUE0_0 {
+                byteBlob: &mut *val,
+            },
+            Sid(val) => FWP_CONDITION_VALUE0_0 { sid: &mut *val },
+            Sd(val) => FWP_CONDITION_VALUE0_0 { sd: &mut *val },
             TokenInformation(val) => FWP_CONDITION_VALUE0_0 {
-                tokenInformation: &mut val,
+                tokenInformation: &mut *val,
             },
             TokenAccessInformation(val) => FWP_CONDITION_VALUE0_0 {
-                tokenAccessInformation: &mut val,
+                tokenAccessInformation: &mut *val,
             },
             UnicodeString(val) => FWP_CONDITION_VALUE0_0 {
-                unicodeString: &mut val,
+                unicodeString: *val,
             },
             ByteArray6(val) => FWP_CONDITION_VALUE0_0 {
-                byteArray6: &mut val,
+                byteArray6: &mut *val,
             },
             V4AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
-                v4AddrMask: &mut val,
+                v4AddrMask: &mut *val,
             },
             V6AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
-                v6AddrMask: &mut val,
+                v6AddrMask: &mut *val,
             },
             RangeValue(val) => FWP_CONDITION_VALUE0_0 {
-                rangeValue: &mut val,
+                rangeValue: &mut *val,
             },
         };
 
-        FWP_CONDTION_VALUE0 {
+        FWP_CONDITION_VALUE0 {
             r#type: typ,
             Anonymous: value,
         }
     }
 
     /// <https://learn.microsoft.com/en-us/windows/win32/api/fwptypes/ne-fwptypes-fwp_data_type>
-    fn fwp_data_type(&self) -> FWP_DATA_TYPE0 {
+    fn fwp_data_type(&self) -> FWP_DATA_TYPE {
         use ConditionValue::*;
         match self {
             Uint8(_) => FWP_UINT8,
