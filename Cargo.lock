@@ -837,17 +837,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_more"
-version = "0.99.17"
-source = "git+https://github.com/JelteF/derive_more#60ed1e7247e7cb085b57c309fade3bde29791017"
+name = "derive_more_preview"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4267ec2c86f47cc7ba8b6fa68072bfa742fb5aab0b87429096c79172b9d6f364"
 dependencies = [
- "derive_more-impl",
+ "derive_more_preview-impl",
 ]
 
 [[package]]
-name = "derive_more-impl"
-version = "0.99.17"
-source = "git+https://github.com/JelteF/derive_more#60ed1e7247e7cb085b57c309fade3bde29791017"
+name = "derive_more_preview-impl"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10c89e23c2ccd1af6fae76cbe614c135e5640837f5e868f0995549f1762db62d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1640,7 +1642,7 @@ dependencies = [
  "clap",
  "config",
  "console",
- "derive_more",
+ "derive_more_preview",
  "dirs-next",
  "duct",
  "flume",
@@ -1680,7 +1682,7 @@ dependencies = [
  "blake3",
  "bytes",
  "data-encoding",
- "derive_more",
+ "derive_more_preview",
  "flume",
  "futures",
  "hex",
@@ -1770,7 +1772,7 @@ dependencies = [
  "data-encoding",
  "default-net",
  "der",
- "derive_more",
+ "derive_more_preview",
  "duct",
  "ed25519-dalek",
  "flume",
