@@ -3,7 +3,6 @@ use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::HumanBytes;
 use iroh::rpc_protocol::{ListBlobsRequest, ListCollectionsRequest};
-use iroh_bytes::cid::Blake3Cid;
 
 use super::{make_rpc_client, DEFAULT_RPC_PORT};
 
@@ -31,12 +30,7 @@ impl Commands {
                 let mut response = client.server_streaming(ListBlobsRequest).await?;
                 while let Some(item) = response.next().await {
                     let item = item?;
-                    println!(
-                        "{} {} ({})",
-                        item.path,
-                        Blake3Cid(item.hash),
-                        HumanBytes(item.size),
-                    );
+                    println!("{} {} ({})", item.path, item.hash, HumanBytes(item.size),);
                 }
             }
             Commands::Collections { rpc_port } => {
@@ -46,7 +40,7 @@ impl Commands {
                     let collection = collection?;
                     println!(
                         "{}: {} {} ({})",
-                        Blake3Cid(collection.hash),
+                        collection.hash,
                         collection.total_blobs_count,
                         if collection.total_blobs_count > 1 {
                             "blobs"

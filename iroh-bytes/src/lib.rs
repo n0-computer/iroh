@@ -4,13 +4,10 @@
 #![recursion_limit = "256"]
 
 pub mod blobs;
-pub mod cid;
 pub mod get;
-pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod runtime;
-pub mod tokio_util;
 pub mod util;
 
 #[cfg(test)]
