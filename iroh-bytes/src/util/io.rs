@@ -2,7 +2,7 @@
 use derive_more::Display;
 use range_collections::RangeSet2;
 use std::{
-    io::{self, Read, Seek, Write},
+    io::{self, Write},
     path::{Component, Path, PathBuf},
     pin::Pin,
     result,
@@ -12,8 +12,11 @@ use thiserror::Error;
 
 use crate::Hash;
 use anyhow::Context;
-use bao_tree::io::error::EncodeError;
 use bao_tree::io::sync::encode_ranges_validated;
+use bao_tree::io::{
+    sync::{ReadAt, Size},
+    EncodeError,
+};
 use bytes::Bytes;
 use futures::{future::LocalBoxFuture, FutureExt};
 use iroh_io::AsyncSliceWriter;
@@ -202,13 +205,13 @@ pub enum BaoValidationError {
 /// Validate that the data matches the outboard.
 pub fn validate_bao<F: Fn(u64)>(
     hash: Hash,
-    data_reader: impl Read + Seek,
+    data_reader: impl ReadAt + Size,
     outboard: Bytes,
     progress: F,
 ) -> result::Result<(), BaoValidationError> {
     let hash = blake3::Hash::from(hash);
     let outboard =
-        bao_tree::outboard::PreOrderMemOutboardRef::new(hash, IROH_BLOCK_SIZE, &outboard)?;
+        bao_tree::io::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, &outboard)?;
 
     // do not wrap the data_reader in a BufReader, that is slow wnen seeking
     encode_ranges_validated(

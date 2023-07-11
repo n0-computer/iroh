@@ -1,7 +1,7 @@
 //! utilities for iroh
 use std::path::{Path, PathBuf};
 
-use bao_tree::{outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
+use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
 use iroh_bytes::{blobs::Collection, protocol::RangeSpecSeq, util::io::pathbuf_from_name, Hash};
 use range_collections::RangeSet2;
 

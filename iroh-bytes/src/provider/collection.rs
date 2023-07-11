@@ -5,11 +5,11 @@
 //! are inserted in a hashmap.
 
 use std::collections::HashMap;
-use std::io::{BufReader, Cursor};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use bao_tree::outboard::PostOrderMemOutboard;
+use bao_tree::io::outboard::PostOrderMemOutboard;
 use bytes::Bytes;
 use futures::{stream, StreamExt};
 use tracing::{trace, trace_span};
@@ -64,7 +64,7 @@ pub async fn create_collection(
     if data.len() > MAX_MESSAGE_SIZE {
         bail!("Serialised collection exceeds {MAX_MESSAGE_SIZE}");
     }
-    let (outboard, hash) = bao_tree::outboard(&data, IROH_BLOCK_SIZE);
+    let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
     let hash = Hash::from(hash);
     map.insert(
         hash,
@@ -189,7 +189,7 @@ fn compute_outboard(
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(bao_tree::outboard_size(size, IROH_BLOCK_SIZE))
+    let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
@@ -205,7 +205,7 @@ fn compute_outboard(
 
     let hash =
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let ob = PostOrderMemOutboard::load(hash, Cursor::new(&outboard), IROH_BLOCK_SIZE)?.flip();
+    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
     trace!(%hash, "done");
 
     Ok((hash.into(), ob.into_inner()))
