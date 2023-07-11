@@ -35,6 +35,7 @@ pub const CLIENT_PORT: u16 = 5350;
 pub const SERVER_PORT: u16 = 5351;
 
 /// Opcode as defined in [RFC 6887 IANA Considerations](https://datatracker.ietf.org/doc/html/rfc6887#section-19)
+// NOTE: PEER is not used, therefor not implemented.
 #[derive(Debug)]
 #[repr(u8)]
 pub enum Opcode {
@@ -101,8 +102,8 @@ pub enum ResultCode {
 ///
 /// See [RFC 6887 Request Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.1)
 ///
-/// NOTE: Opcode information and PCP Options are both optional, and currently not used in this
-/// code, thus not implemented.
+// NOTE: Opcode information and PCP Options are both optional, and currently not used in this
+// code, thus not implemented.
 pub struct Request {
     /// [`Version`] to use in this request.
     version: Version,
@@ -120,8 +121,8 @@ pub struct Request {
 ///
 /// See [RFC 6887 Response Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.2)
 ///
-/// NOTE: Opcode response data and PCP Options are both optional, and currently not used in this
-/// code, thus not implemented.
+// NOTE: Opcode response data and PCP Options are both optional, and currently not used in this
+// code, thus not implemented.
 #[derive(Debug)]
 pub struct Response {
     /// [`Version`] of the response.
@@ -163,32 +164,44 @@ pub fn build_announce_request(ip: Ipv4Addr) -> Vec<u8> {
     buf
 }
 
+/// Error ocurring when attempting to identify the [`Version`] in a server response.
+#[derive(Debug)]
+pub struct InvalidVersion(u8);
+
 impl TryFrom<u8> for Version {
-    type Error = u8;
+    type Error = InvalidVersion;
 
     fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
         match value {
             0 => Ok(Version::NatPmp),
             2 => Ok(Version::Pcp),
-            other => Err(other),
+            other => Err(InvalidVersion(other)),
         }
     }
 }
 
+/// Error ocurring when attempting to identity the [`Opcode`] in a server response.
+#[derive(Debug)]
+pub struct InvalidOpcode(u8);
+
 impl TryFrom<u8> for Opcode {
-    type Error = u8;
+    type Error = InvalidOpcode;
 
     fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
         match value {
             0 => Ok(Opcode::Announce),
             1 => Ok(Opcode::Map),
-            other => Err(other),
+            other => Err(InvalidOpcode(other)),
         }
     }
 }
 
+/// Error ocurring when attempting to decode the [`ResultCode`] in a server response.
+#[derive(Debug)]
+pub struct InvalidResultCode(u8);
+
 impl TryFrom<u8> for ResultCode {
-    type Error = u8;
+    type Error = InvalidResultCode;
 
     fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
         match value {
@@ -206,7 +219,7 @@ impl TryFrom<u8> for ResultCode {
             11 => Ok(ResultCode::CannotProvideExternal),
             12 => Ok(ResultCode::AddressMismatch),
             13 => Ok(ResultCode::ExcessiveRemotePeers),
-            other => Err(other),
+            other => Err(InvalidResultCode(other)),
         }
     }
 }
