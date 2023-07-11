@@ -85,6 +85,7 @@ wmi = "0.13"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+strum = { version = "0.25.0", features = ["derive"]}
 ntest = "*"
 
 [build-dependencies]
