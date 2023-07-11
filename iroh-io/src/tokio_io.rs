@@ -1,6 +1,6 @@
 //! Blocking io for [std::fs::File], using the tokio blocking task pool.
 use bytes::Bytes;
-use futures::Future;
+use futures::{future::LocalBoxFuture, Future, FutureExt};
 use pin_project::pin_project;
 use std::{
     io::{self, Read, Seek, SeekFrom},
@@ -8,7 +8,10 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::task::{spawn_blocking, JoinHandle};
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt},
+    task::{spawn_blocking, JoinHandle},
+};
 
 use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter};
 
@@ -285,5 +288,44 @@ impl FileAdapterFsm {
             let res = self.0.sync_all();
             (self, res)
         })
+    }
+}
+
+/// Utility to convert an [`AsyncWrite`] into an [`AsyncSliceWriter`] by just ignoring the offsets
+#[derive(Debug)]
+pub struct ConcatenateSliceWriter<W>(W);
+
+impl<W> ConcatenateSliceWriter<W> {
+    /// Create a new `ConcatenateSliceWriter` from an inner writer
+    pub fn new(inner: W) -> Self {
+        Self(inner)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncWrite + Unpin + 'static> AsyncSliceWriter for ConcatenateSliceWriter<W> {
+    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_bytes_at(&mut self, _offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        async move { self.0.write_all(&data).await }.boxed_local()
+    }
+
+    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_at(&mut self, _offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+        let t: smallvec::SmallVec<[u8; 16]> = bytes.into();
+        async move { self.0.write_all(&t).await }.boxed_local()
+    }
+
+    type SyncFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        self.0.flush().boxed_local()
+    }
+
+    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+    fn set_len(&mut self, _len: u64) -> Self::SetLenFuture<'_> {
+        futures::future::ready(io::Result::Ok(()))
     }
 }
