@@ -357,10 +357,7 @@ async fn get_to_stdout_single(curr: get::fsm::AtStartRoot) -> Result<get::Stats>
     Ok(curr.next().await?)
 }
 
-async fn get_to_stdout_multi(
-    curr: get::fsm::AtStartRoot,
-    pb: ProgressBar,
-) -> Result<get::Stats> {
+async fn get_to_stdout_multi(curr: get::fsm::AtStartRoot, pb: ProgressBar) -> Result<get::Stats> {
     let (mut next, collection) = {
         let curr = curr.next();
         let (curr, collection_data) = curr.concatenate_into_vec().await?;

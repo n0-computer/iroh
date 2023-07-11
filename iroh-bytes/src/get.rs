@@ -5,7 +5,7 @@
 //!
 //! Create a request describing the data you want to get.
 //!
-//! Then create a state machine using [get_response_machine::start] and
+//! Then create a state machine using [fsm::start] and
 //! drive it to completion by calling next on each state.
 //!
 //! For some states you have to provide additional arguments when calling next,
