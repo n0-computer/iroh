@@ -15,7 +15,7 @@ use futures::{
     future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, FileAdapter};
+use iroh_io::{AsyncSliceReader, File};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt, io,
@@ -182,7 +182,7 @@ impl BaoMapEntry<Database> for DbPair {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, FileAdapter>>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, File>>> {
         self.entry.data_reader().boxed()
     }
 }
@@ -241,7 +241,7 @@ impl BaoReadonlyDb for Database {
 impl BaoMap for Database {
     type Entry = DbPair;
     type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Either<Bytes, FileAdapter>;
+    type DataReader = Either<Bytes, File>;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let entry = self.get(hash)?;
         Some(DbPair {

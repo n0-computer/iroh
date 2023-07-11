@@ -9,7 +9,7 @@ use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::{BoxFuture, Either};
 use futures::{Future, FutureExt};
-use iroh_io::{AsyncSliceReaderExt, FileAdapter};
+use iroh_io::{AsyncSliceReaderExt, File};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
@@ -297,13 +297,11 @@ impl DbEntry {
     }
 
     /// A reader for the data.
-    pub fn data_reader(
-        &self,
-    ) -> impl Future<Output = io::Result<Either<Bytes, FileAdapter>>> + 'static {
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
         let this = self.clone();
         async move {
             Ok(match this {
-                DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path).await?),
+                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
                 DbEntry::Internal { data, .. } => Either::Left(data),
             })
         }

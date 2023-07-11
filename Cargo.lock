@@ -290,7 +290,7 @@ dependencies = [
  "blake3",
  "bytes",
  "futures",
- "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-io",
  "range-collections",
  "self_cell",
  "smallvec",
@@ -1648,7 +1648,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh-bytes",
- "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-io",
  "iroh-metrics",
  "iroh-net",
  "multibase",
@@ -1685,7 +1685,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body",
- "iroh-io 0.2.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-io",
  "iroh-net",
  "multibase",
  "num_cpus",
@@ -1727,19 +1727,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "iroh-io"
-version = "0.2.0-rc.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b759fb4d3a677920f98501ebc1ae898f0d01a15b39c557c758354c8c36791433"
-dependencies = [
- "bytes",
- "futures",
- "pin-project",
- "smallvec",
- "tokio",
 ]
 
 [[package]]

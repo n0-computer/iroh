@@ -526,7 +526,7 @@ mod tests {
         // create a file with 100 bytes
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(&(0..100u8).collect::<Vec<_>>()).unwrap();
-        read_mut_smoke(FileAdapter::from_std(file)).await?;
+        read_mut_smoke(File::from_std(file)).await?;
         Ok(())
     }
 
@@ -558,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn async_slice_writer_smoke() -> io::Result<()> {
         let file = tempfile::tempfile().unwrap();
-        write_mut_smoke(FileAdapter::from_std(file), |x| x.read_contents()).await?;
+        write_mut_smoke(File::from_std(file), |x| x.read_contents()).await?;
 
         Ok(())
     }
@@ -766,7 +766,7 @@ mod tests {
         #[test]
         fn file_write(ops in random_write_ops(1024, 1024, 10)) {
             let file = tempfile::tempfile().unwrap();
-            async_test(write_op_test(ops, FileAdapter::from_std(file), |x| x.read_contents())).unwrap();
+            async_test(write_op_test(ops, File::from_std(file), |x| x.read_contents())).unwrap();
         }
 
         #[test]
@@ -779,7 +779,7 @@ mod tests {
         fn file_read(data in proptest::collection::vec(any::<u8>(), 0..1024), ops in random_read_ops(1024, 1024, 2)) {
             let mut file = tempfile::tempfile().unwrap();
             file.write_all(&data).unwrap();
-            async_test(read_op_test(ops, FileAdapter::from_std(file), &data)).unwrap();
+            async_test(read_op_test(ops, File::from_std(file), &data)).unwrap();
         }
 
         #[cfg(feature = "http")]

@@ -14,10 +14,10 @@ use super::{make_io_error, AsyncSliceReader, AsyncSliceWriter};
 
 /// A wrapper around a [std::fs::File] that implements [AsyncSliceReader] and [AsyncSliceWriter]
 #[derive(Debug)]
-pub struct FileAdapter(Option<FileAdapterFsm>);
+pub struct File(Option<FileAdapterFsm>);
 
-impl FileAdapter {
-    /// Create a new [FileAdapter] from a function that creates a [std::fs::File]
+impl File {
+    /// Create a new [File] from a function that creates a [std::fs::File]
     pub async fn create(
         create_file: impl Fn() -> io::Result<std::fs::File> + Send + 'static,
     ) -> io::Result<Self> {
@@ -25,15 +25,15 @@ impl FileAdapter {
         Ok(Self::from_std(inner))
     }
 
-    /// Create a new [FileAdapter] from a [std::fs::File]
+    /// Create a new [File] from a [std::fs::File]
     ///
-    /// This is fine if you already have a [std::fs::File] and want to use it with [FileAdapter],
+    /// This is fine if you already have a [std::fs::File] and want to use it with [File],
     /// but opening a file is a blocking op that you probably don't want to do in an async context.
     pub fn from_std(file: std::fs::File) -> Self {
         Self(Some(FileAdapterFsm(file)))
     }
 
-    /// Open a [FileAdapter] from a path
+    /// Open a [File] from a path
     pub async fn open(path: PathBuf) -> io::Result<Self> {
         Self::create(move || std::fs::File::open(&path)).await
     }
@@ -51,57 +51,57 @@ impl FileAdapter {
     }
 }
 
-/// Futures for the [FileAdapter]
-pub mod file_adapter {
+/// Futures for the [File]
+pub mod file {
     use bytes::Bytes;
 
     use super::*;
 
     newtype_future!(
-        /// The future returned by [FileAdapter::read_at]
+        /// The future returned by [File::read_at]
         #[derive(Debug)]
         ReadAtFuture,
         Asyncify<'a, Bytes, FileAdapterFsm>,
         io::Result<Bytes>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::len]
+        /// The future returned by [File::len]
         #[derive(Debug)]
         LenFuture,
         Asyncify<'a, u64, FileAdapterFsm>,
         io::Result<u64>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::write_bytes_at]
+        /// The future returned by [File::write_bytes_at]
         #[derive(Debug)]
         WriteBytesAtFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::write_at]
+        /// The future returned by [File::write_at]
         #[derive(Debug)]
         WriteAtFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::set_len]
+        /// The future returned by [File::set_len]
         #[derive(Debug)]
         SetLenFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
     newtype_future!(
-        /// The future returned by [FileAdapter::sync]
+        /// The future returned by [File::sync]
         #[derive(Debug)]
         SyncFuture,
         Asyncify<'a, (), FileAdapterFsm>,
         io::Result<()>
     );
 
-    impl AsyncSliceReader for FileAdapter {
-        type ReadAtFuture<'a> = file_adapter::ReadAtFuture<'a>;
+    impl AsyncSliceReader for File {
+        type ReadAtFuture<'a> = file::ReadAtFuture<'a>;
 
         fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
             let fut = self
@@ -120,7 +120,7 @@ pub mod file_adapter {
         }
     }
 
-    impl AsyncSliceWriter for FileAdapter {
+    impl AsyncSliceWriter for File {
         type WriteBytesAtFuture<'a> = WriteBytesAtFuture<'a>;
 
         fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {

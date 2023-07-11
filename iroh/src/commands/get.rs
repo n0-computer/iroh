@@ -19,7 +19,7 @@ use iroh_bytes::{
     },
     Hash,
 };
-use iroh_io::{AsyncSliceWriter, FileAdapter};
+use iroh_io::{AsyncSliceWriter, File};
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
@@ -84,7 +84,7 @@ impl GetInteractive {
         let data_path = temp_dir.join(format!("{tempname}.data.part"));
         let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
         let data_path_2 = data_path.clone();
-        let mut data_file = FileAdapter::create(move || {
+        let mut data_file = File::create(move || {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -96,7 +96,7 @@ impl GetInteractive {
         pb.set_length(size);
         let mut outboard_file = if size > 0 {
             let outboard_path = outboard_path.clone();
-            let outboard_file = FileAdapter::create(move || {
+            let outboard_file = File::create(move || {
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -216,7 +216,7 @@ impl GetInteractive {
                 let data_path = temp_dir.join(format!("{tempname}.data.part"));
                 let outboard_path = temp_dir.join(format!("{tempname}.outboard.part"));
                 let data_path_2 = data_path.clone();
-                let data_file = FileAdapter::create(move || {
+                let data_file = File::create(move || {
                     std::fs::OpenOptions::new()
                         .write(true)
                         .create(true)
@@ -228,7 +228,7 @@ impl GetInteractive {
                 pb.set_length(size);
                 let mut outboard_file = if size > 0 {
                     let outboard_path = outboard_path.clone();
-                    let outboard_file = FileAdapter::create(move || {
+                    let outboard_file = File::create(move || {
                         std::fs::OpenOptions::new()
                             .write(true)
                             .create(true)
