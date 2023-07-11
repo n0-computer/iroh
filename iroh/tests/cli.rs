@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
-use iroh::bytes::{cid::Blake3Cid, provider::Ticket, Hash};
+use iroh::bytes::{provider::Ticket, Hash};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -454,7 +454,7 @@ fn test_provide_get_loop_single(
         args.push(out.to_str().unwrap());
     }
     args.push("--single");
-    let hash_str = Blake3Cid::new(hash).to_string();
+    let hash_str = hash.to_string();
     args.push(&hash_str);
     let cmd = cmd(iroh_bin(), args)
         .stdout_capture()

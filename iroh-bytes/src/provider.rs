@@ -21,7 +21,7 @@ use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::provider::database::BaoMapEntry;
-use crate::util::{canonicalize_path, Hash, Progress, RpcError};
+use crate::util::{io::canonicalize_path, progress::Progress, Hash, RpcError};
 
 pub mod collection;
 pub mod database;
