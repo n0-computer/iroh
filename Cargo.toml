@@ -5,7 +5,7 @@ members = [
   "iroh-bytes",
   "iroh-metrics",
 ]
-  
+
 [profile.optimized-release]
 inherits = 'release'
 lto = true
