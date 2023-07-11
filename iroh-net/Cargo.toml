@@ -82,6 +82,7 @@ rtnetlink = "0.12.0"
 wmi = "0.13"
 windows = { version = "0.48", features = ["Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_Foundation", "Win32_Security", "Win32_System_Rpc"] }
 widestring = "1"
+ipnet = "2.8"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }

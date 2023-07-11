@@ -5,7 +5,7 @@ use windows::{
     Win32::{
         Foundation::{HANDLE, WIN32_ERROR},
         NetworkManagement::WindowsFilteringPlatform::{
-            FwpmEngineClose0, FwpmEngineOpen0, FwpmProviderAdd0, FwpmSubLayerAdd0,
+            FwpmEngineClose0, FwpmEngineOpen0, FwpmFilterAdd0, FwpmProviderAdd0, FwpmSubLayerAdd0,
             FWPM_DISPLAY_DATA0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC,
         },
         System::Rpc::RPC_C_AUTHN_WINNT,
@@ -82,6 +82,22 @@ impl Engine {
             FwpmSubLayerAdd0(self.handle, &s, None)
         };
         WIN32_ERROR(ret).ok().context("FwpmSublayerAdd0")?;
+
+        Ok(())
+    }
+
+    /// Adds a given rule to the system.
+    pub fn add_rule(&self, rule: Rule) -> Result<()> {
+        anyhow::ensure!(rule.id != GUID::zeroed(), "ID must not be zero");
+
+        let ret = unsafe {
+            let conditions = layer.as_fwpm_filter_conditions();
+            let f = layer.as_fwpm_filter0(&conditions);
+            let mut filter_id = f.filterId;
+            FwpmFilterAdd0(self.handle, &f, None, Some(&mut filter_id))
+        };
+
+        WIN32_ERROR(ret).ok().context("FwpmFilterAdd0")?;
 
         Ok(())
     }

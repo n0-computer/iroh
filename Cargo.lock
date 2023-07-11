@@ -1781,6 +1781,7 @@ dependencies = [
  "http",
  "hyper",
  "igd",
+ "ipnet",
  "iroh-metrics",
  "libc",
  "netlink-packet-route",
