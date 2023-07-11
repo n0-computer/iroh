@@ -4,7 +4,7 @@
 use anyhow::Result;
 use windows::core::GUID;
 
-use super::fwpm::{Engine, Provider, Sublayer, FilterCondition};
+use super::fwpm::{Engine, FilterCondition, Provider, Sublayer};
 
 /// Handle to apply rules using the Windows Filtering Platform (Fwpm).
 #[derive(Debug)]

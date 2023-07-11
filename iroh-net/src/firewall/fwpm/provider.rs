@@ -1,3 +1,4 @@
+use anyhow::Result;
 use widestring::U16CString;
 use windows::{
     core::{GUID, PWSTR},
@@ -5,7 +6,6 @@ use windows::{
         FWPM_DISPLAY_DATA0, FWPM_PROVIDER0, FWPM_PROVIDER_FLAG_PERSISTENT, FWP_BYTE_BLOB,
     },
 };
-use anyhow::Result;
 
 /// Stores the state associated with a policy provider.
 ///
@@ -45,7 +45,7 @@ impl Provider {
         })
     }
 
-    pub (super) unsafe fn as_fwpm_provider0(&mut self) -> FWPM_PROVIDER0 {
+    pub(super) unsafe fn as_fwpm_provider0(&mut self) -> FWPM_PROVIDER0 {
         let mut flags = 0u32;
         if self.persistent {
             flags |= FWPM_PROVIDER_FLAG_PERSISTENT;
@@ -65,7 +65,11 @@ impl Provider {
             },
             flags,
             providerData: FWP_BYTE_BLOB {
-                size: self.provider_data.as_ref().map(|d| d.len() as u32).unwrap_or_default(),
+                size: self
+                    .provider_data
+                    .as_ref()
+                    .map(|d| d.len() as u32)
+                    .unwrap_or_default(),
                 data: self
                     .provider_data
                     .as_mut()

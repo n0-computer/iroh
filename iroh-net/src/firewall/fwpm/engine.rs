@@ -1,12 +1,16 @@
 use anyhow::{Context, Result};
 use widestring::U16CString;
-use windows::{Win32::{
-    Foundation::{HANDLE, WIN32_ERROR},
-    NetworkManagement::WindowsFilteringPlatform::{
-        FwpmEngineClose0, FwpmEngineOpen0, FwpmProviderAdd0, FWPM_DISPLAY_DATA0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC, FwpmSubLayerAdd0,
+use windows::{
+    core::GUID,
+    Win32::{
+        Foundation::{HANDLE, WIN32_ERROR},
+        NetworkManagement::WindowsFilteringPlatform::{
+            FwpmEngineClose0, FwpmEngineOpen0, FwpmProviderAdd0, FwpmSubLayerAdd0,
+            FWPM_DISPLAY_DATA0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC,
+        },
+        System::Rpc::RPC_C_AUTHN_WINNT,
     },
-    System::Rpc::RPC_C_AUTHN_WINNT,
-}, core::GUID};
+};
 
 use super::{Provider, Sublayer};
 
@@ -49,15 +53,8 @@ impl Engine {
             flags,
             ..Default::default()
         };
-        let ret = unsafe {
-            FwpmEngineOpen0(
-                None,
-                RPC_C_AUTHN_WINNT,
-                None,
-                Some(&session),
-                &mut handle,
-            )
-        };
+        let ret =
+            unsafe { FwpmEngineOpen0(None, RPC_C_AUTHN_WINNT, None, Some(&session), &mut handle) };
         WIN32_ERROR(ret).ok().context("FwpmEngineOpen0")?;
 
         Ok(Engine { handle })
