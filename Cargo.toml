@@ -1,12 +1,11 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-io",
   "iroh-net",
   "iroh-bytes",
   "iroh-metrics",
 ]
-
+  
 [profile.optimized-release]
 inherits = 'release'
 lto = true
@@ -14,6 +13,3 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
-
-[patch.crates-io]
-iroh-io = { path = "iroh-io" }

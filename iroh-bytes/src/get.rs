@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use crate::util::Hash;
 use anyhow::{Context, Result};
-use bao_tree::io::error::DecodeError;
-use bao_tree::io::DecodeResponseItem;
+use bao_tree::io::fsm::BaoContentItem;
+use bao_tree::io::DecodeError;
 use bao_tree::ChunkNum;
 use bytes::BytesMut;
 use iroh_net::tls::Keypair;
@@ -78,9 +78,8 @@ pub mod fsm {
 
     use super::*;
 
-    use bao_tree::io::{
-        fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
-        Leaf, Parent,
+    use bao_tree::io::fsm::{
+        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -430,27 +429,6 @@ pub mod fsm {
         misc: Box<Misc>,
     }
 
-    /// Bao content item
-    #[derive(Debug)]
-    pub enum BaoContentItem {
-        /// A parent node
-        Parent(Parent),
-        /// A leaf node containing data
-        Leaf(Leaf),
-    }
-
-    impl TryFrom<DecodeResponseItem> for BaoContentItem {
-        type Error = bao_tree::io::Header;
-
-        fn try_from(item: DecodeResponseItem) -> result::Result<Self, Self::Error> {
-            match item {
-                DecodeResponseItem::Parent(p) => Ok(BaoContentItem::Parent(p)),
-                DecodeResponseItem::Leaf(l) => Ok(BaoContentItem::Leaf(l)),
-                DecodeResponseItem::Header(h) => Err(h),
-            }
-        }
-    }
-
     /// The next state after reading a content item
     #[derive(Debug, From)]
     pub enum BlobContentNext {
@@ -466,7 +444,6 @@ pub mod fsm {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
-                    let res = res.map(|x| x.try_into().unwrap());
                     (next, res).into()
                 }
                 ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
@@ -628,7 +605,7 @@ pub enum GetResponseError {
     Read(#[from] quinn::ReadError),
     /// Error when decoding, e.g. hash mismatch
     #[error("decode: {0}")]
-    Decode(bao_tree::io::error::DecodeError),
+    Decode(bao_tree::io::DecodeError),
     /// A generic error
     #[error("generic: {0}")]
     Generic(anyhow::Error),
@@ -640,10 +617,10 @@ impl From<postcard::Error> for GetResponseError {
     }
 }
 
-impl From<bao_tree::io::error::DecodeError> for GetResponseError {
-    fn from(cause: bao_tree::io::error::DecodeError) -> Self {
+impl From<bao_tree::io::DecodeError> for GetResponseError {
+    fn from(cause: bao_tree::io::DecodeError) -> Self {
         match cause {
-            bao_tree::io::error::DecodeError::Io(cause) => {
+            bao_tree::io::DecodeError::Io(cause) => {
                 // try to downcast to specific quinn errors
                 if let Some(source) = cause.source() {
                     if let Some(error) = source.downcast_ref::<quinn::ConnectionError>() {

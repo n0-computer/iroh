@@ -9,7 +9,7 @@ use crate::{
     Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};
-use bao_tree::{io::fsm::Outboard, outboard::PreOrderMemOutboard};
+use bao_tree::{io::fsm::Outboard, io::outboard::PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::{
     future::{self, BoxFuture, Either},
@@ -59,7 +59,7 @@ impl InMemDatabase {
             let name = name.into();
             let data: &[u8] = data.as_ref();
             // compute the outboard
-            let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+            let (outboard, hash) = bao_tree::io::outboard(data, crate::IROH_BLOCK_SIZE);
             // add the name, this assumes that names are unique
             names.insert(name, hash);
             // wrap into the right types
@@ -77,7 +77,7 @@ impl InMemDatabase {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
         // compute the outboard
-        let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+        let (outboard, hash) = bao_tree::io::outboard(data, crate::IROH_BLOCK_SIZE);
         // wrap into the right types
         let outboard =
             PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
@@ -573,8 +573,7 @@ impl Database {
                                 }
                             }
                             DbEntry::Internal { outboard, data } => {
-                                let data = std::io::Cursor::new(data);
-                                validate_bao(hash, data, outboard, progress)
+                                validate_bao(hash, data.as_ref(), outboard, progress)
                             }
                         };
                         res.err()

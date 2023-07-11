@@ -386,7 +386,7 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender>(
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    outboard: D::Outboard,
+    mut outboard: D::Outboard,
     mut data: D::DataReader,
 ) -> Result<SentStatus> {
     let hash = request.hash;
@@ -413,7 +413,7 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender>(
             // send the root
             encode_ranges_validated(
                 &mut data,
-                &outboard,
+                &mut outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer.inner,
             )
@@ -805,7 +805,7 @@ mod tests {
             for blob in blobs {
                 let size = blob.len() as u64;
                 total_blobs_size += size;
-                let (outboard, hash) = bao_tree::outboard(&blob, crate::IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::io::outboard(&blob, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 let path = PathBuf::from_str(&hash.to_string()).unwrap();
@@ -826,7 +826,7 @@ mod tests {
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::outboard(&data, crate::IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::io::outboard(&data, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 map.insert(hash, DbEntry::Internal { outboard, data });
