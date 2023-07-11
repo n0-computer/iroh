@@ -9,7 +9,10 @@ use windows::Win32::{
     System::Rpc::RPC_C_AUTHN_WINNT,
 };
 
+/// Stores the state associated with a sublayer.
+///
 /// Wrapper around `FWPM_SUBLAYER0`.
+/// <https://learn.microsoft.com/en-us/windows/win32/api/fwpmtypes/ns-fwpmtypes-fwpm_sublayer0>
 #[derive(Debug)]
 pub struct Sublayer {
     id: GUID,
@@ -37,72 +40,3 @@ impl Sublayer {
         }
     }
 }
-
-/// An action the filtering system can execute.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[repr(i32)]
-enum Action {
-    Block = 0x1001,
-    Permit = 0x1002,
-    CalloutTerminating = 0x5003,
-    CalloutInspection = 0x6004,
-    CalloutUnknown = 0x4005,
-}
-
-enum FieldId {
-    IpProtocol,
-}
-
-/// Wrapper around `FWP_MATCH_TYPE`
-#[derive(Copy, Clone, PartialEq, Eq, Debug, derive_more::Display)]
-#[repr(i32)]
-enum MatchType {
-    #[display("==")]
-    Equal = 0,
-    #[display(">")]
-    Greater,
-    #[display("<")]
-    Less,
-    #[display(">=")]
-    GreaterOrEqual,
-    #[display("<=")]
-    LessOrEqual,
-    #[display("in")]
-    Range,
-    #[display("F[all]")]
-    FlagsAllSet,
-    #[display("F[any]")]
-    FlagsAnySet,
-    #[display("F[none]")]
-    FlagsNoneSet,
-    #[display("i==")]
-    EqualCaseInsensitive,
-    #[display("!=")]
-    NotEqual,
-    #[display("pfx")]
-    TypePrefix,
-    #[display("!pfx")]
-    TypeNotPrefix,
-}
-
-impl Into<FWP_MATCH_TYPE> for MatchType {
-    fn into(self) -> FWP_MATCH_TYPE {
-        FWP_MATCH_TYPE(self as i32)
-    }
-}
-
-/// Wrapper around `FWPM_CONDTION_VALUE0_0`.
-enum MatchValue {
-    U16(u16),
-    IpProtoUdp,
-    IpProtoTcp,
-}
-
-/// Wrapper around `FWPM_FILTER_CONDITION0`
-struct Match {
-    field: FieldId,
-    op: MatchType,
-    value: (),
-}
-
-struct Rule {}

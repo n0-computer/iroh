@@ -174,37 +174,77 @@ impl Into<FWP_MATCH_TYPE> for MatchType {
     }
 }
 
+/// The poosible values that are used in filter conditions when testing for matching filters.
+///
 /// Wrapper around `FWPM_CONDTION_VALUE0_0`.
+/// <https://learn.microsoft.com/en-us/windows/win32/api/fwptypes/ns-fwptypes-fwp_condition_value0>
 pub enum ConditionValue {
     Uint8(u8),
     Uint16(u16),
     Uint32(u32),
-    Uint64(*mut u64),
+    Uint64(u64),
     Int8(i8),
     Int16(i16),
     Int32(i32),
-    Int64(*mut i64),
+    Int64(i64),
     Float(f32),
-    Double(*mut f64),
-    ByteArray16(*mut FWP_BYTE_ARRAY16),
-    Sid(*mut SID),
-    Sd(*mut FWP_BYTE_BLOB),
-    ByteBlob(*mut FWP_BYTE_BLOB),
-    TokenInformation(*mut FWP_TOKEN_INFORMATION),
-    TokenAccessInformation(*mut FWP_BYTE_BLOB),
-    V4AddrAndMask(*mut FWP_V4_ADDR_AND_MASK),
-    V6AddrAndMask(*mut FWP_V6_ADDR_AND_MASK),
-    RangeValue(*mut FWP_RANGE0),
+    Double64(f64),
+    ByteArray16(FWP_BYTE_ARRAY16),
+    ByteBlob(FWP_BYTE_BLOB),
+    Sid(SID),
+    Sd(FWP_BYTE_BLOB),
+    TokenInformation(FWP_TOKEN_INFORMATION),
+    TokenAccessInformation(FWP_BYTE_BLOB),
+    UnicodeString(PWSTR),
+    ByteArray6(FWP_BYTE_ARRAY6),
+    V4AddrAndMask(FWP_V4_ADDR_AND_MASK),
+    V6AddrAndMask(FWP_V6_ADDR_AND_MASK),
+    RangeValue(FWP_RANGE0),
 }
 
 impl ConditionValue {
-    pub(super) fn as_fwp_condtion_value0(&mut self) -> FWP_CONDITION_VALUE0 {
+    pub(super) unsafe fn as_fwp_condtion_value0(&mut self) -> FWP_CONDITION_VALUE0 {
         use ConditionValue::*;
 
         let typ = self.fwp_data_type();
         let value = match self {
-            Uint8(uint8) => FWP_CONDITION_VALUE0_0 { uint8 },
-            _ => {}
+            Uint8(val) => FWP_CONDITION_VALUE0_0 { uint8: val },
+            Uint16(val) => FWP_CONDITION_VALUE0_0 { uint16: val },
+            Uint32(val) => FWP_CONDITION_VALUE0_0 { uint32: val },
+            Uint64(val) => FWP_CONDITION_VALUE0_0 { uint64: &mut val },
+            Int8(val) => FWP_CONDITION_VALUE0_0 { int8: val },
+            Int16(val) => FWP_CONDITION_VALUE0_0 { int16: val },
+            Int32(val) => FWP_CONDITION_VALUE0_0 { int32: val },
+            Int64(val) => FWP_CONDITION_VALUE0_0 { int64: &mut val },
+            Float(val) => FWP_CONDITION_VALUE0_0 { float32: val },
+            Double64(val) => FWP_CONDITION_VALUE0_0 { double64: &mut val },
+            ByteArray16(val) => FWP_CONDITION_VALUE0_0 {
+                byteArray16: &mut val,
+            },
+            ByteBlob(val) => FWP_CONDITION_VALUE0_0 { byteBlob: &mut val },
+            Sid(val) => FWP_CONDITION_VALUE0_0 { sid: &mut val },
+            Sd(val) => FWP_CONDITION_VALUE0_0 { sd: &mut val },
+            TokenInformation(val) => FWP_CONDITION_VALUE0_0 {
+                tokenInformation: &mut val,
+            },
+            TokenAccessInformation(val) => FWP_CONDITION_VALUE0_0 {
+                tokenAccessInformation: &mut val,
+            },
+            UnicodeString(val) => FWP_CONDITION_VALUE0_0 {
+                unicodeString: &mut val,
+            },
+            ByteArray6(val) => FWP_CONDITION_VALUE0_0 {
+                byteArray6: &mut val,
+            },
+            V4AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
+                v4AddrMask: &mut val,
+            },
+            V6AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
+                v6AddrMask: &mut val,
+            },
+            RangeValue(val) => FWP_CONDITION_VALUE0_0 {
+                rangeValue: &mut val,
+            },
         };
 
         FWP_CONDTION_VALUE0 {
@@ -226,12 +266,15 @@ impl ConditionValue {
             Int32(_) => FWP_INT32,
             Int64(_) => FWP_INT64,
             Float(_) => FWP_FLOAT,
-            Double(_) => FWP_DOUBLE,
+            Double64(_) => FWP_DOUBLE,
             ByteArray16(_) => FWP_BYTE_ARRAY16_TYPE,
             Sid(_) => FWP_SID,
+            Sd(_) => FWP_SECURITY_DESCRIPTOR_TYPE,
             ByteBlob(_) => FWP_BYTE_BLOB_TYPE,
             TokenInformation(_) => FWP_TOKEN_INFORMATION_TYPE,
             TokenAccessInformation(_) => FWP_TOKEN_ACCESS_INFORMATION_TYPE,
+            UnicodeString(_) => FWP_UNICODE_STRING_TYPE,
+            ByteArray6(_) => FWP_BYTE_ARRAY6_TYPE,
             V4AddrAndMask(_) => FWP_V4_ADDR_MASK,
             V6AddrAndMask(_) => FWP_V6_ADDR_MASK,
             RangeValue(_) => FWP_RANGE_TYPE,
