@@ -176,6 +176,26 @@ where
         }
     }
 
+    /// Configure the collection parser, changing the type of the builder to the new collection parser type.
+    pub fn collection_parser<C2: CollectionParser>(
+        self,
+        collection_parser: C2,
+    ) -> Builder<D, E, C2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            collection_parser,
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            custom_get_handler: self.custom_get_handler,
+            auth_handler: self.auth_handler,
+            rpc_endpoint: self.rpc_endpoint,
+            derp_map: self.derp_map,
+            rt: self.rt,
+        }
+    }
+
     /// Sets the `[DerpMap]`
     pub fn derp_map(mut self, dm: DerpMap) -> Self {
         self.derp_map = Some(dm);

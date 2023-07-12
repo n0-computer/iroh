@@ -232,14 +232,14 @@ pub trait CollectionParser: Send + Debug + Clone + 'static {
         &'a self,
         format: u64,
         reader: &'a mut R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn CollectionStream>, CollectionStats)>>;
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
 }
 
 /// A stream (async iterator) over the hashes of a collection.
 ///
 /// Allows to get the next hash or skip a number of hashes.  Does not
 /// implement `Stream` because of the extra `skip` method.
-pub trait CollectionStream: Debug {
+pub trait LinkStream: Debug {
     /// Get the next hash in the collection.
     fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>>;
     /// Skip a number of hashes in the collection.
@@ -267,7 +267,7 @@ impl CollectionParser for NoCollectionParser {
         &'a self,
         _format: u64,
         _reader: &mut R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn CollectionStream>, CollectionStats)>> {
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         future::err(anyhow::anyhow!("collections not supported")).boxed_local()
     }
 }
@@ -278,19 +278,19 @@ pub struct IrohCollectionParser;
 
 /// Iterator for the current iroh default collections
 #[derive(Debug, Clone)]
-pub struct ArrayCollectionIter {
+pub struct ArrayLinkStream {
     hashes: Box<[Hash]>,
     offset: usize,
 }
 
-impl ArrayCollectionIter {
+impl ArrayLinkStream {
     /// Create a new iterator over the given hashes.
     pub fn new(hashes: Box<[Hash]>) -> Self {
         Self { hashes, offset: 0 }
     }
 }
 
-impl CollectionStream for ArrayCollectionIter {
+impl LinkStream for ArrayLinkStream {
     fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
         let res = if self.offset < self.hashes.len() {
             let hash = self.hashes[self.offset];
@@ -321,7 +321,7 @@ impl CollectionParser for IrohCollectionParser {
         &'a self,
         _format: u64,
         reader: &'a mut R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn CollectionStream>, CollectionStats)>> {
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {
             // read to end
             let data = reader.read_to_end().await?;
@@ -333,8 +333,7 @@ impl CollectionParser for IrohCollectionParser {
                 .map(|x| x.hash)
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            let res: Box<dyn CollectionStream> =
-                Box::new(ArrayCollectionIter { hashes, offset: 0 });
+            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
             Ok((res, CollectionStats::default()))
         }
         .boxed_local()
@@ -525,8 +524,8 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>
         } else {
             let c = c.as_mut().context("collection parser not available")?;
             debug!("wrtiting ranges '{:?}' of child {}", ranges, offset);
+            // skip to the next blob if there is a gap
             if prev < offset - 1 {
-                // skip to the next blob
                 c.skip(offset - prev - 1).await?;
             }
             if let Some(hash) = c.next().await? {

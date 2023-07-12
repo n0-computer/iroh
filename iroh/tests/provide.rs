@@ -8,8 +8,12 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{
+    future::{BoxFuture, LocalBoxFuture},
+    FutureExt,
+};
 use iroh::node::{Event, Node, StaticTokenAuthHandler};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -24,7 +28,8 @@ use iroh_bytes::{
     get::{self, fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{
-        self, create_collection, database::InMemDatabase, CustomGetHandler, DataSource, Database,
+        self, create_collection, database::InMemDatabase, ArrayLinkStream, CollectionParser,
+        CollectionStats, CustomGetHandler, DataSource, Database, IrohCollectionParser, LinkStream,
         RequestAuthorizationHandler,
     },
     runtime,
@@ -170,7 +175,8 @@ async fn multiple_clients() -> Result<()> {
                 let expected_data = &content;
                 let expected_name = &name;
                 let request = GetRequest::all(hash).into();
-                let (collection, children, _stats) = run_get_request(opts, request).await?;
+                let (root, children, _stats) = run_get_request(opts, request).await?;
+                let collection = Collection::from_bytes(&root)?;
                 assert_eq!(expected_name, &collection.blobs()[0].name);
                 assert_eq!(&file_hash, &collection.blobs()[0].hash);
                 assert_eq!(expected_data, &children[&0]);
@@ -278,7 +284,8 @@ where
     let addrs = node.local_endpoint_addresses().await?;
     let opts = get_options(node.peer_id(), addrs);
     let request = GetRequest::all(collection_hash).into();
-    let (collection, children, _stats) = run_get_request(opts, request).await?;
+    let (root, children, _stats) = run_get_request(opts, request).await?;
+    let collection = Collection::from_bytes(&root)?;
     assert_eq!(num_blobs, collection.blobs().len());
     for (i, (name, hash)) in lookup.into_iter().enumerate() {
         let hash = Hash::from(hash);
@@ -526,10 +533,20 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
     Ok(())
 }
 
+/// Run a get request with the default collection parser
 async fn run_get_request(
     opts: get::Options,
     request: AnyGetRequest,
-) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
+) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
+    run_custom_get_request(opts, request, IrohCollectionParser).await
+}
+
+/// Run a get request with a custom collection parser
+async fn run_custom_get_request<C: CollectionParser>(
+    opts: get::Options,
+    request: AnyGetRequest,
+    collection_parser: C,
+) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     let connection = get::dial(opts).await?;
     let initial = fsm::start(connection, request);
     use fsm::*;
@@ -537,31 +554,42 @@ async fn run_get_request(
     let connected = initial.next().await?;
     println!("I am connected");
     // we assume that the request includes the entire collection
-    let (mut next, collection) = {
+    let (mut next, root, mut c) = {
         let ConnectedNext::StartRoot(sc) = connected.next().await? else {
                 panic!("request did not include collection");
             };
         println!("getting collection");
         let (done, data) = sc.next().concatenate_into_vec().await?;
+        let mut data = Bytes::from(data);
         println!("got collection {}", data.len());
-        (done.next(), Collection::from_bytes(&data)?)
+        let (stream, _stats) = collection_parser.parse(0, &mut data).await?;
+        (done.next(), data, stream)
     };
+    // the previous *overall* offset, not child offset
+    let mut prev = 0;
     // read all the children
     let finishing = loop {
         let start = match next {
             EndBlobNext::MoreChildren(start) => start,
             EndBlobNext::Closing(finishing) => break finishing,
         };
-        let child = start.child_offset();
-        let Some(blob) = collection.blobs().get(child as usize) else {
-                break start.finish();
-            };
-        let (done, data) = start.next(blob.hash).concatenate_into_vec().await?;
-        items.insert(child, data.into());
+        let child_offset = start.child_offset();
+        let offset = child_offset + 1;
+        // skip to the next blob if there is a gap
+        if prev < offset - 1 {
+            c.skip(offset - prev - 1).await?;
+        }
+        // get the hash of the next blob, or finish if there are no more
+        let Some(hash) = c.next().await? else {
+            break start.finish();
+        };
+        let (done, data) = start.next(hash).concatenate_into_vec().await?;
+        items.insert(child_offset, data.into());
         next = done.next();
+        prev = offset;
     };
     let stats = finishing.next().await?;
-    Ok((collection, items, stats))
+    Ok((root, items, stats))
 }
 
 #[tokio::test]
@@ -587,7 +615,8 @@ async fn test_run_fsm() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = get_options(peer_id, addrs);
         let request = GetRequest::all(hash).into();
-        let (collection, children, _) = run_get_request(opts, request).await?;
+        let (root, children, _) = run_get_request(opts, request).await?;
+        let collection = Collection::from_bytes(&root)?;
         validate_children(collection, children)?;
         anyhow::Ok(())
     })
@@ -598,6 +627,66 @@ async fn test_run_fsm() {
 
 fn readme_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")
+}
+
+/// A collection parser that assumes that collections are just links
+#[derive(Clone, Debug, Default)]
+pub struct CollectionsAreJustLinks;
+
+impl CollectionParser for CollectionsAreJustLinks {
+    fn parse<'a, R: AsyncSliceReader + 'a>(
+        &'a self,
+        _format: u64,
+        reader: &'a mut R,
+    ) -> LocalBoxFuture<'_, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
+        async move {
+            let data = reader.read_to_end().await?;
+            let collection = postcard::from_bytes::<Vec<Hash>>(&data)?;
+            let iter: Box<dyn LinkStream> = Box::new(ArrayLinkStream::new(collection.into()));
+            Ok((iter, Default::default()))
+        }
+        .boxed_local()
+    }
+}
+
+#[tokio::test]
+async fn test_custom_collection_parser() {
+    let rt = test_runtime();
+    // create a collection consisting of 2 leafs
+    let leaf1_data = vec![0u8; 12345];
+    let leaf2_data = vec![1u8; 67890];
+    let mut db = InMemDatabase::default();
+    let leaf1_hash = db.insert(leaf1_data.clone());
+    let leaf2_hash = db.insert(leaf2_data.clone());
+    let collection = vec![leaf1_hash, leaf2_hash];
+    let collection_bytes = postcard::to_allocvec(&collection).unwrap();
+    let collection_hash = db.insert(collection_bytes.clone());
+    let node = Node::builder(db)
+        .collection_parser(CollectionsAreJustLinks)
+        .bind_addr("127.0.0.1:0".parse().unwrap())
+        .runtime(&rt)
+        .spawn()
+        .await
+        .unwrap();
+    let addrs = node.local_endpoint_addresses().await.unwrap();
+    let peer_id = node.peer_id();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let request = GetRequest::all(collection_hash).into();
+        let (root, children, _stats) = run_custom_get_request(
+            get_options(peer_id, addrs),
+            request,
+            CollectionsAreJustLinks,
+        )
+        .await?;
+        assert_eq!(root, collection_bytes);
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[&0], leaf1_data);
+        assert_eq!(children[&1], leaf2_data);
+        anyhow::Ok(())
+    })
+    .await
+    .expect("timeout")
+    .expect("get failed");
 }
 
 #[derive(Clone, Debug)]
@@ -700,10 +789,11 @@ async fn test_custom_request_collection() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let request: AnyGetRequest = iroh_bytes::protocol::Request::CustomGet(CustomGetRequest {
+        let request: AnyGetRequest = CustomGetRequest {
             token: None,
             data: Bytes::from(&b"hello"[..]),
-        });
+        }
+        .into();
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_get_request(opts, request).await?;
         let actual = &items[&0];
