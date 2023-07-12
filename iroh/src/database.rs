@@ -840,7 +840,7 @@ fn compute_outboard(
 /// Creates a collection blob and returns all blobs in a hashmap.
 ///
 /// Returns the hashmap with all blobs, including the created collection blob itself, as
-/// well as the [`crate::Hash`] of the collection blob.
+/// well as the [`iroh_bytes::Hash`] of the collection blob.
 pub async fn create_collection_inner(
     data_sources: Vec<DataSource>,
     progress: Progress<ProvideProgress>,
