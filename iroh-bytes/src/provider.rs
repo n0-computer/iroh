@@ -498,12 +498,15 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>
     let mut c = if !just_root {
         // use the collection parser to parse the collection
         let (c, stats) = collection_parser.parse(0, &mut data).await?;
-        let _ = writer.events.send(Event::TransferCollectionStarted {
-            connection_id: writer.connection_id(),
-            request_id: writer.request_id(),
-            num_blobs: stats.num_blobs,
-            total_blobs_size: stats.total_blob_size,
-        });
+        writer
+            .events
+            .send(Event::TransferCollectionStarted {
+                connection_id: writer.connection_id(),
+                request_id: writer.request_id(),
+                num_blobs: stats.num_blobs,
+                total_blobs_size: stats.total_blob_size,
+            })
+            .await;
         Some(c)
     } else {
         None
@@ -540,13 +543,16 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>
                     return Ok(status);
                 }
 
-                let _ = writer.events.send(Event::TransferBlobCompleted {
-                    connection_id: writer.connection_id(),
-                    request_id: writer.request_id(),
-                    hash,
-                    index: offset - 1,
-                    size,
-                });
+                writer
+                    .events
+                    .send(Event::TransferBlobCompleted {
+                        connection_id: writer.connection_id(),
+                        request_id: writer.request_id(),
+                        hash,
+                        index: offset - 1,
+                        size,
+                    })
+                    .await;
             } else {
                 // nothing more we can send
                 break;
@@ -561,11 +567,9 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>
 }
 
 /// Trait for sending events.
-pub trait EventSender: Clone + Send + 'static {
+pub trait EventSender: Clone + Sync + Send + 'static {
     /// Send an event.
-    ///
-    /// Returns `None` if the event was sent successfully, or `Some(event)` if the event could not be sent.
-    fn send(&self, event: Event) -> Option<Event>;
+    fn send(&self, event: Event) -> BoxFuture<()>;
 }
 
 /// Handle a single connection.
@@ -599,7 +603,7 @@ pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
                 events: events.clone(),
                 inner: writer,
             };
-            events.send(Event::ClientConnected { connection_id });
+            events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
             let authorization_handler = authorization_handler.clone();
@@ -642,7 +646,7 @@ async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
     let request = match read_request(reader, &mut in_buffer).await {
         Ok(r) => r,
         Err(e) => {
-            writer.notify_transfer_aborted();
+            writer.notify_transfer_aborted().await;
             return Err(e);
         }
     };
@@ -653,7 +657,7 @@ async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
         .authorize(request.token().cloned(), &request)
         .await
     {
-        writer.notify_transfer_aborted();
+        writer.notify_transfer_aborted().await;
         return Err(e);
     }
 
@@ -671,12 +675,15 @@ async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
     custom_get_handler: Arc<dyn CustomGetHandler>,
     collection_parser: C,
 ) -> Result<()> {
-    let _ = writer.events.send(Event::CustomGetRequestReceived {
-        len: request.data.len(),
-        connection_id: writer.connection_id(),
-        request_id: writer.request_id(),
-        token: request.token.clone(),
-    });
+    writer
+        .events
+        .send(Event::CustomGetRequestReceived {
+            len: request.data.len(),
+            connection_id: writer.connection_id(),
+            request_id: writer.request_id(),
+            token: request.token.clone(),
+        })
+        .await;
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler
         .handle(request.token, request.data)
@@ -697,12 +704,15 @@ pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
 ) -> Result<()> {
     let hash = request.hash;
     debug!(%hash, "received request");
-    let _ = writer.events.send(Event::GetRequestReceived {
-        hash,
-        connection_id: writer.connection_id(),
-        request_id: writer.request_id(),
-        token: request.token().cloned(),
-    });
+    writer
+        .events
+        .send(Event::GetRequestReceived {
+            hash,
+            connection_id: writer.connection_id(),
+            request_id: writer.request_id(),
+            token: request.token().cloned(),
+        })
+        .await;
 
     // 4. Attempt to find hash
     match db.get(&hash) {
@@ -720,13 +730,13 @@ pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
             .await
             {
                 Ok(SentStatus::Sent) => {
-                    writer.notify_transfer_completed();
+                    writer.notify_transfer_completed().await;
                 }
                 Ok(SentStatus::NotFound) => {
-                    writer.notify_transfer_aborted();
+                    writer.notify_transfer_aborted().await;
                 }
                 Err(e) => {
-                    writer.notify_transfer_aborted();
+                    writer.notify_transfer_aborted().await;
                     return Err(e);
                 }
             }
@@ -735,7 +745,7 @@ pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
         }
         None => {
             debug!("not found {}", hash);
-            writer.notify_transfer_aborted();
+            writer.notify_transfer_aborted().await;
             writer.inner.finish().await?;
         }
     };
@@ -760,18 +770,22 @@ impl<E: EventSender> ResponseWriter<E> {
         self.inner.id().index()
     }
 
-    fn notify_transfer_completed(&self) {
-        let _ = self.events.send(Event::TransferCollectionCompleted {
-            connection_id: self.connection_id(),
-            request_id: self.request_id(),
-        });
+    async fn notify_transfer_completed(&self) {
+        self.events
+            .send(Event::TransferCollectionCompleted {
+                connection_id: self.connection_id(),
+                request_id: self.request_id(),
+            })
+            .await;
     }
 
-    fn notify_transfer_aborted(&self) {
-        let _ = self.events.send(Event::TransferAborted {
-            connection_id: self.connection_id(),
-            request_id: self.request_id(),
-        });
+    async fn notify_transfer_aborted(&self) {
+        self.events
+            .send(Event::TransferAborted {
+                connection_id: self.connection_id(),
+                request_id: self.request_id(),
+            })
+            .await;
     }
 }
 
