@@ -11,8 +11,12 @@ use windows::{
 /// <https://learn.microsoft.com/en-us/windows/win32/api/fwpmtypes/ns-fwpmtypes-fwpm_sublayer0>
 #[derive(Debug)]
 pub struct Sublayer {
+    /// The unique identifier.
     pub id: GUID,
+    /// Short descriptive name.
     pub name: U16CString,
+    /// Priority of this sublayer relative to other sublayers. Heigher-weighted layers
+    /// are invoked first.
     pub weight: u16,
 }
 

@@ -1,21 +1,27 @@
+use core::ffi::c_void;
+
+use anyhow::{Context, Result};
 use widestring::U16CString;
 use windows::{
-    core::{GUID, PWSTR},
+    core::{GUID, PCWSTR, PWSTR},
     Win32::{
+        Foundation::WIN32_ERROR,
         NetworkManagement::WindowsFilteringPlatform::{
-            FWPM_DISPLAY_DATA0, FWPM_PROVIDER0, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC,
-            FWPM_SUBLAYER0, FWP_ACTION_FLAG_CALLOUT, FWP_ACTION_FLAG_NON_TERMINATING,
-            FWP_ACTION_FLAG_TERMINATING, FWP_BYTE_ARRAY16, FWP_BYTE_ARRAY16_TYPE, FWP_BYTE_ARRAY6,
-            FWP_BYTE_ARRAY6_TYPE, FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0,
-            FWP_CONDITION_VALUE0_0, FWP_DATA_TYPE, FWP_DOUBLE, FWP_FLOAT, FWP_INT16, FWP_INT32,
-            FWP_INT64, FWP_INT8, FWP_MATCH_TYPE, FWP_RANGE0, FWP_RANGE_TYPE,
-            FWP_SECURITY_DESCRIPTOR_TYPE, FWP_SID, FWP_TOKEN_ACCESS_INFORMATION_TYPE,
-            FWP_TOKEN_INFORMATION, FWP_TOKEN_INFORMATION_TYPE, FWP_UINT16, FWP_UINT32, FWP_UINT64,
-            FWP_UINT8, FWP_UNICODE_STRING_TYPE, FWP_V4_ADDR_AND_MASK, FWP_V4_ADDR_MASK,
-            FWP_V6_ADDR_AND_MASK, FWP_V6_ADDR_MASK,
+            FwpmFreeMemory0, FwpmGetAppIdFromFileName0, FWPM_ACTION0, FWPM_ACTION0_0,
+            FWPM_DISPLAY_DATA0, FWPM_FILTER0, FWPM_FILTER_CONDITION0, FWPM_FILTER_FLAGS,
+            FWPM_FILTER_FLAG_BOOTTIME, FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT,
+            FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED, FWPM_FILTER_FLAG_PERSISTENT,
+            FWP_ACTION_FLAG_CALLOUT, FWP_ACTION_FLAG_NON_TERMINATING, FWP_ACTION_FLAG_TERMINATING,
+            FWP_BYTE_ARRAY16, FWP_BYTE_ARRAY16_TYPE, FWP_BYTE_ARRAY6, FWP_BYTE_ARRAY6_TYPE,
+            FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0,
+            FWP_DATA_TYPE, FWP_DOUBLE, FWP_FLOAT, FWP_INT16, FWP_INT32, FWP_INT64, FWP_INT8,
+            FWP_MATCH_TYPE, FWP_RANGE0, FWP_RANGE_TYPE, FWP_SECURITY_DESCRIPTOR_TYPE, FWP_SID,
+            FWP_TOKEN_ACCESS_INFORMATION_TYPE, FWP_TOKEN_INFORMATION, FWP_TOKEN_INFORMATION_TYPE,
+            FWP_UINT16, FWP_UINT32, FWP_UINT64, FWP_UINT8, FWP_UNICODE_STRING_TYPE,
+            FWP_V4_ADDR_AND_MASK, FWP_V4_ADDR_MASK, FWP_V6_ADDR_AND_MASK, FWP_V6_ADDR_MASK,
+            FWP_VALUE0, FWP_VALUE0_0,
         },
         Security::SID,
-        System::Rpc::RPC_C_AUTHN_WINNT,
     },
 };
 
@@ -73,6 +79,7 @@ impl Rule {
         let id = GUID::new()?;
         Ok(Rule {
             id,
+            kernel_id: 0,
             name: U16CString::from_str(name)?,
             description: None,
             layer,
@@ -91,7 +98,7 @@ impl Rule {
         })
     }
 
-    pub(super) unsafe fn as_fwpm_filter_conditions(&self) -> Vec<FWPM_FILTER_CONDTION0> {
+    pub(super) unsafe fn as_fwpm_filter_conditions(&self) -> Vec<FWPM_FILTER_CONDITION0> {
         self.conditions
             .iter()
             .map(|c| c.as_fwpm_filter_condition0())
@@ -101,25 +108,25 @@ impl Rule {
     /// Must be passed the result of `Self::as_fwpm_filter_conditions`.
     pub(super) unsafe fn as_fwpm_filter0(
         &mut self,
-        filter_conditions: &[FWPM_FILTER_CONDTION0],
+        filter_conditions: &[FWPM_FILTER_CONDITION0],
     ) -> FWPM_FILTER0 {
         let mut flags = FWPM_FILTER_FLAGS::default();
         if self.hard_action {
-            flags |= FWPM_FILTER_FLAGS_CLEAR_ACTION_RIGHT;
+            flags |= FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT;
         }
         if self.permit_if_missing {
-            flags |= FWPM_FILTER_FLAGS_PERMIT_IF_CALLOUT_UNREGISTERED;
+            flags |= FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED;
         }
         if self.persistent {
-            flags |= FWPM_FILTER_FLAGS_PERSISTENT;
+            flags |= FWPM_FILTER_FLAG_PERSISTENT;
         }
         if self.boot_time {
-            flags |= FWPM_FILTER_FLAGS_BOOT_TIME;
+            flags |= FWPM_FILTER_FLAG_BOOTTIME;
         }
 
-        let mut action = FWPM_ACTION0_0::default();
+        let mut action0 = FWPM_ACTION0_0::default();
         if let Some(callout) = self.callout {
-            action = FWPM_ACTION0_0 {
+            action0 = FWPM_ACTION0_0 {
                 calloutKey: callout,
             };
         }
@@ -133,21 +140,39 @@ impl Rule {
             displayData: FWPM_DISPLAY_DATA0 {
                 name: PWSTR::from_raw(self.name.as_mut_ptr()),
                 description: self
-                    .name
+                    .description
                     .as_mut()
                     .map(|n| PWSTR::from_raw(n.as_mut_ptr()))
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| PWSTR::null()),
             },
             flags,
-            providerKey: self.provider.as_mut().map(|p| &mut p).unwrap_or_default(),
-            providerData: FWP_BYTE_BLOB,
+            providerKey: self
+                .provider
+                .as_mut()
+                .map(|p| -> *mut GUID { &mut *p })
+                .unwrap_or_else(|| std::ptr::null_mut()),
+            providerData: FWP_BYTE_BLOB {
+                size: self
+                    .provider_data
+                    .as_ref()
+                    .map(|v| v.len() as u32)
+                    .unwrap_or_default(),
+                data: self
+                    .provider_data
+                    .as_mut()
+                    .map(|v| v.as_mut_ptr())
+                    .unwrap_or_else(|| std::ptr::null_mut()),
+            },
             layerKey: self.layer,
             subLayerKey: self.sublayer,
             weight: FWP_VALUE0 {
-                uint64: &mut *self.weight,
+                r#type: FWP_UINT64,
+                Anonymous: FWP_VALUE0_0 {
+                    uint64: &mut self.weight,
+                },
             },
             numFilterConditions: filter_conditions.len() as u32,
-            filterCondition: &*filter_condition as &mut _,
+            filterCondition: filter_conditions.as_ptr() as *mut _,
             action,
             ..Default::default()
         }
@@ -178,6 +203,7 @@ pub enum Action {
 /// Wrapper around `FWPM_FILTER_CONDITION0`
 ///
 /// <https://learn.microsoft.com/en-us/windows/win32/api/fwpmtypes/ns-fwpmtypes-fwpm_filter_condition0>
+#[derive(Clone)]
 pub struct FilterCondition {
     /// GUID of the field to be tested.
     ///
@@ -191,8 +217,8 @@ pub struct FilterCondition {
 
 impl FilterCondition {
     /// Safety: Can only be used in read only contexts.
-    unsafe fn as_fwpm_filter_condtion0(&self) -> FWPM_FILTER_CONDTION0 {
-        let condition_value = self.as_fwp_condition_value0();
+    unsafe fn as_fwpm_filter_condition0(&self) -> FWPM_FILTER_CONDITION0 {
+        let condition_value = self.condition_value.as_fwp_condition_value0();
 
         FWPM_FILTER_CONDITION0 {
             fieldKey: self.field_key,
@@ -338,6 +364,7 @@ impl Into<ConditionValue> for ConditionFlag {
 ///
 /// Wrapper around `FWPM_CONDTION_VALUE0_0`.
 /// <https://learn.microsoft.com/en-us/windows/win32/api/fwptypes/ns-fwptypes-fwp_condition_value0>
+#[derive(Clone)]
 pub enum ConditionValue {
     Uint8(u8),
     Uint16(u16),
@@ -366,12 +393,15 @@ impl Drop for ConditionValue {
     fn drop(&mut self) {
         match self {
             ConditionValue::ByteBlob(blob) => {
-                /// Safety: should only ever store a `Vec` in this
+                // Safety: should only ever store a `Vec` in this
+                println!("dropping bytes: {blob:?}");
                 unsafe {
                     let _drop =
                         Vec::from_raw_parts(blob.data, blob.size as usize, blob.size as usize);
                 }
+                println!("bytes dropped");
             }
+            _ => {}
         }
     }
 }
@@ -393,23 +423,25 @@ impl ConditionValue {
         let file_name = U16CString::from_os_str(file_name)?;
         let file_name_pcwstr = PCWSTR::from_raw(file_name.as_ptr());
 
-        let mut app_id = FWP_BYTE_BLOB::default();
-        let ret = unsafe { FwpmGetAppIdFromFileName0(file_name_pcwstr, &appID) };
+        let mut app_id = std::ptr::null_mut();
+        let ret = unsafe { FwpmGetAppIdFromFileName0(file_name_pcwstr, &mut app_id) };
         WIN32_ERROR(ret).ok().context("FwpmGetAppIdFromFileName0")?;
 
-        let app_id_vec =
-            unsafe { std::slice::from_raw_parts(app_id.data, app_id.size as usize) }.to_vec();
-
+        let app_id_vec = unsafe {
+            let app_id = &*app_id;
+            std::slice::from_raw_parts(app_id.data, app_id.size as usize)
+        }
+        .to_vec();
+        dbg!(&app_id_vec);
         // Must free memory allocated
-        let ret = unsafe { FwpmFreeMemory0(&mut app_id) };
-        WIN32_ERROR(ret).ok().context("FwpmFreeMemory0")?;
+        unsafe { FwpmFreeMemory0(&mut (app_id as *mut c_void) as *mut *mut c_void) };
 
-        Self::byte_blob(app_id)
+        Self::byte_blob(app_id_vec)
     }
 
     /// Constructs a `ByteBlob` variant.
     pub fn byte_blob(blob: Vec<u8>) -> Result<Self> {
-        let blob = std::mem::ManuallyDrop::new(blob);
+        let mut blob = std::mem::ManuallyDrop::new(blob);
         let size = u32::try_from(blob.len())?;
         let data = blob.as_mut_ptr();
 
@@ -417,7 +449,7 @@ impl ConditionValue {
     }
 
     /// Safety: Result can only be used in read only contexts.
-    pub(super) unsafe fn as_fwp_condtion_value0(&self) -> FWP_CONDITION_VALUE0 {
+    pub(super) unsafe fn as_fwp_condition_value0(&self) -> FWP_CONDITION_VALUE0 {
         use ConditionValue::*;
 
         let typ = self.fwp_data_type();
@@ -426,50 +458,50 @@ impl ConditionValue {
             Uint16(val) => FWP_CONDITION_VALUE0_0 { uint16: *val },
             Uint32(val) => FWP_CONDITION_VALUE0_0 { uint32: *val },
             Uint64(val) => FWP_CONDITION_VALUE0_0 {
-                uint64: &*val as &mut _,
+                uint64: &*val as *const _ as *mut _,
             },
             Int8(val) => FWP_CONDITION_VALUE0_0 { int8: *val },
             Int16(val) => FWP_CONDITION_VALUE0_0 { int16: *val },
             Int32(val) => FWP_CONDITION_VALUE0_0 { int32: *val },
             Int64(val) => FWP_CONDITION_VALUE0_0 {
-                int64: &*val as &mut _,
+                int64: &*val as *const _ as *mut _,
             },
             Float(val) => FWP_CONDITION_VALUE0_0 { float32: *val },
             Double64(val) => FWP_CONDITION_VALUE0_0 {
-                double64: &*val as &mut _,
+                double64: &*val as *const _ as *mut _,
             },
             ByteArray16(val) => FWP_CONDITION_VALUE0_0 {
-                byteArray16: &*val as &mut _,
+                byteArray16: &*val as *const _ as *mut _,
             },
             ByteBlob(val) => FWP_CONDITION_VALUE0_0 {
-                byteBlob: &*val as &mut _,
+                byteBlob: &*val as *const _ as *mut _,
             },
             Sid(val) => FWP_CONDITION_VALUE0_0 {
-                sid: &*val as &mut _,
+                sid: &*val as *const _ as *mut _,
             },
             Sd(val) => FWP_CONDITION_VALUE0_0 {
-                sd: &*val as &mut _,
+                sd: &*val as *const _ as *mut _,
             },
             TokenInformation(val) => FWP_CONDITION_VALUE0_0 {
-                tokenInformation: &*val as &mut _,
+                tokenInformation: &*val as *const _ as *mut _,
             },
             TokenAccessInformation(val) => FWP_CONDITION_VALUE0_0 {
-                tokenAccessInformation: &*val as &mut _,
+                tokenAccessInformation: &*val as *const _ as *mut _,
             },
             UnicodeString(val) => FWP_CONDITION_VALUE0_0 {
                 unicodeString: *val,
             },
             ByteArray6(val) => FWP_CONDITION_VALUE0_0 {
-                byteArray6: &*val as &mut _,
+                byteArray6: &*val as *const _ as *mut _,
             },
             V4AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
-                v4AddrMask: &*val as &mut _,
+                v4AddrMask: &*val as *const _ as *mut _,
             },
             V6AddrAndMask(val) => FWP_CONDITION_VALUE0_0 {
-                v6AddrMask: &*val as &mut _,
+                v6AddrMask: &*val as *const _ as *mut _,
             },
             RangeValue(val) => FWP_CONDITION_VALUE0_0 {
-                rangeValue: &*val as &mut _,
+                rangeValue: &*val as *const _ as *mut _,
             },
         };
 

@@ -9,5 +9,7 @@ mod sublayer;
 
 pub use self::engine::Engine;
 pub use self::provider::Provider;
-pub use self::rule::{Action, ConditionValue, FilterCondition, MatchType, Rule};
+pub use self::rule::{
+    Action, ConditionFlag, ConditionValue, FilterCondition, IpProto, MatchType, Rule,
+};
 pub use self::sublayer::Sublayer;

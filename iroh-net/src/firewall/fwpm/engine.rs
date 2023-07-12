@@ -12,7 +12,7 @@ use windows::{
     },
 };
 
-use super::{Provider, Sublayer};
+use super::{Provider, Rule, Sublayer};
 
 /// Wrapper around Fwpm Engine.
 #[derive(Debug)]
@@ -26,11 +26,13 @@ impl Drop for Engine {
         if self.handle.is_invalid() {
             return;
         }
+        println!("engine close");
         let ret = unsafe { FwpmEngineClose0(self.handle) };
         let ret = WIN32_ERROR(ret).ok().context("FwpmEngineClose0");
         if ret.is_err() {
-            tracing::warn!("{:?}", ret);
+            eprintln!("{:?}", ret);
         }
+        println!("engine close done");
     }
 }
 
@@ -87,12 +89,12 @@ impl Engine {
     }
 
     /// Adds a given rule to the system.
-    pub fn add_rule(&self, rule: Rule) -> Result<()> {
+    pub fn add_rule(&self, mut rule: Rule) -> Result<()> {
         anyhow::ensure!(rule.id != GUID::zeroed(), "ID must not be zero");
 
         let ret = unsafe {
-            let conditions = layer.as_fwpm_filter_conditions();
-            let f = layer.as_fwpm_filter0(&conditions);
+            let conditions = rule.as_fwpm_filter_conditions();
+            let f = rule.as_fwpm_filter0(&conditions);
             let mut filter_id = f.filterId;
             FwpmFilterAdd0(self.handle, &f, None, Some(&mut filter_id))
         };

@@ -2,9 +2,21 @@
 //!
 
 use anyhow::Result;
-use windows::core::GUID;
+use windows::{
+    core::GUID,
+    Win32::NetworkManagement::WindowsFilteringPlatform::{
+        FWPM_CONDITION_ALE_APP_ID, FWPM_CONDITION_FLAGS, FWPM_CONDITION_IP_LOCAL_PORT,
+        FWPM_CONDITION_IP_PROTOCOL, FWPM_CONDITION_IP_REMOTE_ADDRESS,
+        FWPM_CONDITION_IP_REMOTE_PORT, FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+        FWPM_LAYER_ALE_AUTH_CONNECT_V6, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,
+        FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,
+    },
+};
 
-use super::fwpm::{Engine, FilterCondition, Provider, Sublayer};
+use super::fwpm::{
+    Action, ConditionFlag, ConditionValue, Engine, FilterCondition, IpProto, MatchType, Provider,
+    Rule, Sublayer,
+};
 
 /// Handle to apply rules using the Windows Filtering Platform (Fwpm).
 #[derive(Debug)]
@@ -42,7 +54,7 @@ impl Firewall {
     fn enable(&self) -> Result<()> {
         self.permit_iroh_service()?;
         self.permit_dns()?;
-        self.permit_looback()?;
+        self.permit_loopback()?;
         self.permit_ndp()?;
 
         // TODO: do we want to do blockall, like tailscale?
@@ -56,8 +68,8 @@ impl Firewall {
 
         let conditions = [FilterCondition {
             field_key: FWPM_CONDITION_ALE_APP_ID,
-            op: MatchType::Equal,
-            value: app_id,
+            match_type: MatchType::Equal,
+            condition_value: app_id,
         }];
 
         self.add_rules(
@@ -75,8 +87,8 @@ impl Firewall {
     fn permit_loopback(&self) -> Result<()> {
         let conditions = [FilterCondition {
             field_key: FWPM_CONDITION_FLAGS,
-            op: MatchType::FlagsAllSet,
-            value: ConditionFlag::IsLoopback,
+            match_type: MatchType::FlagsAllSet,
+            condition_value: ConditionFlag::IsLoopback.into(),
         }];
         self.add_rules(
             "on loopback",
@@ -102,28 +114,28 @@ impl Firewall {
             let mut conditions = vec![
                 FilterCondition {
                     field_key: FWPM_CONDITION_IP_PROTOCOL,
-                    op: wf.MatchType:Equal,
-                    value: IpProto::IcmpV6.into(),
+                    match_type: MatchType::Equal,
+                    condition_value: IpProto::IcmpV6.into(),
                 },
                 FilterCondition {
                     field_key: field_icmp_type,
-                    Op: wf.MatchType::Equal,
-                    Value: t,
+                    match_type: MatchType::Equal,
+                    condition_value: ConditionValue::Uint8(t),
                 },
                 FilterCondition {
                     field_key: field_icmp_code,
-                    op: MatchType::Equal,
-                    value: c,
+                    match_type: MatchType::Equal,
+                    condition_value: ConditionValue::Uint8(c),
                 },
             ];
             if let Some(addr) = remote_address {
                 conditions.push(FilterCondition {
                     field_key: FWPM_CONDITION_IP_REMOTE_ADDRESS,
-                    op: MatchType::Equal,
-                    value: ConditionValue::from_v6_mask(LINK_LOCAL_ROUTER_MULTICAST)?,
+                    match_type: MatchType::Equal,
+                    condition_value: ConditionValue::from_v6_mask(LINK_LOCAL_ROUTER_MULTICAST)?,
                 })
             }
-            conditions
+            anyhow::Ok(conditions)
         };
 
         // Router Solicitation Message - ICMP type 133, code 0. Outgoing.
@@ -131,7 +143,7 @@ impl Firewall {
             133,
             0,
             Some(ConditionValue::from_v6_mask(LINK_LOCAL_ROUTER_MULTICAST)?),
-        );
+        )?;
         self.add_rules(
             "NDP type 133",
             weight,
@@ -142,20 +154,23 @@ impl Firewall {
         )?;
 
         // Router Advertisement Message - ICMP type 134, code 0. Incoming.
-        let conditions =
-            icmpConditions(134, 0, Some(ConditionValue::from_v6_mask(LINK_LOCAL_RANGE)))?;
+        let conditions = icmp_conditions(
+            134,
+            0,
+            Some(ConditionValue::from_v6_mask(LINK_LOCAL_RANGE)?),
+        )?;
         self.add_rules(
             "NDP type 134",
             weight,
             &conditions,
-            ActionPermit,
+            Action::Permit,
             Protocol::IpV6,
             Direction::Inbound,
         )?;
 
         // Neighbor Solicitation Message - ICMP type 135, code 0. Bi-directional.
-        let conditions = icmpConditions(135, 0, None);
-        self.addRules(
+        let conditions = icmp_conditions(135, 0, None)?;
+        self.add_rules(
             "NDP type 135",
             weight,
             &conditions,
@@ -165,10 +180,10 @@ impl Firewall {
         )?;
 
         // Neighbor Advertisement Message - ICMP type 136, code 0. Bi-directional.
-        let conditions = icmp_conditions(136, 0, None);
+        let conditions = icmp_conditions(136, 0, None)?;
         self.add_rules(
             "NDP type 136",
-            w,
+            weight,
             &conditions,
             Action::Permit,
             Protocol::IpV6,
@@ -180,11 +195,11 @@ impl Firewall {
             137,
             0,
             Some(ConditionValue::from_v6_mask(LINK_LOCAL_RANGE)?),
-        );
+        )?;
         self.add_rules(
             "NDP type 137",
-            w,
-            conditions,
+            weight,
+            &conditions,
             Action::Permit,
             Protocol::IpV6,
             Direction::Inbound,
@@ -197,25 +212,25 @@ impl Firewall {
         let conditions = [
             FilterCondition {
                 field_key: FWPM_CONDITION_IP_REMOTE_PORT,
-                op: MatchType::Equal,
-                value: ConditionValue::U16(53),
+                match_type: MatchType::Equal,
+                condition_value: ConditionValue::Uint16(53),
             },
             // Repeat the condition type for logical OR.
             FilterCondition {
                 field_key: FWPM_CONDITION_IP_PROTOCOL,
-                op: MatchType::Equal,
-                value: IpProto::Udp.into(),
+                match_type: MatchType::Equal,
+                condition_value: IpProto::Udp.into(),
             },
             FilterCondition {
                 field_key: FWPM_CONDITION_IP_PROTOCOL,
-                op: MatchType::Equal,
-                value: IpProto::Tcp.into(),
+                match_type: MatchType::Equal,
+                condition_value: IpProto::Tcp.into(),
             },
         ];
         self.add_rules(
             "DNS",
             WEIGHT_IROH_TRAFFIC,
-            conditions,
+            &conditions,
             Action::Permit,
             Protocol::All,
             Direction::Both,
@@ -234,7 +249,7 @@ impl Firewall {
     ) -> Result<()> {
         for layer in protocol.layers(direction) {
             let rule = self.new_rule(name, weight, layer, conditions, action)?;
-            self.session.add_rule(r)?;
+            self.session.add_rule(rule)?;
         }
 
         Ok(())
@@ -249,7 +264,7 @@ impl Firewall {
         action: Action,
     ) -> Result<Rule> {
         let name = rule_name(action, layer, name);
-        let mut rule = Rule::new(&name, layer, self.sublayer_id, action, u64::from(weight))?;
+        let mut rule = Rule::new(&name, layer, self.sublayer_id, u64::from(weight), action)?;
         rule.provider = Some(self.provider_id);
         rule.conditions.extend_from_slice(conditions);
 
@@ -260,8 +275,8 @@ impl Firewall {
 /// Protocol.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Protocol {
-    Ipv4,
-    Ipv6,
+    IpV4,
+    IpV6,
     All,
 }
 
@@ -270,20 +285,20 @@ impl Protocol {
     fn layers(self, direction: Direction) -> Vec<GUID> {
         let mut layers = Vec::new();
 
-        if protocol == Protocol::All || protocol == Protocol::Ipv4 {
-            if direction == Direction::Both || direction = Direction::Inbound {
+        if self == Protocol::All || self == Protocol::IpV4 {
+            if direction == Direction::Both || direction == Direction::Inbound {
                 layers.push(FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4);
             }
-            if direction == Direction::Both || direction = Direction::Outbound {
+            if direction == Direction::Both || direction == Direction::Outbound {
                 layers.push(FWPM_LAYER_ALE_AUTH_CONNECT_V4);
             }
         }
 
-        if protocol == Protocol::All || protocol == Protocol::Ipv6 {
-            if direction == Direction::Both || direction = Direction::Inbound {
+        if self == Protocol::All || self == Protocol::IpV6 {
+            if direction == Direction::Both || direction == Direction::Inbound {
                 layers.push(FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6);
             }
-            if direction == Direction::Both || direction = Direction::Outbound {
+            if direction == Direction::Both || direction == Direction::Outbound {
                 layers.push(FWPM_LAYER_ALE_AUTH_CONNECT_V6);
             }
         }
@@ -306,7 +321,7 @@ fn rule_name(action: Action, layer_id: GUID, name: &str) -> String {
         FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6 => {
             format!("{action} inbound {name} (IPv6)")
         }
-        _ => format!("{action} - {name} - {layer_id}"),
+        _ => format!("{action} - {name} - {layer_id:?}"),
     }
 }
 
