@@ -101,6 +101,20 @@ impl From<SecretKey> for Keypair {
 #[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize, Hash)]
 pub struct PeerId(PublicKey);
 
+impl PeerId {
+    /// Try to create a peer id from a byte array.
+    ///
+    /// # Warning
+    ///
+    /// The caller is responsible for ensuring that the bytes passed into this
+    /// method actually represent a `curve25519_dalek::curve::CompressedEdwardsY`
+    /// and that said compressed point is actually a point on the curve.
+    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
+        let key = PublicKey::from_bytes(bytes)?;
+        Ok(PeerId(key))
+    }
+}
+
 impl From<PublicKey> for PeerId {
     fn from(key: PublicKey) -> Self {
         PeerId(key)

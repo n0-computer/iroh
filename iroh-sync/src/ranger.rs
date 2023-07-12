@@ -401,11 +401,12 @@ where
 
     /// Processes an incoming message and produces a response.
     /// If terminated, returns `None`
-    pub fn process_message(&mut self, message: Message<K, V>) -> Option<Message<K, V>> {
+    pub fn process_message(&mut self, message: Message<K, V>) -> (Vec<K>, Option<Message<K, V>>) {
         let mut out = Vec::new();
 
         // TODO: can these allocs be avoided?
         let mut items = Vec::new();
+        let mut inserted = Vec::new();
         let mut fingerprints = Vec::new();
         for part in message.parts {
             match part {
@@ -431,7 +432,6 @@ where
                 Some(
                     self.store
                         .get_range(range.clone(), self.limit.clone())
-                        .into_iter()
                         .filter(|(k, _)| !values.iter().any(|(vk, _)| &vk == k))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
@@ -440,6 +440,7 @@ where
 
             // Store incoming values
             for (k, v) in values {
+                inserted.push(k.clone());
                 self.store.put(k, v);
             }
 
@@ -546,9 +547,9 @@ where
 
         // If we have any parts, return a message
         if !out.is_empty() {
-            Some(Message { parts: out })
+            (inserted, Some(Message { parts: out }))
         } else {
-            None
+            (inserted, None)
         }
     }
 
