@@ -11,6 +11,10 @@ pub const CLIENT_PORT: u16 = 5350;
 /// Port to use when acting as a server. This is the one we direct requests to.
 pub const SERVER_PORT: u16 = 5351;
 
+/// Max size of a PCP packet as indicated in
+/// [RFC 6887 Common Request and Response Header Format](https://datatracker.ietf.org/doc/html/rfc6887#section-7)
+pub const MAX_RESP_SIZE: usize = 1100;
+
 /// Size of a [`Request`] sent by this client, in bytes.
 // NOTE: 1byte for the version +
 //       1byte for the opcode +
@@ -120,15 +124,15 @@ pub enum ResultCode {
 // code, thus not implemented.
 pub struct Request {
     /// [`Version`] to use in this request.
-    version: Version,
+    pub version: Version,
     /// [`Opcode`] of this request.
-    opcode: Opcode,
+    pub opcode: Opcode,
     /// Requested lifetime in seconds used by the [`Request::opcode`].
-    lifetime_seconds: u32,
+    pub lifetime_seconds: u32,
     /// IP Address of the client.
     ///
     /// If the IP is an IpV4 address, is represented as a IpV4-mapped IpV6 address.
-    client_addr: Ipv6Addr,
+    pub client_addr: Ipv6Addr,
 }
 
 /// A PCP Response/Notification.
@@ -140,19 +144,19 @@ pub struct Request {
 #[derive(Debug)]
 pub struct Response {
     /// [`Version`] of the response.
-    version: Version,
+    pub version: Version,
     /// [`Opcode`] of the [`Request`] that related to this response.
-    opcode: Opcode,
+    pub opcode: Opcode,
     /// [`ResultCode`] of the response.
-    result_code: ResultCode,
+    pub result_code: ResultCode,
     /// Lifetime in seconds that can be assumed by this response.
     ///
     /// For sucessful requests, this lifetime is how long to assume a mapping will last. For error
     /// responses, the lifetime indicates how long will the server return the same response for
     /// this response.
-    lifetime_seconds: u32,
+    pub lifetime_seconds: u32,
     /// Epoch time of the server.
-    epoch_time: u32,
+    pub epoch_time: u32,
 }
 
 impl Request {
@@ -171,17 +175,22 @@ impl Request {
 
 /// Errors that can occur when decoding a [`Response`] from a server.
 // TODO(@divma): copy docs instead of refer?
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, thiserror::Error)]
 pub enum DecodeError {
     /// Request is too short or is otherwise malformed.
+    #[display("Response is malformed")]
     Malformed,
     /// The [`RESPONSE_INDICATOR`] is not present.
+    #[display("Packet does not appear to be a response")]
     NotAResponse,
     /// See [`InvalidOpcode`].
+    #[display("Invalid Opcode received")]
     InvalidOpcode,
     /// See [`InvalidVersion`].
+    #[display("Invalid version received")]
     InvalidVersion,
     /// See [`InvalidResultCode`].
+    #[display("Invalid result code received")]
     InvalidResultCode,
 }
 
