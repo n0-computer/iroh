@@ -75,7 +75,7 @@ where
     D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
-    A: RequestAuthorizationHandler<D>,
+    A: RequestAuthorizationHandler,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
@@ -112,7 +112,7 @@ where
     D: BaoReadonlyDb,
     E: ServiceEndpoint<ProviderService>,
     C: CustomGetHandler<D>,
-    A: RequestAuthorizationHandler<D>,
+    A: RequestAuthorizationHandler,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
@@ -159,7 +159,7 @@ where
     }
 
     /// Configures a custom authorization handler.
-    pub fn custom_auth_handler<A2: RequestAuthorizationHandler<D>>(
+    pub fn custom_auth_handler<A2: RequestAuthorizationHandler>(
         self,
         auth_handler: A2,
     ) -> Builder<D, E, C, A2> {
@@ -778,10 +778,9 @@ impl StaticTokenAuthHandler {
     }
 }
 
-impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
+impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     fn authorize(
         &self,
-        _db: D,
         token: Option<RequestToken>,
         _request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {

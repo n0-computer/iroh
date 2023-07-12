@@ -714,10 +714,9 @@ async fn test_custom_request_collection() {
 #[derive(Clone, Debug)]
 struct CustomAuthHandler;
 
-impl<D> RequestAuthorizationHandler<D> for CustomAuthHandler {
+impl RequestAuthorizationHandler for CustomAuthHandler {
     fn authorize(
         &self,
-        _db: D,
         token: Option<RequestToken>,
         _request: &iroh_bytes::protocol::Request,
     ) -> BoxFuture<'static, Result<()>> {

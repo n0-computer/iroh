@@ -187,21 +187,19 @@ pub enum ProvideProgress {
 /// hook into the request handling to process authorization by examining
 /// the request and any given token. Any error returned will abort the request,
 /// and the error will be sent to the requester.
-pub trait RequestAuthorizationHandler<D>: Send + Sync + Clone + 'static {
+pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
     /// Handle the authorization request, given an opaque data blob from the requester.
     fn authorize(
         &self,
-        db: D,
         token: Option<RequestToken>,
         request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
 /// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
-impl<D> RequestAuthorizationHandler<D> for () {
+impl RequestAuthorizationHandler for () {
     fn authorize(
         &self,
-        _db: D,
         token: Option<RequestToken>,
         _request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
@@ -466,7 +464,7 @@ pub async fn handle_connection<
     D: BaoMap,
     C: CustomGetHandler<D>,
     E: EventSender,
-    A: RequestAuthorizationHandler<D>,
+    A: RequestAuthorizationHandler,
 >(
     connecting: quinn::Connecting,
     db: D,
@@ -527,7 +525,7 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
     custom_get_handler: impl CustomGetHandler<D>,
-    authorization_handler: impl RequestAuthorizationHandler<D>,
+    authorization_handler: impl RequestAuthorizationHandler,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -544,7 +542,7 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
     // 2. Authorize the request (may be a no-op)
     debug!("authorizing request");
     if let Err(e) = authorization_handler
-        .authorize(db.clone(), request.token().cloned(), &request)
+        .authorize(request.token().cloned(), &request)
         .await
     {
         writer.notify_transfer_aborted();
