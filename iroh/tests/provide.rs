@@ -637,7 +637,7 @@ impl CollectionParser for CollectionsAreJustLinks {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
         _format: u64,
-        reader: &'a mut R,
+        mut reader: R,
     ) -> LocalBoxFuture<'_, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {
             let data = reader.read_to_end().await?;

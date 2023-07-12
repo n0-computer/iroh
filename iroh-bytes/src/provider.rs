@@ -231,7 +231,7 @@ pub trait CollectionParser: Send + Debug + Clone + 'static {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
         format: u64,
-        reader: &'a mut R,
+        reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
 }
 
@@ -266,7 +266,7 @@ impl CollectionParser for NoCollectionParser {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
         _format: u64,
-        _reader: &mut R,
+        _reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         future::err(anyhow::anyhow!("collections not supported")).boxed_local()
     }
@@ -320,7 +320,7 @@ impl CollectionParser for IrohCollectionParser {
     fn parse<'a, R: AsyncSliceReader + 'a>(
         &'a self,
         _format: u64,
-        reader: &'a mut R,
+        mut reader: R,
     ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
         async move {
             // read to end

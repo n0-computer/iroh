@@ -20,7 +20,7 @@ bytes = "1"
 derive_more = { package = "derive_more_preview", version = "0.1.0", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
-iroh-io = { version = "0.2.0" }
+iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
@@ -65,7 +65,7 @@ testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
-iroh-io = { version = "0.2.0" }
+iroh-io = { version = "0.2.1" }
 
 [[bin]]
 name = "iroh"

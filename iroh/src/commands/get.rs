@@ -108,7 +108,7 @@ impl GetInteractive {
             None
         };
         let curr = curr
-            .write_all_with_outboard(&mut outboard_file, &mut data_file)
+            .write_all_with_outboard(outboard_file.as_mut(), &mut data_file)
             .await?;
         // Flush the data file first, it is the only thing that matters at this point
         data_file.sync().await?;
@@ -250,7 +250,7 @@ impl GetInteractive {
                 });
                 let mut data_file = ProgressSliceWriter::new(data_file, on_write);
                 let curr = curr
-                    .write_all_with_outboard(&mut outboard_file, &mut data_file)
+                    .write_all_with_outboard(outboard_file.as_mut(), &mut data_file)
                     .await?;
                 // Flush the data file first, it is the only thing that matters at this point
                 data_file.sync().await?;
