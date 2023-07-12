@@ -41,9 +41,6 @@ const RESPONSE_INDICATOR: u8 = 1u8 << 7;
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[repr(u8)]
 pub enum Version {
-    /// NAT-PMP Version according to [RFC 6886 Transition to Port Control Protocol](https://datatracker.ietf.org/doc/html/rfc6886#section-1.1)
-    // Version 0
-    NatPmp = 0,
     /// PCP Version according to [RFC 6887 Version Negotiation](https://datatracker.ietf.org/doc/html/rfc6887#section-9)
     // Version 2
     Pcp = 2,
@@ -160,7 +157,6 @@ pub struct Response {
 }
 
 impl Request {
-    // TODO(@divma): to_bytes? as_bytes?
     pub fn encode(&self) -> [u8; REQ_SIZE] {
         let mut buf = [0; REQ_SIZE];
         buf[0] = self.version as u8;
@@ -260,7 +256,6 @@ impl TryFrom<u8> for Version {
 
     fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
         match value {
-            0 => Ok(Version::NatPmp),
             2 => Ok(Version::Pcp),
             _ => Err(InvalidVersion),
         }

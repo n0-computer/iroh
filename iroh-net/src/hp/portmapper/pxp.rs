@@ -14,8 +14,6 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 use tokio::net::UdpSocket;
 
-pub use pcp::Version;
-
 pub async fn probe_available(
     local_ip: Ipv4Addr,
     gateway: Ipv4Addr,
