@@ -978,8 +978,11 @@ mod tests {
             // We will fall back to sending ICMP pings.  These should succeed when we have a
             // working pinger.
             icmpv4: have_pinger,
-            // If we had a pinger, we'll have some latencies filled in.
-            region_latency: r.region_latency.clone(),
+            // If we had a pinger, we'll have some latencies filled in and a preferred derp
+            region_latency: have_pinger
+                .then(|| r.region_latency.clone())
+                .unwrap_or_default(),
+            preferred_derp: have_pinger.then_some(r.preferred_derp).unwrap_or_default(),
             ..Default::default()
         };
 
