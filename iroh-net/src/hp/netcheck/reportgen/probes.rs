@@ -481,7 +481,7 @@ mod tests {
         let if_state = crate::net::interfaces::State::new().await;
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
-        let expected_plan: ProbePlan = [
+        let mut expected_plan: ProbePlan = [
             ProbeSet {
                 name: "region-1-stunipv4".into(),
                 proto: ProbeProto::StunIpv4,
@@ -495,24 +495,6 @@ mod tests {
                         node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
-                        delay: Duration::from_millis(200),
-                        node: derp_node.clone(),
-                    },
-                ],
-            },
-            ProbeSet {
-                name: "region-1-stunipv6".into(),
-                proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: derp_node.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(100),
-                        node: derp_node.clone(),
-                    },
-                    Probe::StunIpv6 {
                         delay: Duration::from_millis(200),
                         node: derp_node.clone(),
                     },
@@ -560,8 +542,30 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        if if_state.have_v6 {
+            expected_plan.add(ProbeSet {
+                name: "region-1-stunipv6".into(),
+                proto: ProbeProto::StunIpv6,
+                probes: vec![
+                    Probe::StunIpv6 {
+                        delay: Duration::ZERO,
+                        node: derp_node.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_millis(100),
+                        node: derp_node.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_millis(200),
+                        node: derp_node.clone(),
+                    },
+                ],
+            })
+        }
 
+        println!("expected:");
         println!("{expected_plan}");
+        println!("actual:");
         println!("{plan}");
         // TODO: use a fancy diff library, for now just eyeball the output from above...
         assert_eq!(plan, expected_plan);
@@ -594,7 +598,7 @@ mod tests {
             captive_portal: None,
         };
         let plan = ProbePlan::with_last_report(&derp_map, &if_state, &last_report);
-        let expected_plan: ProbePlan = [
+        let mut expected_plan: ProbePlan = [
             ProbeSet {
                 name: "region-1-stunipv4".into(),
                 proto: ProbeProto::StunIpv4,
@@ -612,28 +616,6 @@ mod tests {
                         node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
-                        delay: Duration::from_micros(157_200),
-                        node: derp_node.clone(),
-                    },
-                ],
-            },
-            ProbeSet {
-                name: "region-1-stunipv6".into(),
-                proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: derp_node.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_micros(52_400),
-                        node: derp_node.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_micros(104_800),
-                        node: derp_node.clone(),
-                    },
-                    Probe::StunIpv6 {
                         delay: Duration::from_micros(157_200),
                         node: derp_node.clone(),
                     },
@@ -690,8 +672,34 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        if if_state.have_v6 {
+            expected_plan.add(ProbeSet {
+                name: "region-1-stunipv6".into(),
+                proto: ProbeProto::StunIpv6,
+                probes: vec![
+                    Probe::StunIpv6 {
+                        delay: Duration::ZERO,
+                        node: derp_node.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(52_400),
+                        node: derp_node.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(104_800),
+                        node: derp_node.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(157_200),
+                        node: derp_node.clone(),
+                    },
+                ],
+            })
+        }
 
+        println!("expected:");
         println!("{expected_plan}");
+        println!("actual:");
         println!("{plan}");
         // TODO: use a fancy diff library, for now just eyeball the output from above...
         assert_eq!(plan, expected_plan);
