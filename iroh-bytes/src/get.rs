@@ -398,17 +398,17 @@ pub mod fsm {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(&mut None, data).await
+            self.write_all_with_outboard::<D, D>(None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            mut outboard: Option<O>,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -457,17 +457,17 @@ pub mod fsm {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(&mut None, data).await
+            self.write_all_with_outboard::<D, D>(None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            mut outboard: Option<O>,
+            mut data: D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,

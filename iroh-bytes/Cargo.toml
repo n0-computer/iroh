@@ -21,7 +21,7 @@ derive_more = { package = "derive_more_preview", version = "0.1.0", features = [
 flume = "0.10.14"
 futures = "0.3.25"
 hex = "0.4.3"
-iroh-io = { version = "0.2.0" }
+iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
 multibase = "0.9.1"
 num_cpus = "1.15.0"

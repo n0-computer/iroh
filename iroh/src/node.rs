@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::protocol::GetRequest;
+use iroh_bytes::provider::{CollectionParser, IrohCollectionParser};
 use iroh_bytes::{
     blobs::Collection,
     protocol::{Closed, Request, RequestToken},
@@ -72,10 +73,11 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D = Database, E = DummyServerEndpoint>
+pub struct Builder<D = Database, E = DummyServerEndpoint, C = IrohCollectionParser>
 where
     D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
+    C: CollectionParser,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
@@ -85,6 +87,7 @@ where
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_map: Option<DerpMap>,
+    collection_parser: C,
     rt: Option<runtime::Handle>,
 }
 
@@ -141,18 +144,23 @@ impl<D: BaoMap> Builder<D> {
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
+            collection_parser: Default::default(),
             rt: None,
         }
     }
 }
 
-impl<D, E> Builder<D, E>
+impl<D, E, C> Builder<D, E, C>
 where
     D: BaoReadonlyDb,
     E: ServiceEndpoint<ProviderService>,
+    C: CollectionParser,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<D, E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
+        self,
+        value: E2,
+    ) -> Builder<D, E2, C> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -162,6 +170,27 @@ where
             custom_get_handler: self.custom_get_handler,
             auth_handler: self.auth_handler,
             rpc_endpoint: value,
+            derp_map: self.derp_map,
+            collection_parser: self.collection_parser,
+            rt: self.rt,
+        }
+    }
+
+    /// Configure the collection parser, changing the type of the builder to the new collection parser type.
+    pub fn collection_parser<C2: CollectionParser>(
+        self,
+        collection_parser: C2,
+    ) -> Builder<D, E, C2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            collection_parser,
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            db: self.db,
+            keylog: self.keylog,
+            custom_get_handler: self.custom_get_handler,
+            auth_handler: self.auth_handler,
+            rpc_endpoint: self.rpc_endpoint,
             derp_map: self.derp_map,
             rt: self.rt,
         }
@@ -287,6 +316,7 @@ where
                     internal_rpc,
                     self.custom_get_handler,
                     self.auth_handler,
+                    self.collection_parser,
                     rt3,
                 )
                 .await
@@ -317,6 +347,7 @@ where
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: Arc<dyn CustomGetHandler>,
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
+        collection_parser: C,
         rt: runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -372,8 +403,9 @@ where
                         let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
                         let auth_handler = auth_handler.clone();
+                        let collection_parser = collection_parser.clone();
                         let rt2 = rt.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, custom_get_handler, auth_handler, rt2));
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, collection_parser, custom_get_handler, auth_handler, rt2));
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
