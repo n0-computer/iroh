@@ -15,6 +15,9 @@ const MIN_RESP_SIZE: usize = 1 + 1 + 2 + 4 + 4;
 //       4bytes for the lifetime = response size for a mapping request
 const MAX_RESP_SIZE: usize = 1 + 1 + 2 + 4 + 2 + 2 + 4;
 
+/// Port to use when acting as a server. This is the one we direct requests to.
+pub const SERVER_PORT: u16 = 5351;
+
 /// Indicator ORd into the [`Opcode`] to indicate a response packet.
 const RESPONSE_INDICATOR: u8 = 1u8 << 7;
 
@@ -95,6 +98,7 @@ impl Request {
     }
 }
 
+#[derive(Debug)]
 pub enum Response {
     PublicAddress {
         epoch_time: u32,
@@ -270,4 +274,25 @@ impl Response {
 
         Ok(response)
     }
+}
+
+pub async fn probe_available(
+    local_ip: std::net::Ipv4Addr,
+    gateway: std::net::Ipv4Addr,
+) -> anyhow::Result<bool> {
+    // TODO(@divma): here we likely want to keep both the server epoch so that previous probes
+    // identify loss of state
+    tracing::debug!("Starting pmp probe");
+    // TODO(@divma): do we want to keep this socket alive for more than the probe?
+    let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+    socket.connect((gateway, SERVER_PORT)).await?;
+    let req = Request::ExternalAddress;
+    socket.send(&req.encode()).await?;
+    let mut buffer = vec![0; MAX_RESP_SIZE];
+    socket.recv(&mut buffer).await?;
+    let response = Response::decode(&buffer);
+    tracing::debug!("received pmp response {response:?}");
+
+    // TODO(@divma): neet to check the response type
+    Ok(response.is_ok())
 }

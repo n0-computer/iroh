@@ -18,7 +18,8 @@ use crate::util;
 use mapping::CurrentMapping;
 
 mod mapping;
-mod pxp;
+mod pcp;
+mod pmp;
 mod upnp;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
@@ -180,7 +181,7 @@ impl Probe {
     /// Create a new probe based on a previous output.
     async fn new(output: ProbeOutput) -> Probe {
         tracing::debug!("Starting portmapping probe");
-        let ProbeOutput { upnp, pcp, pmp: _ } = output;
+        let ProbeOutput { upnp, pcp, pmp } = output;
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (!upnp).then(|| {
                 Box::pin(async {
@@ -199,7 +200,7 @@ impl Probe {
             inner: (!pcp).then(|| {
                 Box::pin(async {
                     // TODO(@divma): move error handling and logging to pxp
-                    match pxp::probe_available(local_id, gw, pxp::Version::Pcp).await {
+                    match pcp::probe_available(local_id, gw).await {
                         Ok(true) => Some(Instant::now()),
                         Ok(false) => {
                             // TODO(@divma): this needs to be fixed
@@ -214,7 +215,26 @@ impl Probe {
                 })
             }),
         };
-        let pmp_probing_task = async { None };
+
+        let mut pmp_probing_task = util::MaybeFuture {
+            inner: (!pmp).then(|| {
+                Box::pin(async {
+                    // TODO(@divma): move error handling and logging to pxp
+                    match pmp::probe_available(local_id, gw).await {
+                        Ok(true) => Some(Instant::now()),
+                        Ok(false) => {
+                            // TODO(@divma): this needs to be fixed
+                            tracing::debug!("PCP probe was succesful but had a false result");
+                            None
+                        }
+                        Err(e) => {
+                            tracing::debug!("pcp probe failed {e}");
+                            None
+                        }
+                    }
+                })
+            }),
+        };
 
         if upnp_probing_task.inner.is_some() {
             inc!(Metrics, upnp_probes);
@@ -222,9 +242,7 @@ impl Probe {
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
         let mut pcp_done = pcp_probing_task.inner.is_none();
-        let mut pmp_done = true;
-
-        tokio::pin!(pmp_probing_task);
+        let mut pmp_done = pmp_probing_task.inner.is_none();
 
         let mut probe = Probe::default();
 
@@ -262,15 +280,17 @@ impl Probe {
             .map(|(_gateway_addr, last_probed)| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        // not pr *last_probed + AVAILABILITY_TRUST_DURATION > nowobing for now
         let pcp = self
             .last_pcp
             .as_ref()
             .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        // not probing for now
-        let pmp = false;
+        let pmp = self
+            .last_pmp
+            .as_ref()
+            .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
+            .unwrap_or_default();
 
         ProbeOutput { upnp, pcp, pmp }
     }

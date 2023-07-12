@@ -6,9 +6,6 @@
 // PCP has multicast announcements from the server to the clients, this means binding to
 // 224.0.0.1:CLIENT_PORT. to implement or not to implement.
 
-mod pcp;
-mod pmp;
-
 use std::net::Ipv4Addr;
 
 use anyhow::Result;

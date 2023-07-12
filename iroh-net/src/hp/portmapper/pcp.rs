@@ -168,10 +168,10 @@ impl Request {
         buf
     }
 
-    pub fn annouce(version: Version, client_addr: Ipv6Addr) -> Request {
+    pub fn annouce(client_addr: Ipv6Addr) -> Request {
         // opcode announce requires a lifetime of 0 and to ignore the lifetime on response
         Request {
-            version,
+            version: Version::Pcp,
             opcode: Opcode::Announce,
             lifetime_seconds: 0,
             client_addr,
@@ -304,6 +304,32 @@ impl TryFrom<u8> for ResultCode {
             _ => Err(InvalidResultCode),
         }
     }
+}
+
+// TODO(@divma): move to a better place
+pub async fn probe_available(
+    local_ip: std::net::Ipv4Addr,
+    gateway: std::net::Ipv4Addr,
+) -> anyhow::Result<bool> {
+    // TODO(@divma): here we likely want to keep both the server epoch so that previous probes
+    // identify loss of state
+    tracing::debug!("Starting pcp probe");
+    // TODO(@divma): do we want to keep this socket alive for more than the probe?
+    let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+    socket.connect((gateway, SERVER_PORT)).await?;
+    let req = Request::annouce(local_ip.to_ipv6_mapped());
+    socket.send(&req.encode()).await?;
+    let mut buffer = vec![0; MAX_RESP_SIZE];
+    socket.recv(&mut buffer).await?;
+    let response = Response::decode(&buffer)?;
+    tracing::debug!("received pcp response {response:?}");
+
+    // TODO(@divma): this needs better handling
+    // if the error code is unusupported version, the server sends the higher version is supports,
+    // not sure where this value is sent
+    let available =
+        response.opcode == Opcode::Announce && response.result_code == ResultCode::Success;
+    Ok(available)
 }
 
 #[cfg(test)]
