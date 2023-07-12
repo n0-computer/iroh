@@ -179,11 +179,7 @@ struct Probe {
 impl Probe {
     /// Create a new probe based on a previous output.
     async fn new(output: ProbeOutput) -> Probe {
-        let ProbeOutput {
-            upnp,
-            pcp: _,
-            pmp: _,
-        } = output;
+        let ProbeOutput { upnp, pcp, pmp: _ } = output;
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (!upnp).then(|| {
                 Box::pin(async {
@@ -194,8 +190,29 @@ impl Probe {
             }),
         };
 
-        // placeholder tasks
-        let pcp_probing_task = async { None };
+        // TODO(@divma): remove hardcoded values
+        let local_id = std::net::Ipv4Addr::UNSPECIFIED;
+        let gw: std::net::Ipv4Addr = [192, 168, 20, 1].into();
+
+        let mut pcp_probing_task = util::MaybeFuture {
+            inner: (!pcp).then(|| {
+                Box::pin(async {
+                    // TODO(@divma): move error handling and logging to pxp
+                    match pxp::probe_available(local_id, gw, pxp::Version::Pcp).await {
+                        Ok(true) => Some(Instant::now()),
+                        Ok(false) => {
+                            // TODO(@divma): this needs to be fixed
+                            tracing::debug!("PCP probe was succesful but had a false result");
+                            None
+                        }
+                        Err(e) => {
+                            tracing::debug!("pcp probe failed {e}");
+                            None
+                        }
+                    }
+                })
+            }),
+        };
         let pmp_probing_task = async { None };
 
         if upnp_probing_task.inner.is_some() {
@@ -203,11 +220,10 @@ impl Probe {
         }
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
-        let mut pcp_done = true;
+        let mut pcp_done = pcp_probing_task.inner.is_some();
         let mut pmp_done = true;
 
         tokio::pin!(pmp_probing_task);
-        tokio::pin!(pcp_probing_task);
 
         let mut probe = Probe::default();
 
