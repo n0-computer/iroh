@@ -79,9 +79,9 @@ pub enum Event {
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
         /// The number of blobs in the collection.
-        num_blobs: u64,
+        num_blobs: Option<u64>,
         /// The total blob size of the data.
-        total_blobs_size: u64,
+        total_blobs_size: Option<u64>,
     },
     /// A collection request was completed and the data was sent to the client.
     TransferCollectionCompleted {
@@ -247,10 +247,10 @@ pub trait LinkStream: Debug {
 /// Information about a collection.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CollectionStats {
-    /// The number of blobs in the collection.
-    pub num_blobs: u64,
-    /// The total size of all blobs in the collection.
-    pub total_blob_size: u64,
+    /// The number of blobs in the collection. `None` for unknown.
+    pub num_blobs: Option<u64>,
+    /// The total size of all blobs in the collection. `None` for unknown.
+    pub total_blob_size: Option<u64>,
 }
 
 /// A collection parser that just disables collections entirely.
@@ -329,6 +329,10 @@ impl CollectionParser for IrohCollectionParser {
             let data = reader.read_to_end().await?;
             // parse the collection and just take the hashes
             let collection = Collection::from_bytes(&data)?;
+            let stats = CollectionStats {
+                num_blobs: Some(collection.blobs.len() as u64),
+                total_blob_size: Some(collection.total_blobs_size),
+            };
             let hashes = collection
                 .into_inner()
                 .into_iter()
@@ -336,7 +340,7 @@ impl CollectionParser for IrohCollectionParser {
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
             let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
-            Ok((res, CollectionStats::default()))
+            Ok((res, stats))
         }
         .boxed_local()
     }
