@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use widestring::U16CString;
@@ -377,11 +378,11 @@ pub enum ConditionValue {
     Float(f32),
     Double64(f64),
     ByteArray16(FWP_BYTE_ARRAY16),
-    ByteBlob(FWP_BYTE_BLOB),
+    ByteBlob(ByteBlob),
     Sid(SID),
     Sd(FWP_BYTE_BLOB),
     TokenInformation(FWP_TOKEN_INFORMATION),
-    TokenAccessInformation(FWP_BYTE_BLOB),
+    TokenAccessInformation(ByteBlob),
     UnicodeString(PWSTR),
     ByteArray6(FWP_BYTE_ARRAY6),
     V4AddrAndMask(FWP_V4_ADDR_AND_MASK),
@@ -389,20 +390,34 @@ pub enum ConditionValue {
     RangeValue(FWP_RANGE0),
 }
 
-impl Drop for ConditionValue {
+/// Read only wrapper around `FWP_BYTE_BLOB` to account for memory management
+#[derive(Debug, Clone)]
+pub struct ByteBlob(Arc<FWP_BYTE_BLOB>);
+
+impl Drop for ByteBlob {
     fn drop(&mut self) {
-        match self {
-            ConditionValue::ByteBlob(blob) => {
-                // Safety: should only ever store a `Vec` in this
-                println!("dropping bytes: {blob:?}");
-                unsafe {
-                    let _drop =
-                        Vec::from_raw_parts(blob.data, blob.size as usize, blob.size as usize);
-                }
-                println!("bytes dropped");
+        if Arc::strong_count(&self.0) == 1 {
+            println!("dropping bytes: {self:?}");
+            // last one, actually clean up memory
+            // Safety: should only ever store a `Vec` in this
+            unsafe {
+                let _drop =
+                    Vec::from_raw_parts(self.0.data, self.0.size as usize, self.0.size as usize);
             }
-            _ => {}
+            println!("bytes dropped");
         }
+    }
+}
+
+impl TryFrom<Vec<u8>> for ByteBlob {
+    type Error = anyhow::Error;
+
+    fn try_from(blob: Vec<u8>) -> Result<Self> {
+        let mut blob = std::mem::ManuallyDrop::new(blob);
+        let size = u32::try_from(blob.len())?;
+        let data = blob.as_mut_ptr();
+
+        Ok(ByteBlob(Arc::new(FWP_BYTE_BLOB { size, data })))
     }
 }
 
@@ -436,16 +451,7 @@ impl ConditionValue {
         // Must free memory allocated
         unsafe { FwpmFreeMemory0(&mut (app_id as *mut c_void) as *mut *mut c_void) };
 
-        Self::byte_blob(app_id_vec)
-    }
-
-    /// Constructs a `ByteBlob` variant.
-    pub fn byte_blob(blob: Vec<u8>) -> Result<Self> {
-        let mut blob = std::mem::ManuallyDrop::new(blob);
-        let size = u32::try_from(blob.len())?;
-        let data = blob.as_mut_ptr();
-
-        Ok(ConditionValue::ByteBlob(FWP_BYTE_BLOB { size, data }))
+        Ok(ConditionValue::ByteBlob(app_id_vec.try_into()?))
     }
 
     /// Safety: Result can only be used in read only contexts.

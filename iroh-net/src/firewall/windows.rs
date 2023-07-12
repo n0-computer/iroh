@@ -110,7 +110,7 @@ impl Firewall {
         let field_icmp_type = FWPM_CONDITION_IP_LOCAL_PORT;
         let field_icmp_code = FWPM_CONDITION_IP_REMOTE_PORT;
 
-        let icmp_conditions = |t, c, remote_address| {
+        let icmp_conditions = |t, c, remote_address: Option<_>| {
             let mut conditions = vec![
                 FilterCondition {
                     field_key: FWPM_CONDITION_IP_PROTOCOL,
@@ -128,7 +128,7 @@ impl Firewall {
                     condition_value: ConditionValue::Uint8(c),
                 },
             ];
-            if let Some(addr) = remote_address {
+            if remote_address.is_some() {
                 conditions.push(FilterCondition {
                     field_key: FWPM_CONDITION_IP_REMOTE_ADDRESS,
                     match_type: MatchType::Equal,
