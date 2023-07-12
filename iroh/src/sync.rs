@@ -33,6 +33,7 @@ enum Message {
     Sync(iroh_sync::sync::ProtocolMessage),
 }
 
+/// Connect to a peer and sync a replica
 pub async fn connect_and_sync(
     endpoint: &MagicEndpoint,
     doc: &Replica,
