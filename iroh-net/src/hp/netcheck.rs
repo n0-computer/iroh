@@ -836,6 +836,7 @@ mod tests {
 
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
     use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::hp::ping::Pinger;
     use crate::test_utils::setup_logging;
 
     use super::*;
@@ -963,6 +964,8 @@ mod tests {
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
+        let have_pinger = Pinger::new().await.is_ok();
+
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
             // On Windows this test detects false, while on Linux detects true.
@@ -972,6 +975,9 @@ mod tests {
             os_has_ipv6: r.os_has_ipv6,
             // Captive portal test is irrelevant; accept what the current report has.
             captive_portal: r.captive_portal,
+            // We will fall back to sending ICMP pings.  These should succeed when we have a
+            // working pinger.
+            icmpv4: have_pinger,
             ..Default::default()
         };
 
