@@ -27,14 +27,12 @@ use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::provider::database::BaoMapEntry;
-use crate::util::{io::canonicalize_path, progress::Progress, Hash, RpcError};
+use crate::util::{io::canonicalize_path, Hash, RpcError};
 
 pub mod collection;
 pub mod database;
 mod ticket;
 
-pub use database::Database;
-pub use database::FNAME_PATHS;
 pub use ticket::Ticket;
 
 use self::database::BaoMap;
@@ -273,6 +271,10 @@ impl CollectionParser for NoCollectionParser {
 }
 
 /// Parser for the current iroh default collections
+/// 
+/// This is a custom collection parser that supports the current iroh default collections.
+/// It loads the entire collection into memory and then extracts an array of hashes.
+/// So this will not work for extremely large collections.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IrohCollectionParser;
 
@@ -871,147 +873,5 @@ impl From<PathBuf> for DataSource {
 impl From<&std::path::Path> for DataSource {
     fn from(value: &std::path::Path) -> Self {
         DataSource::new(value.to_path_buf())
-    }
-}
-
-/// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
-/// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
-    Ok((Database::from(db), hash))
-}
-
-#[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-    use std::collections::HashMap;
-    use std::str::FromStr;
-    use testdir::testdir;
-
-    use crate::blobs::Blob;
-    use crate::provider::database::Snapshot;
-
-    use super::*;
-
-    fn blob(size: usize) -> impl Strategy<Value = Bytes> {
-        proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
-    }
-
-    fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
-        proptest::collection::vec(blob(size), 0..count)
-    }
-
-    fn db(blob_count: usize, blob_size: usize) -> impl Strategy<Value = Database> {
-        let blobs = blobs(blob_count, blob_size);
-        blobs.prop_map(|blobs| {
-            let mut map = HashMap::new();
-            let mut cblobs = Vec::new();
-            let mut total_blobs_size = 0u64;
-            for blob in blobs {
-                let size = blob.len() as u64;
-                total_blobs_size += size;
-                let (outboard, hash) = bao_tree::io::outboard(&blob, crate::IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                let path = PathBuf::from_str(&hash.to_string()).unwrap();
-                cblobs.push(Blob {
-                    name: hash.to_string(),
-                    hash,
-                });
-                map.insert(
-                    hash,
-                    DbEntry::External {
-                        outboard,
-                        size,
-                        path,
-                    },
-                );
-            }
-            let collection = Collection::new(cblobs, total_blobs_size).unwrap();
-            // encode collection and add it
-            {
-                let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::io::outboard(&data, crate::IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                map.insert(hash, DbEntry::Internal { outboard, data });
-            }
-            let db = Database::default();
-            db.union_with(map);
-            db
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn database_snapshot_roundtrip(db in db(10, 1024 * 64)) {
-            let snapshot = db.snapshot();
-            let db2 = Database::from_snapshot(snapshot).unwrap();
-            prop_assert_eq!(db.to_inner(), db2.to_inner());
-        }
-
-        #[test]
-        fn database_persistence_roundtrip(db in db(10, 1024 * 64)) {
-            let dir = tempfile::tempdir().unwrap();
-            let snapshot = db.snapshot();
-            snapshot.persist(&dir).unwrap();
-            let snapshot2 = Snapshot::load(&dir).unwrap();
-            let db2 = Database::from_snapshot(snapshot2).unwrap();
-            let db = db.to_inner();
-            let db2 = db2.to_inner();
-            prop_assert_eq!(db, db2);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_collection() -> Result<()> {
-        let dir: PathBuf = testdir!();
-        let mut expect_blobs = vec![];
-        let hash = blake3::hash(&[]);
-        let hash = Hash::from(hash);
-
-        // DataSource::File
-        let foo = dir.join("foo");
-        tokio::fs::write(&foo, vec![]).await?;
-        let foo = DataSource::new(foo);
-        expect_blobs.push(Blob {
-            name: "foo".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile
-        let bar = dir.join("bar");
-        tokio::fs::write(&bar, vec![]).await?;
-        let bar = DataSource::with_name(bar, "bat".to_string());
-        expect_blobs.push(Blob {
-            name: "bat".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile, empty string name
-        let baz = dir.join("baz");
-        tokio::fs::write(&baz, vec![]).await?;
-        let baz = DataSource::with_name(baz, "".to_string());
-        expect_blobs.push(Blob {
-            name: "".to_string(),
-            hash,
-        });
-
-        let expect_collection = Collection::new(expect_blobs, 0).unwrap();
-
-        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
-
-        let collection = {
-            let c = db.get(&hash).unwrap();
-            if let DbEntry::Internal { data, .. } = c {
-                Collection::from_bytes(&data)?
-            } else {
-                panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
-            }
-        };
-
-        assert_eq!(expect_collection, collection);
-
-        Ok(())
     }
 }

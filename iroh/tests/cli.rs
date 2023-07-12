@@ -9,6 +9,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::{provider::Ticket, Hash};
+use iroh::database::create_collection;
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -29,7 +30,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
-    use iroh_bytes::provider::{create_collection, create_data_sources, DbEntry};
+    use iroh_bytes::provider::{create_data_sources, DbEntry};
 
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
@@ -164,7 +165,7 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 fn cli_provide_persistence() -> anyhow::Result<()> {
     use std::time::Duration;
 
-    use iroh_bytes::provider::Database;
+    use iroh::database::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,

@@ -26,7 +26,7 @@ use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
         database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
-        CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, Ticket,
+        CustomGetHandler, ProvideProgress, RequestAuthorizationHandler, Ticket,
         ValidateProgress,
     },
     runtime,
@@ -47,6 +47,7 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
+use crate::database::Database;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
@@ -879,7 +880,7 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = iroh_bytes::provider::create_collection(vec![readme.into()])
+        let (db, hash) = crate::database::create_collection(vec![readme.into()])
             .await
             .unwrap();
         let node = Node::builder(db)

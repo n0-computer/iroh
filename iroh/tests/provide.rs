@@ -12,7 +12,7 @@ use futures::{
     future::{BoxFuture, LocalBoxFuture},
     FutureExt,
 };
-use iroh::node::{Event, Node, StaticTokenAuthHandler};
+use iroh::{node::{Event, Node, StaticTokenAuthHandler}, database::{create_collection, Database}};
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     tls::{Keypair, PeerId},
@@ -28,8 +28,8 @@ use iroh_bytes::{
     get::{self, fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{
-        self, create_collection, database::InMemDatabase, ArrayLinkStream, CollectionParser,
-        CollectionStats, CustomGetHandler, DataSource, Database, IrohCollectionParser, LinkStream,
+        self, database::InMemDatabase, ArrayLinkStream, CollectionParser,
+        CollectionStats, CustomGetHandler, DataSource, IrohCollectionParser, LinkStream,
         RequestAuthorizationHandler,
     },
     runtime,
@@ -152,7 +152,7 @@ async fn multiple_clients() -> Result<()> {
     let expect_hash = blake3::hash(&expect_data);
     let expect_name = filename.to_string();
 
-    let (db, hash) = provider::create_collection(vec![DataSource::new(path)]).await?;
+    let (db, hash) = create_collection(vec![DataSource::new(path)]).await?;
 
     let rt = test_runtime();
     let node = Node::builder(db)

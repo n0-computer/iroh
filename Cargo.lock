@@ -1647,6 +1647,7 @@ dependencies = [
  "nix",
  "num_cpus",
  "postcard",
+ "proptest",
  "quic-rpc",
  "quinn",
  "rand",

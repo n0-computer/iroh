@@ -6,15 +6,14 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{ensure, Result, Context};
 use iroh::{
     node::{Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
+    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService}, database::{Database, FNAME_PATHS},
 };
 use iroh_bytes::{
     protocol::RequestToken,
-    provider::{Database, FNAME_PATHS},
-    runtime,
+    runtime, provider::database::BaoReadonlyDb,
 };
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -119,12 +118,12 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide(
-    db: Database,
+async fn provide<D: BaoReadonlyDb>(
+    db: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<Database>> {
+) -> Result<Node<D>> {
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db)

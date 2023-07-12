@@ -67,6 +67,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
 iroh-io = { version = "0.2.1" }
 postcard = "1"
+proptest = "1.2.0"
 
 [[bin]]
 name = "iroh"
