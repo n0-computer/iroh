@@ -77,7 +77,9 @@ pub(super) enum Probe {
         delay: Duration,
         node: Arc<DerpNode>,
     },
-    // TODO: maybe the region can be change into just a region ID, if we need it at all.
+    // TODO: Probably can remove DerpRegion since the DerpNode already contains the region
+    // ID which can then be looked up in the DerpMap.  But Https isn't even implemented
+    // right now so leave it.
     #[display("Https after {delay:?} to {node}")]
     Https {
         delay: Duration,
