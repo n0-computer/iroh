@@ -16,8 +16,10 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::{
     blobs::Collection,
     protocol::{Closed, Request, RequestToken},
@@ -70,25 +72,62 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D = Database, E = DummyServerEndpoint, C = (), A = ()>
+pub struct Builder<D = Database, E = DummyServerEndpoint>
 where
     D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler<D>,
-    A: RequestAuthorizationHandler<D>,
 {
     bind_addr: SocketAddr,
     keypair: Keypair,
     rpc_endpoint: E,
     db: D,
     keylog: bool,
-    custom_get_handler: C,
-    auth_handler: A,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    auth_handler: Arc<dyn RequestAuthorizationHandler>,
     derp_map: Option<DerpMap>,
     rt: Option<runtime::Handle>,
 }
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::protocol::ALPN];
+
+/// A noop authorization handler that does not do any authorization.
+///
+/// This is the default. It does not have to be pub, since it is going to be
+/// boxed.
+#[derive(Debug)]
+struct NoopRequestAuthorizationHandler;
+
+impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
+    fn authorize(
+        &self,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move {
+            if let Some(token) = token {
+                anyhow::bail!(
+                    "no authorization handler defined, but token was provided: {:?}",
+                    token
+                );
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+#[derive(Debug)]
+struct NoopCustomGetHandler;
+
+impl CustomGetHandler for NoopCustomGetHandler {
+    fn handle(
+        &self,
+        _token: Option<RequestToken>,
+        _request: Bytes,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+    }
+}
 
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
@@ -100,25 +139,20 @@ impl<D: BaoMap> Builder<D> {
             keylog: false,
             derp_map: None,
             rpc_endpoint: Default::default(),
-            custom_get_handler: Default::default(),
-            auth_handler: Default::default(),
+            custom_get_handler: Arc::new(NoopCustomGetHandler),
+            auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             rt: None,
         }
     }
 }
 
-impl<E, C, A, D> Builder<D, E, C, A>
+impl<D, E> Builder<D, E>
 where
     D: BaoReadonlyDb,
     E: ServiceEndpoint<ProviderService>,
-    C: CustomGetHandler<D>,
-    A: RequestAuthorizationHandler<D>,
 {
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
-        self,
-        value: E2,
-    ) -> Builder<D, E2, C, A> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<D, E2> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -139,41 +173,19 @@ where
         self
     }
 
-    /// Configure the custom get handler, changing the type of the builder to the new handler type.
-    pub fn custom_get_handler<C2: CustomGetHandler<D>>(
-        self,
-        custom_handler: C2,
-    ) -> Builder<D, E, C2, A> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            bind_addr: self.bind_addr,
-            keypair: self.keypair,
-            db: self.db,
-            keylog: self.keylog,
-            rpc_endpoint: self.rpc_endpoint,
-            custom_get_handler: custom_handler,
-            auth_handler: self.auth_handler,
-            derp_map: self.derp_map,
-            rt: self.rt,
+    /// Configure the custom get handler.
+    pub fn custom_get_handler(self, custom_get_handler: Arc<dyn CustomGetHandler>) -> Self {
+        Self {
+            custom_get_handler,
+            ..self
         }
     }
 
     /// Configures a custom authorization handler.
-    pub fn custom_auth_handler<A2: RequestAuthorizationHandler<D>>(
-        self,
-        auth_handler: A2,
-    ) -> Builder<D, E, C, A2> {
-        // we can't use ..self here because the return type is different
-        Builder {
-            bind_addr: self.bind_addr,
-            keypair: self.keypair,
-            db: self.db,
-            keylog: self.keylog,
-            rpc_endpoint: self.rpc_endpoint,
-            custom_get_handler: self.custom_get_handler,
+    pub fn custom_auth_handler(self, auth_handler: Arc<dyn RequestAuthorizationHandler>) -> Self {
+        Self {
             auth_handler,
-            derp_map: self.derp_map,
-            rt: self.rt,
+            ..self
         }
     }
 
@@ -303,8 +315,8 @@ where
         handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
-        custom_get_handler: C,
-        auth_handler: A,
+        custom_get_handler: Arc<dyn CustomGetHandler>,
+        auth_handler: Arc<dyn RequestAuthorizationHandler>,
         rt: runtime::Handle,
     ) {
         let rpc = RpcServer::new(rpc);
@@ -778,10 +790,9 @@ impl StaticTokenAuthHandler {
     }
 }
 
-impl<D> RequestAuthorizationHandler<D> for StaticTokenAuthHandler {
+impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     fn authorize(
         &self,
-        _db: D,
         token: Option<RequestToken>,
         _request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>> {

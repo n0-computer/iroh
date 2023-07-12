@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -482,7 +483,7 @@ async fn test_run_ticket() {
     let token = Some(RequestToken::generate());
     let node = Node::builder(db)
         .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
-        .custom_auth_handler(StaticTokenAuthHandler::new(token.clone()))
+        .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token.clone())))
         .runtime(&rt)
         .spawn()
         .await
@@ -600,21 +601,23 @@ fn readme_path() -> PathBuf {
 }
 
 #[derive(Clone, Debug)]
-struct CollectionCustomHandler;
+struct CollectionCustomHandler {
+    db: Database,
+}
 
-impl CustomGetHandler<Database> for CollectionCustomHandler {
+impl CustomGetHandler for CollectionCustomHandler {
     fn handle(
         &self,
         _token: Option<RequestToken>,
         _data: Bytes,
-        database: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        let db = self.db.clone();
         async move {
             let readme = readme_path();
             let sources = vec![DataSource::new(readme)];
             let (new_db, hash) = create_collection(sources).await?;
             let new_db = new_db.to_inner();
-            database.union_with(new_db);
+            db.union_with(new_db);
             let request = GetRequest::all(hash);
             Ok(request)
         }
@@ -623,15 +626,17 @@ impl CustomGetHandler<Database> for CollectionCustomHandler {
 }
 
 #[derive(Clone, Debug)]
-struct BlobCustomHandler;
+struct BlobCustomHandler {
+    db: Database,
+}
 
-impl CustomGetHandler<Database> for BlobCustomHandler {
+impl CustomGetHandler for BlobCustomHandler {
     fn handle(
         &self,
         _token: Option<RequestToken>,
         _data: Bytes,
-        database: Database,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        let db = self.db.clone();
         async move {
             let readme = readme_path();
             let sources = vec![DataSource::new(readme)];
@@ -639,7 +644,7 @@ impl CustomGetHandler<Database> for BlobCustomHandler {
             let mut new_db = new_db.to_inner();
             new_db.remove(&c_hash);
             let file_hash = *new_db.iter().next().unwrap().0;
-            database.union_with(new_db);
+            db.union_with(new_db);
             let request = GetRequest::single(file_hash);
             println!("{:?}", request);
             Ok(request)
@@ -652,10 +657,10 @@ impl CustomGetHandler<Database> for BlobCustomHandler {
 async fn test_custom_request_blob() {
     let rt = test_runtime();
     let db = Database::default();
-    let node = Node::builder(db)
+    let node = Node::builder(db.clone())
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
-        .custom_get_handler(BlobCustomHandler)
+        .custom_get_handler(Arc::new(BlobCustomHandler { db }))
         .spawn()
         .await
         .unwrap();
@@ -685,10 +690,10 @@ async fn test_custom_request_blob() {
 async fn test_custom_request_collection() {
     let rt = test_runtime();
     let db = Database::default();
-    let node = Node::builder(db)
+    let node = Node::builder(db.clone())
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
-        .custom_get_handler(CollectionCustomHandler)
+        .custom_get_handler(Arc::new(CollectionCustomHandler { db }))
         .spawn()
         .await
         .unwrap();
@@ -714,10 +719,9 @@ async fn test_custom_request_collection() {
 #[derive(Clone, Debug)]
 struct CustomAuthHandler;
 
-impl<D> RequestAuthorizationHandler<D> for CustomAuthHandler {
+impl RequestAuthorizationHandler for CustomAuthHandler {
     fn authorize(
         &self,
-        _db: D,
         token: Option<RequestToken>,
         _request: &iroh_bytes::protocol::Request,
     ) -> BoxFuture<'static, Result<()>> {
@@ -745,7 +749,7 @@ async fn test_token_passthrough() -> Result<()> {
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let provider = Node::builder(db)
         .bind_addr("0.0.0.0:0".parse().unwrap())
-        .custom_auth_handler(CustomAuthHandler)
+        .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)
         .spawn()
         .await?;
