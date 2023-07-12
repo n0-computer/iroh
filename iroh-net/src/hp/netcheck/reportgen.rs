@@ -393,8 +393,8 @@ impl Actor {
 
     /// Updates the report to note that node's latency and discovered address from STUN.
     ///
-    /// Since this is only called for STUN probes, in other words [`Probe::Ipv4`] and
-    /// [`Probe::Ipv6`], *ipp` is always `Some`.
+    /// Since this is only called for STUN probes, in other words [`Probe::StunIpv4`] and
+    /// [`Probe::StunIpv6`], *ipp` is always `Some`.
     fn add_stun_addr_latency(
         &mut self,
         derp_node: &DerpNode,

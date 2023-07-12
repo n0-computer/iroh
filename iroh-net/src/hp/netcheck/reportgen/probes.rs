@@ -18,7 +18,7 @@ use crate::net::interfaces;
 /// The retransmit interval used when netcheck first runs.
 ///
 /// We have no past context to work with, and we want answers relatively quickly, so it's
-/// biased slightly more aggressive than [`DEFAULT_ACTIVE_RETRANSMIT_TIME`]. A few extra
+/// biased slightly more aggressive than [`DEFAULT_ACTIVE_RETRANSMIT_DELAY`]. A few extra
 /// packets at startup is fine.
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
@@ -44,8 +44,6 @@ const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
 const NUM_INCREMENTAL_REGIONS: usize = 3;
 
 /// The protocol used to time a node's latency.
-///
-/// This is effectively the discriminant of [`ProbeData`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 pub(super) enum ProbeProto {
