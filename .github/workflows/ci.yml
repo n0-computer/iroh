@@ -334,11 +334,18 @@ jobs:
     - name: Run tests
       run: |
         cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
         sudo python3 main.py --integration sims/iroh/iroh.json
         sudo python3 main.py --integration sims/integration
 
+    - name: Cleanup
+      run: |
+        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh) || true
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
+        
     - name: Setup Environment (PR)  
       if: ${{ github.event_name == 'pull_request' }}  
       shell: bash  
