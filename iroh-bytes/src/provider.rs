@@ -9,8 +9,10 @@ use std::sync::Arc;
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::{BoxFuture, Either};
-use futures::{Future, FutureExt};
+use futures::{
+    future::{BoxFuture, Either},
+    Future,
+};
 use iroh_io::{AsyncSliceReaderExt, File};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
@@ -198,26 +200,6 @@ pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
-/// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
-impl RequestAuthorizationHandler for () {
-    fn authorize(
-        &self,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        async move {
-            if let Some(token) = token {
-                anyhow::bail!(
-                    "no authorization handler defined, but token was provided: {:?}",
-                    token
-                );
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
 pub trait CustomGetHandler: Send + Sync + Debug + 'static {
@@ -227,18 +209,6 @@ pub trait CustomGetHandler: Send + Sync + Debug + 'static {
         token: Option<RequestToken>,
         request: Bytes,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
-/// Handle the custom request, given an opaque data blob from the requester.
-/// Define CustomGetHandler for () so we can use it as a no-op default.
-impl CustomGetHandler for () {
-    fn handle(
-        &self,
-        _token: Option<RequestToken>,
-        _request: Bytes,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
-    }
 }
 
 /// A [`Database`] entry.

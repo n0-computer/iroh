@@ -16,8 +16,10 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::{
     blobs::Collection,
     protocol::{Closed, Request, RequestToken},
@@ -88,6 +90,45 @@ where
 
 const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::protocol::ALPN];
 
+/// A noop authorization handler that does not do any authorization.
+///
+/// This is the default. It does not have to be pub, since it is going to be
+/// boxed.
+#[derive(Debug)]
+struct NoopRequestAuthorizationHandler;
+
+impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
+    fn authorize(
+        &self,
+        token: Option<RequestToken>,
+        _request: &Request,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move {
+            if let Some(token) = token {
+                anyhow::bail!(
+                    "no authorization handler defined, but token was provided: {:?}",
+                    token
+                );
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+#[derive(Debug)]
+struct NoopCustomGetHandler;
+
+impl CustomGetHandler for NoopCustomGetHandler {
+    fn handle(
+        &self,
+        _token: Option<RequestToken>,
+        _request: Bytes,
+    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+    }
+}
+
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
     pub fn with_db(db: D) -> Self {
@@ -98,8 +139,8 @@ impl<D: BaoMap> Builder<D> {
             keylog: false,
             derp_map: None,
             rpc_endpoint: Default::default(),
-            custom_get_handler: Arc::new(()),
-            auth_handler: Arc::new(()),
+            custom_get_handler: Arc::new(NoopCustomGetHandler),
+            auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             rt: None,
         }
     }
