@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
-use iroh_net::{hp::derp::DerpMap, tls::PeerId, MagicEndpoint};
+use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{NamespaceId, Replica, ReplicaStore};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -30,47 +30,7 @@ enum Message {
     Sync(iroh_sync::sync::ProtocolMessage),
 }
 
-pub async fn run(
-    namespace: String,
-    author: String,
-    addrs: Vec<SocketAddr>,
-    peer: PeerId,
-    derp_map: Option<DerpMap>,
-) -> Result<()> {
-    let namespace: iroh_sync::sync::Namespace = namespace
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid namespace"))?;
-    let author: iroh_sync::sync::Author = author
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid author"))?;
-    debug!("Syncing {} with peer {}", namespace.id(), peer);
-    let keylog = false;
-
-    let alice = iroh_sync::sync::Replica::new(namespace.clone());
-
-    alice.insert("alice-is-cool", &author, "alice");
-
-    let endpoint = MagicEndpoint::builder()
-        .keylog(keylog)
-        .derp_map(derp_map)
-        .bind(0)
-        .await?;
-
-    connect_and_sync(&endpoint, &alice, peer, &addrs).await?;
-
-    debug!("sync finished");
-    for (key, value) in alice.all() {
-        debug!(
-            "got {:?}\n{:?}\n {:?}\n",
-            std::str::from_utf8(key.key()),
-            key,
-            value
-        );
-    }
-
-    Ok(())
-}
-
+/// Connect to a peer and sync a replica
 pub async fn connect_and_sync(
     endpoint: &MagicEndpoint,
     doc: &Replica,
@@ -127,6 +87,7 @@ async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     Ok(())
 }
 
+/// Sync with a peer on an incoming connection
 pub async fn handle_connection(
     connecting: quinn::Connecting,
     replica_store: ReplicaStore,
