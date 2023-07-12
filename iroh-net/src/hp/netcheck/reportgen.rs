@@ -337,20 +337,20 @@ impl Actor {
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
         debug!("finished probe: {:?}", probe_report);
-        // TODO: update self.report.region_latency here instead of in each branch.  This is
-        // the same for all branches.  We should add the region ID to the probe report to
-        // make this easier.
-        match probe_report.probe {
-            Probe::Https { region, .. } | Probe::Icmp { region, .. } => {
-                if let Some(delay) = probe_report.delay {
-                    self.report
-                        .region_latency
-                        .update_region(region.region_id, delay);
-                }
-            }
-            Probe::StunIpv4 { node, .. } | Probe::StunIpv6 { node, .. } => {
-                if let Some(delay) = probe_report.delay {
-                    self.add_stun_addr_latency(node, probe_report.addr, delay);
+        let Some(derp_node) = self.derp_map.find_by_name(probe_report.probe.node()) else {
+            error!("derp node missing from derp map");
+            return;
+        };
+        // TODO: when preparing the probes we already create a cache of derp nodes by their
+        // name.  Store this cache in the actor state and use it here.
+        let derp_node = derp_node.clone();
+        if let Some(latency) = probe_report.delay {
+            self.report
+                .region_latency
+                .update_region(derp_node.region_id, latency);
+            match probe_report.probe {
+                Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
+                    self.add_stun_addr_latency(&derp_node, probe_report.addr, latency);
                     if let Some(ref addr) = self.report.global_v4 {
                         // Only needed for the first IPv4 address discovered, but hairpin
                         // actor ignores subsequent messages.
@@ -358,6 +358,7 @@ impl Actor {
                         self.outstanding_tasks.hairpin = true;
                     }
                 }
+                Probe::Https { .. } | Probe::Icmp { .. } => (),
             }
         }
         self.report.ipv4_can_send = probe_report.ipv4_can_send;
@@ -403,21 +404,12 @@ impl Actor {
     /// [`Probe::Ipv6`], *ipp` is always `Some`.
     fn add_stun_addr_latency(
         &mut self,
-        derp_node: String,
+        derp_node: &DerpNode,
         ipp: Option<SocketAddr>,
         latency: Duration,
     ) {
-        let Some(node) = self.derp_map.find_by_name(&derp_node) else {
-            warn!("derp node missing from derp map");
-            return;
-        };
-
-        debug!(node = %node.name, ?latency, "add udp node latency");
+        debug!(derp_node = %derp_node.name, ?latency, "add udp node latency");
         self.report.udp = true;
-
-        self.report
-            .region_latency
-            .update_region(node.region_id, latency);
 
         // Once we've heard from enough regions (3), start a timer to
         // give up on the other ones. The timer's duration is a
@@ -441,7 +433,7 @@ impl Actor {
                 SocketAddr::V4(_) => {
                     self.report
                         .region_v4_latency
-                        .update_region(node.region_id, latency);
+                        .update_region(derp_node.region_id, latency);
                     self.report.ipv4 = true;
                     if self.report.global_v4.is_none() {
                         self.report.global_v4 = Some(ipp);
@@ -454,7 +446,7 @@ impl Actor {
                 SocketAddr::V6(_) => {
                     self.report
                         .region_v6_latency
-                        .update_region(node.region_id, latency);
+                        .update_region(derp_node.region_id, latency);
                     self.report.ipv6 = true;
                     self.report.global_v6 = Some(ipp);
                     // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
@@ -817,9 +809,13 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Icmp { ref region, .. } => {
+        Probe::Icmp { .. } => {
             if let Some(ref pinger) = pinger {
-                match time::timeout(ICMP_PROBE_TIMEOUT, measure_icmp_latency(region, pinger)).await
+                match time::timeout(
+                    ICMP_PROBE_TIMEOUT,
+                    measure_icmp_latency(pinger, derp_node, derp_addr),
+                )
+                .await
                 {
                     Ok(Ok(latency)) => {
                         result.delay = Some(latency);
@@ -974,8 +970,13 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
                 return Ok(SocketAddr::new(IpAddr::V6(ip), port));
             }
         }
-        _ => {
-            // TODO: original code returns None here, but that seems wrong?
+        ProbeProto::Icmp => {
+            if let UseIpv4::Some(ip) = n.ipv4 {
+                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
+            }
+        }
+        ProbeProto::Https => {
+            anyhow::bail!("not implemented");
         }
     }
 
@@ -1010,42 +1011,29 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     }
 }
 
-async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration> {
-    if reg.nodes.is_empty() {
-        anyhow::bail!(
-            "no nodes for region {} ({})",
-            reg.region_id,
-            reg.region_code
-        );
-    }
-
-    // Try pinging the first node in the region
-    let node = &reg.nodes[0];
-
-    // Get the IPAddr by asking for the UDP address that we would use for
-    // STUN and then using that IP.
-    let node_addr = get_derp_addr(node, ProbeProto::StunIpv4)
-        .await
-        .with_context(|| format!("no address for node {}", node.name))?;
-
+async fn measure_icmp_latency(
+    pinger: &Pinger,
+    derp_node: Arc<DerpNode>,
+    derp_addr: SocketAddr,
+) -> Result<Duration> {
     debug!(
-        "ICMP ping start to {} with payload len {} - derp {} {}",
-        node_addr,
-        node.name.as_bytes().len(),
-        node.name,
-        reg.region_id
+        "ICMP ping start to {} with payload len {} - derp {}",
+        derp_addr,
+        derp_node.name.as_bytes().len(),
+        derp_node.name,
     );
     // Use the unique node.name field as the packet data to reduce the
     // likelihood that we get a mismatched echo response.
-    let d = p.send(node_addr.ip(), node.name.as_bytes()).await?;
+    let latency = pinger
+        .send(derp_addr.ip(), derp_node.name.as_bytes())
+        .await?;
     debug!(
-        "ICMP ping done {} with latency {}ms - derp {} {}",
-        node_addr,
-        d.as_millis(),
-        node.name,
-        reg.region_id
+        "ICMP ping done {} with latency {}ms - derp {}",
+        derp_addr,
+        latency.as_millis(),
+        derp_node.name,
     );
-    Ok(d)
+    Ok(latency)
 }
 
 async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {

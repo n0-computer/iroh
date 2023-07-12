@@ -73,7 +73,7 @@ pub(super) enum Probe {
     },
     #[display("Ipv6 after {delay:?} to {node}")]
     StunIpv6 { delay: Duration, node: String },
-    // TODO: maybe the region can be change into just a region ID?
+    // TODO: maybe the region can be change into just a region ID, if we need it at all.
     #[display("Https after {delay:?} to {node}")]
     Https {
         delay: Duration,
@@ -81,12 +81,7 @@ pub(super) enum Probe {
         region: DerpRegion,
     },
     #[display("Icmp after {delay:?} to {node}")]
-    Icmp {
-        delay: Duration,
-        node: String,
-        // TODO: remove this, we probably don't need it. maybe we need a region ID
-        region: DerpRegion,
-    },
+    Icmp { delay: Duration, node: String },
 }
 
 impl Probe {
@@ -253,7 +248,6 @@ impl ProbePlan {
                     .push(Probe::Icmp {
                         delay,
                         node: derp_node.name.clone(),
-                        region: region.clone(),
                     })
                     .expect("adding Icmp probe to an Icmp probe set");
             }
@@ -367,7 +361,6 @@ impl ProbePlan {
                     .push(Probe::Icmp {
                         delay,
                         node: derp_node.name.clone(),
-                        region: reg.clone(),
                     })
                     .expect("Pushing Icmp Probe to an Icmp ProbeSet");
             }
@@ -530,17 +523,14 @@ mod tests {
                     Probe::Icmp {
                         delay: Duration::from_millis(300),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(400),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(500),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                 ],
             },
@@ -579,7 +569,7 @@ mod tests {
             global_v6: None,
             captive_portal: None,
         };
-        let plan = ProbePlan::with_last_report(&derp_map, &if_state, Some(&last_report));
+        let plan = ProbePlan::with_last_report(&derp_map, &if_state, &last_report);
         let expected_plan: ProbePlan = [
             ProbeSet {
                 name: "region-1-stunipv4".into(),
@@ -658,22 +648,18 @@ mod tests {
                     Probe::Icmp {
                         delay: Duration::from_micros(207_200),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(259_600),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(312_000),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(364_400),
                         node: "default-1".into(),
-                        region: derp_map.regions[&1].clone(),
                     },
                 ],
             },
