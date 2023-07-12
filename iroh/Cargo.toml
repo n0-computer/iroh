@@ -20,11 +20,14 @@ bytes = "1"
 derive_more = { package = "derive_more_preview", version = "0.1.0", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
+hex = { version = "0.4.3" }
 iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
+num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
 range-collections = { version = "0.4.0" }
@@ -41,18 +44,15 @@ clap = { version = "4", features = ["derive"], optional = true }
 config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"], optional = true }
 console = { version = "0.15.5", optional = true }
 dirs-next = { version = "2.0.0", optional = true }
-hex = { version = "0.4.3", optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
-num_cpus = { version = "1.15.0", optional = true }
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "hex", "indicatif", "multibase", "num_cpus", "postcard", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics"]
 test = []
 
@@ -70,6 +70,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-io = { version = "0.2.1" }
 postcard = "1"
 proptest = "1.2.0"
+tempfile = "3.4"
 
 [[bin]]
 name = "iroh"

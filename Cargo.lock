@@ -1695,8 +1695,6 @@ dependencies = [
  "serde-error",
  "smallvec",
  "subtle",
- "tempfile",
- "testdir",
  "thiserror",
  "tokio",
  "tokio-util",

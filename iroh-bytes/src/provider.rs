@@ -1,4 +1,4 @@
-//! Provider API
+//! The server side API
 use std::fmt::Debug;
 use std::sync::Arc;
 
