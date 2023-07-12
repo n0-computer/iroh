@@ -1920,6 +1920,7 @@ dependencies = [
  "iroh-bytes",
  "once_cell",
  "parking_lot",
+ "postcard",
  "rand",
  "rand_core",
  "serde",

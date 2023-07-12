@@ -19,7 +19,7 @@ use tracing::{debug, warn};
 use self::util::{read_message, write_message, Dialer, Timers};
 use crate::proto::{self, TopicId};
 
-mod util;
+pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"n0/iroh-gossip/0";

@@ -80,6 +80,8 @@ pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connecti
 ///
 /// This wraps a [MagicEndpoint], connects to peers through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
+///
+/// TODO: Move to iroh-net
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: FuturesUnordered<DialFuture>,
