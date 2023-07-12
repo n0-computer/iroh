@@ -66,6 +66,7 @@ tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
 iroh-io = { version = "0.2.1" }
+postcard = "1"
 
 [[bin]]
 name = "iroh"
