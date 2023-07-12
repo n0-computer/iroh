@@ -212,7 +212,7 @@ async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> a
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a derp map from host name and stun port
-            DerpMap::default_from_node(url, stun_port, UseIpv4::None, UseIpv6::None)
+            DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns)
         }
         None => config.derp_map().expect("derp map not configured"),
     };
@@ -451,7 +451,7 @@ fn configure_local_derp_map() -> DerpMap {
     let stun_port = DEFAULT_DERP_STUN_PORT;
     let url = "http://derp.invalid:3340".parse().unwrap();
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
-    let derp_ipv6 = UseIpv6::None;
+    let derp_ipv6 = UseIpv6::TryDns;
     DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6)
 }
 

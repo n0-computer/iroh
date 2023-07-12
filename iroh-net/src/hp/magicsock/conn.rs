@@ -2674,7 +2674,7 @@ pub(crate) mod tests {
                         stun_only: false,
                         stun_port: stun_addr.port(),
                         ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
-                        ipv6: UseIpv6::None,
+                        ipv6: UseIpv6::TryDns,
                         stun_test_ip: Some(stun_addr.ip()),
                     }],
                     avoid: false,

@@ -43,6 +43,7 @@ use crate::net::interfaces;
 use crate::util::{CancelOnDrop, MaybeFuture};
 
 mod hairpin;
+mod probes;
 
 /// Fake DNS TLD used in tests for an invalid hostname.
 const DOT_INVALID: &str = ".invalid";
@@ -332,8 +333,11 @@ impl Actor {
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
         debug!("finished probe: {:?}", probe_report);
+        // TODO: update self.report.region_latency here instead of in each branch.  This is
+        // the same for all branches.  We should add the region ID to the probe report to
+        // make this easier.
         match probe_report.probe {
-            Probe::Https { region, .. } => {
+            Probe::Https { region, .. } | Probe::Icmp { region, .. } => {
                 if let Some(delay) = probe_report.delay {
                     self.report
                         .region_latency
@@ -537,6 +541,23 @@ impl Actor {
     }
 
     /// Prepares the future which will run all the probes as per generated ProbePlan.
+    ///
+    /// Probes operate like the following:
+    ///
+    /// - A future is created for each probe in all probe sets.
+    /// - All probes in a set are grouped in [`FuturesUnordered`].
+    /// - All those probe sets are grouped in one overall [`FuturesUnordered`].
+    ///   - This future is polled by the main actor loop to make progress.
+    /// - Once a probe future is polled:
+    ///   - Many probes start with a delay, they sleep during this time.
+    ///   - When a probe starts it first asks the reportgen [`Actor`] if it is still useful
+    ///     to run.  If not it aborts the entire probe set.
+    ///   - When a probe finishes, its [`ProbeReport`] is yielded to the reportgen actor.
+    /// - Probes get aborted in several ways:
+    ///   - A running it can fail and abort the entire probe set if it deems the
+    ///     failure permanent.  Probes in a probe set are essentially retries.
+    ///   - Once there are [`ProbeReport`]s from enough regions, all remaining probes are
+    ///     aborted.  That is, the main actor loop stops polling them.
     async fn prepare_probes_task(
         &mut self,
     ) -> Result<FuturesUnordered<Pin<Box<impl Future<Output = Result<ProbeReport>>>>>> {
@@ -787,6 +808,9 @@ async fn run_probe(
                     result.addr = Some(addr);
                 }
             }
+        }
+        Probe::Icmp { .. } => {
+            todo!();
         }
         Probe::Https { ref region, .. } => {
             debug!(icmp=%pinger.is_some(), "sending probe HTTPS");

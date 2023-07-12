@@ -24,7 +24,7 @@ const DEFAULT_ACTIVE_RETRANSMIT_TIME: Duration = Duration::from_millis(200);
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
 /// The protocol used to time a node's latency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 pub enum ProbeProto {
     /// STUN IPv4
@@ -33,6 +33,8 @@ pub enum ProbeProto {
     Ipv6,
     /// HTTPS
     Https,
+    /// ICMP
+    Icmp,
 }
 
 #[derive(Debug, Clone, derive_more::Display)]
@@ -50,8 +52,15 @@ pub enum Probe {
     },
     #[display("Ipv6 after {delay:?} to {node}")]
     Ipv6 { delay: Duration, node: String },
+    // TODO: maybe the region can be change into just a region ID?
     #[display("Https after {delay:?} to {node} {}", region.region_code)]
     Https {
+        delay: Duration,
+        node: String,
+        region: DerpRegion,
+    },
+    #[display("Icmp after {delay:?} to {node}")]
+    Icmp {
         delay: Duration,
         node: String,
         region: DerpRegion,
@@ -61,9 +70,10 @@ pub enum Probe {
 impl Probe {
     pub fn delay(&self) -> Duration {
         match self {
-            Probe::Ipv4 { delay, .. } | Probe::Ipv6 { delay, .. } | Probe::Https { delay, .. } => {
-                *delay
-            }
+            Probe::Ipv4 { delay, .. }
+            | Probe::Ipv6 { delay, .. }
+            | Probe::Https { delay, .. }
+            | Probe::Icmp { delay, .. } => *delay,
         }
     }
 
@@ -72,14 +82,16 @@ impl Probe {
             Probe::Ipv4 { .. } => ProbeProto::Ipv4,
             Probe::Ipv6 { .. } => ProbeProto::Ipv6,
             Probe::Https { .. } => ProbeProto::Https,
+            Probe::Icmp { .. } => ProbeProto::Icmp,
         }
     }
 
     pub fn node(&self) -> &str {
         match self {
-            Probe::Ipv4 { node, .. } => node,
-            Probe::Ipv6 { node, .. } => node,
-            Probe::Https { node, .. } => node,
+            Probe::Ipv4 { node, .. }
+            | Probe::Ipv6 { node, .. }
+            | Probe::Https { node, .. }
+            | Probe::Icmp { node, .. } => node,
         }
     }
 }
@@ -250,14 +262,14 @@ impl ProbePlan {
     fn new_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbePlan {
         let mut plan = ProbePlan::default();
 
-        for reg in dm.regions.values() {
+        for region in dm.regions.values() {
             let mut p4 = Vec::new();
             let mut p6 = Vec::new();
             let mut https = Vec::new();
 
-            for tr in 0..3 {
-                let n = &reg.nodes[tr % reg.nodes.len()];
-                let delay = DEFAULT_INITIAL_RETRANSMIT * tr as u32;
+            for attempt in 0..3 {
+                let n = &region.nodes[attempt % region.nodes.len()];
+                let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
                 let have_v4 = if_state.have_v4 && node_might4(n);
                 let have_v6 = if_state.have_v6 && node_might6(n);
                 if have_v4 {
@@ -272,23 +284,23 @@ impl ProbePlan {
                         node: n.name.clone(),
                     })
                 }
-                if region_has_derp_node(reg) || (!have_v6 && !have_v4) {
+                if region_has_derp_node(region) || (!have_v6 && !have_v4) {
                     https.push(Probe::Https {
                         delay,
-                        region: reg.clone(),
+                        region: region.clone(),
                         node: n.name.clone(),
                     });
                 }
             }
             if !p4.is_empty() {
-                plan.0.insert(format!("region-{}-v4", reg.region_id), p4);
+                plan.0.insert(format!("region-{}-v4", region.region_id), p4);
             }
             if !p6.is_empty() {
-                plan.0.insert(format!("region-{}-v6", reg.region_id), p6);
+                plan.0.insert(format!("region-{}-v6", region.region_id), p6);
             }
             if !https.is_empty() {
                 plan.0
-                    .insert(format!("region-{}-https", reg.region_id), https);
+                    .insert(format!("region-{}-https", region.region_id), https);
             }
         }
         plan
@@ -325,10 +337,10 @@ fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
 
 /// Reports whether n might reply to STUN over IPv6 based on
 /// its config alone, without DNS lookups. It only returns false if
-/// it's not explicitly disabled.
+/// it is explicitly disabled.
 fn node_might6(n: &DerpNode) -> bool {
     match n.ipv6 {
-        UseIpv6::None => true,
+        UseIpv6::TryDns => true,
         UseIpv6::Disabled => false,
         UseIpv6::Some(_) => true,
     }
@@ -336,10 +348,10 @@ fn node_might6(n: &DerpNode) -> bool {
 
 /// Reports whether n might reply to STUN over IPv4 based on
 /// its config alone, without DNS lookups. It only returns false if
-/// it's not explicitly disabled.
+/// it is explicitly disabled.
 fn node_might4(n: &DerpNode) -> bool {
     match n.ipv4 {
-        UseIpv4::None => true,
+        UseIpv4::TryDns => true,
         UseIpv4::Disabled => false,
         UseIpv4::Some(_) => true,
     }

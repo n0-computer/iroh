@@ -977,8 +977,8 @@ mod tests {
                         url: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
-                        ipv4: UseIpv4::None,
-                        ipv6: UseIpv6::None,
+                        ipv4: UseIpv4::TryDns,
+                        ipv6: UseIpv6::TryDns,
                         stun_test_ip: None,
                     })
                     .collect(),
@@ -1015,38 +1015,6 @@ mod tests {
         } else {
             eprintln!("missing UDP, probe not returned by network");
         }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_udp_tokio() -> Result<()> {
-        let local_addr = "127.0.0.1";
-        let bind_addr = "0.0.0.0";
-
-        let server = UdpSocket::bind(format!("{bind_addr}:0")).await?;
-        let addr = server.local_addr()?;
-
-        let server_task = tokio::task::spawn(async move {
-            let mut buf = vec![0u8; 32];
-            println!("server recv");
-            let (n, addr) = server.recv_from(&mut buf).await.unwrap();
-            println!("server send");
-            server.send_to(&buf[..n], addr).await.unwrap();
-        });
-
-        let client = UdpSocket::bind(format!("{bind_addr}:0")).await?;
-        let data = b"foobar";
-        println!("client: send");
-        let server_addr = format!("{local_addr}:{}", addr.port());
-        client.send_to(data, server_addr).await?;
-        let mut buf = vec![0u8; 32];
-        println!("client recv");
-        let (n, addr_r) = client.recv_from(&mut buf).await?;
-        assert_eq!(&buf[..n], data);
-        assert_eq!(addr_r.port(), addr.port());
-
-        server_task.await?;
 
         Ok(())
     }
