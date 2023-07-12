@@ -16,7 +16,7 @@ pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
 use crate::util::Hash;
 
 /// Maximum message size is limited to 100MiB for now.
-pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// The ALPN used with quic for the iroh bytes protocol.
 pub const ALPN: [u8; 13] = *b"/iroh-bytes/2";

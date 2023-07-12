@@ -19,18 +19,16 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::collection::CollectionParser;
 use iroh_bytes::protocol::GetRequest;
-use iroh_bytes::provider::{CollectionParser, IrohCollectionParser};
 use iroh_bytes::{
-    blobs::Collection,
     protocol::{Closed, Request, RequestToken},
     provider::{
         database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
-        CustomGetHandler, ProvideProgress, RequestAuthorizationHandler, Ticket,
-        ValidateProgress,
+        CustomGetHandler, ProvideProgress, RequestAuthorizationHandler, Ticket, ValidateProgress,
     },
-    runtime,
-    util::{progress::Progress, Hash},
+    util::runtime,
+    util::Hash,
 };
 use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
@@ -47,13 +45,15 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::database::Database;
+use crate::blobs::{Collection, IrohCollectionParser};
+use crate::database::{create_data_sources, Database};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
     ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
+use crate::util::progress::Progress;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -680,14 +680,11 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = iroh_bytes::provider::create_data_sources(root)?;
+        let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, hash) = iroh_bytes::provider::collection::create_collection(
-            data_sources,
-            Progress::new(progress),
-        )
-        .await?;
+        let (db, hash) =
+            crate::database::create_collection_inner(data_sources, Progress::new(progress)).await?;
 
         // todo: generify this
         // for now provide will only work if D is a Database

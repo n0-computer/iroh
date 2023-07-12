@@ -6,15 +6,13 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Result, Context};
+use anyhow::{ensure, Context, Result};
 use iroh::{
+    database::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
-    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService}, database::{Database, FNAME_PATHS},
+    rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{
-    protocol::RequestToken,
-    runtime, provider::database::BaoReadonlyDb,
-};
+use iroh_bytes::{protocol::RequestToken, provider::database::BaoReadonlyDb, util::runtime};
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 

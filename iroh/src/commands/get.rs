@@ -5,21 +5,22 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use iroh::util::{get_data_path, get_missing_range, get_missing_ranges};
-use iroh_bytes::{
+use iroh::{
     blobs::Collection,
+    util::{
+        get_data_path, get_missing_range, get_missing_ranges, io::pathbuf_from_name,
+        progress::ProgressSliceWriter,
+    },
+};
+use iroh_bytes::{
     get::{
         self,
         fsm::{self, ConnectedNext, EndBlobNext},
     },
     protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
-    util::{
-        io::{pathbuf_from_name, ConcatenateSliceWriter},
-        progress::ProgressSliceWriter,
-    },
     Hash,
 };
-use iroh_io::{AsyncSliceWriter, File};
+use iroh_io::{AsyncSliceWriter, ConcatenateSliceWriter, File};
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 

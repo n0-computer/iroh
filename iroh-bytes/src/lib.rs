@@ -3,11 +3,10 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]
 
-pub mod blobs;
+pub mod collection;
 pub mod get;
 pub mod protocol;
 pub mod provider;
-pub mod runtime;
 pub mod util;
 
 #[cfg(test)]

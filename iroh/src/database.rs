@@ -1,21 +1,31 @@
 //! The concrete database used by the iroh binary.
-use std::path::{PathBuf, Path};
-use std::sync::{Arc, RwLock};
-use std::collections::{HashMap, BTreeSet};
-use std::{io, result, fmt};
 use anyhow::Context;
-use bao_tree::io::outboard::PreOrderMemOutboard;
+use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::Bytes;
-use futures::{FutureExt, StreamExt};
 use futures::future::BoxFuture;
-use iroh_bytes::provider::{ValidateProgress, DbEntry, DataSource, collection};
-use iroh_bytes::util::io::{validate_bao, BaoValidationError};
-use iroh_bytes::util::progress::Progress;
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_bytes::provider::database::{BaoMapEntry, BaoMap, BaoReadonlyDb};
-use iroh_io::File;
-use tokio::sync::mpsc;
 use futures::future::Either;
+use futures::{Future, FutureExt, StreamExt};
+use iroh_bytes::protocol::MAX_MESSAGE_SIZE;
+use iroh_bytes::provider::database::{BaoMap, BaoMapEntry, BaoReadonlyDb};
+use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
+use iroh_io::File;
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::{fmt, io, result};
+use tokio::sync::mpsc;
+use tracing::{trace, trace_span};
+use walkdir::WalkDir;
+
+use crate::blobs::Blob;
+use crate::blobs::Collection;
+use crate::util::canonicalize_path;
+use crate::util::io::validate_bao;
+use crate::util::io::BaoValidationError;
+use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
 
 /// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
 const FNAME_OUTBOARDS: &str = "outboards";
@@ -57,6 +67,82 @@ impl BaoMapEntry<Database> for DbPair {
     }
 }
 
+/// A [`Database`] entry.
+///
+/// This is either stored externally in the file system, or internally in the database.
+///
+/// Internally stored entries are stored in the iroh home directory when the database is
+/// persisted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbEntry {
+    /// A blob.
+    External {
+        /// The bao outboard data.
+        outboard: Bytes,
+        /// Path to the original data, which must not change while in use.
+        ///
+        /// Note that when adding multiple files with the same content, only one of them
+        /// will get added to the store. So the path is not that useful for information.  It
+        /// is just a place to look for the data correspoding to the hash and outboard.
+        // TODO: Change this to a list of paths.
+        path: PathBuf,
+        /// Size of the original data.
+        size: u64,
+    },
+    /// A collection.
+    Internal {
+        /// The bao outboard data.
+        outboard: Bytes,
+        /// The inline data.
+        data: Bytes,
+    },
+}
+
+impl DbEntry {
+    /// True if this is an entry that is stored externally.
+    pub fn is_external(&self) -> bool {
+        matches!(self, DbEntry::External { .. })
+    }
+
+    /// Path to the external data, or `None` if this is an internal entry.
+    pub fn blob_path(&self) -> Option<&Path> {
+        match self {
+            DbEntry::External { path, .. } => Some(path),
+            DbEntry::Internal { .. } => None,
+        }
+    }
+
+    /// Get the outboard data for this entry, as a `Bytes`.
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
+        futures::future::ok(match self {
+            DbEntry::External { outboard, .. } => outboard.clone(),
+            DbEntry::Internal { outboard, .. } => outboard.clone(),
+        })
+    }
+
+    /// A reader for the data.
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
+        let this = self.clone();
+        async move {
+            Ok(match this {
+                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
+                DbEntry::Internal { data, .. } => Either::Left(data),
+            })
+        }
+    }
+
+    /// Returns the size of the blob or collection.
+    ///
+    /// For collections this is the size of the serialized collection.
+    /// For blobs it is the blob size.
+    pub async fn size(&self) -> u64 {
+        match self {
+            DbEntry::External { size, .. } => *size,
+            DbEntry::Internal { data, .. } => data.len() as u64,
+        }
+    }
+}
+
 impl BaoMap for Database {
     type Entry = DbPair;
     type Outboard = PreOrderMemOutboard<Bytes>;
@@ -87,10 +173,7 @@ impl BaoReadonlyDb for Database {
         Box::new(items.into_iter())
     }
 
-    fn validate(
-        &self,
-        tx: mpsc::Sender<ValidateProgress>,
-    ) -> BoxFuture<'_, anyhow::Result<()>> {
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
         self.validate0(tx).boxed()
     }
 }
@@ -266,8 +349,7 @@ where
         }
         let mut paths = self.paths.collect::<Vec<_>>();
         paths.sort_by_key(|(path, _, _)| *path);
-        let paths_content =
-            postcard::to_stdvec(&paths).expect("failed to serialize paths file");
+        let paths_content = postcard::to_stdvec(&paths).expect("failed to serialize paths file");
         fs::write(paths_file, paths_content)?;
         Ok(())
     }
@@ -394,7 +476,7 @@ impl Database {
                         .send(ValidateProgress::Entry {
                             id,
                             hash,
-                            path: path.clone(),
+                            path: path.map(|x| x.display().to_string()),
                             size,
                         })
                         .await?;
@@ -528,16 +610,298 @@ impl Database {
     }
 }
 
+/// Data for a blob
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobData {
+    /// Outboard data from bao.
+    outboard: Bytes,
+    /// Path to the original data, which must not change while in use.
+    ///
+    /// Note that when adding multiple files with the same content, only one of them
+    /// will get added to the store. So the path is not that useful for information.
+    /// It is just a place to look for the data correspoding to the hash and outboard.
+    path: PathBuf,
+    /// Size of the original data.
+    size: u64,
+}
+
+/// A data source
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub struct DataSource {
+    /// Custom name
+    name: String,
+    /// Path to the file
+    path: PathBuf,
+}
+
+impl DataSource {
+    /// Creates a new [`DataSource`] from a [`PathBuf`].
+    pub fn new(path: PathBuf) -> Self {
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        DataSource { path, name }
+    }
+    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
+    pub fn with_name(path: PathBuf, name: String) -> Self {
+        DataSource { path, name }
+    }
+
+    /// Returns blob name for this data source.
+    ///
+    /// If no name was provided when created it is derived from the path name.
+    pub(crate) fn name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.name)
+    }
+
+    /// Returns the path of this data source.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl From<PathBuf> for DataSource {
+    fn from(value: PathBuf) -> Self {
+        DataSource::new(value)
+    }
+}
+
+impl From<&std::path::Path> for DataSource {
+    fn from(value: &std::path::Path) -> Self {
+        DataSource::new(value.to_path_buf())
+    }
+}
+
+/// Create data sources from a path.
+pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
+    Ok(if root.is_dir() {
+        let files = WalkDir::new(&root).into_iter();
+        let data_sources = files
+            .map(|entry| {
+                let entry = entry?;
+                let root = root.clone();
+                if !entry.file_type().is_file() {
+                    // Skip symlinks. Directories are handled by WalkDir.
+                    return Ok(None);
+                }
+                let path = entry.into_path();
+                let name = canonicalize_path(path.strip_prefix(&root)?)?;
+                anyhow::Ok(Some(DataSource { name, path }))
+            })
+            .filter_map(Result::transpose);
+        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
+        data_sources
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+    } else {
+        // A single file, use the file name as the name of the blob.
+        vec![DataSource {
+            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
+            path: root,
+        }]
+    })
+}
+
+/// Outboard data for a blob.
+struct BlobWithOutboard {
+    /// The path of the file containing the original blob data.
+    path: PathBuf,
+    /// The blob name.
+    // TODO: This is not optional!  crate::blobs::Blob::name is String.
+    name: String,
+    /// The size of the original data.
+    size: u64,
+    /// The hash of the blob.
+    hash: Hash,
+    /// The bao outboard data.
+    outboard: Bytes,
+}
+
+/// Computes all the outboards, using parallelism.
+async fn compute_all_outboards(
+    data_sources: Vec<DataSource>,
+    progress: Progress<ProvideProgress>,
+) -> anyhow::Result<Vec<BlobWithOutboard>> {
+    let outboards: Vec<_> = futures::stream::iter(data_sources)
+        .enumerate()
+        .map(|(id, data)| {
+            let progress = progress.clone();
+            tokio::task::spawn_blocking(move || outboard_from_datasource(id as u64, data, progress))
+        })
+        // Allow at most num_cpus tasks at a time, otherwise we might get too many open
+        // files.
+        // TODO: this assumes that this is 100% cpu bound, which is likely not true.  we
+        // might get better performance by using a larger number here.
+        .buffer_unordered(num_cpus::get())
+        .collect()
+        .await;
+
+    // Flatten JoinError and computation error, then bail on any error.
+    outboards
+        .into_iter()
+        .map(|join_res| {
+            join_res
+                .map_err(|_| anyhow::Error::msg("Task JoinError"))
+                .and_then(|res| res)
+        })
+        .collect::<anyhow::Result<Vec<BlobWithOutboard>>>()
+}
+
+/// Computes a single outboard synchronously.
+///
+/// This includes the file access and sending progress reports.  Moving all file access here
+/// is simpler and faster to do on the sync pool anyway.
+fn outboard_from_datasource(
+    id: u64,
+    data_source: DataSource,
+    progress: Progress<ProvideProgress>,
+) -> anyhow::Result<BlobWithOutboard> {
+    let file_meta = data_source.path().metadata().with_context(|| {
+        format!(
+            "Failed to read file size from {}",
+            data_source.path().display()
+        )
+    })?;
+    let size = file_meta.len();
+    // TODO: Found should really send the PathBuf, not the name?
+    progress.blocking_send(ProvideProgress::Found {
+        name: data_source.name().to_string(),
+        id,
+        size,
+    });
+    let (hash, outboard) = {
+        let progress = progress.clone();
+        compute_outboard(data_source.path(), size, move |offset| {
+            progress.try_send(ProvideProgress::Progress { id, offset })
+        })?
+    };
+    progress.blocking_send(ProvideProgress::Done { id, hash });
+    Ok(BlobWithOutboard {
+        path: data_source.path().to_path_buf(),
+        name: data_source.name().to_string(),
+        size,
+        hash,
+        outboard: Bytes::from(outboard),
+    })
+}
+
+/// Synchronously compute the outboard of a file, and return hash and outboard.
+///
+/// It is assumed that the file is not modified while this is running.
+///
+/// If it is modified while or after this is running, the outboard will be
+/// invalid, so any attempt to compute a slice from it will fail.
+///
+/// If the size of the file is changed while this is running, an error will be
+/// returned.
+fn compute_outboard(
+    path: &Path,
+    size: u64,
+    progress: impl Fn(u64) + Send + Sync + 'static,
+) -> anyhow::Result<(Hash, Vec<u8>)> {
+    anyhow::ensure!(
+        path.is_file(),
+        "can only transfer blob data: {}",
+        path.display()
+    );
+    let span = trace_span!("outboard.compute", path = %path.display());
+    let _guard = span.enter();
+    let file = std::fs::File::open(path)?;
+    // compute outboard size so we can pre-allocate the buffer.
+    //
+    // outboard is ~1/16 of data size, so this will fail for really large files
+    // on really small devices. E.g. you want to transfer a 1TB file from a pi4 with 1gb ram.
+    //
+    // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
+    // I think we really want to keep the outboard in memory for simplicity.
+    let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
+        .context("outboard too large to fit in memory")?;
+    let mut outboard = Vec::with_capacity(outboard_size);
+
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(file, |p| {
+        if let ProgressReaderUpdate::Progress(offset) = p {
+            progress(offset);
+        }
+    });
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
+
+    let hash =
+        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
+    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
+    trace!(%hash, "done");
+
+    Ok((hash.into(), ob.into_inner()))
+}
+
+/// Creates a collection blob and returns all blobs in a hashmap.
+///
+/// Returns the hashmap with all blobs, including the created collection blob itself, as
+/// well as the [`crate::Hash`] of the collection blob.
+pub async fn create_collection_inner(
+    data_sources: Vec<DataSource>,
+    progress: Progress<ProvideProgress>,
+) -> anyhow::Result<(HashMap<Hash, DbEntry>, Hash)> {
+    let mut outboards = compute_all_outboards(data_sources, progress.clone()).await?;
+
+    // TODO: Don't sort on async runtime?
+    outboards.sort_by_key(|o| (o.name.clone(), o.hash));
+
+    let mut map = HashMap::with_capacity(outboards.len() + 1);
+    let mut blobs = Vec::with_capacity(outboards.len());
+    let mut total_blobs_size: u64 = 0;
+
+    for BlobWithOutboard {
+        path,
+        name,
+        size,
+        hash,
+        outboard,
+    } in outboards
+    {
+        debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
+        map.insert(
+            hash,
+            DbEntry::External {
+                outboard,
+                path,
+                size,
+            },
+        );
+        total_blobs_size += size;
+        blobs.push(Blob { name, hash });
+    }
+
+    let collection = Collection::new(blobs, total_blobs_size)?;
+    let data = postcard::to_stdvec(&collection).context("collection blob encoding")?;
+    if data.len() > MAX_MESSAGE_SIZE {
+        anyhow::bail!("Serialised collection exceeds {MAX_MESSAGE_SIZE}");
+    }
+    let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
+    let hash = Hash::from(hash);
+    map.insert(
+        hash,
+        DbEntry::Internal {
+            outboard: Bytes::from(outboard),
+            data: Bytes::from(data.to_vec()),
+        },
+    );
+    progress.send(ProvideProgress::AllDone { hash }).await?;
+    Ok((map, hash))
+}
+
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> anyhow::Result<(Database, Hash)> {
-    let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
+    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
     Ok((Database::from(db), hash))
 }
 
 #[cfg(test)]
 mod tests {
-    use iroh_bytes::blobs::{Blob, Collection};
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::str::FromStr;

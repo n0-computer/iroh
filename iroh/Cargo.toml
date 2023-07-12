@@ -24,14 +24,17 @@ iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
 iroh-bytes = { path = "../iroh-bytes" }
 iroh-metrics = { path = "../iroh-metrics", optional = true }
+portable-atomic = "1"
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
 range-collections = { version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
+thiserror = "1"
 tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-stream = "0.1"
 tracing = "0.1"
+walkdir = "2"
 
 # CLI
 clap = { version = "4", features = ["derive"], optional = true }
@@ -64,7 +67,6 @@ regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-walkdir = "2"
 iroh-io = { version = "0.2.1" }
 postcard = "1"
 proptest = "1.2.0"

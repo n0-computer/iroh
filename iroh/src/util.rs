@@ -1,9 +1,16 @@
 //! utilities for iroh
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
+use anyhow::Context;
 use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
-use iroh_bytes::{blobs::Collection, protocol::RangeSpecSeq, util::io::pathbuf_from_name, Hash};
+use iroh_bytes::{protocol::RangeSpecSeq, Hash};
 use range_collections::RangeSet2;
+
+use crate::blobs::Collection;
+
+use self::io::pathbuf_from_name;
+pub mod io;
+pub mod progress;
 
 /// Get missing range for a single file, given a temp and target directory
 ///
@@ -164,4 +171,39 @@ fn load_collection(data_path: &Path, hash: Hash) -> anyhow::Result<Option<Collec
     } else {
         None
     })
+}
+
+/// converts a canonicalized relative path to a string, returning an error if
+/// the path is not valid unicode
+///
+/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
+/// or if the path components contain any windows or unix path separators
+pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    let parts = path
+        .as_ref()
+        .components()
+        .map(|c| {
+            let c = if let Component::Normal(x) = c {
+                x.to_str().context("invalid character in path")?
+            } else {
+                anyhow::bail!("invalid path component {:?}", c)
+            };
+            anyhow::ensure!(
+                !c.contains('/') && !c.contains('\\'),
+                "invalid path component {:?}",
+                c
+            );
+            Ok(c)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
 }

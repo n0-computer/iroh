@@ -71,10 +71,7 @@ impl Stats {
 pub mod fsm {
     use std::result;
 
-    use crate::{
-        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
-        util::io::ConcatenateSliceWriter,
-    };
+    use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
 
     use super::*;
 
@@ -82,7 +79,7 @@ pub mod fsm {
         ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
-    use iroh_io::AsyncSliceWriter;
+    use iroh_io::{AsyncSliceWriter, ConcatenateSliceWriter};
 
     self_cell::self_cell! {
         struct RangesIterInner {

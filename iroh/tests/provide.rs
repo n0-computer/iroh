@@ -12,7 +12,11 @@ use futures::{
     future::{BoxFuture, LocalBoxFuture},
     FutureExt,
 };
-use iroh::{node::{Event, Node, StaticTokenAuthHandler}, database::{create_collection, Database}};
+use iroh::{
+    blobs::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
+    database::{create_collection, DataSource, Database},
+    node::{Event, Node, StaticTokenAuthHandler},
+};
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     tls::{Keypair, PeerId},
@@ -24,16 +28,12 @@ use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
-    blobs::{Blob, Collection},
+    collection::{CollectionParser, CollectionStats, LinkStream},
     get::{self, fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{
-        self, database::InMemDatabase, ArrayLinkStream, CollectionParser,
-        CollectionStats, CustomGetHandler, DataSource, IrohCollectionParser, LinkStream,
-        RequestAuthorizationHandler,
-    },
-    runtime,
-    util::Hash,
+    provider::{self, database::InMemDatabase, CustomGetHandler, RequestAuthorizationHandler},
+    util::runtime,
+    Hash,
 };
 
 /// Pick up the tokio runtime from the thread local and add a

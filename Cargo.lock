@@ -1646,6 +1646,7 @@ dependencies = [
  "multibase",
  "nix",
  "num_cpus",
+ "portable-atomic",
  "postcard",
  "proptest",
  "quic-rpc",
@@ -1656,6 +1657,7 @@ dependencies = [
  "serde",
  "tempfile",
  "testdir",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -1683,7 +1685,6 @@ dependencies = [
  "multibase",
  "num_cpus",
  "once_cell",
- "portable-atomic",
  "postcard",
  "proptest",
  "quinn",
@@ -1702,7 +1703,6 @@ dependencies = [
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]

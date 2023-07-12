@@ -2,10 +2,7 @@
 //!
 //! Databases are key value stores that store data and associated outboard data
 //! for blake3 hashes, in addition to some metadata.
-use crate::{
-    provider::ValidateProgress,
-    Hash,
-};
+use crate::{provider::ValidateProgress, Hash};
 use bao_tree::{io::fsm::Outboard, io::outboard::PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::{

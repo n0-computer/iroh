@@ -1,35 +1,23 @@
 //! Provider API
-
-use std::borrow::Cow;
 use std::fmt::Debug;
-use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::LocalBoxFuture;
-use futures::FutureExt;
-use futures::{
-    future::{self, BoxFuture, Either},
-    Future,
-};
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, File};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
-use walkdir::WalkDir;
 
-use crate::blobs::Collection;
+use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::provider::database::BaoMapEntry;
-use crate::util::{io::canonicalize_path, Hash, RpcError};
+use crate::util::{Hash, RpcError};
 
-pub mod collection;
 pub mod database;
 mod ticket;
 
@@ -127,7 +115,7 @@ pub enum ValidateProgress {
         /// the hash of the entry
         hash: Hash,
         /// the path of the entry on the local file system
-        path: Option<PathBuf>,
+        path: Option<String>,
         /// the size of the entry
         size: u64,
     },
@@ -209,247 +197,6 @@ pub trait CustomGetHandler: Send + Sync + Debug + 'static {
         token: Option<RequestToken>,
         request: Bytes,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
-/// A custom collection parser that allows the user to define what a collection is.
-///
-/// A collection can be anything that contains an ordered sequence of blake3 hashes.
-/// Some collections store links with a fixed size and therefore allow efficient
-/// skipping. Others store links with a variable size and therefore only allow
-/// sequential access.
-///
-/// This API tries to accomodate both use cases. For collections that do not allow
-/// efficient random access, the [`LinkStream::skip`] method can be implemented by just repeatedly
-/// calling `next`.
-///
-/// For collections that do allow efficient random access, the [`LinkStream::skip`] method can be
-/// used to move some internal offset.
-pub trait CollectionParser: Send + Debug + Clone + 'static {
-    /// Parse a collection with this parser
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        format: u64,
-        reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
-}
-
-/// A stream (async iterator) over the hashes of a collection.
-///
-/// Allows to get the next hash or skip a number of hashes.  Does not
-/// implement `Stream` because of the extra `skip` method.
-pub trait LinkStream: Debug {
-    /// Get the next hash in the collection.
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>>;
-    /// Skip a number of hashes in the collection.
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>>;
-}
-
-/// Information about a collection.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CollectionStats {
-    /// The number of blobs in the collection. `None` for unknown.
-    pub num_blobs: Option<u64>,
-    /// The total size of all blobs in the collection. `None` for unknown.
-    pub total_blob_size: Option<u64>,
-}
-
-/// A collection parser that just disables collections entirely.
-#[derive(Debug, Clone)]
-struct NoCollectionParser;
-
-/// A CustomCollection for NoCollectionParser.
-///
-/// This is useful for when you don't want to support collections at all.
-impl CollectionParser for NoCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        _reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        future::err(anyhow::anyhow!("collections not supported")).boxed_local()
-    }
-}
-
-/// Parser for the current iroh default collections
-/// 
-/// This is a custom collection parser that supports the current iroh default collections.
-/// It loads the entire collection into memory and then extracts an array of hashes.
-/// So this will not work for extremely large collections.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IrohCollectionParser;
-
-/// Iterator for the current iroh default collections
-#[derive(Debug, Clone)]
-pub struct ArrayLinkStream {
-    hashes: Box<[Hash]>,
-    offset: usize,
-}
-
-impl ArrayLinkStream {
-    /// Create a new iterator over the given hashes.
-    pub fn new(hashes: Box<[Hash]>) -> Self {
-        Self { hashes, offset: 0 }
-    }
-}
-
-impl LinkStream for ArrayLinkStream {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        let res = if self.offset < self.hashes.len() {
-            let hash = self.hashes[self.offset];
-            self.offset += 1;
-            Some(hash)
-        } else {
-            None
-        };
-        future::ok(res).boxed_local()
-    }
-
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
-        let res = if let Some(offset) = self
-            .offset
-            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
-        {
-            self.offset = offset;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("overflow"))
-        };
-        future::ready(res).boxed_local()
-    }
-}
-
-impl CollectionParser for IrohCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        mut reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        async move {
-            // read to end
-            let data = reader.read_to_end().await?;
-            // parse the collection and just take the hashes
-            let collection = Collection::from_bytes(&data)?;
-            let stats = CollectionStats {
-                num_blobs: Some(collection.blobs.len() as u64),
-                total_blob_size: Some(collection.total_blobs_size),
-            };
-            let hashes = collection
-                .into_inner()
-                .into_iter()
-                .map(|x| x.hash)
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
-            Ok((res, stats))
-        }
-        .boxed_local()
-    }
-}
-
-/// A [`Database`] entry.
-///
-/// This is either stored externally in the file system, or internally in the database.
-///
-/// Internally stored entries are stored in the iroh home directory when the database is
-/// persisted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DbEntry {
-    /// A blob.
-    External {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// Path to the original data, which must not change while in use.
-        ///
-        /// Note that when adding multiple files with the same content, only one of them
-        /// will get added to the store. So the path is not that useful for information.  It
-        /// is just a place to look for the data correspoding to the hash and outboard.
-        // TODO: Change this to a list of paths.
-        path: PathBuf,
-        /// Size of the original data.
-        size: u64,
-    },
-    /// A collection.
-    Internal {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// The inline data.
-        data: Bytes,
-    },
-}
-
-impl DbEntry {
-    /// True if this is an entry that is stored externally.
-    pub fn is_external(&self) -> bool {
-        matches!(self, DbEntry::External { .. })
-    }
-
-    /// Path to the external data, or `None` if this is an internal entry.
-    pub fn blob_path(&self) -> Option<&Path> {
-        match self {
-            DbEntry::External { path, .. } => Some(path),
-            DbEntry::Internal { .. } => None,
-        }
-    }
-
-    /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
-        futures::future::ok(match self {
-            DbEntry::External { outboard, .. } => outboard.clone(),
-            DbEntry::Internal { outboard, .. } => outboard.clone(),
-        })
-    }
-
-    /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
-        let this = self.clone();
-        async move {
-            Ok(match this {
-                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
-                DbEntry::Internal { data, .. } => Either::Left(data),
-            })
-        }
-    }
-
-    /// Returns the size of the blob or collection.
-    ///
-    /// For collections this is the size of the serialized collection.
-    /// For blobs it is the blob size.
-    pub async fn size(&self) -> u64 {
-        match self {
-            DbEntry::External { size, .. } => *size,
-            DbEntry::Internal { data, .. } => data.len() as u64,
-        }
-    }
-}
-
-/// Create data sources from a path.
-pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
-    Ok(if root.is_dir() {
-        let files = WalkDir::new(&root).into_iter();
-        let data_sources = files
-            .map(|entry| {
-                let entry = entry?;
-                let root = root.clone();
-                if !entry.file_type().is_file() {
-                    // Skip symlinks. Directories are handled by WalkDir.
-                    return Ok(None);
-                }
-                let path = entry.into_path();
-                let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource { name, path }))
-            })
-            .filter_map(Result::transpose);
-        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
-        data_sources
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
-    } else {
-        // A single file, use the file name as the name of the blob.
-        vec![DataSource {
-            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-            path: root,
-        }]
-    })
 }
 
 /// Read the request from the getter.
@@ -578,7 +325,7 @@ pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
-    rt: crate::runtime::Handle,
+    rt: crate::util::runtime::Handle,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -814,68 +561,5 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
             debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, 0))
         }
-    }
-}
-
-/// Data for a blob
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlobData {
-    /// Outboard data from bao.
-    outboard: Bytes,
-    /// Path to the original data, which must not change while in use.
-    ///
-    /// Note that when adding multiple files with the same content, only one of them
-    /// will get added to the store. So the path is not that useful for information.
-    /// It is just a place to look for the data correspoding to the hash and outboard.
-    path: PathBuf,
-    /// Size of the original data.
-    size: u64,
-}
-
-/// A data source
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct DataSource {
-    /// Custom name
-    name: String,
-    /// Path to the file
-    path: PathBuf,
-}
-
-impl DataSource {
-    /// Creates a new [`DataSource`] from a [`PathBuf`].
-    pub fn new(path: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        DataSource { path, name }
-    }
-    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
-    pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource { path, name }
-    }
-
-    /// Returns blob name for this data source.
-    ///
-    /// If no name was provided when created it is derived from the path name.
-    pub(crate) fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.name)
-    }
-
-    /// Returns the path of this data source.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl From<PathBuf> for DataSource {
-    fn from(value: PathBuf) -> Self {
-        DataSource::new(value)
-    }
-}
-
-impl From<&std::path::Path> for DataSource {
-    fn from(value: &std::path::Path) -> Self {
-        DataSource::new(value.to_path_buf())
     }
 }
