@@ -12,7 +12,7 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::database::BaoReadonlyDb, util::runtime};
+use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 

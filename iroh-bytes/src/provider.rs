@@ -1,13 +1,16 @@
 //! The server side API
 use std::fmt::Debug;
+use std::io;
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
+use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
+use tokio::sync::mpsc;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
@@ -15,15 +18,54 @@ use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
-use crate::provider::database::BaoMapEntry;
 use crate::util::{Hash, RpcError};
-
-pub mod database;
 mod ticket;
 
 pub use ticket::Ticket;
 
-use self::database::BaoMap;
+/// An entry for one hash in a bao collection
+///
+/// The entry has the ability to provide you with an (outboard, data)
+/// reader pair. Creating the reader is async and may fail. The futures that
+/// create the readers must be `Send`, but the readers themselves don't have to
+/// be.
+pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
+    /// The hash of the entry
+    fn hash(&self) -> blake3::Hash;
+    /// A future that resolves to a reader that can be used to read the outboard
+    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    /// A future that resolves to a reader that can be used to read the data
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
+}
+
+/// A generic collection of blobs with precomputed outboards
+pub trait BaoMap: Clone + Send + Sync + 'static {
+    /// The outboard type. This can be an in memory outboard or an outboard that
+    /// retrieves the data asynchronously from a remote database.
+    type Outboard: bao_tree::io::fsm::Outboard;
+    /// The reader type.
+    type DataReader: AsyncSliceReader;
+    /// The entry type. An entry is a cheaply cloneable handle that can be used
+    /// to open readers for both the data and the outboard
+    type Entry: BaoMapEntry<Self>;
+    /// Get an entry for a hash.
+    ///
+    /// This can also be used for a membership test by just checking if there
+    /// is an entry. Creating an entry should be cheap, any expensive ops should
+    /// be deferred to the creation of the actual readers.
+    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+}
+
+/// Extension of BaoMap to add misc methods used by the rpc calls
+pub trait BaoReadonlyDb: BaoMap {
+    /// list all blobs in the database. This should include collections, since
+    /// collections are blobs and can be requested as blobs.
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// list all roots (collections or other explicitly added things) in the database
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// Validate the database
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+}
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]

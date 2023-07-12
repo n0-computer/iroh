@@ -14,7 +14,7 @@ use futures::{
 };
 use iroh::{
     blobs::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
-    database::{create_collection, DataSource, Database},
+    database::{create_collection, DataSource, Database, InMemDatabase},
     node::{Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
@@ -31,7 +31,7 @@ use iroh_bytes::{
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{self, fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{self, database::InMemDatabase, CustomGetHandler, RequestAuthorizationHandler},
+    provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
 };
