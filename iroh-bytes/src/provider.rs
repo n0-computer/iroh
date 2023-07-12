@@ -1,8 +1,10 @@
 //! Provider API
 
 use std::borrow::Cow;
+use std::fmt::Debug;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
@@ -187,7 +189,7 @@ pub enum ProvideProgress {
 /// hook into the request handling to process authorization by examining
 /// the request and any given token. Any error returned will abort the request,
 /// and the error will be sent to the requester.
-pub trait RequestAuthorizationHandler: Send + Sync + Clone + 'static {
+pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
     /// Handle the authorization request, given an opaque data blob from the requester.
     fn authorize(
         &self,
@@ -218,24 +220,22 @@ impl RequestAuthorizationHandler for () {
 
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
-pub trait CustomGetHandler<D>: Send + Sync + Clone + 'static {
+pub trait CustomGetHandler: Send + Sync + Debug + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
     fn handle(
         &self,
         token: Option<RequestToken>,
         request: Bytes,
-        db: D,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
 }
 
 /// Handle the custom request, given an opaque data blob from the requester.
 /// Define CustomGetHandler for () so we can use it as a no-op default.
-impl<D> CustomGetHandler<D> for () {
+impl CustomGetHandler for () {
     fn handle(
         &self,
         _token: Option<RequestToken>,
         _request: Bytes,
-        _db: D,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
         async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
     }
@@ -460,17 +460,12 @@ pub trait EventSender: Clone + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<
-    D: BaoMap,
-    C: CustomGetHandler<D>,
-    E: EventSender,
-    A: RequestAuthorizationHandler,
->(
+pub async fn handle_connection<D: BaoMap, E: EventSender>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
-    custom_get_handler: C,
-    authorization_handler: A,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::runtime::Handle,
 ) {
     let remote_addr = connecting.remote_address();
@@ -524,8 +519,8 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler<D>,
-    authorization_handler: impl RequestAuthorizationHandler,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -560,7 +555,7 @@ async fn handle_custom_get<E: EventSender, D: BaoMap>(
     db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler<D>,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
         len: request.data.len(),
@@ -570,7 +565,7 @@ async fn handle_custom_get<E: EventSender, D: BaoMap>(
     });
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler
-        .handle(request.token, request.data, db.clone())
+        .handle(request.token, request.data)
         .await?;
     // write it to the requester as the first thing
     let data = postcard::to_stdvec(&request)?;

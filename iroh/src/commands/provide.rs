@@ -3,6 +3,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{ensure, Context, Result};
@@ -127,7 +128,7 @@ async fn provide(
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db)
-        .custom_auth_handler(StaticTokenAuthHandler::new(opts.request_token))
+        .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
         builder = builder.derp_map(dm);
