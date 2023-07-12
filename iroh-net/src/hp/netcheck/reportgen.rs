@@ -16,7 +16,6 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
@@ -337,20 +336,14 @@ impl Actor {
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
         debug!("finished probe: {:?}", probe_report);
-        let Some(derp_node) = self.derp_map.find_by_name(probe_report.probe.node()) else {
-            error!("derp node missing from derp map");
-            return;
-        };
-        // TODO: when preparing the probes we already create a cache of derp nodes by their
-        // name.  Store this cache in the actor state and use it here.
-        let derp_node = derp_node.clone();
+        let derp_node = probe_report.probe.node();
         if let Some(latency) = probe_report.delay {
             self.report
                 .region_latency
                 .update_region(derp_node.region_id, latency);
             match probe_report.probe {
                 Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
-                    self.add_stun_addr_latency(&derp_node, probe_report.addr, latency);
+                    self.add_stun_addr_latency(derp_node, probe_report.addr, latency);
                     if let Some(ref addr) = self.report.global_v4 {
                         // Only needed for the first IPv4 address discovered, but hairpin
                         // actor ignores subsequent messages.
@@ -579,28 +572,13 @@ impl Actor {
 
         // A collection of futures running probe sets.
         let probes = FuturesUnordered::default();
-        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
-
         for probe_set in plan.iter() {
             let mut set = FuturesUnordered::default();
             for probe in probe_set {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let derp_node = match derp_nodes_cache.get(probe.node()) {
-                    Some(node) => node.clone(),
-                    None => {
-                        let name = probe.node().to_string();
-                        let node = self
-                            .derp_map
-                            .find_by_name(&name)
-                            .with_context(|| format!("missing named derp node {}", probe.node()))?;
-                        let node = Arc::new(node.clone());
-                        derp_nodes_cache.insert(name, node.clone());
-                        node
-                    }
-                };
-                let derp_node = derp_node.clone();
+                let derp_node = probe.node().clone();
                 let probe = probe.clone();
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();

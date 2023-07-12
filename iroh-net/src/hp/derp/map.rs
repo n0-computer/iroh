@@ -126,7 +126,7 @@ impl DerpRegion {
 pub struct DerpNode {
     /// The name of this derp server.
     ///
-    /// This name should be unique among all configured DERP servers.
+    /// This name MUST be unique among all configured DERP servers.
     pub name: String,
     /// The numeric region ID
     pub region_id: u16,
@@ -142,6 +142,12 @@ pub struct DerpNode {
     pub ipv4: UseIpv4,
     /// Whether to dial this server on IPv6.
     pub ipv6: UseIpv6,
+}
+
+impl fmt::Display for DerpNode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
 }
 
 /// Whether we should use IPv4 when communicating with this derp server

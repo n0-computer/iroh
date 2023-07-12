@@ -4,13 +4,14 @@
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
 //! probes for HTTPS and ICMP exist as well.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use tokio::time::Duration;
 
-use crate::hp::derp::{DerpMap, DerpRegion};
+use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::Report;
 use crate::net::interfaces;
 
@@ -69,19 +70,25 @@ pub(super) enum Probe {
 
         /// The name of the node name. DERP node names are globally
         /// unique so there's no region ID.
-        node: String,
+        node: Arc<DerpNode>,
     },
     #[display("Ipv6 after {delay:?} to {node}")]
-    StunIpv6 { delay: Duration, node: String },
+    StunIpv6 {
+        delay: Duration,
+        node: Arc<DerpNode>,
+    },
     // TODO: maybe the region can be change into just a region ID, if we need it at all.
     #[display("Https after {delay:?} to {node}")]
     Https {
         delay: Duration,
-        node: String,
+        node: Arc<DerpNode>,
         region: DerpRegion,
     },
     #[display("Icmp after {delay:?} to {node}")]
-    Icmp { delay: Duration, node: String },
+    Icmp {
+        delay: Duration,
+        node: Arc<DerpNode>,
+    },
 }
 
 impl Probe {
@@ -103,7 +110,7 @@ impl Probe {
         }
     }
 
-    pub(super) fn node(&self) -> &str {
+    pub(super) fn node(&self) -> &Arc<DerpNode> {
         match self {
             Probe::StunIpv4 { node, .. }
             | Probe::StunIpv6 { node, .. }
@@ -195,19 +202,25 @@ impl ProbePlan {
     /// Creates an initial probe plan.
     pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
+        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
+
         for region in derp_map.regions.values() {
             let mut stun_ipv4_probes = ProbeSet::new(region.region_id, ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(region.region_id, ProbeProto::StunIpv6);
 
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
+                let derp_node = derp_nodes_cache
+                    .entry(derp_node.name.clone())
+                    .or_insert_with(|| Arc::new(derp_node.clone()))
+                    .clone();
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 && derp_node.ipv4.is_enabled() {
                     stun_ipv4_probes
                         .push(Probe::StunIpv4 {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                         })
                         .expect("adding StunIpv4 probe to a StunIpv4 probe set");
                 }
@@ -215,7 +228,7 @@ impl ProbePlan {
                     stun_ipv6_probes
                         .push(Probe::StunIpv6 {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                         })
                         .expect("adding StunIpv6 probe to a StunIpv6 probe set");
                 }
@@ -228,10 +241,10 @@ impl ProbePlan {
             let mut icmp_probes = ProbeSet::new(region.region_id, ProbeProto::Icmp);
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
-                // let start = match plan.is_empty() {
-                //     true => Duration::ZERO,
-                //     false => DEFAULT_INITIAL_RETRANSMIT * 3,
-                // };
+                let derp_node = derp_nodes_cache
+                    .entry(derp_node.name.clone())
+                    .or_insert_with(|| Arc::new(derp_node.clone()))
+                    .clone();
                 let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
@@ -239,7 +252,7 @@ impl ProbePlan {
                     https_probes
                         .push(Probe::Https {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                             region: region.clone(),
                         })
                         .expect("adding Https probe to a Https probe set");
@@ -247,7 +260,7 @@ impl ProbePlan {
                 icmp_probes
                     .push(Probe::Icmp {
                         delay,
-                        node: derp_node.name.clone(),
+                        node: derp_node.clone(),
                     })
                     .expect("adding Icmp probe to an Icmp probe set");
             }
@@ -267,6 +280,7 @@ impl ProbePlan {
             return Self::initial(derp_map, if_state);
         }
         let mut plan = Self(Default::default());
+        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
 
         let had_stun_ipv4 = !last_report.region_v4_latency.is_empty();
         let had_stun_ipv6 = !last_report.region_v6_latency.is_empty();
@@ -317,13 +331,17 @@ impl ProbePlan {
 
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
+                let derp_node = derp_nodes_cache
+                    .entry(derp_node.name.clone())
+                    .or_insert_with(|| Arc::new(derp_node.clone()))
+                    .clone();
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
                     stun_ipv4_probes
                         .push(Probe::StunIpv4 {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                         })
                         .expect("Pushing StunIpv4 Probe to StunIpv4 ProbeSet");
                 }
@@ -331,7 +349,7 @@ impl ProbePlan {
                     stun_ipv6_probes
                         .push(Probe::StunIpv6 {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                         })
                         .expect("Pushing StunIpv6 Probe to StunIpv6 ProbeSet");
                 }
@@ -345,6 +363,10 @@ impl ProbePlan {
             let start = plan.max_delay();
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
+                let derp_node = derp_nodes_cache
+                    .entry(derp_node.name.clone())
+                    .or_insert_with(|| Arc::new(derp_node.clone()))
+                    .clone();
                 let delay = start
                     + (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
@@ -352,7 +374,7 @@ impl ProbePlan {
                     https_probes
                         .push(Probe::Https {
                             delay,
-                            node: derp_node.name.clone(),
+                            node: derp_node.clone(),
                             region: reg.clone(),
                         })
                         .expect("Pushing Https Probe to an Https ProbeSet");
@@ -360,7 +382,7 @@ impl ProbePlan {
                 icmp_probes
                     .push(Probe::Icmp {
                         delay,
-                        node: derp_node.name.clone(),
+                        node: derp_node.clone(),
                     })
                     .expect("Pushing Icmp Probe to an Icmp ProbeSet");
             }
@@ -455,6 +477,7 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
+        let derp_node = Arc::new(derp_map.regions[&1].nodes[0].clone());
         let if_state = crate::net::interfaces::State::new().await;
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
@@ -465,15 +488,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(100),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
@@ -483,15 +506,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(100),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
@@ -501,17 +524,17 @@ mod tests {
                 probes: vec![
                     Probe::Https {
                         delay: Duration::from_millis(300),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(500),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                 ],
@@ -522,15 +545,15 @@ mod tests {
                 probes: vec![
                     Probe::Icmp {
                         delay: Duration::from_millis(300),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(500),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
@@ -547,6 +570,7 @@ mod tests {
     #[tokio::test]
     async fn test_plan_with_report() {
         let derp_map = default_derp_map();
+        let derp_node = Arc::new(derp_map.regions[&1].nodes[0].clone());
         let if_state = crate::net::interfaces::State::new().await;
         let mut latencies = RegionLatencies::new();
         latencies.update_region(1, Duration::from_millis(2));
@@ -577,19 +601,19 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(52_400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(104_800),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(157_200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
@@ -599,19 +623,19 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(52_400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(104_800),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(157_200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
@@ -621,22 +645,22 @@ mod tests {
                 probes: vec![
                     Probe::Https {
                         delay: Duration::from_micros(207_200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(259_600),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(312_000),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(364_400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                 ],
@@ -647,19 +671,19 @@ mod tests {
                 probes: vec![
                     Probe::Icmp {
                         delay: Duration::from_micros(207_200),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(259_600),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(312_000),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(364_400),
-                        node: "default-1".into(),
+                        node: derp_node.clone(),
                     },
                 ],
             },
