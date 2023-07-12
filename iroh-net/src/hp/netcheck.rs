@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::inc;
 use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
@@ -17,18 +17,13 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
 
-use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::net::ip::to_canonical;
 use crate::util::CancelOnDrop;
 
-use self::probe::ProbeProto;
-
-use super::derp::{DerpMap, DerpNode, UseIpv4, UseIpv6};
-use super::dns::DNS_RESOLVER;
+use super::derp::DerpMap;
 use super::portmapper;
 use super::stun;
 
-mod probe;
 mod reportgen;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -264,71 +259,6 @@ impl Client {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
         }
-    }
-}
-
-/// Returns the IP address to use to communicate to this derp node.
-///
-/// *proto* specifies the protocol we want to use to talk to the node.
-async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
-    let mut port = n.stun_port;
-    if port == 0 {
-        port = DEFAULT_DERP_STUN_PORT;
-    }
-    if let Some(ip) = n.stun_test_ip {
-        if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        if proto == ProbeProto::Ipv6 && ip.is_ipv4() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        return Ok(SocketAddr::new(ip, port));
-    }
-
-    match proto {
-        ProbeProto::Ipv4 => {
-            if let UseIpv4::Some(ip) = n.ipv4 {
-                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
-            }
-        }
-        ProbeProto::Ipv6 => {
-            if let UseIpv6::Some(ip) = n.ipv6 {
-                return Ok(SocketAddr::new(IpAddr::V6(ip), port));
-            }
-        }
-        _ => {
-            // TODO: original code returns None here, but that seems wrong?
-        }
-    }
-
-    match n.url.host() {
-        Some(url::Host::Domain(hostname)) => {
-            async move {
-                debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
-
-                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
-                    for addr in addrs {
-                        if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                            let addr = to_canonical(addr);
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if proto == ProbeProto::Https {
-                            // For now just return the first one
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                    }
-                }
-                Err(anyhow!("no suitable addr found for derp config"))
-            }
-            .instrument(debug_span!("dns"))
-            .await
-        }
-        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
-        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
-        None => Err(anyhow!("no valid hostname available")),
     }
 }
 
@@ -904,7 +834,8 @@ mod tests {
     use bytes::BytesMut;
     use tokio::time;
 
-    use crate::hp::derp::DerpRegion;
+    use crate::defaults::DEFAULT_DERP_STUN_PORT;
+    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
     use crate::test_utils::setup_logging;
 
     use super::*;

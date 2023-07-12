@@ -76,7 +76,12 @@ impl From<Url> for DerpMap {
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     fn from(url: Url) -> Self {
-        Self::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
+        Self::default_from_node(
+            url,
+            DEFAULT_DERP_STUN_PORT,
+            UseIpv4::TryDns,
+            UseIpv6::TryDns,
+        )
     }
 }
 
