@@ -480,7 +480,7 @@ impl ConditionValue {
                 byteArray16: &*val as *const _ as *mut _,
             },
             ByteBlob(val) => FWP_CONDITION_VALUE0_0 {
-                byteBlob: &*val as *const _ as *mut _,
+                byteBlob: Arc::as_ptr(&val.0) as *mut _,
             },
             Sid(val) => FWP_CONDITION_VALUE0_0 {
                 sid: &*val as *const _ as *mut _,
