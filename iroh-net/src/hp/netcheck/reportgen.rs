@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use iroh_metrics::inc;
 use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use rand::seq::IteratorRandom;
@@ -785,7 +785,7 @@ async fn run_probe(
             if let Some(ref sock) = stun_sock4 {
                 let n = sock.send_to(&req, derp_addr).await;
                 inc!(NetcheckMetrics, stun_packets_sent_ipv4);
-                debug!(%derp_addr, send_res=?n, %txid, "sending probe Ipv4");
+                debug!(%derp_addr, send_res=?n, %txid, "sending probe StunIpv4");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv4_can_send = true;
@@ -802,7 +802,7 @@ async fn run_probe(
             if let Some(ref pc6) = stun_sock6 {
                 let n = pc6.send_to(&req, derp_addr).await;
                 inc!(NetcheckMetrics, stun_packets_sent_ipv6);
-                debug!(%derp_addr, snd_res=?n, %txid, "sending probe Ipv6");
+                debug!(%derp_addr, snd_res=?n, %txid, "sending probe StunIpv6");
                 // TODO:  || neterror.TreatAsLostUDP(err)
                 if n.is_ok() && n.unwrap() == req.len() {
                     result.ipv6_can_send = true;
@@ -815,38 +815,25 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Icmp { .. } => {
-            todo!();
-        }
-        Probe::Https { ref region, .. } => {
-            debug!(icmp=%pinger.is_some(), "sending probe HTTPS");
-
-            let res = if let Some(ref pinger) = pinger {
-                tokio::join!(
-                    time::timeout(
-                        ICMP_PROBE_TIMEOUT,
-                        measure_icmp_latency(region, pinger).map(Some)
-                    ),
-                    measure_https_latency(region)
-                )
-            } else {
-                (Ok(None), measure_https_latency(region).await)
-            };
-            if let Ok(Some(icmp_res)) = res.0 {
-                match icmp_res {
-                    Ok(d) => {
-                        result.delay = Some(d);
+        Probe::Icmp { ref region, .. } => {
+            if let Some(ref pinger) = pinger {
+                match time::timeout(ICMP_PROBE_TIMEOUT, measure_icmp_latency(region, pinger)).await
+                {
+                    Ok(Ok(latency)) => {
+                        result.delay = Some(latency);
                         result.ipv4_can_send = true;
                         result.icmpv4 = true;
                     }
-                    Err(err) => {
-                        warn!("icmp latency measurement failed: {:?}", err);
-                    }
+                    Ok(Err(err)) => warn!("icmp latency measurement failed: {:#}", err),
+                    Err(elapsed) => warn!("icmp latency measurement failed: {:#}", elapsed),
                 }
             }
-            match res.1 {
-                Ok((d, ip)) => {
-                    result.delay = Some(d);
+        }
+        Probe::Https { ref region, .. } => {
+            debug!("sending probe HTTPS");
+            match measure_https_latency(region).await {
+                Ok((latency, ip)) => {
+                    result.delay = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
                     // and we don't necessarily set them both. If UDP is blocked
                     // and both IPv4 and IPv6 are available over TCP, it's basically
