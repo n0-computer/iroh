@@ -179,6 +179,7 @@ struct Probe {
 impl Probe {
     /// Create a new probe based on a previous output.
     async fn new(output: ProbeOutput) -> Probe {
+        tracing::debug!("Starting portmapping probe");
         let ProbeOutput { upnp, pcp, pmp: _ } = output;
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (!upnp).then(|| {
@@ -220,7 +221,7 @@ impl Probe {
         }
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
-        let mut pcp_done = pcp_probing_task.inner.is_some();
+        let mut pcp_done = pcp_probing_task.inner.is_none();
         let mut pmp_done = true;
 
         tokio::pin!(pmp_probing_task);
@@ -261,8 +262,12 @@ impl Probe {
             .map(|(_gateway_addr, last_probed)| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        // not probing for now
-        let pcp = false;
+        // not pr *last_probed + AVAILABILITY_TRUST_DURATION > nowobing for now
+        let pcp = self
+            .last_pcp
+            .as_ref()
+            .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
+            .unwrap_or_default();
 
         // not probing for now
         let pmp = false;

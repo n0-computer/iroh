@@ -20,6 +20,7 @@ pub async fn probe_available(
     gateway: Ipv4Addr,
     version: protocol::Version,
 ) -> Result<bool> {
+    tracing::debug!("Starting pxp probe");
     // TODO(@divma): do we want to keep this socket alive for more than the probe?
     let socket = UdpSocket::bind((local_ip, protocol::CLIENT_PORT)).await?;
     socket.connect((gateway, protocol::SERVER_PORT)).await?;
