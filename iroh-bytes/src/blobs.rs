@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::util::Hash;
 
 /// A collection of blobs
+///
+/// Note that the format is subject to change.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
     /// Links to the blobs in this collection

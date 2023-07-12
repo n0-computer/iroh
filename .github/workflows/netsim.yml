@@ -111,8 +111,8 @@ jobs:
     - name: Run tests
       run: |
         cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
@@ -122,6 +122,13 @@ jobs:
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json
         fi
+      
+    - name: Cleanup
+      run: |
+        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh) || true
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
 
     - name: Generate report
       id: generate_report

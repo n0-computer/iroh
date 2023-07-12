@@ -6,6 +6,7 @@ pub use iroh_net as net;
 
 pub mod node;
 pub mod rpc_protocol;
+pub mod util;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]

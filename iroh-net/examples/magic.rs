@@ -3,8 +3,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
-    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
-    hp::derp::{DerpMap, UseIpv4, UseIpv6},
+    defaults::default_derp_map,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -52,9 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_map = match args.derp_url {
         None => default_derp_map(),
-        Some(url) => {
-            DerpMap::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
-        }
+        Some(url) => url.into(),
     };
 
     let endpoint = MagicEndpoint::builder()

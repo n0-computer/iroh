@@ -5,32 +5,30 @@
 //!
 //! Create a request describing the data you want to get.
 //!
-//! Then create a state machine using [get_response_machine::AtInitial::new] and
+//! Then create a state machine using [fsm::start] and
 //! drive it to completion by calling next on each state.
+//!
+//! For some states you have to provide additional arguments when calling next,
+//! or you can choose to finish early.
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use crate::util::Hash;
 use anyhow::{Context, Result};
-use bao_tree::io::error::DecodeError;
-use bao_tree::io::DecodeResponseItem;
-use bao_tree::outboard::PreOrderMemOutboard;
-use bao_tree::{ByteNum, ChunkNum};
+use bao_tree::io::fsm::BaoContentItem;
+use bao_tree::io::DecodeError;
+use bao_tree::ChunkNum;
 use bytes::BytesMut;
 use iroh_net::tls::Keypair;
 use iroh_net::{hp::derp::DerpMap, tls::PeerId};
 use quinn::RecvStream;
 use range_collections::RangeSet2;
-use std::path::{Path, PathBuf};
 use tracing::{debug, error};
 
-pub use crate::util::Hash;
-
-use crate::blobs::Collection;
 use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
-use crate::tokio_util::{TrackingReader, TrackingWriter};
-use crate::util::pathbuf_from_name;
+use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
 /// Options for the client
@@ -70,19 +68,18 @@ impl Stats {
 /// Finite state machine for get responses
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
-pub mod get_response_machine {
+pub mod fsm {
     use std::result;
 
     use crate::{
         protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
-        tokio_util::ConcatenateSliceWriter,
+        util::io::ConcatenateSliceWriter,
     };
 
     use super::*;
 
-    use bao_tree::io::{
-        fsm::{ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart},
-        Leaf, Parent,
+    use bao_tree::io::fsm::{
+        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -93,6 +90,11 @@ pub mod get_response_machine {
             #[covariant]
             dependent: NonEmptyRequestRangeSpecIter,
         }
+    }
+
+    /// The entry point of the get response machine
+    pub fn start(connection: quinn::Connection, request: AnyGetRequest) -> AtInitial {
+        AtInitial::new(connection, request)
     }
 
     /// Owned iterator for the ranges in a request
@@ -396,17 +398,17 @@ pub mod get_response_machine {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(&mut None, data).await
+            self.write_all_with_outboard::<D, D>(None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            mut outboard: Option<O>,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -427,27 +429,6 @@ pub mod get_response_machine {
         misc: Box<Misc>,
     }
 
-    /// Bao content item
-    #[derive(Debug)]
-    pub enum BaoContentItem {
-        /// A parent node
-        Parent(Parent),
-        /// A leaf node containing data
-        Leaf(Leaf),
-    }
-
-    impl TryFrom<DecodeResponseItem> for BaoContentItem {
-        type Error = bao_tree::io::Header;
-
-        fn try_from(item: DecodeResponseItem) -> result::Result<Self, Self::Error> {
-            match item {
-                DecodeResponseItem::Parent(p) => Ok(BaoContentItem::Parent(p)),
-                DecodeResponseItem::Leaf(l) => Ok(BaoContentItem::Leaf(l)),
-                DecodeResponseItem::Header(h) => Err(h),
-            }
-        }
-    }
-
     /// The next state after reading a content item
     #[derive(Debug, From)]
     pub enum BlobContentNext {
@@ -463,7 +444,6 @@ pub mod get_response_machine {
             match self.stream.next().await {
                 ResponseDecoderReadingNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
-                    let res = res.map(|x| x.try_into().unwrap());
                     (next, res).into()
                 }
                 ResponseDecoderReadingNext::Done(stream) => AtEndBlob {
@@ -477,17 +457,17 @@ pub mod get_response_machine {
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
-            data: &mut D,
+            data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(&mut None, data).await
+            self.write_all_with_outboard::<D, D>(None, data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
         pub async fn write_all_with_outboard<D, O>(
             self,
-            outboard: &mut Option<O>,
-            data: &mut D,
+            mut outboard: Option<O>,
+            mut data: D,
         ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
@@ -625,7 +605,7 @@ pub enum GetResponseError {
     Read(#[from] quinn::ReadError),
     /// Error when decoding, e.g. hash mismatch
     #[error("decode: {0}")]
-    Decode(bao_tree::io::error::DecodeError),
+    Decode(bao_tree::io::DecodeError),
     /// A generic error
     #[error("generic: {0}")]
     Generic(anyhow::Error),
@@ -637,10 +617,10 @@ impl From<postcard::Error> for GetResponseError {
     }
 }
 
-impl From<bao_tree::io::error::DecodeError> for GetResponseError {
-    fn from(cause: bao_tree::io::error::DecodeError) -> Self {
+impl From<bao_tree::io::DecodeError> for GetResponseError {
+    fn from(cause: bao_tree::io::DecodeError) -> Self {
         match cause {
-            bao_tree::io::error::DecodeError::Io(cause) => {
+            bao_tree::io::DecodeError::Io(cause) => {
                 // try to downcast to specific quinn errors
                 if let Some(source) = cause.source() {
                     if let Some(error) = source.downcast_ref::<quinn::ConnectionError>() {
@@ -664,164 +644,4 @@ impl From<anyhow::Error> for GetResponseError {
     fn from(cause: anyhow::Error) -> Self {
         Self::Generic(cause)
     }
-}
-
-/// Get missing range for a single file, given a temp and target directory
-///
-/// This will check missing ranges from the outboard, but for the data file itself
-/// just use the length of the file.
-pub fn get_missing_range(
-    hash: &Hash,
-    name: &str,
-    temp_dir: &Path,
-    target_dir: &Path,
-) -> std::io::Result<RangeSet2<ChunkNum>> {
-    if target_dir.exists() && !temp_dir.exists() {
-        // target directory exists yet does not contain the temp dir
-        // refuse to continue
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Target directory exists but does not contain temp directory",
-        ));
-    }
-    let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
-    Ok(range)
-}
-
-/// Get missing range for a single file
-fn get_missing_range_impl(
-    hash: &Hash,
-    name: &str,
-    temp_dir: &Path,
-    target_dir: &Path,
-) -> std::io::Result<RangeSet2<ChunkNum>> {
-    let paths = FilePaths::new(hash, name, temp_dir, target_dir);
-    Ok(if paths.is_final() {
-        tracing::debug!("Found final file: {:?}", paths.target);
-        // we assume that the file is correct
-        RangeSet2::empty()
-    } else if paths.is_incomplete() {
-        tracing::debug!("Found incomplete file: {:?}", paths.temp);
-        // we got incomplete data
-        let outboard = std::fs::read(&paths.outboard)?;
-        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard);
-        match outboard {
-            Ok(outboard) => {
-                // compute set of valid ranges from the outboard and the file
-                //
-                // We assume that the file is correct and does not contain holes.
-                // Otherwise, we would have to rehash the file.
-                //
-                // Do a quick check of the outboard in case something went wrong when writing.
-                let mut valid = bao_tree::io::sync::valid_ranges(&outboard)?;
-                let valid_from_file =
-                    RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
-                tracing::debug!("valid_from_file: {:?}", valid_from_file);
-                tracing::debug!("valid_from_outboard: {:?}", valid);
-                valid &= valid_from_file;
-                RangeSet2::all().difference(&valid)
-            }
-            Err(cause) => {
-                tracing::debug!("Outboard damaged, assuming missing {cause:?}");
-                // the outboard is invalid, so we assume that the file is missing
-                RangeSet2::all()
-            }
-        }
-    } else {
-        tracing::debug!("Found missing file: {:?}", paths.target);
-        // we don't know anything about this file, so we assume it's missing
-        RangeSet2::all()
-    })
-}
-
-/// Given a target directory and a temp directory, get a set of ranges that we are missing
-///
-/// Assumes that the temp directory contains at least the data for the collection.
-/// Also assumes that partial data files do not contain gaps.
-pub fn get_missing_ranges(
-    hash: Hash,
-    target_dir: &Path,
-    temp_dir: &Path,
-) -> anyhow::Result<(RangeSpecSeq, Option<Collection>)> {
-    if target_dir.exists() && !temp_dir.exists() {
-        // target directory exists yet does not contain the temp dir
-        // refuse to continue
-        anyhow::bail!("Target directory exists but does not contain temp directory");
-    }
-    // try to load the collection from the temp directory
-    //
-    // if the collection can not be deserialized, we treat it as if it does not exist
-    let collection = load_collection(temp_dir, hash).ok().flatten();
-    let collection = match collection {
-        Some(collection) => collection,
-        None => return Ok((RangeSpecSeq::all(), None)),
-    };
-    let mut ranges = collection
-        .blobs()
-        .iter()
-        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    ranges
-        .iter()
-        .zip(collection.blobs())
-        .for_each(|(ranges, blob)| {
-            if ranges.is_empty() {
-                tracing::debug!("{} is complete", blob.name);
-            } else if ranges.is_all() {
-                tracing::debug!("{} is missing", blob.name);
-            } else {
-                tracing::debug!("{} is partial {:?}", blob.name, ranges);
-            }
-        });
-    // make room for the collection at offset 0
-    // if we get here, we already have the collection, so we don't need to ask for it again.
-    ranges.insert(0, RangeSet2::empty());
-    Ok((RangeSpecSeq::new(ranges), Some(collection)))
-}
-
-#[derive(Debug)]
-struct FilePaths {
-    target: PathBuf,
-    temp: PathBuf,
-    outboard: PathBuf,
-}
-
-impl FilePaths {
-    fn new(hash: &Hash, name: &str, temp_dir: &Path, target_dir: &Path) -> Self {
-        let target = target_dir.join(pathbuf_from_name(name));
-        let hash = blake3::Hash::from(*hash).to_hex();
-        let temp = temp_dir.join(format!("{hash}.data.part"));
-        let outboard = temp_dir.join(format!("{hash}.outboard.part"));
-        Self {
-            target,
-            temp,
-            outboard,
-        }
-    }
-
-    fn is_final(&self) -> bool {
-        self.target.exists()
-    }
-
-    fn is_incomplete(&self) -> bool {
-        self.temp.exists() && self.outboard.exists()
-    }
-}
-
-/// get data path for a hash
-pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
-    let hash = blake3::Hash::from(hash).to_hex();
-    data_path.join(format!("{hash}.data"))
-}
-
-/// Load a collection from a data path
-fn load_collection(data_path: &Path, hash: Hash) -> anyhow::Result<Option<Collection>> {
-    let collection_path = get_data_path(data_path, hash);
-    Ok(if collection_path.exists() {
-        let collection = std::fs::read(&collection_path)?;
-        let collection = Collection::from_bytes(&collection)?;
-        Some(collection)
-    } else {
-        None
-    })
 }
