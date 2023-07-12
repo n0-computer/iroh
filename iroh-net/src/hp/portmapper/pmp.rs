@@ -29,6 +29,7 @@ pub enum Version {
 }
 
 // 3.5.  Result Codes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum ResultCode {
     Success = 0,
@@ -56,11 +57,13 @@ pub enum Opcode {
     MapTcp = 2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapProtocol {
     UDP,
     TCP,
 }
 
+#[derive(Debug)]
 pub enum Request {
     ExternalAddress,
     Mapping {
