@@ -267,15 +267,11 @@ impl ProbePlan {
     pub(super) fn with_last_report(
         derp_map: &DerpMap,
         if_state: &interfaces::State,
-        last_report: Option<&Report>,
+        last_report: &Report,
     ) -> Self {
-        let last_report = match last_report {
-            None => return Self::initial(derp_map, if_state),
-            Some(report) if report.region_latency.is_empty() => {
-                return Self::initial(derp_map, if_state);
-            }
-            Some(report) => report,
-        };
+        if last_report.region_latency.is_empty() {
+            return Self::initial(derp_map, if_state);
+        }
         let mut plan = Self(Default::default());
 
         let had_stun_ipv4 = !last_report.region_v4_latency.is_empty();

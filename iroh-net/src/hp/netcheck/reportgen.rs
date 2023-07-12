@@ -567,8 +567,10 @@ impl Actor {
         &mut self,
     ) -> Result<FuturesUnordered<Pin<Box<impl Future<Output = Result<ProbeReport>>>>>> {
         let if_state = interfaces::State::new().await;
-        let plan =
-            ProbePlan::with_last_report(&self.derp_map, &if_state, self.last_report.as_deref());
+        let plan = match self.last_report {
+            Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
+            None => ProbePlan::initial(&self.derp_map, &if_state),
+        };
         trace!(%plan, "probe plan");
 
         let pinger = if plan.has_icmp_probes() {
