@@ -216,6 +216,14 @@ impl ReplicaStore {
             .insert(replica.namespace(), replica.clone());
         replica
     }
+
+    pub fn open_replica(&self, bytes: &[u8]) -> anyhow::Result<Replica> {
+        let replica = Replica::from_bytes(bytes)?;
+        self.replicas
+            .write()
+            .insert(replica.namespace(), replica.clone());
+        Ok(replica)
+    }
 }
 
 /// TODO: Would potentially nice to pass a `&SignedEntry` reference, however that would make
@@ -239,7 +247,6 @@ pub struct Replica {
 struct InnerReplica {
     namespace: Namespace,
     peer: Peer<RecordIdentifier, SignedEntry, Store>,
-    content: HashMap<Hash, Bytes>,
     #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
     on_insert: Vec<OnInsertCallback>,
 }
@@ -337,6 +344,12 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for Store {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ReplicaData {
+    entries: Vec<SignedEntry>,
+    namespace: Namespace,
+}
+
 #[derive(Debug)]
 pub struct RangeIterator<'a> {
     iter: std::collections::btree_map::Iter<'a, RecordIdentifier, BTreeMap<u64, SignedEntry>>,
@@ -375,7 +388,6 @@ impl Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
                 peer: Peer::default(),
-                content: HashMap::default(),
                 on_insert: Default::default(),
             })),
         }
@@ -384,10 +396,6 @@ impl Replica {
     pub fn on_insert(&self, callback: OnInsertCallback) {
         let mut inner = self.inner.write();
         inner.on_insert.push(callback);
-    }
-
-    pub fn get_content(&self, hash: &Hash) -> Option<Bytes> {
-        self.inner.read().content.get(hash).cloned()
     }
 
     // TODO: not horrible
@@ -400,23 +408,45 @@ impl Replica {
             .collect()
     }
 
+    // TODO: not horrible
+    pub fn all_for_key(&self, key: impl AsRef<[u8]>) -> Vec<(RecordIdentifier, SignedEntry)> {
+        self.all()
+            .into_iter()
+            .filter(|(id, _entry)| id.key() == key.as_ref())
+            .collect()
+    }
+
+    pub fn to_bytes(&self) -> anyhow::Result<Bytes> {
+        let entries = self.all().into_iter().map(|(_id, entry)| entry).collect();
+        let data = ReplicaData {
+            entries,
+            namespace: self.inner.read().namespace.clone(),
+        };
+        let bytes = postcard::to_stdvec(&data)?;
+        Ok(bytes.into())
+    }
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let data: ReplicaData = postcard::from_bytes(bytes)?;
+        let replica = Self::new(data.namespace);
+        for entry in data.entries {
+            replica.insert_remote_entry(entry)?;
+        }
+        Ok(replica)
+    }
+
     /// Inserts a new record at the given key.
-    pub fn insert(&self, key: impl AsRef<[u8]>, author: &Author, data: impl Into<Bytes>) {
+    pub fn insert(&self, key: impl AsRef<[u8]>, author: &Author, hash: Hash, len: u64) {
         let mut inner = self.inner.write();
 
         let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
-        let data: Bytes = data.into();
-        let record = Record::from_data(&data, inner.namespace.id());
-
-        // Store content
-        inner.content.insert(*record.content_hash(), data);
+        let record = Record::from_hash(hash, len);
 
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
         let signed_entry = entry.sign(&inner.namespace, author);
         inner.peer.put(id, signed_entry.clone());
         for cb in &inner.on_insert {
-            cb(InsertOrigin::Local, signed_entry.clone())
+            cb(InsertOrigin::Local, signed_entry.clone());
         }
     }
 
@@ -470,7 +500,15 @@ impl Replica {
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
     ) -> Option<crate::ranger::Message<RecordIdentifier, SignedEntry>> {
-        self.inner.write().peer.process_message(message)
+        let (inserted_keys, reply) = self.inner.write().peer.process_message(message);
+        let inner = self.inner.read();
+        for key in inserted_keys {
+            let entry = inner.peer.get(&key).unwrap();
+            for cb in &inner.on_insert {
+                cb(InsertOrigin::Sync, entry.clone())
+            }
+        }
+        reply
     }
 
     pub fn namespace(&self) -> NamespaceId {
@@ -719,22 +757,24 @@ impl Record {
         &self.hash
     }
 
-    pub fn from_data(data: impl AsRef<[u8]>, namespace: &NamespaceId) -> Self {
+    pub fn from_hash(hash: Hash, len: u64) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time drift")
             .as_micros() as u64;
-        let data = data.as_ref();
-        let len = data.len() as u64;
+        Self::new(timestamp, len, hash)
+    }
+
+    // TODO: remove
+    pub fn from_data(data: impl AsRef<[u8]>, namespace: &NamespaceId) -> Self {
         // Salted hash
         // TODO: do we actually want this?
         // TODO: this should probably use a namespace prefix if used
         let mut hasher = blake3::Hasher::new();
         hasher.update(namespace.as_bytes());
-        hasher.update(data);
+        hasher.update(data.as_ref());
         let hash = hasher.finalize();
-
-        Self::new(timestamp, len, hash.into())
+        Self::from_hash(hash.into(), data.as_ref().len() as u64)
     }
 
     pub fn as_bytes(&self, out: &mut Vec<u8>) {
