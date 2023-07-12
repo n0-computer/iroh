@@ -1,6 +1,6 @@
 //! Definitions and utilities to interact with a NAT-PMP/PCP server.
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv6Addr;
 
 // PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
@@ -195,19 +195,19 @@ pub enum DecodeError {
 }
 
 impl From<InvalidOpcode> for DecodeError {
-    fn from(value: InvalidOpcode) -> Self {
+    fn from(_: InvalidOpcode) -> Self {
         DecodeError::InvalidOpcode
     }
 }
 
 impl From<InvalidVersion> for DecodeError {
-    fn from(value: InvalidVersion) -> Self {
+    fn from(_: InvalidVersion) -> Self {
         DecodeError::InvalidVersion
     }
 }
 
 impl From<InvalidResultCode> for DecodeError {
-    fn from(value: InvalidResultCode) -> Self {
+    fn from(_: InvalidResultCode) -> Self {
         DecodeError::InvalidResultCode
     }
 }
