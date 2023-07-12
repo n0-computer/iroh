@@ -8,14 +8,20 @@
 //! similar and more advanced functionality is available in the `indicatif` crate for
 //! terminal applications.
 
+use std::fmt;
+use std::io::Read;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::Poll;
 
+use bytes::Bytes;
+use iroh_io::AsyncSliceWriter;
 use portable_atomic::{AtomicU16, AtomicU64};
-use tokio::io::{self, AsyncRead};
-use tokio::sync::broadcast;
+use tokio::io::{self, AsyncRead, AsyncWrite};
+use tokio::sync::{broadcast, mpsc};
+
+use super::io::TrackingWriter;
 
 /// A generic progress event emitter.
 ///
@@ -141,6 +147,188 @@ where
             Poll::Pending => Poll::Pending,
         }
     }
+}
+
+/// A slice writer that adds a synchronous progress callback
+#[derive(Debug)]
+pub struct ProgressSliceWriter<W>(W, mpsc::Sender<(u64, usize)>);
+
+impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
+    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    pub fn new(inner: W, on_write: mpsc::Sender<(u64, usize)>) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
+    type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        self.1.try_send((offset, Bytes::len(&data))).ok();
+        self.0.write_bytes_at(offset, data)
+    }
+
+    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
+    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> Self::WriteAtFuture<'_> {
+        self.0.write_at(offset, bytes)
+    }
+
+    type SyncFuture<'a> = W::SyncFuture<'a>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        self.0.sync()
+    }
+
+    type SetLenFuture<'a> = W::SetLenFuture<'a>;
+    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
+        self.0.set_len(size)
+    }
+}
+
+/// A writer that tries to send the total number of bytes written after each write
+///
+/// It sends the total number instead of just an increment so the update is self-contained
+#[derive(Debug)]
+pub struct ProgressWriter<W> {
+    inner: TrackingWriter<W>,
+    sender: mpsc::Sender<u64>,
+}
+
+impl<W> ProgressWriter<W> {
+    /// Create a new `ProgressWriter` from an inner writer
+    pub fn new(inner: W) -> (Self, mpsc::Receiver<u64>) {
+        let (sender, receiver) = mpsc::channel(1);
+        (
+            Self {
+                inner: TrackingWriter::new(inner),
+                sender,
+            },
+            receiver,
+        )
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.inner.into_parts().0
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for ProgressWriter<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = &mut *self;
+        let res = Pin::new(&mut this.inner).poll_write(cx, buf);
+        if let Poll::Ready(Ok(_)) = res {
+            this.sender.try_send(this.inner.bytes_written()).ok();
+        }
+        res
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// A sender for progress messages.
+///
+/// This may optionally be a no-op if the [`Progress::none`] constructor is used.
+#[derive(Debug)]
+pub struct Progress<T>(Option<mpsc::Sender<T>>);
+
+impl<T> Clone for Progress<T> {
+    fn clone(&self) -> Self {
+        Progress(self.0.clone())
+    }
+}
+
+impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
+    /// Create a new progress sender.
+    pub fn new(sender: mpsc::Sender<T>) -> Self {
+        Self(Some(sender))
+    }
+
+    /// Create a no-op progress sender.
+    pub fn none() -> Self {
+        Self(None)
+    }
+
+    /// Try to send a message.
+    pub fn try_send(&self, msg: T) {
+        if let Some(progress) = &self.0 {
+            progress.try_send(msg).ok();
+        }
+    }
+
+    /// Block until the message is sent.
+    pub fn blocking_send(&self, msg: T) {
+        if let Some(progress) = &self.0 {
+            progress.blocking_send(msg).ok();
+        }
+    }
+
+    /// Send a message
+    pub async fn send(&self, msg: T) -> anyhow::Result<()> {
+        if let Some(progress) = &self.0 {
+            progress.send(msg).await?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: Read, F: Fn(ProgressReaderUpdate)> Read for ProgressReader<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(ProgressReaderUpdate::Progress(self.offset));
+        Ok(read)
+    }
+}
+
+impl<R, F: Fn(ProgressReaderUpdate)> Drop for ProgressReader<R, F> {
+    fn drop(&mut self) {
+        (self.cb)(ProgressReaderUpdate::Done);
+    }
+}
+
+/// Update from a [`ProgressReader`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ProgressReaderUpdate {
+    /// A progress event containing the current offset.
+    Progress(u64),
+    /// The reader has been dropped.
+    Done,
 }
 
 #[cfg(test)]

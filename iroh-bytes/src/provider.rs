@@ -1,15 +1,21 @@
 //! Provider API
 
 use std::borrow::Cow;
+use std::fmt::Debug;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::{BoxFuture, Either};
-use futures::{Future, FutureExt};
-use iroh_io::{AsyncSliceReaderExt, FileAdapter};
+use futures::future::LocalBoxFuture;
+use futures::FutureExt;
+use futures::{
+    future::{self, BoxFuture, Either},
+    Future,
+};
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, File};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tracing::{debug, debug_span, warn};
@@ -21,7 +27,7 @@ use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::provider::database::BaoMapEntry;
-use crate::util::{canonicalize_path, Hash, Progress, RpcError};
+use crate::util::{io::canonicalize_path, progress::Progress, Hash, RpcError};
 
 pub mod collection;
 pub mod database;
@@ -75,9 +81,9 @@ pub enum Event {
         /// An identifier uniquely identifying this transfer request.
         request_id: u64,
         /// The number of blobs in the collection.
-        num_blobs: u64,
+        num_blobs: Option<u64>,
         /// The total blob size of the data.
-        total_blobs_size: u64,
+        total_blobs_size: Option<u64>,
     },
     /// A collection request was completed and the data was sent to the client.
     TransferCollectionCompleted {
@@ -187,59 +193,154 @@ pub enum ProvideProgress {
 /// hook into the request handling to process authorization by examining
 /// the request and any given token. Any error returned will abort the request,
 /// and the error will be sent to the requester.
-pub trait RequestAuthorizationHandler<D>: Send + Sync + Clone + 'static {
+pub trait RequestAuthorizationHandler: Send + Sync + Debug + 'static {
     /// Handle the authorization request, given an opaque data blob from the requester.
     fn authorize(
         &self,
-        db: D,
         token: Option<RequestToken>,
         request: &Request,
     ) -> BoxFuture<'static, anyhow::Result<()>>;
 }
 
-/// Define RequestAuthorizationHandler for () so we can use it as a no-op default.
-impl<D> RequestAuthorizationHandler<D> for () {
-    fn authorize(
-        &self,
-        _db: D,
-        token: Option<RequestToken>,
-        _request: &Request,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        async move {
-            if let Some(token) = token {
-                anyhow::bail!(
-                    "no authorization handler defined, but token was provided: {:?}",
-                    token
-                );
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-}
-
 /// A custom get request handler that allows the user to make up a get request
 /// on the fly.
-pub trait CustomGetHandler<D>: Send + Sync + Clone + 'static {
+pub trait CustomGetHandler: Send + Sync + Debug + 'static {
     /// Handle the custom request, given an opaque data blob from the requester.
     fn handle(
         &self,
         token: Option<RequestToken>,
         request: Bytes,
-        db: D,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
 }
 
-/// Handle the custom request, given an opaque data blob from the requester.
-/// Define CustomGetHandler for () so we can use it as a no-op default.
-impl<D> CustomGetHandler<D> for () {
-    fn handle(
-        &self,
-        _token: Option<RequestToken>,
-        _request: Bytes,
-        _db: D,
-    ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-        async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+/// A custom collection parser that allows the user to define what a collection is.
+///
+/// A collection can be anything that contains an ordered sequence of blake3 hashes.
+/// Some collections store links with a fixed size and therefore allow efficient
+/// skipping. Others store links with a variable size and therefore only allow
+/// sequential access.
+///
+/// This API tries to accomodate both use cases. For collections that do not allow
+/// efficient random access, the [`LinkStream::skip`] method can be implemented by just repeatedly
+/// calling `next`.
+///
+/// For collections that do allow efficient random access, the [`LinkStream::skip`] method can be
+/// used to move some internal offset.
+pub trait CollectionParser: Send + Debug + Clone + 'static {
+    /// Parse a collection with this parser
+    fn parse<'a, R: AsyncSliceReader + 'a>(
+        &'a self,
+        format: u64,
+        reader: R,
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
+}
+
+/// A stream (async iterator) over the hashes of a collection.
+///
+/// Allows to get the next hash or skip a number of hashes.  Does not
+/// implement `Stream` because of the extra `skip` method.
+pub trait LinkStream: Debug {
+    /// Get the next hash in the collection.
+    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>>;
+    /// Skip a number of hashes in the collection.
+    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>>;
+}
+
+/// Information about a collection.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CollectionStats {
+    /// The number of blobs in the collection. `None` for unknown.
+    pub num_blobs: Option<u64>,
+    /// The total size of all blobs in the collection. `None` for unknown.
+    pub total_blob_size: Option<u64>,
+}
+
+/// A collection parser that just disables collections entirely.
+#[derive(Debug, Clone)]
+struct NoCollectionParser;
+
+/// A CustomCollection for NoCollectionParser.
+///
+/// This is useful for when you don't want to support collections at all.
+impl CollectionParser for NoCollectionParser {
+    fn parse<'a, R: AsyncSliceReader + 'a>(
+        &'a self,
+        _format: u64,
+        _reader: R,
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
+        future::err(anyhow::anyhow!("collections not supported")).boxed_local()
+    }
+}
+
+/// Parser for the current iroh default collections
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IrohCollectionParser;
+
+/// Iterator for the current iroh default collections
+#[derive(Debug, Clone)]
+pub struct ArrayLinkStream {
+    hashes: Box<[Hash]>,
+    offset: usize,
+}
+
+impl ArrayLinkStream {
+    /// Create a new iterator over the given hashes.
+    pub fn new(hashes: Box<[Hash]>) -> Self {
+        Self { hashes, offset: 0 }
+    }
+}
+
+impl LinkStream for ArrayLinkStream {
+    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
+        let res = if self.offset < self.hashes.len() {
+            let hash = self.hashes[self.offset];
+            self.offset += 1;
+            Some(hash)
+        } else {
+            None
+        };
+        future::ok(res).boxed_local()
+    }
+
+    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
+        let res = if let Some(offset) = self
+            .offset
+            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
+        {
+            self.offset = offset;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("overflow"))
+        };
+        future::ready(res).boxed_local()
+    }
+}
+
+impl CollectionParser for IrohCollectionParser {
+    fn parse<'a, R: AsyncSliceReader + 'a>(
+        &'a self,
+        _format: u64,
+        mut reader: R,
+    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
+        async move {
+            // read to end
+            let data = reader.read_to_end().await?;
+            // parse the collection and just take the hashes
+            let collection = Collection::from_bytes(&data)?;
+            let stats = CollectionStats {
+                num_blobs: Some(collection.blobs.len() as u64),
+                total_blob_size: Some(collection.total_blobs_size),
+            };
+            let hashes = collection
+                .into_inner()
+                .into_iter()
+                .map(|x| x.hash)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
+            Ok((res, stats))
+        }
+        .boxed_local()
     }
 }
 
@@ -297,13 +398,11 @@ impl DbEntry {
     }
 
     /// A reader for the data.
-    pub fn data_reader(
-        &self,
-    ) -> impl Future<Output = io::Result<Either<Bytes, FileAdapter>>> + 'static {
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
         let this = self.clone();
         async move {
             Ok(match this {
-                DbEntry::External { path, .. } => Either::Right(FileAdapter::open(path).await?),
+                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
                 DbEntry::Internal { data, .. } => Either::Left(data),
             })
         }
@@ -381,41 +480,43 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: BaoMap, E: EventSender>(
+pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>(
     request: GetRequest,
     // Database from which to fetch blobs.
     db: &D,
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    outboard: D::Outboard,
+    mut outboard: D::Outboard,
     mut data: D::DataReader,
+    collection_parser: C,
 ) -> Result<SentStatus> {
     let hash = request.hash;
 
     // if the request is just for the root, we don't need to deserialize the collection
     let just_root = matches!(request.ranges.single(), Some((0, _)));
-    let c = if !just_root {
-        let bytes = data.read_to_end().await?;
-        let c: Collection = postcard::from_bytes(&bytes)?;
+    let mut c = if !just_root {
+        // use the collection parser to parse the collection
+        let (c, stats) = collection_parser.parse(0, &mut data).await?;
         let _ = writer.events.send(Event::TransferCollectionStarted {
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
-            num_blobs: c.blobs().len() as u64,
-            total_blobs_size: c.total_blobs_size(),
+            num_blobs: stats.num_blobs,
+            total_blobs_size: stats.total_blob_size,
         });
         Some(c)
     } else {
         None
     };
 
+    let mut prev = 0;
     for (offset, ranges) in request.ranges.iter_non_empty() {
         if offset == 0 {
             debug!("writing ranges '{:?}' of collection {}", ranges, hash);
             // send the root
             encode_ranges_validated(
                 &mut data,
-                &outboard,
+                &mut outboard,
                 &ranges.to_chunk_ranges(),
                 &mut writer.inner,
             )
@@ -425,11 +526,14 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender>(
                 ranges, hash
             );
         } else {
+            let c = c.as_mut().context("collection parser not available")?;
             debug!("wrtiting ranges '{:?}' of child {}", ranges, offset);
-            let c = c.as_ref().unwrap();
-            if offset < c.total_entries() + 1 {
+            // skip to the next blob if there is a gap
+            if prev < offset - 1 {
+                c.skip(offset - prev - 1).await?;
+            }
+            if let Some(hash) = c.next().await? {
                 tokio::task::yield_now().await;
-                let hash = c.blobs()[(offset - 1) as usize].hash;
                 let (status, size) = send_blob(db, hash, ranges, &mut writer.inner).await?;
                 if SentStatus::NotFound == status {
                     writer.inner.finish().await?;
@@ -447,6 +551,7 @@ pub async fn transfer_collection<D: BaoMap, E: EventSender>(
                 // nothing more we can send
                 break;
             }
+            prev = offset;
         }
     }
 
@@ -464,17 +569,13 @@ pub trait EventSender: Clone + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<
-    D: BaoMap,
-    C: CustomGetHandler<D>,
-    E: EventSender,
-    A: RequestAuthorizationHandler<D>,
->(
+pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
-    custom_get_handler: C,
-    authorization_handler: A,
+    collection_parser: C,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
     rt: crate::runtime::Handle,
 ) {
     let remote_addr = connecting.remote_address();
@@ -502,6 +603,7 @@ pub async fn handle_connection<
             let db = db.clone();
             let custom_get_handler = custom_get_handler.clone();
             let authorization_handler = authorization_handler.clone();
+            let collection_parser = collection_parser.clone();
             rt.local_pool().spawn_pinned(|| {
                 async move {
                     if let Err(err) = handle_stream(
@@ -510,6 +612,7 @@ pub async fn handle_connection<
                         writer,
                         custom_get_handler,
                         authorization_handler,
+                        collection_parser,
                     )
                     .await
                     {
@@ -524,12 +627,13 @@ pub async fn handle_connection<
     .await
 }
 
-async fn handle_stream<D: BaoMap, E: EventSender>(
+async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler<D>,
-    authorization_handler: impl RequestAuthorizationHandler<D>,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    authorization_handler: Arc<dyn RequestAuthorizationHandler>,
+    collection_parser: C,
 ) -> Result<()> {
     let mut in_buffer = BytesMut::with_capacity(1024);
 
@@ -546,7 +650,7 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
     // 2. Authorize the request (may be a no-op)
     debug!("authorizing request");
     if let Err(e) = authorization_handler
-        .authorize(db.clone(), request.token().cloned(), &request)
+        .authorize(request.token().cloned(), &request)
         .await
     {
         writer.notify_transfer_aborted();
@@ -554,17 +658,18 @@ async fn handle_stream<D: BaoMap, E: EventSender>(
     }
 
     match request {
-        Request::Get(request) => handle_get(db, request, writer).await,
+        Request::Get(request) => handle_get(db, request, collection_parser, writer).await,
         Request::CustomGet(request) => {
-            handle_custom_get(db, request, writer, custom_get_handler).await
+            handle_custom_get(db, request, writer, custom_get_handler, collection_parser).await
         }
     }
 }
-async fn handle_custom_get<E: EventSender, D: BaoMap>(
+async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
     db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
-    custom_get_handler: impl CustomGetHandler<D>,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    collection_parser: C,
 ) -> Result<()> {
     let _ = writer.events.send(Event::CustomGetRequestReceived {
         len: request.data.len(),
@@ -574,19 +679,20 @@ async fn handle_custom_get<E: EventSender, D: BaoMap>(
     });
     // try to make a GetRequest from the custom bytes
     let request = custom_get_handler
-        .handle(request.token, request.data, db.clone())
+        .handle(request.token, request.data)
         .await?;
     // write it to the requester as the first thing
     let data = postcard::to_stdvec(&request)?;
     write_lp(&mut writer.inner, &data).await?;
     // from now on just handle it like a normal get request
-    handle_get(db, request, writer).await
+    handle_get(db, request, collection_parser, writer).await
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: BaoMap, E: EventSender>(
+pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
     db: D,
     request: GetRequest,
+    collection_parser: C,
     mut writer: ResponseWriter<E>,
 ) -> Result<()> {
     let hash = request.hash;
@@ -609,6 +715,7 @@ pub async fn handle_get<D: BaoMap, E: EventSender>(
                 &mut writer,
                 entry.outboard().await?,
                 entry.data_reader().await?,
+                collection_parser,
             )
             .await
             {
@@ -807,7 +914,7 @@ mod tests {
             for blob in blobs {
                 let size = blob.len() as u64;
                 total_blobs_size += size;
-                let (outboard, hash) = bao_tree::outboard(&blob, crate::IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::io::outboard(&blob, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 let path = PathBuf::from_str(&hash.to_string()).unwrap();
@@ -828,7 +935,7 @@ mod tests {
             // encode collection and add it
             {
                 let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::outboard(&data, crate::IROH_BLOCK_SIZE);
+                let (outboard, hash) = bao_tree::io::outboard(&data, crate::IROH_BLOCK_SIZE);
                 let outboard = Bytes::from(outboard);
                 let hash = Hash::from(hash);
                 map.insert(hash, DbEntry::Internal { outboard, data });

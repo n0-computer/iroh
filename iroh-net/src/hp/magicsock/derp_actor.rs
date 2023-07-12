@@ -7,7 +7,7 @@ use std::{
 
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
-use iroh_metrics::{inc, magicsock::MagicsockMetrics, record};
+use iroh_metrics::{inc, inc_by, magicsock::Metrics as MagicsockMetrics};
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -271,11 +271,11 @@ impl DerpActor {
         for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
             match derp_client.send(peer.clone(), packet).await {
                 Ok(_) => {
-                    record!(MagicsockMetrics::SendDerp, total_bytes);
+                    inc_by!(MagicsockMetrics, send_derp, total_bytes);
                 }
                 Err(err) => {
                     warn!("derp.send: failed {:?}", err);
-                    inc!(MagicsockMetrics::SendDerpError);
+                    inc!(MagicsockMetrics, send_derp_error);
                 }
             }
         }
@@ -360,15 +360,21 @@ impl DerpActor {
             reader: ReaderState::new(region_id, cancel, dc.clone()),
         };
 
-        // Make sure we can establish a connection.
-        if let Err(err) = dc.connect().await {
-            // TODO: what to do?
-            warn!("failed to connect to derp server: {:?}", err);
-        }
-
+        // Insert, to make sure we do not attempt to double connect.
         self.active_derp.insert(region_id, ad);
 
-        inc!(MagicsockMetrics::NumDerpConnsAdded);
+        // Kickoff a connection establishment in the background
+        let dc_spawn = dc.clone();
+        tokio::task::spawn(async move {
+            // Make sure we can establish a connection.
+            if let Err(err) = dc_spawn.connect().await {
+                // TODO: what to do?
+                warn!("failed to connect to derp server: {:?}", err);
+            }
+        });
+
+        inc!(MagicsockMetrics, num_derp_conns_added);
+
         self.log_active_derp();
 
         if let Some(ref f) = self.conn.on_derp_active {
@@ -483,7 +489,7 @@ impl DerpActor {
             c.close().await;
             cancel.cancel();
 
-            inc!(MagicsockMetrics::NumDerpConnsRemoved);
+            inc!(MagicsockMetrics, num_derp_conns_removed);
         }
     }
 

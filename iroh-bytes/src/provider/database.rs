@@ -5,17 +5,17 @@
 use super::DbEntry;
 use crate::{
     provider::ValidateProgress,
-    util::{validate_bao, BaoValidationError},
+    util::io::{validate_bao, BaoValidationError},
     Hash, IROH_BLOCK_SIZE,
 };
 use anyhow::{Context, Result};
-use bao_tree::{io::fsm::Outboard, outboard::PreOrderMemOutboard};
+use bao_tree::{io::fsm::Outboard, io::outboard::PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::{
     future::{self, BoxFuture, Either},
     FutureExt, StreamExt,
 };
-use iroh_io::{AsyncSliceReader, FileAdapter};
+use iroh_io::{AsyncSliceReader, File};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt, io,
@@ -59,7 +59,7 @@ impl InMemDatabase {
             let name = name.into();
             let data: &[u8] = data.as_ref();
             // compute the outboard
-            let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+            let (outboard, hash) = bao_tree::io::outboard(data, crate::IROH_BLOCK_SIZE);
             // add the name, this assumes that names are unique
             names.insert(name, hash);
             // wrap into the right types
@@ -77,7 +77,7 @@ impl InMemDatabase {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
         // compute the outboard
-        let (outboard, hash) = bao_tree::outboard(data, crate::IROH_BLOCK_SIZE);
+        let (outboard, hash) = bao_tree::io::outboard(data, crate::IROH_BLOCK_SIZE);
         // wrap into the right types
         let outboard =
             PreOrderMemOutboard::new(hash, crate::IROH_BLOCK_SIZE, outboard.into()).unwrap();
@@ -182,7 +182,7 @@ impl BaoMapEntry<Database> for DbPair {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, FileAdapter>>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, File>>> {
         self.entry.data_reader().boxed()
     }
 }
@@ -241,7 +241,7 @@ impl BaoReadonlyDb for Database {
 impl BaoMap for Database {
     type Entry = DbPair;
     type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Either<Bytes, FileAdapter>;
+    type DataReader = Either<Bytes, File>;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let entry = self.get(hash)?;
         Some(DbPair {
@@ -573,8 +573,7 @@ impl Database {
                                 }
                             }
                             DbEntry::Internal { outboard, data } => {
-                                let data = std::io::Cursor::new(data);
-                                validate_bao(hash, data, outboard, progress)
+                                validate_bao(hash, data.as_ref(), outboard, progress)
                             }
                         };
                         res.err()

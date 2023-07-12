@@ -7,7 +7,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::rpc_protocol::*;
-use iroh_bytes::{cid::Blake3Cid, protocol::RequestToken, provider::Ticket, runtime};
+use iroh_bytes::{protocol::RequestToken, provider::Ticket, runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
@@ -77,7 +77,7 @@ impl Cli {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
-                        hash: *hash.as_hash(),
+                        hash,
                         opts: iroh_bytes::get::Options {
                             addrs,
                             peer_id: peer,
@@ -219,7 +219,7 @@ pub enum Commands {
     Get {
         /// The hash to retrieve, as a Blake3 CID
         #[clap(conflicts_with = "ticket", required_unless_present = "ticket")]
-        hash: Option<Blake3Cid>,
+        hash: Option<Hash>,
         /// PeerId of the provider
         #[clap(
             long,
@@ -292,15 +292,21 @@ pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
     rt: &iroh_bytes::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    iroh_metrics::metrics::init_metrics();
+    use iroh_metrics::core::Metric;
+
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
+        iroh_metrics::core::Core::init(|reg, metrics| {
+            metrics.insert(iroh::metrics::Metrics::new(reg));
+            metrics.insert(iroh_metrics::magicsock::Metrics::new(reg));
+            metrics.insert(iroh_metrics::netcheck::Metrics::new(reg));
+            metrics.insert(iroh_metrics::portmap::Metrics::new(reg));
+        });
+
         return Some(rt.main().spawn(async move {
-            iroh_metrics::metrics::start_metrics_server(metrics_addr)
-                .await
-                .unwrap_or_else(|e| {
-                    eprintln!("Failed to start metrics server: {e}");
-                });
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
         }));
     }
     tracing::info!("Metrics server not started, no address provided");

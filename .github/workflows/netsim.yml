@@ -51,11 +51,33 @@ jobs:
       run: |
         cargo build --profile optimized-release --workspace --all-features
 
+    - name: Detect chuck branch
+      if: github.event_name == 'issue_comment'
+      id: detect_chuck_branch
+      shell: bash
+      run: |
+        a='${{ github.event.comment.body }}'
+        if [[ $a == '/netsim branch'* ]];
+        then
+          a=$(echo "$a" | tr '\n' ' ' | tr -s " " | cut -d ' ' -f3)
+          branch="$a"
+          echo "CHUCK_BRANCH=$branch" >> ${GITHUB_ENV}
+        else
+          echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
+        fi
+
+    - name: Detect chuck branch if not comment
+      if: github.event_name != 'issue_comment'
+      shell: bash
+      run: |
+        echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
+
     - name: Fetch and build chuck
+      shell: bash  
       run: |
         cd ..
         rm -rf chuck
-        git clone https://github.com/n0-computer/chuck.git
+        git clone --single-branch --branch ${{ env.CHUCK_BRANCH }} https://github.com/n0-computer/chuck.git
         cd chuck
         cargo build --release
     
@@ -89,8 +111,8 @@ jobs:
     - name: Run tests
       run: |
         cd ../chuck/netsim
-        sudo kill -9 $(pgrep ovs)
-        sudo mn --clean
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
         c='${{ steps.detect_comment_config.outputs.NETSIM_CONFIG }}'
         if [ -z "${c}" ];
         then
@@ -100,6 +122,13 @@ jobs:
           echo $c >> custom_sim.json
           sudo python3 main.py custom_sim.json
         fi
+      
+    - name: Cleanup
+      run: |
+        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh) || true
+        sudo kill -9 $(pgrep ovs) || true
+        sudo mn --clean || true
 
     - name: Generate report
       id: generate_report

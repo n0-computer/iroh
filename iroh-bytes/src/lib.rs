@@ -4,13 +4,10 @@
 #![recursion_limit = "256"]
 
 pub mod blobs;
-pub mod cid;
 pub mod get;
-pub mod progress;
 pub mod protocol;
 pub mod provider;
 pub mod runtime;
-pub mod tokio_util;
 pub mod util;
 
 #[cfg(test)]
@@ -22,7 +19,4 @@ pub use iroh_net as net;
 use bao_tree::BlockSize;
 
 /// Block size used by iroh, 2^4*1024 = 16KiB
-pub const IROH_BLOCK_SIZE: BlockSize = match BlockSize::new(4) {
-    Some(bs) => bs,
-    None => panic!(),
-};
+pub const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
