@@ -221,10 +221,10 @@ pub trait CustomGetHandler: Send + Sync + Debug + 'static {
 /// sequential access.
 ///
 /// This API tries to accomodate both use cases. For collections that do not allow
-/// efficient random access, the [`CollectionIter::skip`] method can be implemented by just repeatedly
+/// efficient random access, the [`LinkStream::skip`] method can be implemented by just repeatedly
 /// calling `next`.
 ///
-/// For collections that do allow efficient random access, the [`CollectionIter::skip`] method can be
+/// For collections that do allow efficient random access, the [`LinkStream::skip`] method can be
 /// used to move some internal offset.
 pub trait CollectionParser: Send + Debug + Clone + 'static {
     /// Parse a collection with this parser
