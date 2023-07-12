@@ -114,7 +114,10 @@ pub enum ValidateProgress {
         id: u64,
         /// the hash of the entry
         hash: Hash,
-        /// the path of the entry on the local file system
+        /// location of the entry.
+        ///
+        /// In case of a file, this is the path to the file.
+        /// Otherwise it might be an url or something else to uniquely identify the entry.
         path: Option<String>,
         /// the size of the entry
         size: u64,
