@@ -171,6 +171,16 @@ impl Request {
         buf[8..].copy_from_slice(&self.client_addr.octets());
         buf
     }
+
+    pub fn annouce(version: Version, client_addr: Ipv6Addr) -> Request {
+        // opcode announce requires a lifetime of 0 and to ignore the lifetime on response
+        Request {
+            version,
+            opcode: Opcode::Announce,
+            lifetime_seconds: 0,
+            client_addr,
+        }
+    }
 }
 
 /// Errors that can occur when decoding a [`Response`] from a server.
