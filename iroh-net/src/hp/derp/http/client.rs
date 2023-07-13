@@ -706,11 +706,10 @@ impl Client {
                             .await
                             .map_err(|e| ClientError::Dns(Some(e)))?
                             .iter()
-                            .filter(|addr| match dst_primary {
+                            .find(|addr| match dst_primary {
                                 UseIp::Ipv4(_) => addr.is_ipv4(),
                                 UseIp::Ipv6(_) => addr.is_ipv6(),
-                            })
-                            .next();
+                            });
                         addr.ok_or_else(|| ClientError::Dns(None))?
                     }
                     url::Host::Ipv4(ip) => IpAddr::V4(ip),
