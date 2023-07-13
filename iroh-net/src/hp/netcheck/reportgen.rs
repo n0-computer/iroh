@@ -802,7 +802,7 @@ async fn run_probe(
                         result.icmpv4 = true;
                     }
                     Ok(Err(err)) => warn!("icmp latency measurement failed: {:#}", err),
-                    Err(elapsed) => warn!("icmp latency measurement failed: {:#}", elapsed),
+                    Err(_) => warn!("icmp latency measurement timed out"),
                 }
             }
         }
