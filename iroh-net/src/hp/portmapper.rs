@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
-use tracing::{debug, trace};
+use tracing::{debug, info_span, trace, Instrument};
 
 use iroh_metrics::{inc, portmap::Metrics};
 
@@ -89,7 +89,10 @@ impl Client {
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
-            tokio::spawn(async move { service.run().await }).abort_handle(),
+            tokio::spawn(
+                async move { service.run().await }.instrument(info_span!("portmapper.service")),
+            )
+            .abort_handle(),
         );
 
         Client {
@@ -504,12 +507,10 @@ impl Service {
                 .as_ref()
                 .map(|(gateway, _last_seen)| gateway.clone());
             self.mapping_task = Some(
-                tokio::spawn(upnp::Mapping::new(
-                    local_ip,
-                    local_port,
-                    gateway,
-                    external_port,
-                ))
+                tokio::spawn(
+                    upnp::Mapping::new(local_ip, local_port, gateway, external_port)
+                        .instrument(info_span!("portmapper.mapping")),
+                )
                 .into(),
             );
         }
@@ -530,7 +531,10 @@ impl Service {
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
                     inc!(Metrics, probes_started);
-                    let handle = tokio::spawn(async move { Probe::new(probe_output).await });
+                    let handle = tokio::spawn(
+                        async move { Probe::new(probe_output).await }
+                            .instrument(info_span!("portmapper.probe")),
+                    );
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
                 }

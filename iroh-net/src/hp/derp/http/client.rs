@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
 use crate::hp::derp::client_conn::Io;
@@ -327,27 +327,25 @@ impl Client {
     /// If there is already an active derp connection, returns the already
     /// connected [`crate::hp::derp::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
-        let key = self.inner.secret_key.public_key();
-        debug!("client {key:?} - connect");
         if self.inner.is_closed.load(Ordering::Relaxed) {
             return Err(ClientError::Closed);
         }
-
-        {
+        let key = self.inner.secret_key.public_key();
+        async move {
             // acquire lock on the derp client
             // we must hold onto the lock until we are sure we have a connection
             // or other calls to `connect` will attempt to start a connection
             // as well
             let mut derp_client_lock = self.inner.derp_client.lock().await;
             if let Some(derp_client) = &*derp_client_lock {
-                debug!("client {key:?} - already had connection");
+                debug!("already had connection");
                 return Ok((
                     derp_client.clone(),
                     self.inner.conn_gen.load(Ordering::SeqCst),
                 ));
             }
 
-            debug!("client {key:?} - no connection, trying to connect");
+            debug!("no connection, trying to connect");
             let derp_client = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
                 .await
                 .map_err(|_| ClientError::ConnectTimeout)??;
@@ -355,9 +353,11 @@ impl Client {
             let derp_client_clone = derp_client.clone();
             *derp_client_lock = Some(derp_client_clone);
             let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
-            debug!("client {key:?} - got connection, conn num {conn_gen}");
+            debug!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
+        .instrument(info_span!("client-connect", ?key))
+        .await
     }
 
     async fn current_region(&self) -> Result<DerpRegion, ClientError> {
@@ -639,12 +639,18 @@ impl Client {
         if node.ipv4.is_enabled() {
             let this = self.clone();
             let node = node.clone();
-            dials.spawn(async move { this.start_dial(&node, UseIp::Ipv4(node.ipv4)).await });
+            dials.spawn(
+                async move { this.start_dial(&node, UseIp::Ipv4(node.ipv4)).await }
+                    .instrument(info_span!("dial", proto = "ipv4")),
+            );
         }
         if node.ipv6.is_enabled() {
             let this = self.clone();
             let node = node.clone();
-            dials.spawn(async move { this.start_dial(&node, UseIp::Ipv6(node.ipv6)).await });
+            dials.spawn(
+                async move { this.start_dial(&node, UseIp::Ipv6(node.ipv6)).await }
+                    .instrument(info_span!("dial", proto = "ipv6")),
+            );
         }
 
         // Return the first successfull dial, otherwise the first error we saw.
@@ -1057,7 +1063,7 @@ impl PeersPresent {
                     }
                 }
             }
-        });
+        }.instrument(info_span!("peers-present.actor")));
         Self {
             actor_task,
             actor_channel: send,
@@ -1107,7 +1113,7 @@ impl PacketForwarder for Client {
                 }
             }
             tracing::warn!("attempted three times to forward packet from {srckey:?} to {dstkey:?}, failed. Dropping packet.");
-        });
+        }.instrument(info_span!("packet-forwarder")));
     }
 }
 

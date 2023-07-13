@@ -32,7 +32,7 @@ use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
-use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::hp::netcheck::probe::{Probe, ProbePlan, ProbeProto};
@@ -108,7 +108,9 @@ impl Client {
             hairpin_actor: hairpin::Client::new(netcheck, addr),
             outstanding_tasks: OutstandingTasks::default(),
         };
-        let task = tokio::spawn(async move { actor.run().await });
+        let task = tokio::spawn(
+            async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
+        );
         Self {
             _drop_guard: CancelOnDrop::new("reportgen actor", task.abort_handle()),
         }
@@ -194,7 +196,6 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "reportgen.actor", skip_all)]
     async fn run(&mut self) {
         match self.run_inner().await {
             Ok(_) => debug!("reportgen actor finished"),
