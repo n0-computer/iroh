@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::{protocol::RequestToken, runtime, Hash};
+use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
@@ -291,7 +291,7 @@ pub fn create_quinn_client(
 #[cfg(feature = "metrics")]
 pub fn init_metrics_collection(
     metrics_addr: Option<SocketAddr>,
-    rt: &iroh_bytes::runtime::Handle,
+    rt: &iroh_bytes::util::runtime::Handle,
 ) -> Option<tokio::task::JoinHandle<()>> {
     use iroh_metrics::core::Metric;
 

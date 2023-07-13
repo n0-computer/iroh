@@ -1,6 +1,6 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#![cfg(feature = "cli")]
 use std::env;
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -26,12 +26,12 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     Ok(hash.into())
 }
 
+#[cfg(feature = "flat-db")]
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
-    use iroh_bytes::provider::{create_collection, create_data_sources, DbEntry};
-
+    use iroh::database::flat::{create_collection, create_data_sources, DbEntry};
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
     std::fs::create_dir_all(&temp_dir)?;
@@ -49,7 +49,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
                 data_path.set_extension("data.part");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::rename(path, &data_path)?;
-                let file = OpenOptions::new().write(true).open(&data_path)?;
+                let file = std::fs::OpenOptions::new().write(true).open(&data_path)?;
                 let len = file.metadata()?.len();
                 file.set_len(len / 2)?;
                 drop(file);
@@ -125,6 +125,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
+#[cfg(feature = "flat-db")]
 #[test]
 fn cli_provide_tree_resume() -> Result<()> {
     let dir = testdir!().join("src");
@@ -163,13 +164,12 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use std::time::Duration;
-
-    use iroh_bytes::provider::Database;
+    use iroh::database::flat::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
     };
+    use std::time::Duration;
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
@@ -278,6 +278,7 @@ enum Output {
     /// Indicates we should pipe the content to `stdout` of the `iroh get` process
     Stdout,
     /// Custom output
+    #[allow(dead_code)]
     Custom(PathBuf),
 }
 

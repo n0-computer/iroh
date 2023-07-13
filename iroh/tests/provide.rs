@@ -1,3 +1,4 @@
+#![cfg(all(feature = "flat-db", feature = "iroh-collection"))]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -12,34 +13,46 @@ use futures::{
     future::{BoxFuture, LocalBoxFuture},
     FutureExt,
 };
-use iroh::node::{Event, Node, StaticTokenAuthHandler};
+use iroh::{
+    collection::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
+    database::{
+        flat::{create_collection, DataSource, Database},
+        mem,
+    },
+    node::{Builder, Event, Node, StaticTokenAuthHandler},
+};
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{
     tls::{Keypair, PeerId},
     MagicEndpoint,
 };
+use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
 use testdir::testdir;
 use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
-    blobs::{Blob, Collection},
     get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{
-        self, create_collection, database::InMemDatabase, ArrayLinkStream, CollectionParser,
-        CollectionStats, CustomGetHandler, DataSource, Database, IrohCollectionParser, LinkStream,
-        RequestAuthorizationHandler,
-    },
-    runtime,
-    util::Hash,
+    provider::{self, BaoReadonlyDb, CustomGetHandler, RequestAuthorizationHandler},
+    util::runtime,
+    Hash, collection::{CollectionParser, LinkStream, CollectionStats},
 };
 
 /// Pick up the tokio runtime from the thread local and add a
 /// thread per core runtime.
 fn test_runtime() -> runtime::Handle {
     runtime::Handle::from_currrent(1).unwrap()
+}
+
+fn test_node<D: BaoReadonlyDb>(
+    db: D,
+    addr: SocketAddr,
+) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {
+    Node::builder(db)
+        .collection_parser(IrohCollectionParser)
+        .bind_addr(addr)
 }
 
 #[tokio::test]
@@ -152,14 +165,10 @@ async fn multiple_clients() -> Result<()> {
     let expect_hash = blake3::hash(&expect_data);
     let expect_name = filename.to_string();
 
-    let (db, hash) = provider::create_collection(vec![DataSource::new(path)]).await?;
+    let (db, hash) = create_collection(vec![DataSource::new(path)]).await?;
 
     let rt = test_runtime();
-    let node = Node::builder(db)
-        .runtime(&rt)
-        .bind_addr(addr)
-        .spawn()
-        .await?;
+    let node = test_node(db, addr).runtime(&rt).spawn().await?;
 
     let mut tasks = Vec::new();
     for _i in 0..3 {
@@ -219,7 +228,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = InMemDatabase::new(file_opts.clone());
+    let (mut mdb, lookup) = mem::Database::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -250,11 +259,7 @@ where
     expects.sort_by(|a, b| a.0.cmp(&b.0));
 
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = Node::builder(mdb.clone())
-        .runtime(rt)
-        .bind_addr(addr)
-        .spawn()
-        .await?;
+    let node = test_node(mdb.clone(), addr).runtime(rt).spawn().await?;
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
 
@@ -361,12 +366,8 @@ async fn test_server_close() {
     let src = dir.join("src");
     fs::write(&src, "hello there").await.unwrap();
     let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
-    let mut node = Node::builder(db)
-        .bind_addr("127.0.0.1:0".parse().unwrap())
-        .runtime(&rt)
-        .spawn()
-        .await
-        .unwrap();
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
 
@@ -426,11 +427,8 @@ async fn test_blob_reader_partial() -> Result<()> {
     }
     fs::write(&src1, "hello world").await?;
     let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
-    let node = Node::builder(db)
-        .bind_addr("127.0.0.1:0".parse().unwrap())
-        .runtime(&rt)
-        .spawn()
-        .await?;
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db, addr).runtime(&rt).spawn().await?;
     let node_addr = node.local_endpoint_addresses().await?;
     let peer_id = node.peer_id();
 
@@ -460,12 +458,8 @@ async fn test_ipv6() {
 
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-    let node = match Node::builder(db)
-        .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
-        .runtime(&rt)
-        .spawn()
-        .await
-    {
+    let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
+    let node = match test_node(db, addr).runtime(&rt).spawn().await {
         Ok(provider) => provider,
         Err(_) => {
             // We assume the problem here is IPv6 on this host.  If the problem is
@@ -491,8 +485,8 @@ async fn test_run_ticket() {
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let token = Some(RequestToken::generate());
-    let node = Node::builder(db)
-        .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
+    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
+    let node = test_node(db, addr)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token.clone())))
         .runtime(&rt)
         .spawn()
@@ -600,19 +594,8 @@ async fn test_run_fsm() {
     let rt = test_runtime();
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-    let node = match Node::builder(db)
-        .bind_addr("[::1]:0".parse().unwrap())
-        .runtime(&rt)
-        .spawn()
-        .await
-    {
-        Ok(provider) => provider,
-        Err(_) => {
-            // We assume the problem here is IPv6 on this host.  If the problem is
-            // not IPv6 then other tests will also fail.
-            return;
-        }
-    };
+    let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
+    let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
@@ -658,15 +641,16 @@ async fn test_custom_collection_parser() {
     // create a collection consisting of 2 leafs
     let leaf1_data = vec![0u8; 12345];
     let leaf2_data = vec![1u8; 67890];
-    let mut db = InMemDatabase::default();
+    let mut db = mem::Database::default();
     let leaf1_hash = db.insert(leaf1_data.clone());
     let leaf2_hash = db.insert(leaf2_data.clone());
     let collection = vec![leaf1_hash, leaf2_hash];
     let collection_bytes = postcard::to_allocvec(&collection).unwrap();
     let collection_hash = db.insert(collection_bytes.clone());
+    let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db)
         .collection_parser(CollectionsAreJustLinks)
-        .bind_addr("127.0.0.1:0".parse().unwrap())
+        .bind_addr(addr)
         .runtime(&rt)
         .spawn()
         .await
@@ -749,8 +733,8 @@ impl CustomGetHandler for BlobCustomHandler {
 async fn test_custom_request_blob() {
     let rt = test_runtime();
     let db = Database::default();
-    let node = Node::builder(db.clone())
-        .bind_addr("127.0.0.1:0".parse().unwrap())
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db.clone(), addr)
         .runtime(&rt)
         .custom_get_handler(Arc::new(BlobCustomHandler { db }))
         .spawn()
@@ -782,8 +766,8 @@ async fn test_custom_request_blob() {
 async fn test_custom_request_collection() {
     let rt = test_runtime();
     let db = Database::default();
-    let node = Node::builder(db.clone())
-        .bind_addr("127.0.0.1:0".parse().unwrap())
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let node = test_node(db.clone(), addr)
         .runtime(&rt)
         .custom_get_handler(Arc::new(CollectionCustomHandler { db }))
         .spawn()
@@ -840,8 +824,8 @@ async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
     let readme = readme_path();
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-    let node = Node::builder(db)
-        .bind_addr("0.0.0.0:0".parse().unwrap())
+    let addr = "0.0.0.0:0".parse().unwrap();
+    let node = test_node(db, addr)
         .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)
         .spawn()

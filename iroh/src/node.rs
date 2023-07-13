@@ -5,8 +5,6 @@
 //! You can monitor what is happening in the node using [`Node::subscribe`].
 //!
 //! To shut down the node, call [`Node::shutdown`].
-
-use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -19,19 +17,17 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
-use iroh_bytes::provider::{CollectionParser, IrohCollectionParser};
 use iroh_bytes::{
-    blobs::Collection,
     protocol::{Closed, Request, RequestToken},
     provider::{
-        database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
-        CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, ValidateProgress,
+        BaoMap, BaoMapEntry, BaoReadonlyDb,
+        CustomGetHandler, ProvideProgress, RequestAuthorizationHandler, ValidateProgress,
     },
-    runtime,
-    util::{progress::Progress, Hash},
+    util::runtime,
+    util::Hash,
 };
-use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
@@ -67,13 +63,15 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database which can be created using [`iroh_bytes::provider::create_collection`], everything else is
-/// optional.  Finally you can create and run the node by calling [`Builder::spawn`].
+/// You must supply a database. Various database implementations are available
+/// in [`crate::database`]. Everything else is optional.
+///
+/// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D = Database, E = DummyServerEndpoint, C = IrohCollectionParser>
+pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
 where
     D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
@@ -133,8 +131,8 @@ impl CustomGetHandler for NoopCustomGetHandler {
 }
 
 impl<D: BaoMap> Builder<D> {
-    /// Creates a new builder for [`Node`] using the given [`Database`].
-    pub fn with_db(db: D) -> Self {
+    /// Creates a new builder for [`Node`] using the given database.
+    fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -144,7 +142,7 @@ impl<D: BaoMap> Builder<D> {
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            collection_parser: Default::default(),
+            collection_parser: NoCollectionParser,
             rt: None,
         }
     }
@@ -304,6 +302,7 @@ where
         let task = {
             let handler = RpcHandler {
                 inner: inner.clone(),
+                collection_parser: self.collection_parser.clone(),
             };
             rt2.main().spawn(async move {
                 Self::run(
@@ -342,7 +341,7 @@ where
         server: MagicEndpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
-        handler: RpcHandler<D>,
+        handler: RpcHandler<D, C>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: Arc<dyn CustomGetHandler>,
@@ -453,6 +452,7 @@ impl Callbacks {
         self.0.write().await.push(cb);
     }
 
+    #[allow(dead_code)]
     async fn send(&self, event: Event) {
         let cbs = self.0.read().await;
         for cb in &*cbs {
@@ -498,6 +498,7 @@ struct NodeInner<D> {
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    #[allow(dead_code)]
     callbacks: Callbacks,
     rt: runtime::Handle,
 }
@@ -616,11 +617,12 @@ impl<D: BaoMap> Future for Node<D> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D> {
+struct RpcHandler<D, C> {
     inner: Arc<NodeInner<D>>,
+    collection_parser: C,
 }
 
-impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
+impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -654,20 +656,21 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         futures::stream::iter(roots).filter_map(move |hash| {
             let db = db.clone();
             let local = local.clone();
+            let cp = self.collection_parser.clone();
             async move {
                 let entry = db.get(&hash)?;
-                let data = local
+                let stats = local
                     .spawn_pinned(|| async move {
-                        let mut reader = entry.data_reader().await.ok()?;
-                        reader.read_to_end().await.ok()
+                        let reader = entry.data_reader().await.ok()?;
+                        let (_collection, stats) = cp.parse(0, reader).await.ok()?;
+                        Some(stats)
                     })
                     .await
                     .ok()??;
-                let collection = Collection::from_bytes(&data).ok()?;
                 Some(ListCollectionsResponse {
                     hash,
-                    total_blobs_count: collection.blobs().len(),
-                    total_blobs_size: collection.total_blobs_size(),
+                    total_blobs_count: stats.num_blobs.unwrap_or_default(),
+                    total_blobs_size: stats.total_blob_size.unwrap_or_default(),
                 })
             }
         })
@@ -692,7 +695,7 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
-        self.rt().main().spawn(async move {
+        self.rt().local_pool().spawn_pinned(|| async move {
             if let Err(e) = self.provide0(msg, tx).await {
                 tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
             }
@@ -700,32 +703,32 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
+    #[cfg(feature = "flat-db")]
     async fn provide0(
         self,
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
+        use crate::database::flat::{create_collection_inner, create_data_sources, Database};
+        use crate::util::progress::Progress;
+        use std::any::Any;
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = iroh_bytes::provider::create_data_sources(root)?;
+        let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, hash) = iroh_bytes::provider::collection::create_collection(
-            data_sources,
-            Progress::new(progress),
-        )
-        .await?;
+        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
 
-        {
-            // todo: generify this
-            // for now provide will only work if D is a Database
-            let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-            if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-                current.union_with(db);
-            }
+        // todo: generify this
+        // for now provide will only work if D is a Database
+        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
+            current.union_with(db);
+        } else {
+            anyhow::bail!("provide not supported yet for this database type");
         }
 
         self.inner
@@ -737,6 +740,16 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
 
         Ok(())
     }
+
+    #[cfg(not(feature = "flat-db"))]
+    async fn provide0(
+        self,
+        _msg: ProvideRequest,
+        _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("provide not supported yet for this database type");
+    }
+
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -785,10 +798,14 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
     }
 }
 
-fn handle_rpc_request<D: BaoReadonlyDb, C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<
+    D: BaoReadonlyDb,
+    E: ServiceEndpoint<ProviderService>,
+    C: CollectionParser,
+>(
     msg: ProviderRequest,
-    chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler<D>,
+    chan: RpcChannel<ProviderService, E>,
+    handler: &RpcHandler<D, C>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
@@ -893,8 +910,9 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "flat-db"))]
 mod tests {
+    use crate::database::flat::create_collection;
     use anyhow::bail;
     use futures::StreamExt;
     use std::collections::HashMap;
@@ -913,9 +931,7 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = iroh_bytes::provider::create_collection(vec![readme.into()])
-            .await
-            .unwrap();
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)
@@ -928,10 +944,11 @@ mod tests {
         assert!(!ticket.addrs().is_empty());
     }
 
+    #[cfg(feature = "flat-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = Database::from(HashMap::new());
-        let node = Builder::with_db(db)
+        let db = crate::database::flat::Database::from(HashMap::new());
+        let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
             .spawn()
