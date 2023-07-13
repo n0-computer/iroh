@@ -5,8 +5,6 @@
 //! You can monitor what is happening in the node using [`Node::subscribe`].
 //!
 //! To shut down the node, call [`Node::shutdown`].
-
-use std::any::Any;
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -21,7 +19,6 @@ use crate::rpc_protocol::{
     ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::util::progress::Progress;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
@@ -49,7 +46,7 @@ use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -671,40 +668,53 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
+    #[cfg(feature = "flat-db")]
     async fn provide0(
         self,
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        #[cfg(feature = "flat-db")]
-        {
-            use crate::database::flat::{create_collection_inner, create_data_sources, Database};
-            let root = msg.path;
-            anyhow::ensure!(
-                root.is_dir() || root.is_file(),
-                "path must be either a Directory or a File"
-            );
-            let data_sources = create_data_sources(root)?;
-            // create the collection
-            // todo: provide feedback for progress
-            let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
+        use crate::database::flat::{create_collection_inner, create_data_sources, Database};
+        use crate::util::progress::Progress;
+        use std::any::Any;
+        use tracing::warn;
+        let root = msg.path;
+        anyhow::ensure!(
+            root.is_dir() || root.is_file(),
+            "path must be either a Directory or a File"
+        );
+        let data_sources = create_data_sources(root)?;
+        // create the collection
+        // todo: provide feedback for progress
+        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
 
-            // todo: generify this
-            // for now provide will only work if D is a Database
-            let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-            if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-                current.union_with(db);
-            }
-
-            if let Err(e) = self.inner.events.send(Event::ByteProvide(
-                iroh_bytes::provider::Event::CollectionAdded { hash },
-            )) {
-                warn!("failed to send CollectionAdded event: {:?}", e);
-            };
+        // todo: generify this
+        // for now provide will only work if D is a Database
+        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
+            current.union_with(db);
+        } else {
+            anyhow::bail!("provide not supported yet for this database type");
         }
+
+        if let Err(e) = self.inner.events.send(Event::ByteProvide(
+            iroh_bytes::provider::Event::CollectionAdded { hash },
+        )) {
+            warn!("failed to send CollectionAdded event: {:?}", e);
+        };
 
         Ok(())
     }
+
+    #[cfg(not(feature = "flat-db"))]
+    async fn provide0(
+        self,
+        _msg: ProvideRequest,
+        _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("provide not supported yet for this database type");
+    }
+
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),

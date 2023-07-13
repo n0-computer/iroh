@@ -1,4 +1,4 @@
-#![cfg(feature = "mem-db")]
+#![cfg(all(feature = "mem-db", feature = "iroh-collections"))]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},

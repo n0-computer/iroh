@@ -1,6 +1,5 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -48,7 +47,7 @@ fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
                 data_path.set_extension("data.part");
                 std::fs::write(outboard_path, outboard)?;
                 std::fs::rename(path, &data_path)?;
-                let file = OpenOptions::new().write(true).open(&data_path)?;
+                let file = std::fs::OpenOptions::new().write(true).open(&data_path)?;
                 let len = file.metadata()?.len();
                 file.set_len(len / 2)?;
                 drop(file);
@@ -277,6 +276,7 @@ enum Output {
     /// Indicates we should pipe the content to `stdout` of the `iroh get` process
     Stdout,
     /// Custom output
+    #[cfg(feature = "flat-db")]
     Custom(PathBuf),
 }
 
