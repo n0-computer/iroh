@@ -1,3 +1,5 @@
+use tracing::{debug, trace};
+
 /// Minimum size of an encoded [`Response`] sent by a server to this client.
 // NOTE: 1byte for the version +
 //       1byte for the opcode +
@@ -279,23 +281,40 @@ impl Response {
     }
 }
 
-pub async fn probe_available(
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ipv4Addr) -> bool {
+    debug!("starting probe");
+    match probe_available_fallible(local_ip, gateway).await {
+        Ok(response) => {
+            trace!("probe response: {response:?}");
+            match response {
+                Response::PublicAddress { .. } => true,
+                _ => {
+                    debug!("server returned an unexpected response type for probe");
+                    // missbehaving server is not useful
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            debug!("probe failed: {e}");
+            false
+        }
+    }
+}
+
+async fn probe_available_fallible(
     local_ip: std::net::Ipv4Addr,
     gateway: std::net::Ipv4Addr,
-) -> anyhow::Result<bool> {
-    // TODO(@divma): here we likely want to keep both the server epoch so that previous probes
-    // identify loss of state
-    tracing::debug!("Starting pmp probe");
-    // TODO(@divma): do we want to keep this socket alive for more than the probe?
+) -> anyhow::Result<Response> {
     let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
     socket.connect((gateway, SERVER_PORT)).await?;
     let req = Request::ExternalAddress;
     socket.send(&req.encode()).await?;
     let mut buffer = vec![0; MAX_RESP_SIZE];
-    socket.recv(&mut buffer).await?;
-    let response = Response::decode(&buffer);
-    tracing::debug!("received pmp response {response:?}");
+    let read = tokio::time::timeout(PROBE_TIMEOUT, socket.recv(&mut buffer)).await??;
+    let response = Response::decode(&buffer[..read])?;
 
-    // TODO(@divma): neet to check the response type
-    Ok(response.is_ok())
+    Ok(response)
 }

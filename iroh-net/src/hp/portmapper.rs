@@ -201,9 +201,9 @@ impl Client {
 struct Probe {
     /// The last [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
-    // TODO(@divma): PCP placeholder.
+    /// Last time PCP was seen.
     last_pcp: Option<Instant>,
-    // TODO(@divma): PMP placeholder.
+    /// Last time PMP was seen.
     last_pmp: Option<Instant>,
 }
 
@@ -245,19 +245,9 @@ impl Probe {
         let mut pmp_probing_task = util::MaybeFuture {
             inner: (enable_pmp && !pmp).then(|| {
                 Box::pin(async {
-                    // TODO(@divma): move error handling and logging to pxp
-                    match pmp::probe_available(local_ip, gateway).await {
-                        Ok(true) => Some(Instant::now()),
-                        Ok(false) => {
-                            // TODO(@divma): this needs to be fixed
-                            tracing::debug!("PCP probe was succesful but had a false result");
-                            None
-                        }
-                        Err(e) => {
-                            tracing::debug!("pcp probe failed {e}");
-                            None
-                        }
-                    }
+                    pmp::probe_available(local_ip, gateway)
+                        .await
+                        .then(|| Instant::now())
                 })
             }),
         };
