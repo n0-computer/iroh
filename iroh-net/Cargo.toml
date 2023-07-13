@@ -49,7 +49,7 @@ thiserror = "1"
 tracing = "0.1"
 trust-dns-resolver = "0.22.0"
 time = "0.3.20"
-tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "io-std", "signal"] }
+tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-rustls = { version = "0.24" }
 tokio-rustls-acme = { version = "0.1" }
