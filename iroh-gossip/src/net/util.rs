@@ -82,6 +82,7 @@ pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connecti
 /// the pending connect futures and emits finished connect results.
 ///
 /// TODO: Move to iroh-net
+#[derive(Debug)]
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: FuturesUnordered<DialFuture>,
