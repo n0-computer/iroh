@@ -112,7 +112,7 @@ pub enum Commands {
         enable_pcp: bool,
         /// Whether to enable PMP.
         #[clap(long)]
-        enable_pmp: bool,
+        enable_nat_pmp: bool,
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
@@ -689,12 +689,12 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
         Commands::PortMapProbe {
             enable_upnp,
             enable_pcp,
-            enable_pmp,
+            enable_nat_pmp,
         } => {
             let config = portmapper::Config {
                 enable_upnp,
                 enable_pcp,
-                enable_pmp,
+                enable_nat_pmp,
             };
 
             port_map_probe(config).await

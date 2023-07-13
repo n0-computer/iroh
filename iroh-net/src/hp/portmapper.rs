@@ -19,7 +19,7 @@ use mapping::CurrentMapping;
 
 mod mapping;
 mod pcp;
-mod pmp;
+mod nat_pmp;
 mod upnp;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
@@ -31,20 +31,20 @@ const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
 
 /// Output of a port mapping probe.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-#[display("portmap={{ UPnP: {upnp}, PMP: {pmp}, PCP: {pcp} }}")]
+#[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
 pub struct ProbeOutput {
     /// If UPnP can be considered available.
     pub upnp: bool,
     /// If PCP can be considered available.
     pub pcp: bool,
     /// If PMP can be considered available.
-    pub pmp: bool,
+    pub nat_pmp: bool,
 }
 
 impl ProbeOutput {
     /// Indicates if all port mapping protocols are available.
     pub fn all_available(&self) -> bool {
-        self.upnp && self.pcp && self.pmp
+        self.upnp && self.pcp && self.nat_pmp
     }
 }
 
@@ -78,7 +78,7 @@ pub struct Config {
     /// Whether PCP is enabled.
     pub enable_pcp: bool,
     /// Whether PMP is enabled.
-    pub enable_pmp: bool,
+    pub enable_nat_pmp: bool,
 }
 
 impl Default for Config {
@@ -87,7 +87,7 @@ impl Default for Config {
         Config {
             enable_upnp: true,
             enable_pcp: true,
-            enable_pmp: true,
+            enable_nat_pmp: true,
         }
     }
 }
@@ -204,7 +204,7 @@ struct Probe {
     /// Last time PCP was seen.
     last_pcp: Option<Instant>,
     /// Last time PMP was seen.
-    last_pmp: Option<Instant>,
+    last_nat_pmp: Option<Instant>,
 }
 
 impl Probe {
@@ -216,11 +216,11 @@ impl Probe {
         gateway: Ipv4Addr,
     ) -> Probe {
         tracing::debug!("Starting portmapping probe");
-        let ProbeOutput { upnp, pcp, pmp } = output;
+        let ProbeOutput { upnp, pcp, nat_pmp } = output;
         let Config {
             enable_upnp,
             enable_pcp,
-            enable_pmp,
+            enable_nat_pmp,
         } = config;
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (enable_upnp && !upnp).then(|| {
@@ -242,10 +242,10 @@ impl Probe {
             }),
         };
 
-        let mut pmp_probing_task = util::MaybeFuture {
-            inner: (enable_pmp && !pmp).then(|| {
+        let mut nat_pmp_probing_task = util::MaybeFuture {
+            inner: (enable_nat_pmp && !nat_pmp).then(|| {
                 Box::pin(async {
-                    pmp::probe_available(local_ip, gateway)
+                    nat_pmp::probe_available(local_ip, gateway)
                         .await
                         .then(|| Instant::now())
                 })
@@ -258,21 +258,21 @@ impl Probe {
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
         let mut pcp_done = pcp_probing_task.inner.is_none();
-        let mut pmp_done = pmp_probing_task.inner.is_none();
+        let mut nat_pmp_done = nat_pmp_probing_task.inner.is_none();
 
         let mut probe = Probe::default();
 
-        while !upnp_done || !pcp_done || !pmp_done {
+        while !upnp_done || !pcp_done || !nat_pmp_done {
             tokio::select! {
                 last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
                     trace!("tick: upnp probe ready");
                     probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
                     upnp_done = true;
                 },
-                last_pmp = &mut pmp_probing_task, if !pmp_done => {
-                    trace!("tick: pmp probe ready");
-                    probe.last_pmp = last_pmp;
-                    pmp_done = true;
+                last_nat_pmp = &mut nat_pmp_probing_task, if !nat_pmp_done => {
+                    trace!("tick: nat_pmp probe ready");
+                    probe.last_nat_pmp = last_nat_pmp;
+                    nat_pmp_done = true;
                 },
                 last_pcp = &mut pcp_probing_task, if !pcp_done => {
                     trace!("tick: pcp probe ready");
@@ -302,13 +302,13 @@ impl Probe {
             .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        let pmp = self
-            .last_pmp
+        let nat_pmp = self
+            .last_nat_pmp
             .as_ref()
             .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        ProbeOutput { upnp, pcp, pmp }
+        ProbeOutput { upnp, pcp, nat_pmp }
     }
 
     /// Updates a probe with the `Some` values of another probe.
@@ -316,7 +316,7 @@ impl Probe {
         let Probe {
             last_upnp_gateway_addr,
             last_pcp,
-            last_pmp,
+            last_nat_pmp,
         } = probe;
         if last_upnp_gateway_addr.is_some() {
             inc!(Metrics, upnp_available);
@@ -344,8 +344,8 @@ impl Probe {
         if last_pcp.is_some() {
             self.last_pcp = last_pcp;
         }
-        if last_pmp.is_some() {
-            self.last_pmp = last_pmp;
+        if last_nat_pmp.is_some() {
+            self.last_nat_pmp = last_nat_pmp;
         }
     }
 }
