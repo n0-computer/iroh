@@ -409,7 +409,8 @@ impl Actor {
         // function of whether this is our initial full probe or an
         // incremental one. For incremental ones, wait for the
         // duration of the slowest region. For initial ones, double that.
-        if self.report.region_latency.len() == ENOUGH_REGIONS {
+        let enough_regions = std::cmp::min(self.derp_map.regions.len(), ENOUGH_REGIONS);
+        if self.report.region_latency.len() == enough_regions {
             let mut timeout = self.report.region_latency.max_latency();
             if !self.incremental {
                 timeout *= 2;
