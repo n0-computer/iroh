@@ -42,10 +42,10 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -282,11 +282,7 @@ where
 
         trace!("created quinn endpoint");
 
-        // the size of this channel must be large because the producer can be on
-        // a different thread than the consumer, and can produce a lot of events
-        // in a short time
-        let (events_sender, _events_receiver) = broadcast::channel(512);
-        let events = events_sender.clone();
+        let (cb_sender, cb_receiver) = mpsc::channel(8);
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
@@ -294,13 +290,15 @@ where
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
         let rt3 = rt.clone();
+        let callbacks = Callbacks::default();
         let inner = Arc::new(NodeInner {
             db: self.db,
             endpoint: endpoint.clone(),
             keypair: self.keypair,
-            events,
             controller,
             cancel_token,
+            callbacks: callbacks.clone(),
+            cb_sender,
             rt,
         });
         let task = {
@@ -310,7 +308,8 @@ where
             rt2.main().spawn(async move {
                 Self::run(
                     endpoint,
-                    events_sender,
+                    callbacks,
+                    cb_receiver,
                     handler,
                     self.rpc_endpoint,
                     internal_rpc,
@@ -341,7 +340,8 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn run(
         server: MagicEndpoint,
-        events: broadcast::Sender<Event>,
+        callbacks: Callbacks,
+        mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: RpcHandler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
@@ -360,6 +360,7 @@ where
             );
         }
         let cancel_token = handler.inner.cancel_token.clone();
+
         loop {
             tokio::select! {
                 biased;
@@ -400,16 +401,20 @@ where
                     };
                     if alpn.as_bytes() == iroh_bytes::protocol::ALPN.as_ref() {
                         let db = handler.inner.db.clone();
-                        let events = MappedSender(events.clone());
                         let custom_get_handler = custom_get_handler.clone();
                         let auth_handler = auth_handler.clone();
                         let collection_parser = collection_parser.clone();
                         let rt2 = rt.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, events, collection_parser, custom_get_handler, auth_handler, rt2));
+                        let callbacks = callbacks.clone();
+                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, callbacks, collection_parser, custom_get_handler, auth_handler, rt2));
                     } else {
                         tracing::error!("unknown protocol: {}", alpn);
                         continue;
                     }
+                }
+                // Handle new callbacks
+                Some(cb) = cb_receiver.recv() => {
+                    callbacks.push(cb).await;
                 }
                 else => break,
             }
@@ -438,15 +443,33 @@ async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MappedSender(broadcast::Sender<Event>);
+type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
 
-impl iroh_bytes::provider::EventSender for MappedSender {
-    fn send(&self, event: iroh_bytes::provider::Event) -> Option<iroh_bytes::provider::Event> {
-        match self.0.send(Event::ByteProvide(event)) {
-            Ok(_) => None,
-            Err(broadcast::error::SendError(Event::ByteProvide(e))) => Some(e),
+#[derive(Default, derive_more::Debug, Clone)]
+struct Callbacks(#[debug("..")] Arc<RwLock<Vec<EventCallback>>>);
+
+impl Callbacks {
+    async fn push(&self, cb: EventCallback) {
+        self.0.write().await.push(cb);
+    }
+
+    async fn send(&self, event: Event) {
+        let cbs = self.0.read().await;
+        for cb in &*cbs {
+            cb(event.clone()).await;
         }
+    }
+}
+
+impl iroh_bytes::provider::EventSender for Callbacks {
+    fn send(&self, event: iroh_bytes::provider::Event) -> BoxFuture<()> {
+        async move {
+            let cbs = self.0.read().await;
+            for cb in &*cbs {
+                cb(Event::ByteProvide(event.clone())).await;
+            }
+        }
+        .boxed()
     }
 }
 
@@ -466,14 +489,16 @@ pub struct Node<D: BaoMap> {
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
     endpoint: MagicEndpoint,
     keypair: Keypair,
-    events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
+    #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
+    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    callbacks: Callbacks,
     rt: runtime::Handle,
 }
 
@@ -518,8 +543,14 @@ impl<D: BaoReadonlyDb> Node<D> {
 
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
     /// progress.
-    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        self.inner.events.subscribe()
+    ///
+    /// Warning: The callback must complete quickly, as otherwise it will block ongoing work.
+    pub async fn subscribe<F: Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>(
+        &self,
+        cb: F,
+    ) -> Result<()> {
+        self.inner.cb_sender.send(Box::new(cb)).await?;
+        Ok(())
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
@@ -688,18 +719,21 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         )
         .await?;
 
-        // todo: generify this
-        // for now provide will only work if D is a Database
-        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-            current.union_with(db);
+        {
+            // todo: generify this
+            // for now provide will only work if D is a Database
+            let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+            if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
+                current.union_with(db);
+            }
         }
 
-        if let Err(e) = self.inner.events.send(Event::ByteProvide(
-            iroh_bytes::provider::Event::CollectionAdded { hash },
-        )) {
-            warn!("failed to send CollectionAdded event: {:?}", e);
-        };
+        self.inner
+            .callbacks
+            .send(Event::ByteProvide(
+                iroh_bytes::provider::Event::CollectionAdded { hash },
+            ))
+            .await;
 
         Ok(())
     }
@@ -905,17 +939,19 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
 
-        let mut events = node.subscribe();
-        let provide_handle = tokio::spawn(async move {
-            while let Ok(msg) = events.recv().await {
+        let (r, mut s) = mpsc::channel(1);
+        node.subscribe(move |event| {
+            let r = r.clone();
+            async move {
                 if let Event::ByteProvide(iroh_bytes::provider::Event::CollectionAdded { hash }) =
-                    msg
+                    event
                 {
-                    return Some(hash);
+                    r.send(hash).await.ok();
                 }
             }
-            None
-        });
+            .boxed()
+        })
+        .await?;
 
         let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
             let mut stream = node
@@ -942,7 +978,7 @@ mod tests {
         .context("timeout")?
         .context("get failed")?;
 
-        let event_hash = provide_handle.await?.expect("missing collection event");
+        let event_hash = s.recv().await.expect("missing collection event");
         assert_eq!(got_hash, event_hash);
 
         Ok(())
