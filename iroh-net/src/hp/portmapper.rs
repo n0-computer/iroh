@@ -17,7 +17,10 @@ use crate::{net::interfaces::HomeRouter, util};
 
 use current_mapping::CurrentMapping;
 
+use self::mapping::PortMapped;
+
 mod current_mapping;
+mod mapping;
 mod nat_pmp;
 mod pcp;
 mod upnp;
@@ -371,7 +374,7 @@ pub struct Service {
     ///
     /// This task will be cancelled if a request to set the local port arrives before it's
     /// finished.
-    mapping_task: Option<util::AbortingJoinHandle<Result<upnp::Mapping>>>,
+    mapping_task: Option<util::AbortingJoinHandle<Result<mapping::Mapping>>>,
     /// Task probing the necessary protocols.
     ///
     /// Requests for a probe that arrive while this task is still in progress will receive the same
@@ -404,9 +407,10 @@ impl Service {
     /// Clears the current mapping and releases it.
     async fn invalidate_mapping(&mut self) {
         if let Some(old_mapping) = self.current_mapping.update(None) {
-            if let Err(e) = old_mapping.release().await {
-                debug!("failed to release mapping {e}");
-            }
+            // TODO(@divma): common release
+            // if let Err(e) = old_mapping.release().await {
+            //     debug!("failed to release mapping {e}");
+            // }
         }
     }
 
@@ -482,7 +486,7 @@ impl Service {
         }
     }
 
-    async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {
+    async fn on_mapping_result(&mut self, result: Result<mapping::Mapping>) {
         match result {
             Ok(mapping) => {
                 self.current_mapping.update(Some(mapping));
@@ -567,13 +571,13 @@ impl Service {
                 .as_ref()
                 .map(|(gateway, _last_seen)| gateway.clone());
             self.mapping_task = Some(
-                tokio::spawn(upnp::Mapping::new(
-                    local_ip,
-                    local_port,
-                    gateway,
-                    external_port,
-                ))
-                .into(),
+                todo!("need to decide mapping priorities"), // tokio::spawn(upnp::Mapping::new(
+                                                            //     local_ip,
+                                                            //     local_port,
+                                                            //     gateway,
+                                                            //     external_port,
+                                                            // ))
+                                                            // .into(),
             );
         }
     }

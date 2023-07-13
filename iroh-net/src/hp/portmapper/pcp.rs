@@ -1,7 +1,12 @@
 //! Definitions and utilities to interact with a NAT-PMP/PCP server.
 
-use std::net::Ipv6Addr;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroU16,
+    time::Duration,
+};
 
+use rand::RngCore;
 use tracing::{debug, trace};
 
 // PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
@@ -283,9 +288,9 @@ impl Request {
         nonce: [u8; 12],
         lifetime_seconds: std::num::NonZeroU32,
         local_port: u16,
-        local_ip: std::net::Ipv4Addr,
+        local_ip: Ipv4Addr,
         preferred_external_port: Option<u16>,
-        preferred_external_address: Option<std::net::Ipv4Addr>,
+        preferred_external_address: Option<Ipv4Addr>,
     ) -> Request {
         Request {
             version: Version::Pcp,
@@ -299,7 +304,7 @@ impl Request {
                 // preference, it must use 0.
                 preferred_external_port: preferred_external_port.unwrap_or_default(),
                 preferred_external_address: preferred_external_address
-                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED)
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED)
                     .to_ipv6_mapped(),
             }),
             pcp_options: vec![],
@@ -437,9 +442,54 @@ impl TryFrom<u8> for ResultCode {
     }
 }
 
-const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+#[derive(Debug)]
+pub struct Mapping {
+    external_port: NonZeroU16,
+    externa_addr: Ipv4Addr,
+    lifetime_seconds: u32,
+    nonce: [u8; 16],
+}
 
-pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ipv4Addr) -> bool {
+impl super::mapping::PortMapped for Mapping {
+    fn external(&self) -> (Ipv4Addr, NonZeroU16) {
+        (self.externa_addr, self.external_port)
+    }
+
+    fn half_lifetime(&self) -> Duration {
+        Duration::from_secs(self.lifetime_seconds.into())
+    }
+
+    fn release(self) -> anyhow::Result<()> {
+        todo!()
+    }
+}
+
+impl Mapping {
+    pub async fn new(
+        local_ip: Ipv4Addr,
+        port: NonZeroU16,
+        gateway: Ipv4Addr,
+        preferred_external_port: Option<NonZeroU16>,
+        preferred_external_address: Option<Ipv4Addr>,
+    ) -> anyhow::Result<Self> {
+        let mut nonce = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        // let lifetime_seconds = 7200;
+        // let req = Request::get_mapping(
+        //     nonce,
+        //     lifetime_seconds,
+        //     port.into(),
+        //     local_ip,
+        //     preferred_external_port.map(|port| port.into()),
+        //     preferred_external_address,
+        // );
+        todo!()
+    }
+}
+
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
+pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     debug!("starting probe");
     match probe_available_fallible(local_ip, gateway).await {
         Ok(response) => {
@@ -469,8 +519,8 @@ pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ip
 }
 
 async fn probe_available_fallible(
-    local_ip: std::net::Ipv4Addr,
-    gateway: std::net::Ipv4Addr,
+    local_ip: Ipv4Addr,
+    gateway: Ipv4Addr,
 ) -> anyhow::Result<Response> {
     let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
     socket.connect((gateway, SERVER_PORT)).await?;

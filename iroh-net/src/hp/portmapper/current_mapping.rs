@@ -18,7 +18,7 @@ pub(super) trait Mapping: std::fmt::Debug + Unpin {
     fn half_lifetime(&self) -> Duration;
 }
 
-impl Mapping for super::upnp::Mapping {
+impl Mapping for super::mapping::Mapping {
     fn external(&self) -> (Ipv4Addr, NonZeroU16) {
         self.external()
     }
@@ -57,7 +57,7 @@ pub(super) enum Event {
 
 /// Holds the current mapping value and ensures that any change is reported accordingly.
 #[derive(derive_more::Debug)]
-pub(super) struct CurrentMapping<M = super::upnp::Mapping> {
+pub(super) struct CurrentMapping<M = super::mapping::Mapping> {
     /// Active port mapping.
     mapping: Option<ActiveMapping<M>>,
     /// A [`watch::Sender`] that keeps the latest external address for subscribers to changes.

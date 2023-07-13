@@ -36,6 +36,20 @@ pub struct Mapping {
     external_port: NonZeroU16,
 }
 
+impl super::mapping::PortMapped for Mapping {
+    fn external(&self) -> (Ipv4Addr, NonZeroU16) {
+        (self.external_ip, self.external_port)
+    }
+
+    fn half_lifetime(&self) -> Duration {
+        HALF_LIFETIME
+    }
+
+    fn release(self) -> Result<()> {
+        todo!()
+    }
+}
+
 impl Mapping {
     pub(crate) async fn new(
         local_addr: Ipv4Addr,
@@ -98,10 +112,6 @@ impl Mapping {
         })
     }
 
-    pub fn half_lifetime(&self) -> Duration {
-        HALF_LIFETIME
-    }
-
     /// Releases the mapping.
     pub(crate) async fn release(self) -> Result<()> {
         let Mapping {
@@ -113,11 +123,6 @@ impl Mapping {
             .remove_port(igd::PortMappingProtocol::UDP, external_port.into())
             .await?;
         Ok(())
-    }
-
-    /// Returns the external gateway ip and port that can be used to contact this node.
-    pub fn external(&self) -> (Ipv4Addr, NonZeroU16) {
-        (self.external_ip, self.external_port)
     }
 }
 

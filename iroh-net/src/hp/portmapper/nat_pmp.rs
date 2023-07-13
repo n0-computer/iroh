@@ -1,3 +1,5 @@
+use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
+
 use tracing::{debug, trace};
 
 /// Minimum size of an encoded [`Response`] sent by a server to this client.
@@ -107,7 +109,7 @@ impl Request {
 pub enum Response {
     PublicAddress {
         epoch_time: u32,
-        public_ip: std::net::Ipv4Addr,
+        public_ip: Ipv4Addr,
     },
     PortMap {
         proto: MapProtocol,
@@ -281,9 +283,30 @@ impl Response {
     }
 }
 
-const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+#[derive(Debug)]
+pub struct Mapping {
+    external_port: NonZeroU16,
+    externa_addr: Ipv4Addr,
+    lifetime_seconds: u32,
+}
 
-pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ipv4Addr) -> bool {
+impl super::mapping::PortMapped for Mapping {
+    fn external(&self) -> (Ipv4Addr, NonZeroU16) {
+        (self.externa_addr, self.external_port)
+    }
+
+    fn half_lifetime(&self) -> Duration {
+        Duration::from_secs(self.lifetime_seconds.into())
+    }
+
+    fn release(self) -> anyhow::Result<()> {
+        todo!()
+    }
+}
+
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
+pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     debug!("starting probe");
     match probe_available_fallible(local_ip, gateway).await {
         Ok(response) => {
@@ -305,8 +328,8 @@ pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ip
 }
 
 async fn probe_available_fallible(
-    local_ip: std::net::Ipv4Addr,
-    gateway: std::net::Ipv4Addr,
+    local_ip: Ipv4Addr,
+    gateway: Ipv4Addr,
 ) -> anyhow::Result<Response> {
     let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
     socket.connect((gateway, SERVER_PORT)).await?;
