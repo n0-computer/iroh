@@ -647,7 +647,13 @@ async fn test_custom_collection_parser() {
     let collection_bytes = postcard::to_allocvec(&collection).unwrap();
     let collection_hash = db.insert(collection_bytes.clone());
     let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
+    let node = Node::builder(db)
+        .collection_parser(CollectionsAreJustLinks)
+        .bind_addr(addr)
+        .runtime(&rt)
+        .spawn()
+        .await
+        .unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
