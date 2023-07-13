@@ -22,8 +22,8 @@ use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
-        BaoMap, BaoMapEntry, BaoReadonlyDb,
-        CustomGetHandler, ProvideProgress, RequestAuthorizationHandler, ValidateProgress,
+        BaoMap, BaoMapEntry, BaoReadonlyDb, CustomGetHandler, ProvideProgress,
+        RequestAuthorizationHandler, ValidateProgress,
     },
     util::runtime,
     util::Hash,

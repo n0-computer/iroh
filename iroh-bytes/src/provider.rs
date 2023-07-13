@@ -14,12 +14,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
-use crate::Hash;
 use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
 use crate::util::RpcError;
+use crate::Hash;
 
 /// An entry for one hash in a bao collection
 ///

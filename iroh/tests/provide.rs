@@ -33,11 +33,12 @@ use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
+    collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{self, BaoReadonlyDb, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
-    Hash, collection::{CollectionParser, LinkStream, CollectionStats},
+    Hash,
 };
 
 /// Pick up the tokio runtime from the thread local and add a
