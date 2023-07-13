@@ -911,7 +911,6 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
 
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
-    use crate::database::flat::create_collection;
     use anyhow::bail;
     use futures::StreamExt;
     use std::collections::HashMap;
@@ -929,8 +928,8 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let (db, hashes) = crate::database::mem::Database::new([("test", b"hello")]);
+        let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)

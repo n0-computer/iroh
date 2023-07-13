@@ -450,13 +450,34 @@ async fn test_blob_reader_partial() -> Result<()> {
     Ok(())
 }
 
+/// create an in memory test database containing the given entries and an iroh collection of all entries
+///
+/// returns the database and the root hash of the collection
+fn create_test_db(
+    entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
+) -> (mem::Database, Hash) {
+    let (mut db, hashes) = iroh::database::mem::Database::new(entries);
+    let collection = Collection::new(
+        hashes
+            .into_iter()
+            .map(|(name, hash)| Blob {
+                name,
+                hash: hash.into(),
+            })
+            .collect(),
+        0,
+    )
+    .unwrap();
+    let hash = db.insert(collection.to_bytes().unwrap());
+    (db, hash)
+}
+
 #[tokio::test]
 async fn test_ipv6() {
     setup_logging();
     let rt = test_runtime();
 
-    let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-    let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let (db, hash) = create_test_db([("test", b"hello")]);
     let addr = (Ipv6Addr::UNSPECIFIED, 0).into();
     let node = match test_node(db, addr).runtime(&rt).spawn().await {
         Ok(provider) => provider,
@@ -481,8 +502,7 @@ async fn test_ipv6() {
 #[tokio::test]
 async fn test_run_ticket() {
     let rt = test_runtime();
-    let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-    let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let (db, hash) = create_test_db([("test", b"hello")]);
     let token = Some(RequestToken::generate());
     let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
     let node = test_node(db, addr)
@@ -591,8 +611,7 @@ async fn run_custom_get_request<C: CollectionParser>(
 #[tokio::test]
 async fn test_run_fsm() {
     let rt = test_runtime();
-    let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-    let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
     let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
     let node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
@@ -821,8 +840,8 @@ impl RequestAuthorizationHandler for CustomAuthHandler {
 #[tokio::test]
 async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
-    let readme = readme_path();
-    let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+    let expected = b"hello".to_vec();
+    let (db, hash) = create_test_db([("test", expected.clone())]);
     let addr = "0.0.0.0:0".parse().unwrap();
     let node = test_node(db, addr)
         .custom_auth_handler(Arc::new(CustomAuthHandler))
@@ -865,7 +884,6 @@ async fn test_token_passthrough() -> Result<()> {
         let opts = get_options(peer_id, addrs);
         let (_collection, items, _stats) = run_get_request(opts, request).await?;
         let actual = &items[&0];
-        let expected = tokio::fs::read(readme_path()).await?;
         assert_eq!(actual, &expected);
         anyhow::Ok(())
     })
