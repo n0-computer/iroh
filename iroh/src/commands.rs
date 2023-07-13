@@ -6,8 +6,9 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
-use iroh_bytes::{protocol::RequestToken, provider::Ticket, util::runtime, Hash};
+use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::RpcClient;
@@ -78,7 +79,7 @@ impl Cli {
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
                         hash,
-                        opts: iroh_bytes::get::Options {
+                        opts: iroh::dial::Options {
                             addrs,
                             peer_id: peer,
                             keylog: self.keylog,

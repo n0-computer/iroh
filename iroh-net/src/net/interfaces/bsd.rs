@@ -221,7 +221,7 @@ impl WireFormat {
         }
     }
 
-    #[cfg(any(target_os = "openbsd"))]
+    #[cfg(target_os = "openbsd")]
     fn parse(&self, typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
         // https://cs.opensource.google/go/x/net/+/master:route/route_openbsd.go
         todo!()

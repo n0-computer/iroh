@@ -18,10 +18,8 @@ use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
-use crate::util::{Hash, RpcError};
-mod ticket;
-
-pub use ticket::Ticket;
+use crate::util::RpcError;
+use crate::Hash;
 
 /// An entry for one hash in a bao collection
 ///
