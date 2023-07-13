@@ -228,25 +228,15 @@ impl Probe {
         };
 
         // TODO(@divma): remove hardcoded values
-        let local_id = std::net::Ipv4Addr::UNSPECIFIED;
+        let local_ip = std::net::Ipv4Addr::UNSPECIFIED;
         let gw: std::net::Ipv4Addr = [192, 168, 20, 1].into();
 
         let mut pcp_probing_task = util::MaybeFuture {
             inner: (enable_pcp && !pcp).then(|| {
                 Box::pin(async {
-                    // TODO(@divma): move error handling and logging to pxp
-                    match pcp::probe_available(local_id, gw).await {
-                        Ok(true) => Some(Instant::now()),
-                        Ok(false) => {
-                            // TODO(@divma): this needs to be fixed
-                            tracing::debug!("PCP probe was succesful but had a false result");
-                            None
-                        }
-                        Err(e) => {
-                            tracing::debug!("pcp probe failed {e}");
-                            None
-                        }
-                    }
+                    pcp::probe_available(local_ip, gw)
+                        .await
+                        .then(|| Instant::now())
                 })
             }),
         };
@@ -255,7 +245,7 @@ impl Probe {
             inner: (enable_pmp && !pmp).then(|| {
                 Box::pin(async {
                     // TODO(@divma): move error handling and logging to pxp
-                    match pmp::probe_available(local_id, gw).await {
+                    match pmp::probe_available(local_ip, gw).await {
                         Ok(true) => Some(Instant::now()),
                         Ok(false) => {
                             // TODO(@divma): this needs to be fixed

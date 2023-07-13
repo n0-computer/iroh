@@ -2,6 +2,8 @@
 
 use std::net::Ipv6Addr;
 
+use tracing::{debug, trace};
+
 // PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
 
@@ -213,7 +215,9 @@ impl MapData {
 ///
 // NOTE: Opcode response data and PCP Options are both optional, and currently not used in this
 // code, thus not implemented.
-#[derive(Debug)]
+// NOTE: last three fields are *currently* not used, but are useful for debug purposes
+#[allow(unused)]
+#[derive(derive_more::Debug)]
 pub struct Response {
     /// [`Version`] of the response.
     version: Version,
@@ -230,6 +234,7 @@ pub struct Response {
     /// Epoch time of the server.
     epoch_time: u32,
     // TODO(@divma): docs
+    #[debug("{}bytes", extra_data.len())]
     extra_data: Vec<u8>,
 }
 
@@ -432,30 +437,49 @@ impl TryFrom<u8> for ResultCode {
     }
 }
 
-// TODO(@divma): move to a better place
-pub async fn probe_available(
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ipv4Addr) -> bool {
+    debug!("starting pcp probe");
+    match probe_available_fallible(local_ip, gateway).await {
+        Ok(response) => {
+            trace!("pcp probe response: {response:?}");
+            match response.opcode {
+                Opcode::Announce => match response.result_code {
+                    ResultCode::Success => true,
+                    other => {
+                        // weird state here, since the server is not giving a positive result, but
+                        // it's seemingly available anyway
+                        debug!("pcp probe received error code: {other:?}");
+                        false
+                    }
+                },
+                _ => {
+                    debug!("pcp server returned an unexpected response type for probe");
+                    // missbehaving server is not useful
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            debug!("pcp probe failed: {e}");
+            false
+        }
+    }
+}
+
+async fn probe_available_fallible(
     local_ip: std::net::Ipv4Addr,
     gateway: std::net::Ipv4Addr,
-) -> anyhow::Result<bool> {
-    // TODO(@divma): here we likely want to keep both the server epoch so that previous probes
-    // identify loss of state
-    tracing::debug!("Starting pcp probe");
-    // TODO(@divma): do we want to keep this socket alive for more than the probe?
+) -> anyhow::Result<Response> {
     let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
     socket.connect((gateway, SERVER_PORT)).await?;
     let req = Request::annouce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
     let mut buffer = vec![0; MAX_RESP_SIZE];
-    socket.recv(&mut buffer).await?;
-    let response = Response::decode(&buffer)?;
-    tracing::debug!("received pcp response {response:?}");
-
-    // TODO(@divma): this needs better handling
-    // if the error code is unusupported version, the server sends the higher version is supports,
-    // not sure where this value is sent
-    let available =
-        response.opcode == Opcode::Announce && response.result_code == ResultCode::Success;
-    Ok(available)
+    let read = tokio::time::timeout(PROBE_TIMEOUT, socket.recv(&mut buffer)).await??;
+    let response = Response::decode(&buffer[..read])?;
+    Ok(response)
 }
 
 #[cfg(test)]
