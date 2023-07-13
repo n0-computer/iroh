@@ -4,7 +4,7 @@
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
 //! probes for HTTPS and ICMP exist as well.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -202,7 +202,7 @@ impl ProbePlan {
     /// Creates an initial probe plan.
     pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
-        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
+        let mut derp_nodes_cache = DerpNodeCache::new();
 
         for region in derp_map.regions.values() {
             let mut stun_ipv4_probes = ProbeSet::new(region.region_id, ProbeProto::StunIpv4);
@@ -210,10 +210,7 @@ impl ProbePlan {
 
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
-                let derp_node = derp_nodes_cache
-                    .entry(derp_node.name.clone())
-                    .or_insert_with(|| Arc::new(derp_node.clone()))
-                    .clone();
+                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 && derp_node.ipv4.is_enabled() {
@@ -241,10 +238,7 @@ impl ProbePlan {
             let mut icmp_probes = ProbeSet::new(region.region_id, ProbeProto::Icmp);
             for attempt in 0..3 {
                 let derp_node = &region.nodes[attempt % region.nodes.len()];
-                let derp_node = derp_nodes_cache
-                    .entry(derp_node.name.clone())
-                    .or_insert_with(|| Arc::new(derp_node.clone()))
-                    .clone();
+                let derp_node = derp_nodes_cache.get(derp_node);
                 let start = plan.max_delay() + DEFAULT_INITIAL_RETRANSMIT;
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
@@ -280,7 +274,7 @@ impl ProbePlan {
             return Self::initial(derp_map, if_state);
         }
         let mut plan = Self(Default::default());
-        let mut derp_nodes_cache: BTreeMap<String, Arc<DerpNode>> = BTreeMap::new();
+        let mut derp_nodes_cache = DerpNodeCache::new();
 
         let had_stun_ipv4 = !last_report.region_v4_latency.is_empty();
         let had_stun_ipv6 = !last_report.region_v6_latency.is_empty();
@@ -331,10 +325,7 @@ impl ProbePlan {
 
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
-                let derp_node = derp_nodes_cache
-                    .entry(derp_node.name.clone())
-                    .or_insert_with(|| Arc::new(derp_node.clone()))
-                    .clone();
+                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
@@ -363,10 +354,7 @@ impl ProbePlan {
             let start = plan.max_delay();
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
-                let derp_node = derp_nodes_cache
-                    .entry(derp_node.name.clone())
-                    .or_insert_with(|| Arc::new(derp_node.clone()))
-                    .clone();
+                let derp_node = derp_nodes_cache.get(derp_node);
                 let delay = start
                     + (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
@@ -441,6 +429,35 @@ impl fmt::Display for ProbePlan {
 impl FromIterator<ProbeSet> for ProbePlan {
     fn from_iter<T: IntoIterator<Item = ProbeSet>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
+    }
+}
+
+/// A cache to create [`DerpNode`]s on the heap and share them.
+///
+/// The probe code needs the [`DerpNode`] a lot and they need to be sent around.  It is
+/// better to allocate those on the heap and share them using pointers.
+#[derive(Debug, Default)]
+struct DerpNodeCache {
+    inner: BTreeSet<Arc<DerpNode>>,
+}
+
+impl DerpNodeCache {
+    fn new() -> Self {
+        Default::default()
+    }
+    /// Returns a [`DerpNode`] from the cache, inserting it if needed.
+    ///
+    /// This allows you to exchange a [`DerpNode`] retrieved from the [`DerpMap`] for one
+    /// from the cache.  Eventually the [`DerpMap`] should just do this directly.
+    fn get(&mut self, node: &DerpNode) -> Arc<DerpNode> {
+        match self.inner.get(node) {
+            Some(node) => node.clone(),
+            None => {
+                let node = Arc::new(node.clone());
+                self.inner.insert(node.clone());
+                node
+            }
+        }
     }
 }
 
