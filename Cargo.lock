@@ -391,9 +391,9 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbdb825da8a5df079a43676dbe042702f1707b1109f713a01420fbb4cc71fa27"
+checksum = "2cfa25e60aea747ec7e1124f238816749faa93759c6ff5b31f1ccdda137f4479"
 dependencies = [
  "serde",
 ]
@@ -751,14 +751,14 @@ dependencies = [
 
 [[package]]
 name = "default-net"
-version = "0.15.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b06254cc7a9b82a9e3e78849eab1af3dbef006bf629b2928b882534d84ded6b9"
+checksum = "ae47401ee27418babbf80e20de5ff240a19c850ec6000326342cdb198b341687"
 dependencies = [
  "dlopen2",
  "libc",
  "memalloc",
- "netlink-packet-core 0.5.0",
+ "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
  "once_cell",
@@ -870,25 +870,13 @@ dependencies = [
 
 [[package]]
 name = "dlopen2"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b121caccfc363e4d9a4589528f3bef7c71b83c6ed01c8dc68cbeeb7fd29ec698"
+checksum = "09b4f5f101177ff01b8ec4ecc81eead416a8aa42819a2869311b3420fa114ffa"
 dependencies = [
- "dlopen2_derive",
  "libc",
  "once_cell",
  "winapi",
-]
-
-[[package]]
-name = "dlopen2_derive"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a09ac8bb8c16a282264c379dffba707b9c998afc7506009137f3c6136888078"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2002,18 +1990,6 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-core"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e5cf0b54effda4b91615c40ff0fd12d0d4c9a6e0f5116874f03941792ff535a"
-dependencies = [
- "anyhow",
- "byteorder",
- "libc",
- "netlink-packet-utils",
-]
-
-[[package]]
-name = "netlink-packet-core"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72724faf704479d67b388da142b186f916188505e7e0b26719019c525882eda4"
@@ -2025,15 +2001,15 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-route"
-version = "0.15.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea993e32c77d87f01236c38f572ecb6c311d592e56a06262a007fd2a6e31253c"
+checksum = "f6de2fe935f44cbdfcab77dce2150d68eda75be715cd42d4d6f52b0bd4dcc5b1"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
  "byteorder",
  "libc",
- "netlink-packet-core 0.5.0",
+ "netlink-packet-core",
  "netlink-packet-utils",
 ]
 
@@ -2058,7 +2034,7 @@ dependencies = [
  "bytes",
  "futures",
  "log",
- "netlink-packet-core 0.7.0",
+ "netlink-packet-core",
  "netlink-sys",
  "thiserror",
  "tokio",
@@ -3114,13 +3090,13 @@ dependencies = [
 
 [[package]]
 name = "rtnetlink"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed7d42da676fdf7e470e2502717587dd1089d8b48d9d1b846dcc3c01072858cb"
+checksum = "6333af2adba73478936174a0ef3edf05fbfa058539c21d567344a53bb6d75cfd"
 dependencies = [
  "futures",
  "log",
- "netlink-packet-core 0.5.0",
+ "netlink-packet-core",
  "netlink-packet-route",
  "netlink-packet-utils",
  "netlink-proto",
@@ -3465,6 +3441,15 @@ checksum = "b0d94659ad3c2137fef23ae75b03d5241d633f8acded53d672decfa0e6e0caef"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8229b473baa5980ac72ef434c4415e70c4b5e71b423043adb4ba059f89c99a1"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -3876,6 +3861,7 @@ dependencies = [
  "mio",
  "num_cpus",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2 0.4.9",
  "tokio-macros",
  "windows-sys 0.48.0",
