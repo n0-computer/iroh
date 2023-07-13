@@ -255,8 +255,10 @@ impl EndpointUpdateState {
 impl Conn {
     /// Creates a magic `Conn` listening on `opts.port`.
     ///
-    /// As the set of possible endpoints for a Conn changes, the callback
-    /// [`Options::EndpointsFunc`] is called.
+    /// As the set of possible endpoints for a Conn changes, the [`Callbacks::on_endpoints`]
+    /// callback of [`Options::callbacks`] is called.
+    ///
+    /// [`Callbacks::on_endpoint`]: crate::hp::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
         let name = format!(
             "magic-{}",
