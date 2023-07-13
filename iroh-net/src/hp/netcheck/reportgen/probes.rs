@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
@@ -153,9 +153,7 @@ impl ProbeSet {
     }
 
     fn push(&mut self, probe: Probe) -> Result<()> {
-        if probe.proto() != self.proto {
-            bail!("mismatching probe proto");
-        }
+        ensure!(probe.proto() == self.proto, "mismatching probe proto");
         self.probes.push(probe);
         Ok(())
     }
