@@ -102,6 +102,18 @@ pub enum Commands {
         #[clap(long)]
         local_derper: bool,
     },
+    /// Probe the port mapping protocols.
+    PortMapProbe {
+        /// Whether to enable UPnP.
+        #[clap(long)]
+        enable_upnp: bool,
+        /// Whether to enable PCP.
+        #[clap(long)]
+        enable_pcp: bool,
+        /// Whether to enable PMP.
+        #[clap(long)]
+        enable_pmp: bool,
+    },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
         /// Local port to get a mapping.
@@ -600,6 +612,15 @@ async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<(
     }
 }
 
+async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
+    println!("probing port mapping protocols with {config:?}");
+    let port_mapper = portmapper::Client::new(config).await;
+    let probe_rx = port_mapper.probe();
+    let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
+    println!("{probe}");
+    Ok(())
+}
+
 fn create_secret_key(private_key: PrivateKey) -> anyhow::Result<SecretKey> {
     Ok(match private_key {
         PrivateKey::Random => SecretKey::generate(),
@@ -665,5 +686,18 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             local_port,
             timeout_secs,
         } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
+        Commands::PortMapProbe {
+            enable_upnp,
+            enable_pcp,
+            enable_pmp,
+        } => {
+            let config = portmapper::Config {
+                enable_upnp,
+                enable_pcp,
+                enable_pmp,
+            };
+
+            port_map_probe(config).await
+        }
     }
 }
