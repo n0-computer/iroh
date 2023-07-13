@@ -258,6 +258,7 @@ impl<T> Clone for Progress<T> {
 
 impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
     /// Create a new progress sender.
+    #[allow(dead_code)]
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
@@ -297,6 +298,7 @@ pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
 }
 
 impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    #[allow(dead_code)]
     pub fn new(inner: R, cb: F) -> Self {
         Self {
             inner,

@@ -129,7 +129,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
 }
 
 impl<D: BaoMap> Builder<D> {
-    /// Creates a new builder for [`Node`] using the given [`Database`].
+    /// Creates a new builder for [`Node`] using the given database.
     fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
@@ -450,6 +450,7 @@ impl Callbacks {
         self.0.write().await.push(cb);
     }
 
+    #[allow(dead_code)]
     async fn send(&self, event: Event) {
         let cbs = self.0.read().await;
         for cb in &*cbs {
@@ -495,6 +496,7 @@ struct NodeInner<D> {
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    #[allow(dead_code)]
     callbacks: Callbacks,
     rt: runtime::Handle,
 }
