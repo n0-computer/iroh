@@ -249,7 +249,7 @@ impl Client {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
-                derp_map: dm.clone(),
+                derp_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
                 response_tx: tx,
