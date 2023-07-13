@@ -225,7 +225,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 println!("> aborted");
             }
-            res = handle_command(cmd, &doc, &log_filter) => if let Err(err) = res {
+            res = handle_command(cmd, &doc, &our_ticket, &log_filter) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -244,7 +244,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_command(cmd: Cmd, doc: &Doc, log_filter: &LogLevelReload) -> anyhow::Result<()> {
+async fn handle_command(cmd: Cmd, doc: &Doc, ticket: &Ticket, log_filter: &LogLevelReload) -> anyhow::Result<()> {
     match cmd {
         Cmd::Set { key, value } => {
             doc.insert_bytes(&key, value.into_bytes().into()).await?;
@@ -267,6 +267,9 @@ async fn handle_command(cmd: Cmd, doc: &Doc, log_filter: &LogLevelReload) -> any
             for (_id, entry) in entries {
                 println!("{}", fmt_entry(&entry),);
             }
+        }
+        Cmd::Ticket => {
+            println!("Ticket: {ticket}");
         }
         Cmd::Log { directive } => {
             let next_filter = EnvFilter::from_str(&directive)?;
@@ -301,6 +304,8 @@ pub enum Cmd {
         /// Optionally list only entries whose key starts with PREFIX.
         prefix: Option<String>,
     },
+    /// Print the ticket with which other peers can join our document.
+    Ticket,
     /// Change the log level
     Log {
         /// The log level or log filtering directive
@@ -449,7 +454,6 @@ fn init_logging() -> LogLevelReload {
         .init();
     reload_handle
 }
-
 
 // helpers
 
