@@ -440,29 +440,29 @@ impl TryFrom<u8> for ResultCode {
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub async fn probe_available(local_ip: std::net::Ipv4Addr, gateway: std::net::Ipv4Addr) -> bool {
-    debug!("starting pcp probe");
+    debug!("starting probe");
     match probe_available_fallible(local_ip, gateway).await {
         Ok(response) => {
-            trace!("pcp probe response: {response:?}");
+            trace!("probe response: {response:?}");
             match response.opcode {
                 Opcode::Announce => match response.result_code {
                     ResultCode::Success => true,
                     other => {
                         // weird state here, since the server is not giving a positive result, but
                         // it's seemingly available anyway
-                        debug!("pcp probe received error code: {other:?}");
+                        debug!("probe received error code: {other:?}");
                         false
                     }
                 },
                 _ => {
-                    debug!("pcp server returned an unexpected response type for probe");
+                    debug!("server returned an unexpected response type for probe");
                     // missbehaving server is not useful
                     false
                 }
             }
         }
         Err(e) => {
-            debug!("pcp probe failed: {e}");
+            debug!("probe failed: {e}");
             false
         }
     }
