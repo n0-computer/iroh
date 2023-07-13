@@ -5,7 +5,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, result, str::FromStr};
 use thiserror::Error;
 pub mod io;
-pub mod progress;
+pub mod runtime;
 
 /// Hash type used throught.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
@@ -231,10 +231,5 @@ mod tests {
 
         let encoded = hash.to_string();
         assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
-    }
-
-    #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(io::canonicalize_path("foo/bar").unwrap(), "foo/bar");
     }
 }
