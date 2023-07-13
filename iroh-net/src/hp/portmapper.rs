@@ -1,7 +1,7 @@
 //! Port mapping client and service.
 
 use std::{
-    net::SocketAddrV4,
+    net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
     time::{Duration, Instant},
 };
@@ -13,7 +13,7 @@ use tracing::{debug, trace};
 
 use iroh_metrics::{inc, portmap::Metrics};
 
-use crate::util;
+use crate::{net::interfaces::HomeRouter, util};
 
 use mapping::CurrentMapping;
 
@@ -209,7 +209,12 @@ struct Probe {
 
 impl Probe {
     /// Create a new probe based on a previous output.
-    async fn new(config: Config, output: ProbeOutput) -> Probe {
+    async fn new(
+        config: Config,
+        output: ProbeOutput,
+        local_ip: Ipv4Addr,
+        gateway: Ipv4Addr,
+    ) -> Probe {
         tracing::debug!("Starting portmapping probe");
         let ProbeOutput { upnp, pcp, pmp } = output;
         let Config {
@@ -227,14 +232,10 @@ impl Probe {
             }),
         };
 
-        // TODO(@divma): remove hardcoded values
-        let local_ip = std::net::Ipv4Addr::UNSPECIFIED;
-        let gw: std::net::Ipv4Addr = [192, 168, 20, 1].into();
-
         let mut pcp_probing_task = util::MaybeFuture {
             inner: (enable_pcp && !pcp).then(|| {
                 Box::pin(async {
-                    pcp::probe_available(local_ip, gw)
+                    pcp::probe_available(local_ip, gateway)
                         .await
                         .then(|| Instant::now())
                 })
@@ -245,7 +246,7 @@ impl Probe {
             inner: (enable_pmp && !pmp).then(|| {
                 Box::pin(async {
                     // TODO(@divma): move error handling and logging to pxp
-                    match pmp::probe_available(local_ip, gw).await {
+                    match pmp::probe_available(local_ip, gateway).await {
                         Ok(true) => Some(Instant::now()),
                         Ok(false) => {
                             // TODO(@divma): this needs to be fixed
@@ -602,13 +603,51 @@ impl Service {
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
                     inc!(Metrics, probes_started);
+
+                    let (local_ip, gateway) = match ip_and_gateway() {
+                        Ok(ip_and_gw) => ip_and_gw,
+                        Err(e) => {
+                            // there is no guarantee this will be displayed, so log it anyway
+                            debug!("could not start probe: {e}");
+                            let _ = result_tx.send(Err(e.to_string()));
+                            // TODO(@divma): metrics
+                            // inc!(Metrics, probes_failed);
+                            return;
+                        }
+                    };
+
                     let config = self.config.clone();
-                    let handle =
-                        tokio::spawn(async move { Probe::new(config, probe_output).await });
+                    let handle = tokio::spawn(async move {
+                        Probe::new(config, probe_output, local_ip, gateway).await
+                    });
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
                 }
             }
         }
     }
+}
+
+fn ip_and_gateway() -> Result<(Ipv4Addr, Ipv4Addr)> {
+    let Some(HomeRouter { gateway, my_ip }) = HomeRouter::new() else {
+        anyhow::bail!("no gateway found for probe");
+    };
+
+    let local_ip = match my_ip {
+        Some(std::net::IpAddr::V4(ip))
+            if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() =>
+        {
+            ip
+        }
+        other => {
+            debug!("no address suitable for port mapping found ({other:?}), using localhost");
+            Ipv4Addr::LOCALHOST
+        }
+    };
+
+    let std::net::IpAddr::V4(gateway) = gateway else {
+        anyhow::bail!("gateway found is ipv6, ignoring");
+    };
+
+    Ok((local_ip, gateway))
 }
