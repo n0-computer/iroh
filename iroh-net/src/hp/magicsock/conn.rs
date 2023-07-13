@@ -262,7 +262,7 @@ impl Conn {
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
 
-        let port_mapper = portmapper::Client::new().await;
+        let port_mapper = portmapper::Client::default().await;
 
         let Options {
             port,

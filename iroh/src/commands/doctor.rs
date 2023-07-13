@@ -205,7 +205,7 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::new().await;
+    let port_mapper = hp::portmapper::Client::default().await;
     let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = match stun_host {
@@ -580,7 +580,7 @@ async fn accept(
 }
 
 async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::new().await;
+    let port_mapper = portmapper::Client::default().await;
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 

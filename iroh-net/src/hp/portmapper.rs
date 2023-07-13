@@ -69,6 +69,29 @@ enum Message {
     },
 }
 
+/// Configures which port mapping protocols are enabled in the [`Service`].
+// TODO(@divma): apply configurations to mappings
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Whether UPnP is enabled.
+    pub enable_upnp: bool,
+    /// Whether PCP is enabled.
+    pub enable_pcp: bool,
+    /// Whether PMP is enabled.
+    pub enable_pmp: bool,
+}
+
+impl Default for Config {
+    /// By default all port mapping protocols are enabled.
+    fn default() -> Self {
+        Config {
+            enable_upnp: true,
+            enable_pcp: true,
+            enable_pmp: true,
+        }
+    }
+}
+
 /// Port mapping client.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -83,11 +106,18 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a client that uses the default configuration.
+    ///
+    /// See [`Config::default`].
+    pub async fn default() -> Self {
+        Self::new(Config::default()).await
+    }
+
     /// Create a new port mapping client.
-    pub async fn new() -> Self {
+    pub async fn new(config: Config) -> Self {
         let (service_tx, service_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
 
-        let (service, watcher) = Service::new(service_rx);
+        let (service, watcher) = Service::new(config, service_rx);
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
@@ -179,11 +209,16 @@ struct Probe {
 
 impl Probe {
     /// Create a new probe based on a previous output.
-    async fn new(output: ProbeOutput) -> Probe {
+    async fn new(config: Config, output: ProbeOutput) -> Probe {
         tracing::debug!("Starting portmapping probe");
         let ProbeOutput { upnp, pcp, pmp } = output;
+        let Config {
+            enable_upnp,
+            enable_pcp,
+            enable_pmp,
+        } = config;
         let mut upnp_probing_task = util::MaybeFuture {
-            inner: (!upnp).then(|| {
+            inner: (enable_upnp && !upnp).then(|| {
                 Box::pin(async {
                     upnp::probe_available()
                         .await
@@ -197,7 +232,7 @@ impl Probe {
         let gw: std::net::Ipv4Addr = [192, 168, 20, 1].into();
 
         let mut pcp_probing_task = util::MaybeFuture {
-            inner: (!pcp).then(|| {
+            inner: (enable_pcp && !pcp).then(|| {
                 Box::pin(async {
                     // TODO(@divma): move error handling and logging to pxp
                     match pcp::probe_available(local_id, gw).await {
@@ -217,7 +252,7 @@ impl Probe {
         };
 
         let mut pmp_probing_task = util::MaybeFuture {
-            inner: (!pmp).then(|| {
+            inner: (enable_pmp && !pmp).then(|| {
                 Box::pin(async {
                     // TODO(@divma): move error handling and logging to pxp
                     match pmp::probe_available(local_id, gw).await {
@@ -340,6 +375,7 @@ type ProbeResult = Result<ProbeOutput, String>;
 /// A port mapping client.
 #[derive(Debug)]
 pub struct Service {
+    config: Config,
     /// Local port to map.
     local_port: Option<NonZeroU16>,
     /// Channel over which the service is informed of messages.
@@ -366,9 +402,13 @@ pub struct Service {
 }
 
 impl Service {
-    fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
+    fn new(
+        config: Config,
+        rx: mpsc::Receiver<Message>,
+    ) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new();
         let service = Service {
+            config,
             local_port: None,
             rx,
             current_mapping,
@@ -572,7 +612,9 @@ impl Service {
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
                     inc!(Metrics, probes_started);
-                    let handle = tokio::spawn(async move { Probe::new(probe_output).await });
+                    let config = self.config.clone();
+                    let handle =
+                        tokio::spawn(async move { Probe::new(config, probe_output).await });
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
                 }
