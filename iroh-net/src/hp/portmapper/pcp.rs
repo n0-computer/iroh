@@ -121,15 +121,90 @@ pub enum ResultCode {
 // code, thus not implemented.
 pub struct Request {
     /// [`Version`] to use in this request.
-    pub version: Version,
-    /// [`Opcode`] of this request.
-    pub opcode: Opcode,
+    version: Version,
     /// Requested lifetime in seconds used by the [`Request::opcode`].
-    pub lifetime_seconds: u32,
+    lifetime_seconds: u32,
     /// IP Address of the client.
     ///
     /// If the IP is an IpV4 address, is represented as a IpV4-mapped IpV6 address.
-    pub client_addr: Ipv6Addr,
+    client_addr: Ipv6Addr,
+    // TODO(@divma): docs
+    opcode_data: OpcodeData,
+    // TODO(@divma): docs
+    pcp_options: Vec<u8>,
+}
+
+// TODO(@divma): docs
+// NOTE: technically any IANA protocol is allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Protocol {
+    Udp = 17,
+}
+
+pub enum OpcodeData {
+    Annouce,
+    MapData(MapData),
+}
+
+impl OpcodeData {
+    pub fn opcode(&self) -> Opcode {
+        match self {
+            OpcodeData::Annouce => Opcode::Announce,
+            OpcodeData::MapData(_) => Opcode::Map,
+        }
+    }
+
+    pub fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            OpcodeData::Annouce => {}
+            OpcodeData::MapData(map_data) => buf.extend_from_slice(&map_data.encode()),
+        }
+    }
+
+    pub const fn encoded_size(&self) -> usize {
+        match self {
+            OpcodeData::Annouce => 0,
+            OpcodeData::MapData(_) => MapData::ENCODED_SIZE,
+        }
+    }
+}
+
+pub struct MapData {
+    nonce: [u8; 12],
+    protocol: Protocol,
+    local_port: u16,
+    preferred_external_port: u16,
+    preferred_external_address: Ipv6Addr,
+}
+
+impl MapData {
+    /// Size of the opcode-specific data of a [`Opcode::Map`] request.
+    // NOTE: 12bytes for the nonce +
+    //       1byte for the protocol +
+    //       3bytes reserved +
+    //       2bytes for the local port +
+    //       2 butes for the external port +
+    //       16bytes for the external address
+    pub const ENCODED_SIZE: usize = 12 + 1 + 3 + 2 + 2 + 16;
+    pub fn encode(&self) -> [u8; Self::ENCODED_SIZE] {
+        let MapData {
+            nonce,
+            protocol,
+            local_port,
+            preferred_external_port,
+            preferred_external_address,
+        } = self;
+        let mut buf = [0; Self::ENCODED_SIZE];
+        buf[0..12].copy_from_slice(nonce);
+        buf[12] = *protocol as u8;
+        // buf[13..16] reserved
+        buf[16..18].copy_from_slice(&local_port.to_be_bytes());
+        buf[18..20].copy_from_slice(&preferred_external_port.to_be_bytes());
+        buf[20..].copy_from_slice(&preferred_external_address.octets());
+
+        buf
+    }
 }
 
 /// A PCP Response/Notification.
@@ -141,40 +216,88 @@ pub struct Request {
 #[derive(Debug)]
 pub struct Response {
     /// [`Version`] of the response.
-    pub version: Version,
+    version: Version,
     /// [`Opcode`] of the [`Request`] that related to this response.
-    pub opcode: Opcode,
+    opcode: Opcode,
     /// [`ResultCode`] of the response.
-    pub result_code: ResultCode,
+    result_code: ResultCode,
     /// Lifetime in seconds that can be assumed by this response.
     ///
     /// For sucessful requests, this lifetime is how long to assume a mapping will last. For error
     /// responses, the lifetime indicates how long will the server return the same response for
     /// this response.
-    pub lifetime_seconds: u32,
+    lifetime_seconds: u32,
     /// Epoch time of the server.
-    pub epoch_time: u32,
+    epoch_time: u32,
+    // TODO(@divma): docs
+    extra_data: Vec<u8>,
 }
 
 impl Request {
-    pub fn encode(&self) -> [u8; REQ_SIZE] {
-        let mut buf = [0; REQ_SIZE];
-        buf[0] = self.version as u8;
-        buf[1] = self.opcode as u8;
+    pub fn encode(&self) -> Vec<u8> {
+        let Request {
+            version,
+            lifetime_seconds,
+            client_addr,
+            opcode_data,
+            pcp_options,
+        } = self;
+        let mut buf = Vec::with_capacity(REQ_SIZE + opcode_data.encoded_size());
+        // buf[0]
+        buf.push(*version as u8);
+        // buf[1]
+        buf.push(opcode_data.opcode() as u8);
         // buf[2] reserved
+        buf.push(0);
         // buf[3] reserved
-        buf[4..8].copy_from_slice(&self.lifetime_seconds.to_be_bytes());
-        buf[8..].copy_from_slice(&self.client_addr.octets());
+        buf.push(0);
+        // buf[4..8]
+        buf.extend_from_slice(&lifetime_seconds.to_be_bytes());
+        // buf[8..12]
+        buf.extend_from_slice(&client_addr.octets());
+        // buf[12..]
+        opcode_data.encode_into(&mut buf);
+        buf.extend_from_slice(pcp_options);
+
         buf
     }
 
     pub fn annouce(client_addr: Ipv6Addr) -> Request {
-        // opcode announce requires a lifetime of 0 and to ignore the lifetime on response
         Request {
             version: Version::Pcp,
-            opcode: Opcode::Announce,
+            // opcode announce requires a lifetime of 0 and to ignore the lifetime on response
             lifetime_seconds: 0,
             client_addr,
+            // the pcp announce opcode requests and responses have no opcode-specific payload
+            opcode_data: OpcodeData::Annouce,
+            pcp_options: vec![],
+        }
+    }
+
+    pub fn get_mapping(
+        nonce: [u8; 12],
+        lifetime_seconds: std::num::NonZeroU32,
+        local_port: u16,
+        local_ip: std::net::Ipv4Addr,
+        preferred_external_port: Option<u16>,
+        preferred_external_address: Option<std::net::Ipv4Addr>,
+    ) -> Request {
+        Request {
+            version: Version::Pcp,
+            lifetime_seconds: lifetime_seconds.into(),
+            client_addr: local_ip.to_ipv6_mapped(),
+            opcode_data: OpcodeData::MapData(MapData {
+                nonce,
+                protocol: Protocol::Udp,
+                local_port,
+                // if the pcp client does not know the external port, or does not have a
+                // preference, it must use 0.
+                preferred_external_port: preferred_external_port.unwrap_or_default(),
+                preferred_external_address: preferred_external_address
+                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED)
+                    .to_ipv6_mapped(),
+            }),
+            pcp_options: vec![],
         }
     }
 }
@@ -221,21 +344,23 @@ impl From<InvalidResultCode> for DecodeError {
 impl Response {
     // TODO(@divma): from_bytes?
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
-        if buf.len() < MIN_RESP_SIZE {
+        if buf.len() < MIN_RESP_SIZE || buf.len() > MAX_RESP_SIZE {
             return Err(DecodeError::Malformed);
         }
         let version: Version = buf[0].try_into()?;
         let opcode = buf[1];
-        // buf[2] reserved
         if !(opcode & RESPONSE_INDICATOR == RESPONSE_INDICATOR) {
             return Err(DecodeError::NotAResponse);
         }
         let opcode = (opcode & !RESPONSE_INDICATOR).try_into()?;
+        // buf[2] reserved
         let result_code = buf[3].try_into()?;
         let lifetime_bytes = buf[4..8].try_into().expect("slice has the right len");
         let lifetime_seconds = u32::from_be_bytes(lifetime_bytes);
         let epoch_bytes = buf[8..12].try_into().expect("slice has the right len");
         let epoch_time = u32::from_be_bytes(epoch_bytes);
+        // buf[12..24] reserved
+        let extra_data = buf[12..].into();
 
         Ok(Response {
             version,
@@ -243,6 +368,7 @@ impl Response {
             result_code,
             lifetime_seconds,
             epoch_time,
+            extra_data,
         })
     }
 }
