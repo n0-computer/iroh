@@ -8,11 +8,15 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use iroh::{
-    database::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
+use iroh_bytes::{
+    database::{Database, FNAME_PATHS},
+    protocol::RequestToken,
+    provider::BaoReadonlyDb,
+    util::runtime,
+};
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 

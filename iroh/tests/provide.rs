@@ -13,8 +13,10 @@ use futures::{
     FutureExt,
 };
 use iroh::{
-    blobs::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
-    database::{create_collection, DataSource, Database, InMemDatabase},
+    bytes::database::{
+        create_collection, ArrayLinkStream, Blob, Collection, DataSource, Database, InMemDatabase,
+        IrohCollectionParser,
+    },
     node::{Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};

@@ -45,15 +45,15 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::blobs::{Collection, IrohCollectionParser};
-use crate::database::{create_data_sources, Database};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
     ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::util::progress::Progress;
+use iroh_bytes::database::{create_data_sources, Database};
+use iroh_bytes::database::{Collection, IrohCollectionParser};
+use iroh_bytes::util::progress::Progress;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -684,7 +684,8 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         // create the collection
         // todo: provide feedback for progress
         let (db, hash) =
-            crate::database::create_collection_inner(data_sources, Progress::new(progress)).await?;
+            iroh_bytes::database::create_collection_inner(data_sources, Progress::new(progress))
+                .await?;
 
         // todo: generify this
         // for now provide will only work if D is a Database
@@ -877,7 +878,7 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = crate::database::create_collection(vec![readme.into()])
+        let (db, hash) = iroh_bytes::database::create_collection(vec![readme.into()])
             .await
             .unwrap();
         let node = Node::builder(db)

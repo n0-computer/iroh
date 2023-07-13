@@ -1,11 +1,11 @@
 //! Types for blobs and collections of blobs
+use crate::collection::{CollectionParser, CollectionStats, LinkStream};
+use crate::Hash;
 use anyhow::{Context, Result};
 use futures::{
     future::{self, LocalBoxFuture},
     FutureExt,
 };
-use iroh_bytes::collection::{CollectionParser, CollectionStats, LinkStream};
-use iroh_bytes::Hash;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use serde::{Deserialize, Serialize};
 

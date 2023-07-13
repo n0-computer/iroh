@@ -1,138 +1,35 @@
 //! The concrete database used by the iroh binary.
+use crate::database::Blob;
+use crate::protocol::{RangeSpecSeq, MAX_MESSAGE_SIZE};
+use crate::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
+use crate::provider::{ProvideProgress, ValidateProgress};
+use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
+use crate::{Hash, IROH_BLOCK_SIZE};
 use anyhow::Context;
-use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
+use bao_tree::io::sync::encode_ranges_validated;
+use bao_tree::io::sync::{ReadAt, Size};
+use bao_tree::io::EncodeError;
+use bao_tree::{ByteNum, ChunkNum};
 use bytes::Bytes;
+use derive_more::Display;
+use futures::future::BoxFuture;
 use futures::future::Either;
-use futures::future::{self, BoxFuture};
 use futures::{Future, FutureExt, StreamExt};
-use iroh_bytes::protocol::MAX_MESSAGE_SIZE;
-use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
-use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
-use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
+use range_collections::RangeSet2;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashMap};
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::{fmt, io, result};
+use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{trace, trace_span};
 use walkdir::WalkDir;
 
-use crate::blobs::Blob;
-use crate::blobs::Collection;
-use crate::util::canonicalize_path;
-use crate::util::io::validate_bao;
-use crate::util::io::BaoValidationError;
-use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
-
-/// An in memory implementation of [BaoMap] and [BaoReadonlyDb], useful for
-/// testing and short lived nodes.
-#[derive(Debug, Clone, Default)]
-pub struct InMemDatabase(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
-
-impl InMemDatabase {
-    /// Create a new [InMemDatabase] from a sequence of entries.
-    ///
-    /// Returns the database and a map of names to computed blake3 hashes.
-    /// In case of duplicate names, the last entry is used.
-    pub fn new(
-        entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-    ) -> (Self, BTreeMap<String, blake3::Hash>) {
-        let mut names = BTreeMap::new();
-        let mut res = HashMap::new();
-        for (name, data) in entries.into_iter() {
-            let name = name.into();
-            let data: &[u8] = data.as_ref();
-            // compute the outboard
-            let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-            // add the name, this assumes that names are unique
-            names.insert(name, hash);
-            // wrap into the right types
-            let outboard =
-                PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
-            let data = Bytes::from(data.to_vec());
-            let hash = Hash::from(hash);
-            res.insert(hash, (outboard, data));
-        }
-        (Self(Arc::new(res)), names)
-    }
-
-    /// Insert a new entry into the database, and return the hash of the entry.
-    pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
-        let inner = Arc::make_mut(&mut self.0);
-        let data: &[u8] = data.as_ref();
-        // compute the outboard
-        let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-        // wrap into the right types
-        let outboard = PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
-        let data = Bytes::from(data.to_vec());
-        let hash = Hash::from(hash);
-        inner.insert(hash, (outboard, data));
-        hash
-    }
-
-    /// Get the bytes associated with a hash, if they exist.
-    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
-        let entry = self.0.get(hash)?;
-        Some(entry.1.clone())
-    }
-}
-
-/// The [BaoMapEntry] implementation for [InMemDatabase].
-#[derive(Debug, Clone)]
-pub struct InMemDatabaseEntry {
-    outboard: PreOrderMemOutboard<Bytes>,
-    data: Bytes,
-}
-
-impl BaoMapEntry<InMemDatabase> for InMemDatabaseEntry {
-    fn hash(&self) -> blake3::Hash {
-        self.outboard.root()
-    }
-
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
-    }
-
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
-        futures::future::ok(self.data.clone()).boxed()
-    }
-}
-
-impl BaoMap for InMemDatabase {
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Bytes;
-    type Entry = InMemDatabaseEntry;
-
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let (o, d) = self.0.get(hash)?;
-        Some(InMemDatabaseEntry {
-            outboard: o.clone(),
-            data: d.clone(),
-        })
-    }
-}
-
-impl BaoReadonlyDb for InMemDatabase {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
-    }
-
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
-    }
-
-    fn validate(
-        &self,
-        _tx: mpsc::Sender<ValidateProgress>,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        future::ok(()).boxed()
-    }
-}
+use super::Collection;
 
 /// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
 const FNAME_OUTBOARDS: &str = "outboards";
@@ -780,6 +677,15 @@ impl From<&std::path::Path> for DataSource {
     }
 }
 
+/// Create a pathbuf from a name.
+pub fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
+    }
+    path
+}
+
 /// Create data sources from a path.
 pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
     Ok(if root.is_dir() {
@@ -1007,6 +913,244 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> anyhow::Result<
     Ok((Database::from(db), hash))
 }
 
+/// Get missing range for a single file, given a temp and target directory
+///
+/// This will check missing ranges from the outboard, but for the data file itself
+/// just use the length of the file.
+pub fn get_missing_range(
+    hash: &Hash,
+    name: &str,
+    temp_dir: &Path,
+    target_dir: &Path,
+) -> std::io::Result<RangeSet2<ChunkNum>> {
+    if target_dir.exists() && !temp_dir.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Target directory exists but does not contain temp directory",
+        ));
+    }
+    let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
+    Ok(range)
+}
+
+/// Get missing range for a single file
+fn get_missing_range_impl(
+    hash: &Hash,
+    name: &str,
+    temp_dir: &Path,
+    target_dir: &Path,
+) -> std::io::Result<RangeSet2<ChunkNum>> {
+    let paths = FilePaths::new(hash, name, temp_dir, target_dir);
+    Ok(if paths.is_final() {
+        tracing::debug!("Found final file: {:?}", paths.target);
+        // we assume that the file is correct
+        RangeSet2::empty()
+    } else if paths.is_incomplete() {
+        tracing::debug!("Found incomplete file: {:?}", paths.temp);
+        // we got incomplete data
+        let outboard = std::fs::read(&paths.outboard)?;
+        let outboard = PreOrderMemOutboard::new((*hash).into(), IROH_BLOCK_SIZE, outboard);
+        match outboard {
+            Ok(outboard) => {
+                // compute set of valid ranges from the outboard and the file
+                //
+                // We assume that the file is correct and does not contain holes.
+                // Otherwise, we would have to rehash the file.
+                //
+                // Do a quick check of the outboard in case something went wrong when writing.
+                let mut valid = bao_tree::io::sync::valid_ranges(&outboard)?;
+                let valid_from_file =
+                    RangeSet2::from(..ByteNum(paths.temp.metadata()?.len()).full_chunks());
+                tracing::debug!("valid_from_file: {:?}", valid_from_file);
+                tracing::debug!("valid_from_outboard: {:?}", valid);
+                valid &= valid_from_file;
+                RangeSet2::all().difference(&valid)
+            }
+            Err(cause) => {
+                tracing::debug!("Outboard damaged, assuming missing {cause:?}");
+                // the outboard is invalid, so we assume that the file is missing
+                RangeSet2::all()
+            }
+        }
+    } else {
+        tracing::debug!("Found missing file: {:?}", paths.target);
+        // we don't know anything about this file, so we assume it's missing
+        RangeSet2::all()
+    })
+}
+
+/// Given a target directory and a temp directory, get a set of ranges that we are missing
+///
+/// Assumes that the temp directory contains at least the data for the collection.
+/// Also assumes that partial data files do not contain gaps.
+pub fn get_missing_ranges(
+    hash: Hash,
+    target_dir: &Path,
+    temp_dir: &Path,
+) -> anyhow::Result<(RangeSpecSeq, Option<Collection>)> {
+    if target_dir.exists() && !temp_dir.exists() {
+        // target directory exists yet does not contain the temp dir
+        // refuse to continue
+        anyhow::bail!("Target directory exists but does not contain temp directory");
+    }
+    // try to load the collection from the temp directory
+    //
+    // if the collection can not be deserialized, we treat it as if it does not exist
+    let collection = load_collection(temp_dir, hash).ok().flatten();
+    let collection = match collection {
+        Some(collection) => collection,
+        None => return Ok((RangeSpecSeq::all(), None)),
+    };
+    let mut ranges = collection
+        .blobs()
+        .iter()
+        .map(|blob| get_missing_range_impl(&blob.hash, blob.name.as_str(), temp_dir, target_dir))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    ranges
+        .iter()
+        .zip(collection.blobs())
+        .for_each(|(ranges, blob)| {
+            if ranges.is_empty() {
+                tracing::debug!("{} is complete", blob.name);
+            } else if ranges.is_all() {
+                tracing::debug!("{} is missing", blob.name);
+            } else {
+                tracing::debug!("{} is partial {:?}", blob.name, ranges);
+            }
+        });
+    // make room for the collection at offset 0
+    // if we get here, we already have the collection, so we don't need to ask for it again.
+    ranges.insert(0, RangeSet2::empty());
+    Ok((RangeSpecSeq::new(ranges), Some(collection)))
+}
+
+#[derive(Debug)]
+struct FilePaths {
+    target: PathBuf,
+    temp: PathBuf,
+    outboard: PathBuf,
+}
+
+impl FilePaths {
+    fn new(hash: &Hash, name: &str, temp_dir: &Path, target_dir: &Path) -> Self {
+        let target = target_dir.join(pathbuf_from_name(name));
+        let hash = blake3::Hash::from(*hash).to_hex();
+        let temp = temp_dir.join(format!("{hash}.data.part"));
+        let outboard = temp_dir.join(format!("{hash}.outboard.part"));
+        Self {
+            target,
+            temp,
+            outboard,
+        }
+    }
+
+    fn is_final(&self) -> bool {
+        self.target.exists()
+    }
+
+    fn is_incomplete(&self) -> bool {
+        self.temp.exists() && self.outboard.exists()
+    }
+}
+
+/// get data path for a hash
+pub fn get_data_path(data_path: &Path, hash: Hash) -> PathBuf {
+    let hash = blake3::Hash::from(hash).to_hex();
+    data_path.join(format!("{hash}.data"))
+}
+
+/// Load a collection from a data path
+fn load_collection(data_path: &Path, hash: Hash) -> anyhow::Result<Option<Collection>> {
+    let collection_path = get_data_path(data_path, hash);
+    Ok(if collection_path.exists() {
+        let collection = std::fs::read(&collection_path)?;
+        let collection = Collection::from_bytes(&collection)?;
+        Some(collection)
+    } else {
+        None
+    })
+}
+
+/// converts a canonicalized relative path to a string, returning an error if
+/// the path is not valid unicode
+///
+/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
+/// or if the path components contain any windows or unix path separators
+pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
+    let parts = path
+        .as_ref()
+        .components()
+        .map(|c| {
+            let c = if let Component::Normal(x) = c {
+                x.to_str().context("invalid character in path")?
+            } else {
+                anyhow::bail!("invalid path component {:?}", c)
+            };
+            anyhow::ensure!(
+                !c.contains('/') && !c.contains('\\'),
+                "invalid path component {:?}",
+                c
+            );
+            Ok(c)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(parts.join("/"))
+}
+
+/// Todo: gather more information about validation errors. E.g. offset
+///
+/// io::Error should be just the fallback when a more specific error is not available.
+#[derive(Debug, Display, Error)]
+pub enum BaoValidationError {
+    /// Generic io error. We were unable to read the data.
+    IoError(#[from] std::io::Error),
+    /// The data failed to validate
+    EncodeError(#[from] EncodeError),
+}
+
+/// Validate that the data matches the outboard.
+pub fn validate_bao<F: Fn(u64)>(
+    hash: Hash,
+    data_reader: impl ReadAt + Size,
+    outboard: Bytes,
+    progress: F,
+) -> result::Result<(), BaoValidationError> {
+    let hash = blake3::Hash::from(hash);
+    let outboard =
+        bao_tree::io::outboard::PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, &outboard)?;
+
+    // do not wrap the data_reader in a BufReader, that is slow wnen seeking
+    encode_ranges_validated(
+        data_reader,
+        outboard,
+        &RangeSet2::all(),
+        DevNull(0, progress),
+    )?;
+    Ok(())
+}
+
+/// little util that discards data but prints progress every 1MB
+struct DevNull<F>(u64, F);
+
+impl<F: Fn(u64)> Write for DevNull<F> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        const NOTIFY_EVERY: u64 = 1024 * 1024;
+        let prev = self.0;
+        let curr = prev + buf.len() as u64;
+        if prev % NOTIFY_EVERY != curr % NOTIFY_EVERY {
+            (self.1)(curr);
+        }
+        self.0 = curr;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -1017,6 +1161,11 @@ mod tests {
     use crate::database::Snapshot;
 
     use super::*;
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(super::canonicalize_path("foo/bar").unwrap(), "foo/bar");
+    }
 
     fn blob(size: usize) -> impl Strategy<Value = Bytes> {
         proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)

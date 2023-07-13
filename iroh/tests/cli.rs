@@ -8,8 +8,8 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
+use iroh::bytes::database::{create_collection, create_data_sources, DbEntry};
 use iroh::bytes::{provider::Ticket, Hash};
-use iroh::database::{create_collection, create_data_sources, DbEntry};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -163,7 +163,7 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 fn cli_provide_persistence() -> anyhow::Result<()> {
     use std::time::Duration;
 
-    use iroh::database::Database;
+    use iroh::bytes::database::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,

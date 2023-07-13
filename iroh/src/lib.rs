@@ -4,11 +4,8 @@
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 
-pub mod blobs;
-pub mod database;
 pub mod node;
 pub mod rpc_protocol;
-pub mod util;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]

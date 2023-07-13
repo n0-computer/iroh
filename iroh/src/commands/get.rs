@@ -5,12 +5,11 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use iroh::{
-    blobs::Collection,
-    util::{
-        get_data_path, get_missing_range, get_missing_ranges, io::pathbuf_from_name,
-        progress::ProgressSliceWriter,
+use iroh_bytes::{
+    database::{
+        get_data_path, get_missing_range, get_missing_ranges, pathbuf_from_name, Collection,
     },
+    util::progress::ProgressSliceWriter,
 };
 use iroh_bytes::{
     get::{
