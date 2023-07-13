@@ -13,10 +13,15 @@ use futures::{
 };
 use iroh_bytes::{provider::Database, util::Hash, writable::WritableFileDatabase};
 use iroh_gossip::net::util::Dialer;
-use iroh_io::AsyncSliceReaderExt;
+use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{tls::PeerId, MagicEndpoint};
-use iroh_sync::sync::{Author, InsertOrigin, Replica, SignedEntry};
-use tokio::sync::{mpsc, oneshot};
+use iroh_sync::sync::{
+    Author, InsertOrigin, Namespace, NamespaceId, Replica, ReplicaStore, SignedEntry,
+};
+use tokio::{
+    io::AsyncRead,
+    sync::{mpsc, oneshot},
+};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
@@ -26,6 +31,63 @@ pub enum DownloadMode {
     Manual,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocStore {
+    replicas: ReplicaStore,
+    blobs: BlobStore,
+    local_author: Arc<Author>,
+    storage_path: PathBuf,
+}
+
+impl DocStore {
+    pub fn new(blobs: BlobStore, author: Author, storage_path: PathBuf) -> Self {
+        Self {
+            replicas: ReplicaStore::default(),
+            local_author: Arc::new(author),
+            storage_path,
+            blobs,
+        }
+    }
+
+    pub async fn create_or_open(
+        &self,
+        namespace: Namespace,
+        download_mode: DownloadMode,
+    ) -> anyhow::Result<Doc> {
+        let path = self.replica_path(namespace.id());
+        let replica = if path.exists() {
+            let bytes = tokio::fs::read(path).await?;
+            self.replicas.open_replica(&bytes)?
+        } else {
+            self.replicas.new_replica(namespace)
+        };
+
+        let doc = Doc::new(
+            replica,
+            self.blobs.clone(),
+            self.local_author.clone(),
+            download_mode,
+        );
+        Ok(doc)
+    }
+
+    pub async fn save(&self, doc: &Doc) -> anyhow::Result<()> {
+        let replica_path = self.replica_path(&doc.replica().namespace());
+        tokio::fs::create_dir_all(replica_path.parent().unwrap()).await?;
+        let bytes = doc.replica().to_bytes()?;
+        tokio::fs::write(replica_path, bytes).await?;
+        Ok(())
+    }
+
+    fn replica_path(&self, namespace: &NamespaceId) -> PathBuf {
+        self.storage_path.join(hex::encode(namespace.as_bytes()))
+    }
+
+    pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+        crate::sync::handle_connection(conn, self.replicas.clone()).await
+    }
+}
+
 /// A replica with a [`BlobStore`] for contents.
 ///
 /// This will also download missing content from peers.
@@ -33,15 +95,25 @@ pub enum DownloadMode {
 /// TODO: Currently content is only downloaded from the author of a entry.
 /// We want to try other peers if the author is offline (or always).
 /// We'll need some heuristics which peers to try.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Doc {
     replica: Replica,
     blobs: BlobStore,
+    local_author: Arc<Author>,
 }
 
 impl Doc {
-    pub fn new(replica: Replica, blobs: BlobStore, download_mode: DownloadMode) -> Self {
-        let doc = Self { replica, blobs };
+    pub fn new(
+        replica: Replica,
+        blobs: BlobStore,
+        local_author: Arc<Author>,
+        download_mode: DownloadMode,
+    ) -> Self {
+        let doc = Self {
+            replica,
+            blobs,
+            local_author,
+        };
         if let DownloadMode::Always = download_mode {
             let doc2 = doc.clone();
             doc.replica.on_insert(Box::new(move |origin, entry| {
@@ -57,15 +129,28 @@ impl Doc {
         &self.replica
     }
 
-    pub async fn insert(
+    pub fn local_author(&self) -> &Author {
+        &self.local_author
+    }
+
+    pub async fn insert_bytes(
         &self,
         key: impl AsRef<[u8]>,
-        author: &Author,
         content: Bytes,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(Hash, u64)> {
         let (hash, len) = self.blobs.put_bytes(content).await?;
-        self.replica.insert(key, author, hash, len);
-        Ok(())
+        self.replica.insert(key, &self.local_author, hash, len);
+        Ok((hash, len))
+    }
+
+    pub async fn insert_reader(
+        &self,
+        key: impl AsRef<[u8]>,
+        content: impl AsyncRead + Unpin,
+    ) -> anyhow::Result<(Hash, u64)> {
+        let (hash, len) = self.blobs.put_reader(content).await?;
+        self.replica.insert(key, &self.local_author, hash, len);
+        Ok((hash, len))
     }
 
     pub fn download_content_fron_author(&self, entry: &SignedEntry) {
@@ -75,9 +160,14 @@ impl Doc {
         self.blobs.start_download(hash, peer_id);
     }
 
-    pub async fn get_content(&self, entry: &SignedEntry) -> Option<Bytes> {
+    pub async fn get_content_bytes(&self, entry: &SignedEntry) -> Option<Bytes> {
         let hash = entry.entry().record().content_hash();
         let bytes = self.blobs.get_bytes(hash).await.ok().flatten();
+        bytes
+    }
+    pub async fn get_content_reader(&self, entry: &SignedEntry) -> Option<impl AsyncSliceReader> {
+        let hash = entry.entry().record().content_hash();
+        let bytes = self.blobs.get_reader(hash).await.ok().flatten();
         bytes
     }
 }
@@ -129,8 +219,21 @@ impl BlobStore {
         Ok(Some(bytes))
     }
 
+    pub async fn get_reader(&self, hash: &Hash) -> anyhow::Result<Option<impl AsyncSliceReader>> {
+        self.downloader.wait_for_download(hash).await;
+        let Some(entry) = self.db().get(hash) else {
+            return Ok(None)
+        };
+        let reader = entry.data_reader().await?;
+        Ok(Some(reader))
+    }
+
     pub async fn put_bytes(&self, data: Bytes) -> anyhow::Result<(Hash, u64)> {
         self.db.put_bytes(data).await
+    }
+
+    pub async fn put_reader(&self, data: impl AsyncRead + Unpin) -> anyhow::Result<(Hash, u64)> {
+        self.db.put_reader(data).await
     }
 }
 
@@ -206,6 +309,7 @@ impl Downloader {
     }
 }
 
+#[derive(Debug)]
 pub struct DownloadActor {
     dialer: Dialer,
     db: WritableFileDatabase,
