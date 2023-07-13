@@ -28,7 +28,7 @@ use iroh_net::{
 };
 use rand::RngCore;
 use testdir::testdir;
-use tokio::{fs, io::AsyncWriteExt, sync::broadcast};
+use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
@@ -261,31 +261,17 @@ where
         .bind_addr(addr)
         .spawn()
         .await?;
-    let mut provider_events = node.subscribe();
-    let events_task = tokio::task::spawn(async move {
-        let mut events = Vec::new();
-        loop {
-            match provider_events.recv().await {
-                Ok(event) => match event {
-                    Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. })
-                    | Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                        events.push(event);
-                        break;
-                    }
-                    _ => events.push(event),
-                },
-                Err(e) => match e {
-                    broadcast::error::RecvError::Closed => {
-                        break;
-                    }
-                    broadcast::error::RecvError::Lagged(num) => {
-                        panic!("unable to keep up, skipped {num} messages");
-                    }
-                },
-            }
+
+    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
+
+    node.subscribe(move |event| {
+        let events_sender = events_sender.clone();
+        async move {
+            events_sender.send(event).ok();
         }
-        events
-    });
+        .boxed()
+    })
+    .await?;
 
     let addrs = node.local_endpoint_addresses().await?;
     let opts = get_options(node.peer_id(), addrs);
@@ -304,10 +290,23 @@ where
     }
 
     // We have to wait for the completed event before shutting down the node.
-    let events = tokio::time::timeout(Duration::from_secs(30), events_task)
-        .await
-        .expect("duration expired")
-        .expect("events task failed");
+    let events = tokio::time::timeout(Duration::from_secs(30), async move {
+        let mut events = Vec::new();
+        while let Some(event) = events_recv.recv().await {
+            match event {
+                Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. })
+                | Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
+                    events.push(event);
+                    break;
+                }
+                _ => events.push(event),
+            }
+        }
+        events
+    })
+    .await
+    .expect("duration expired");
+
     node.shutdown();
     node.await?;
 
@@ -378,42 +377,44 @@ async fn test_server_close() {
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.peer_id();
 
-    // This tasks closes the connection on the provider side as soon as the transfer
-    // completes.
-    let supervisor = tokio::spawn(async move {
-        let mut events = node.subscribe();
-        loop {
-            tokio::select! {
-                biased;
-                res = &mut node => break res.context("provider failed"),
-                maybe_event = events.recv() => {
-                    match maybe_event {
-                        Ok(event) => {
-                            match event {
-                                Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. }) => node.shutdown(),
-                                Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                                    break Err(anyhow!("transfer aborted"));
-                                }
-                                _ => (),
-                            }
-                        }
-                        Err(err) => break Err(anyhow!("event failed: {err:#}")),
-                    }
-                }
-            }
+    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
+    node.subscribe(move |event| {
+        let events_sender = events_sender.clone();
+        async move {
+            events_sender.send(event).ok();
         }
-    });
-
+        .boxed()
+    })
+    .await
+    .unwrap();
     let opts = get_options(peer_id, node_addr);
     let request = GetRequest::all(hash).into();
     let (_collection, _children, _stats) = run_get_request(opts, request).await.unwrap();
 
     // Unwrap the JoinHandle, then the result of the Provider
-    tokio::time::timeout(Duration::from_secs(10), supervisor)
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        loop {
+            tokio::select! {
+                biased;
+                res = &mut node => break res.context("provider failed"),
+                maybe_event = events_recv.recv() => {
+                    match maybe_event {
+                        Some(event) => match event {
+                            Event::ByteProvide(provider::Event::TransferCollectionCompleted { .. }) => node.shutdown(),
+                            Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
+                                break Err(anyhow!("transfer aborted"));
+                            }
+                            _ => (),
+                        }
+                        None => break Err(anyhow!("events ended")),
+                    }
+                }
+            }
+        }
+    })
         .await
         .expect("supervisor timeout")
-        .expect("supervisor failed")
-        .expect("supervisor error");
+        .expect("supervisor failed");
 }
 
 #[tokio::test]
@@ -850,8 +851,7 @@ async fn test_token_passthrough() -> Result<()> {
     let rt = test_runtime();
     let readme = readme_path();
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-    let provider = Node::builder(db)
-        .collection_parser(IrohCollectionParser)
+    let node = Node::builder(db)
         .bind_addr("0.0.0.0:0".parse().unwrap())
         .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)
@@ -859,25 +859,26 @@ async fn test_token_passthrough() -> Result<()> {
         .await?;
 
     let token = Some(RequestToken::new(vec![1, 2, 3, 4, 5, 6])?);
-    let mut events = provider.subscribe();
-    let event_handle = rt.main().spawn(async move {
-        while let Ok(msg) = events.recv().await {
-            match msg {
+    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
+    node.subscribe(move |event| {
+        let events_sender = events_sender.clone();
+        async move {
+            match event {
                 Event::ByteProvide(bp_msg) => {
                     if let iroh_bytes::provider::Event::GetRequestReceived { token: tok, .. } =
                         bp_msg
                     {
-                        // println!("token: {:?}", token);
-                        return tok;
+                        events_sender.send(tok).ok();
                     }
                 }
             }
         }
-        None
-    });
+        .boxed()
+    })
+    .await?;
 
-    let addrs = provider.local_endpoint_addresses().await?;
-    let peer_id = provider.peer_id();
+    let addrs = node.local_endpoint_addresses().await?;
+    let peer_id = node.peer_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let endpoint = MagicEndpoint::builder()
             .keypair(Keypair::generate())
@@ -900,7 +901,7 @@ async fn test_token_passthrough() -> Result<()> {
     .context("timeout")?
     .context("get failed")?;
 
-    let token = event_handle.await?.expect("missing token");
+    let token = events_recv.recv().await.unwrap().expect("missing token");
     assert_eq!(token.as_bytes(), &[1, 2, 3, 4, 5, 6][..]);
 
     Ok(())

@@ -1,4 +1,5 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#![cfg(feature = "cli")]
 use std::env;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
@@ -276,7 +277,7 @@ enum Output {
     /// Indicates we should pipe the content to `stdout` of the `iroh get` process
     Stdout,
     /// Custom output
-    #[cfg(feature = "flat-db")]
+    #[allow(dead_code)]
     Custom(PathBuf),
 }
 
