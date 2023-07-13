@@ -483,6 +483,8 @@ fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use crate::defaults::default_derp_map;
     use crate::hp::netcheck::RegionLatencies;
 
@@ -581,7 +583,9 @@ mod tests {
         println!("{expected_plan}");
         println!("actual:");
         println!("{plan}");
-        // TODO: use a fancy diff library, for now just eyeball the output from above...
+        // The readable error:
+        assert_eq!(plan.to_string(), expected_plan.to_string());
+        // Just in case there's a bug in the Display impl:
         assert_eq!(plan, expected_plan);
     }
 
@@ -715,7 +719,9 @@ mod tests {
         println!("{expected_plan}");
         println!("actual:");
         println!("{plan}");
-        // TODO: use a fancy diff library, for now just eyeball the output from above...
+        // The readable error:
+        assert_eq!(plan.to_string(), expected_plan.to_string());
+        // Just in case there's a bug in the Display impl:
         assert_eq!(plan, expected_plan);
     }
 }
