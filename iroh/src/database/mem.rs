@@ -1,5 +1,10 @@
 //! An in memory implementation of [BaoMap] and [BaoReadonlyDb], useful for
 //! testing and short lived nodes.
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::io;
+use std::sync::Arc;
+
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderMemOutboard;
 use bytes::Bytes;
@@ -8,10 +13,6 @@ use futures::FutureExt;
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::io;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// An in memory database for iroh-bytes.

@@ -1,4 +1,11 @@
 //! The concrete database used by the iroh binary.
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::{fmt, io, result};
+
 use anyhow::Context;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::Bytes;
@@ -10,12 +17,6 @@ use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
-use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-use std::{fmt, io, result};
 use tokio::sync::mpsc;
 use tracing::{trace, trace_span};
 use walkdir::WalkDir;

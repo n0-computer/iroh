@@ -5,6 +5,14 @@
 //! You can monitor what is happening in the node using [`Node::subscribe`].
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::fmt::Debug;
+use std::future::Future;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
@@ -29,13 +37,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use std::fmt::Debug;
-use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
