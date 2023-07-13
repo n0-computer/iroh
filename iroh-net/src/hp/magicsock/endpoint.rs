@@ -292,6 +292,13 @@ impl Endpoint {
                 }
             }
         }
+        if udp_addr.is_none() && derp_addr.is_none() {
+            tracing::error!(
+                "unable to ping endpoint {} {:?}, no UDP or DERP addresses known.",
+                self.id,
+                self.public_key
+            );
+        }
     }
 
     /// Cleanup the expired ping for the passed in txid.

@@ -99,8 +99,20 @@ pub enum Commands {
         private_key: PrivateKey,
 
         /// Use a local derp relay
+        ///
+        /// Overrides the `derp_region` field.
         #[clap(long)]
         local_derper: bool,
+
+        /// The DERP region the peer you are dialing can be found on.
+        ///
+        /// If `local_derper` is true, this field is ignored.
+        ///
+        /// When `None`, or if attempting to dial an unknown region, no hole punching can occur.
+        ///
+        /// Default is `None`.
+        #[clap(long)]
+        derp_region: Option<u16>,
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
@@ -212,7 +224,7 @@ async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> a
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a derp map from host name and stun port
-            DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns)
+            DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns, 0)
         }
         None => config.derp_map().expect("derp map not configured"),
     };
@@ -452,7 +464,7 @@ fn configure_local_derp_map() -> DerpMap {
     let url = "http://derp.invalid:3340".parse().unwrap();
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
     let derp_ipv6 = UseIpv6::TryDns;
-    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6)
+    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6, 0)
 }
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
@@ -507,6 +519,7 @@ async fn connect(
     dial: String,
     private_key: SecretKey,
     remote_endpoints: Vec<SocketAddr>,
+    derp_region: Option<u16>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(private_key.clone(), derp_map).await?;
@@ -517,7 +530,7 @@ async fn connect(
 
     tracing::info!("dialing {:?}", peer_id);
     let conn = endpoint
-        .connect(peer_id, &DR_DERP_ALPN, &remote_endpoints)
+        .connect(peer_id, &DR_DERP_ALPN, derp_region, &remote_endpoints)
         .await;
     match conn {
         Ok(connection) => {
@@ -636,15 +649,16 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             dial,
             private_key,
             local_derper,
+            derp_region,
             remote_endpoint,
         } => {
-            let derp_map = if local_derper {
-                Some(configure_local_derp_map())
+            let (derp_map, derp_region) = if local_derper {
+                (Some(configure_local_derp_map()), Some(0))
             } else {
-                config.derp_map()
+                (config.derp_map(), derp_region)
             };
             let private_key = create_secret_key(private_key)?;
-            connect(dial, private_key, remote_endpoint, derp_map).await
+            connect(dial, private_key, remote_endpoint, derp_region, derp_map).await
         }
         Commands::Accept {
             private_key,

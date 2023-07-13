@@ -202,16 +202,35 @@ pub struct Inner {
     /// None (or zero regions/nodes) means DERP is disabled.
     pub(super) derp_map: tokio::sync::RwLock<Option<DerpMap>>,
     /// Nearest DERP region ID; 0 means none/unknown.
-    my_derp: AtomicU16,
+    /// None means we are not connected or do not yet know the connection status.
+    // I'm sorry.
+    my_derp: tokio::sync::RwLock<Option<u16>>,
 }
 
 impl Inner {
-    pub(super) fn my_derp(&self) -> u16 {
-        self.my_derp.load(Ordering::Relaxed)
+    /// Returns the derp region we are connected to, that has the best latency.
+    ///
+    /// If `None`, then we are not connected to any derp region.
+    pub(super) async fn my_derp(&self) -> Option<u16> {
+        let my_derp = self.my_derp.read().await;
+        *my_derp
     }
 
-    pub(super) fn set_my_derp(&self, my_derp: u16) {
-        self.my_derp.store(my_derp, Ordering::Relaxed);
+    /// Sets the derp region with the best latency.
+    ///
+    /// If we are not connected to any derp regions, set this to "0".
+    pub(super) async fn set_my_derp(&self, new: Option<u16>) {
+        let mut old = self.my_derp.write().await;
+        if let Some(my_derp) = new {
+            old.replace(my_derp);
+        } else {
+            old.take();
+        }
+    }
+
+    /// Returns `true` if we have DERP configuration for the given DERP `region`.
+    pub async fn has_derp_region(&self, region: u16) -> bool {
+        self.get_derp_region(region).await.is_some()
     }
 
     pub(super) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
@@ -320,7 +339,7 @@ impl Conn {
             network_sender,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map: Default::default(),
-            my_derp: AtomicU16::new(0),
+            my_derp: tokio::sync::RwLock::new(None),
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -504,6 +523,13 @@ impl Conn {
             .await?;
         r.await?;
         Ok(())
+    }
+
+    /// Returns the DERP region with the best latency.
+    ///
+    /// If `None`, then we currently have no verified connection to a DERP node in any region.
+    pub async fn my_derp(&self) -> Option<u16> {
+        self.inner.my_derp().await
     }
 
     /// Called when the control client gets a new network map from the control server.
@@ -1226,9 +1252,9 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(&mut self, region_id: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
         self.send_derp_actor(DerpActorMessage::Send {
-            region_id: port,
+            region_id,
             contents,
             peer,
         });
@@ -1547,13 +1573,13 @@ impl Actor {
             ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
         }
 
-        if ni.preferred_derp == 0 {
+        if ni.preferred_derp.is_none() {
             // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
             ni.preferred_derp = self.pick_derp_fallback().await;
         }
 
         if !self.set_nearest_derp(ni.preferred_derp).await {
-            ni.preferred_derp = 0;
+            ni.preferred_derp = None;
         }
 
         // TODO: set link type
@@ -1562,22 +1588,27 @@ impl Actor {
         Ok(report)
     }
 
-    async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
-        {
+    async fn set_nearest_derp(&mut self, derp_num: Option<u16>) -> bool {
+        let my_derp_num = {
             let derp_map = self.conn.derp_map.read().await;
-            if derp_map.is_none() {
-                self.conn.set_my_derp(0);
+            // no derp map and no derp num, return
+            if derp_map.is_none() || derp_num.is_none() {
+                self.conn.set_my_derp(derp_num).await;
                 return false;
             }
-            let my_derp = self.conn.my_derp();
+            let my_derp = self.conn.my_derp().await;
+            // my_derp is some number and derp_num is the same number
             if derp_num == my_derp {
                 // No change.
                 return true;
             }
-            if my_derp != 0 && derp_num != 0 {
+            // we were previously connected to a derp server, and now we are connected to
+            // a different one
+            if my_derp.is_some() {
                 inc!(MagicsockMetrics, derp_home_change);
             }
-            self.conn.set_my_derp(derp_num);
+            self.conn.set_my_derp(derp_num).await;
+            let my_derp_num = derp_num.expect("checked above");
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
@@ -1585,21 +1616,21 @@ impl Actor {
                 .as_ref()
                 .expect("already checked")
                 .regions
-                .get(&derp_num)
+                .get(&my_derp_num)
             {
                 Some(dr) => {
-                    info!("home is now derp-{} ({})", derp_num, dr.region_code);
+                    info!("home is now derp-{} ({})", my_derp_num, dr.region_code);
                 }
                 None => {
-                    warn!("derp_map.regions[{}] is empty", derp_num);
+                    warn!("derp_map.regions[{}] is empty", my_derp_num);
                 }
             }
-        }
+            my_derp_num
+        };
 
-        let my_derp = self.conn.my_derp();
-        self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp));
+        self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp_num));
         self.send_derp_actor(DerpActorMessage::Connect {
-            region_id: derp_num,
+            region_id: my_derp_num,
             peer: None,
         });
         true
@@ -1608,11 +1639,11 @@ impl Actor {
     /// Returns a non-zero but deterministic DERP node to
     /// connect to. This is only used if netcheck couldn't find the nearest one
     /// For instance, if UDP is blocked and thus STUN latency checks aren't working
-    async fn pick_derp_fallback(&self) -> u16 {
+    async fn pick_derp_fallback(&self) -> Option<u16> {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;
             if derp_map.is_none() {
-                return 0;
+                return None;
             }
             let ids = derp_map
                 .as_ref()
@@ -1620,7 +1651,7 @@ impl Actor {
                 .unwrap_or_default();
             if ids.is_empty() {
                 // No DERP regions in map.
-                return 0;
+                return None;
             }
             ids
         };
@@ -1635,13 +1666,13 @@ impl Actor {
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
-        let my_derp = self.conn.my_derp();
-        if my_derp > 0 {
+        let my_derp = self.conn.my_derp().await;
+        if my_derp.is_some() {
             return my_derp;
         }
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        *ids.choose(&mut rng).unwrap()
+        Some(*ids.choose(&mut rng).unwrap())
     }
 
     /// Records the new endpoints, reporting whether they're changed.
@@ -2657,7 +2688,11 @@ pub(crate) mod tests {
 
     pub async fn run_derp_and_stun(
         stun_ip: IpAddr,
-    ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
+    ) -> Result<(
+        DerpMap,
+        Option<u16>,
+        impl FnOnce() -> BoxFuture<'static, ()>,
+    )> {
         // TODO: pass a mesh_key?
 
         let server_key = key::node::SecretKey::generate();
@@ -2672,15 +2707,16 @@ pub(crate) mod tests {
         println!("DERP listening on {:?}", https_addr);
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
+        let region_id = 1;
         let m = DerpMap {
             regions: [(
                 1,
                 DerpRegion {
-                    region_id: 1,
+                    region_id,
                     region_code: "test".into(),
                     nodes: vec![DerpNode {
                         name: "t1".into(),
-                        region_id: 1,
+                        region_id,
                         // In test mode, the DERP client does not validate HTTPS certs, so the host
                         // name is irrelevant, but the port is used.
                         url: format!("https://test-node.invalid:{}", https_addr.port())
@@ -2707,7 +2743,7 @@ pub(crate) mod tests {
             }) as BoxFuture<'static, ()>
         };
 
-        Ok((m, cleanup))
+        Ok((m, Some(region_id), cleanup))
     }
 
     /// Magicsock plus wrappers for sending packets
@@ -2865,7 +2901,7 @@ pub(crate) mod tests {
             stun_ip: "127.0.0.1".parse()?,
         };
 
-        let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+        let (derp_map, region, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -2958,7 +2994,7 @@ pub(crate) mod tests {
                     println!("[{}] connecting to {}", a_name, b_addr);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, &[b_addr])
+                        .connect(b_peer_id, &ALPN, region, &[b_addr])
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 
@@ -3039,7 +3075,7 @@ pub(crate) mod tests {
         };
 
         for _ in 0..10 {
-            let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+            let (derp_map, _, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;

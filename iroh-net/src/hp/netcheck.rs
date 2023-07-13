@@ -63,8 +63,8 @@ pub struct Report {
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
-    /// or 0 for unknown
-    pub preferred_derp: u16,
+    /// `None` for unknown
+    pub preferred_derp: Option<u16>,
     /// keyed by DERP Region ID
     pub region_latency: RegionLatencies,
     /// keyed by DERP Region ID
@@ -621,7 +621,7 @@ impl Actor {
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
     /// `r` is stored ref counted and a reference is returned.
     fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
-        let mut prev_derp = 0;
+        let mut prev_derp = None;
         if let Some(ref last) = self.reports.last {
             prev_derp = last.preferred_derp;
         }
@@ -658,20 +658,22 @@ impl Actor {
         let mut old_region_cur_latency = Duration::default();
         {
             for (region_id, d) in r.region_latency.iter() {
-                if region_id == prev_derp {
-                    old_region_cur_latency = d;
+                if let Some(prev_derp) = prev_derp {
+                    if region_id == prev_derp {
+                        old_region_cur_latency = d;
+                    }
                 }
                 let best = best_recent.get(region_id).unwrap();
-                if r.preferred_derp == 0 || best < best_any {
+                if r.preferred_derp.is_none() || best < best_any {
                     best_any = best;
-                    r.preferred_derp = region_id;
+                    r.preferred_derp = Some(region_id);
                 }
             }
 
             // If we're changing our preferred DERP but the old one's still
             // accessible and the new one's not much better, just stick with
             // where we are.
-            if prev_derp != 0
+            if prev_derp.is_some()
                 && r.preferred_derp != prev_derp
                 && !old_region_cur_latency.is_zero()
                 && best_any > old_region_cur_latency / 3 * 2
@@ -717,8 +719,12 @@ impl Actor {
         if let Some(c) = r.captive_portal {
             log += &format!(" captiveportal={c}");
         }
-        log += &format!(" derp={}", r.preferred_derp);
-        if r.preferred_derp != 0 {
+        log += &format!(
+            " derp={}",
+            r.preferred_derp
+                .map_or("None".to_string(), |region| region.to_string())
+        );
+        if r.preferred_derp.is_some() {
             log += " derpdist=";
             let mut need_comma = false;
             for rid in &dm.region_ids() {
@@ -868,10 +874,11 @@ mod tests {
                 r.region_latency
             );
             assert!(r.global_v4.is_some(), "expected globalV4 set");
+            let expect_preferred_derp = Some(1);
             assert_eq!(
-                r.preferred_derp, 1,
-                "preferred_derp = {}; want 1",
-                r.preferred_derp
+                r.preferred_derp, expect_preferred_derp,
+                "preferred_derp = {:?}; want {expect_preferred_derp:?}",
+                r.preferred_derp,
             );
         }
 
@@ -939,9 +946,10 @@ mod tests {
                 r.region_latency
             );
             assert!(r.global_v4.is_some(), "expected globalV4 set");
+            let expect_preferred_derp = Some(1);
             assert_eq!(
-                r.preferred_derp, 1,
-                "preferred_derp = {}; want 1",
+                r.preferred_derp, expect_preferred_derp,
+                "preferred_derp = {:?}; want {expect_preferred_derp:?}",
                 r.preferred_derp
             );
         } else {
@@ -1160,7 +1168,7 @@ mod tests {
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
             let got = last_report.preferred_derp;
-            let want = tt.want_derp;
+            let want = Some(tt.want_derp);
             assert_eq!(got, want, "preferred_derp");
         }
 

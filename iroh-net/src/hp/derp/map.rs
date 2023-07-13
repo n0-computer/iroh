@@ -35,6 +35,7 @@ impl DerpMap {
         stun_port: u16,
         derp_ipv4: UseIpv4,
         derp_ipv6: UseIpv6,
+        region_id: u16,
     ) -> Self {
         let mut dm = DerpMap {
             regions: HashMap::new(),
@@ -43,10 +44,10 @@ impl DerpMap {
         dm.regions.insert(
             1,
             DerpRegion {
-                region_id: 1,
+                region_id,
                 nodes: vec![DerpNode {
                     name: "default-1".into(),
-                    region_id: 1,
+                    region_id,
                     url,
                     stun_only: !derp_ipv4.is_enabled() && !derp_ipv6.is_enabled(),
                     stun_port,
@@ -69,18 +70,18 @@ impl DerpMap {
             .flat_map(|r| r.nodes.iter())
             .find(|n| n.name == node_name)
     }
-}
 
-impl From<Url> for DerpMap {
-    /// Creates a new [`DerpMap`] with a Derp server configured from a single URL.
+    /// Returns a [`DerpMap`] from a [`Url`] and a `region_id`
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    fn from(url: Url) -> Self {
+    /// Region IDs are specified at <https://number-zero.notion.site/Derp-Regions-a63c309839e64d9ab19c23778a7b9c37>
+    pub fn from_url(url: Url, region_id: u16) -> Self {
         Self::default_from_node(
             url,
             DEFAULT_DERP_STUN_PORT,
             UseIpv4::TryDns,
             UseIpv6::TryDns,
+            region_id,
         )
     }
 }

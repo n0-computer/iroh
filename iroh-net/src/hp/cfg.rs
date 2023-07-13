@@ -81,8 +81,8 @@ pub struct NetInfo {
     /// This node's preferred DERP server for incoming traffic. The node might be be temporarily
     /// connected to multiple DERP servers (to send to other nodes)
     /// but PreferredDERP is the instance number that the node
-    /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: u16,
+    /// subscribes to traffic at. `None` means disconnected or unknown.
+    pub preferred_derp: Option<u16>,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,
