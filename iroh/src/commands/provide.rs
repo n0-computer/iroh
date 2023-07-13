@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use iroh::{
-    database::{Database, FNAME_PATHS},
+    database::flat::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };

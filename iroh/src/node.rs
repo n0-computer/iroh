@@ -45,8 +45,8 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::blobs::{Collection, IrohCollectionParser};
-use crate::database::{create_data_sources, Database};
+use crate::collection::{Collection, IrohCollectionParser};
+use crate::database::flat::{create_collection_inner, create_data_sources, Database};
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
@@ -68,8 +68,11 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database, which can be created using [`crate::database::create_collection`], everything else is
-/// optional.  Finally you can create and run the node by calling [`Builder::spawn`].
+/// You must supply a database. An in memory database is available in
+/// [`crate::database::mem`]. A flat file persistent database is available in
+/// [`crate::database::flat`]. Everything else is optional.
+///
+/// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
@@ -683,8 +686,7 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         let data_sources = create_data_sources(root)?;
         // create the collection
         // todo: provide feedback for progress
-        let (db, hash) =
-            crate::database::create_collection_inner(data_sources, Progress::new(progress)).await?;
+        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
 
         // todo: generify this
         // for now provide will only work if D is a Database
@@ -865,6 +867,8 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::path::Path;
 
+    use crate::database::flat::create_collection;
+
     use super::*;
 
     /// Pick up the tokio runtime from the thread local and add a
@@ -877,9 +881,7 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = crate::database::create_collection(vec![readme.into()])
-            .await
-            .unwrap();
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)

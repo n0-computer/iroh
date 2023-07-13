@@ -1,4 +1,4 @@
-//! Types for blobs and collections of blobs
+//! The collection type used by iroh
 use anyhow::{Context, Result};
 use futures::{
     future::{self, LocalBoxFuture},

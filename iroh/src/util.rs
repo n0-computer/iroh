@@ -6,7 +6,7 @@ use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
 use iroh_bytes::{protocol::RangeSpecSeq, Hash};
 use range_collections::RangeSet2;
 
-use crate::blobs::Collection;
+use crate::collection::Collection;
 
 use self::io::pathbuf_from_name;
 pub mod io;

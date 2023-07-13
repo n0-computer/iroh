@@ -4,7 +4,7 @@
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 
-pub mod blobs;
+pub mod collection;
 pub mod database;
 pub mod node;
 pub mod rpc_protocol;

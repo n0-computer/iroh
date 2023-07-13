@@ -13,8 +13,11 @@ use futures::{
     FutureExt,
 };
 use iroh::{
-    blobs::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
-    database::{create_collection, DataSource, Database, InMemDatabase},
+    collection::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
+    database::{
+        flat::{create_collection, DataSource, Database},
+        mem,
+    },
     node::{Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
@@ -219,7 +222,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = InMemDatabase::new(file_opts.clone());
+    let (mut mdb, lookup) = mem::Database::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -655,7 +658,7 @@ async fn test_custom_collection_parser() {
     // create a collection consisting of 2 leafs
     let leaf1_data = vec![0u8; 12345];
     let leaf2_data = vec![1u8; 67890];
-    let mut db = InMemDatabase::default();
+    let mut db = mem::Database::default();
     let leaf1_hash = db.insert(leaf1_data.clone());
     let leaf2_hash = db.insert(leaf2_data.clone());
     let collection = vec![leaf1_hash, leaf2_hash];

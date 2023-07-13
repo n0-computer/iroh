@@ -9,7 +9,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::{provider::Ticket, Hash};
-use iroh::database::{create_collection, create_data_sources, DbEntry};
+use iroh::database::flat::{create_collection, create_data_sources, DbEntry};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -161,13 +161,12 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use std::time::Duration;
-
-    use iroh::database::Database;
+    use iroh::database::flat::Database;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
     };
+    use std::time::Duration;
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");

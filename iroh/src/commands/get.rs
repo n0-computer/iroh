@@ -6,7 +6,7 @@ use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
 use iroh::{
-    blobs::Collection,
+    collection::Collection,
     util::{
         get_data_path, get_missing_range, get_missing_ranges, io::pathbuf_from_name,
         progress::ProgressSliceWriter,
