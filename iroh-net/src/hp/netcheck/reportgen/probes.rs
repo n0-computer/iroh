@@ -321,7 +321,6 @@ impl ProbePlan {
 
             let mut stun_ipv4_probes = ProbeSet::new(reg.region_id, ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(reg.region_id, ProbeProto::StunIpv6);
-            // let mut https = Vec::new();
 
             for attempt in 0..attempts {
                 let derp_node = &reg.nodes[attempt % reg.nodes.len()];
