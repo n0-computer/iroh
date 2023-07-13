@@ -10,6 +10,7 @@ use anyhow::Context;
 use bytes::Bytes;
 use iroh_io::{AsyncSliceWriter, File};
 use range_collections::RangeSet2;
+use tokio::io::AsyncRead;
 
 use crate::{
     get::fsm,
@@ -56,6 +57,12 @@ impl WritableFileDatabase {
 
     pub async fn put_bytes(&self, data: Bytes) -> anyhow::Result<(Hash, u64)> {
         let (hash, size, entry) = self.storage.put_bytes(data).await?;
+        self.db.union_with(HashMap::from_iter([(hash, entry)]));
+        Ok((hash, size))
+    }
+
+    pub async fn put_reader(&self, data: impl AsyncRead + Unpin) -> anyhow::Result<(Hash, u64)> {
+        let (hash, size, entry) = self.storage.put_reader(data).await?;
         self.db.union_with(HashMap::from_iter([(hash, entry)]));
         Ok((hash, size))
     }
@@ -140,6 +147,21 @@ impl StoragePaths {
     pub async fn put_bytes(&self, data: Bytes) -> anyhow::Result<(Hash, u64, DbEntry)> {
         let temp_path = self.temp_path();
         tokio::fs::write(&temp_path, &data).await?;
+        let (hash, size, entry) = self.move_to_blobs(&temp_path).await?;
+        Ok((hash, size, entry))
+    }
+
+    pub async fn put_reader(
+        &self,
+        mut reader: impl AsyncRead + Unpin,
+    ) -> anyhow::Result<(Hash, u64, DbEntry)> {
+        let temp_path = self.temp_path();
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&temp_path)
+            .await?;
+        tokio::io::copy(&mut reader, &mut file).await?;
         let (hash, size, entry) = self.move_to_blobs(&temp_path).await?;
         Ok((hash, size, entry))
     }
