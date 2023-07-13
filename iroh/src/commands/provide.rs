@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use iroh::{
+    collection::IrohCollectionParser,
     database::flat::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
@@ -125,6 +126,7 @@ async fn provide<D: BaoReadonlyDb>(
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {

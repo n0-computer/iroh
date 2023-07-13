@@ -51,7 +51,7 @@ pub struct CollectionStats {
 
 /// A collection parser that just disables collections entirely.
 #[derive(Debug, Clone)]
-struct NoCollectionParser;
+pub struct NoCollectionParser;
 
 /// A CustomCollection for NoCollectionParser.
 ///

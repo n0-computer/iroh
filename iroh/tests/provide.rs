@@ -1,3 +1,4 @@
+#![cfg(feature = "mem-db")]
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -159,6 +160,7 @@ async fn multiple_clients() -> Result<()> {
 
     let rt = test_runtime();
     let node = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .runtime(&rt)
         .bind_addr(addr)
         .spawn()
@@ -254,6 +256,7 @@ where
 
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(mdb.clone())
+        .collection_parser(IrohCollectionParser)
         .runtime(rt)
         .bind_addr(addr)
         .spawn()
@@ -366,6 +369,7 @@ async fn test_server_close() {
     fs::write(&src, "hello there").await.unwrap();
     let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
     let mut node = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
         .spawn()
@@ -429,6 +433,7 @@ async fn test_blob_reader_partial() -> Result<()> {
     fs::write(&src1, "hello world").await?;
     let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
     let node = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
         .spawn()
@@ -461,6 +466,7 @@ async fn test_ipv6() {
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let node = match Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr((Ipv6Addr::UNSPECIFIED, 0).into())
         .runtime(&rt)
         .spawn()
@@ -492,6 +498,7 @@ async fn test_run_ticket() {
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let token = Some(RequestToken::generate());
     let node = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(token.clone())))
         .runtime(&rt)
@@ -601,6 +608,7 @@ async fn test_run_fsm() {
     let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let node = match Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr("[::1]:0".parse().unwrap())
         .runtime(&rt)
         .spawn()
@@ -750,6 +758,7 @@ async fn test_custom_request_blob() {
     let rt = test_runtime();
     let db = Database::default();
     let node = Node::builder(db.clone())
+        .collection_parser(IrohCollectionParser)
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
         .custom_get_handler(Arc::new(BlobCustomHandler { db }))
@@ -783,6 +792,7 @@ async fn test_custom_request_collection() {
     let rt = test_runtime();
     let db = Database::default();
     let node = Node::builder(db.clone())
+        .collection_parser(IrohCollectionParser)
         .bind_addr("127.0.0.1:0".parse().unwrap())
         .runtime(&rt)
         .custom_get_handler(Arc::new(CollectionCustomHandler { db }))
@@ -841,6 +851,7 @@ async fn test_token_passthrough() -> Result<()> {
     let readme = readme_path();
     let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
     let provider = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .bind_addr("0.0.0.0:0".parse().unwrap())
         .custom_auth_handler(Arc::new(CustomAuthHandler))
         .runtime(&rt)

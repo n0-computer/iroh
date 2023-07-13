@@ -9,7 +9,6 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::{provider::Ticket, Hash};
-use iroh::database::flat::{create_collection, create_data_sources, DbEntry};
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -26,10 +25,12 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     Ok(hash.into())
 }
 
+#[cfg(feature = "flat-db")]
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
 fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
+    use iroh::database::flat::{create_collection, create_data_sources, DbEntry};
     let temp_dir = out_dir.join(".iroh-tmp");
     anyhow::ensure!(!temp_dir.exists());
     std::fs::create_dir_all(&temp_dir)?;
@@ -123,6 +124,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
+#[cfg(feature = "flat-db")]
 #[test]
 fn cli_provide_tree_resume() -> Result<()> {
     let dir = testdir!().join("src");

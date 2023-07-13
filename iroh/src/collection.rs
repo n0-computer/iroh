@@ -106,7 +106,9 @@ mod tests {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IrohCollectionParser;
 
-/// Iterator for the current iroh default collections
+/// Stream of links that is used by the default collections
+///
+/// Just contains an array of hashes, so it requires at least all hashes to be loaded into memory.
 #[derive(Debug, Clone)]
 pub struct ArrayLinkStream {
     hashes: Box<[Hash]>,

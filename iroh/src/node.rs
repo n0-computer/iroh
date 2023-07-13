@@ -15,11 +15,18 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+use crate::rpc_protocol::{
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
+    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
+    VersionResponse, WatchRequest, WatchResponse,
+};
+use crate::util::progress::Progress;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_bytes::collection::CollectionParser;
+use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
@@ -30,7 +37,6 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
-use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     hp::{cfg::Endpoint, derp::DerpMap},
     tls::{self, Keypair, PeerId},
@@ -45,16 +51,6 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::collection::{Collection, IrohCollectionParser};
-use crate::database::flat::{create_collection_inner, create_data_sources, Database};
-use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
-    VersionResponse, WatchRequest, WatchResponse,
-};
-use crate::util::progress::Progress;
-
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
@@ -68,16 +64,15 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database. An in memory database is available in
-/// [`crate::database::mem`]. A flat file persistent database is available in
-/// [`crate::database::flat`]. Everything else is optional.
+/// You must supply a database. Various database implementations are available
+/// in [`crate::database`]. Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D = Database, E = DummyServerEndpoint, C = IrohCollectionParser>
+pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
 where
     D: BaoMap,
     E: ServiceEndpoint<ProviderService>,
@@ -138,7 +133,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
 
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given [`Database`].
-    pub fn with_db(db: D) -> Self {
+    fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -148,7 +143,7 @@ impl<D: BaoMap> Builder<D> {
             rpc_endpoint: Default::default(),
             custom_get_handler: Arc::new(NoopCustomGetHandler),
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
-            collection_parser: Default::default(),
+            collection_parser: NoCollectionParser,
             rt: None,
         }
     }
@@ -310,6 +305,7 @@ where
         let task = {
             let handler = RpcHandler {
                 inner: inner.clone(),
+                collection_parser: self.collection_parser.clone(),
             };
             rt2.main().spawn(async move {
                 Self::run(
@@ -346,7 +342,7 @@ where
     async fn run(
         server: MagicEndpoint,
         events: broadcast::Sender<Event>,
-        handler: RpcHandler<D>,
+        handler: RpcHandler<D, C>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: Arc<dyn CustomGetHandler>,
@@ -589,11 +585,12 @@ impl<D: BaoMap> Future for Node<D> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D> {
+struct RpcHandler<D, C> {
     inner: Arc<NodeInner<D>>,
+    collection_parser: C,
 }
 
-impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
+impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -627,20 +624,21 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         futures::stream::iter(roots).filter_map(move |hash| {
             let db = db.clone();
             let local = local.clone();
+            let cp = self.collection_parser.clone();
             async move {
                 let entry = db.get(&hash)?;
-                let data = local
+                let stats = local
                     .spawn_pinned(|| async move {
-                        let mut reader = entry.data_reader().await.ok()?;
-                        reader.read_to_end().await.ok()
+                        let reader = entry.data_reader().await.ok()?;
+                        let (_collection, stats) = cp.parse(0, reader).await.ok()?;
+                        Some(stats)
                     })
                     .await
                     .ok()??;
-                let collection = Collection::from_bytes(&data).ok()?;
                 Some(ListCollectionsResponse {
                     hash,
-                    total_blobs_count: collection.blobs().len(),
-                    total_blobs_size: collection.total_blobs_size(),
+                    total_blobs_count: stats.num_blobs.unwrap_or_default(),
+                    total_blobs_size: stats.total_blob_size.unwrap_or_default(),
                 })
             }
         })
@@ -678,28 +676,32 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        let root = msg.path;
-        anyhow::ensure!(
-            root.is_dir() || root.is_file(),
-            "path must be either a Directory or a File"
-        );
-        let data_sources = create_data_sources(root)?;
-        // create the collection
-        // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
+        #[cfg(feature = "flat-db")]
+        {
+            use crate::database::flat::{create_collection_inner, create_data_sources, Database};
+            let root = msg.path;
+            anyhow::ensure!(
+                root.is_dir() || root.is_file(),
+                "path must be either a Directory or a File"
+            );
+            let data_sources = create_data_sources(root)?;
+            // create the collection
+            // todo: provide feedback for progress
+            let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
 
-        // todo: generify this
-        // for now provide will only work if D is a Database
-        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-            current.union_with(db);
+            // todo: generify this
+            // for now provide will only work if D is a Database
+            let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
+            if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
+                current.union_with(db);
+            }
+
+            if let Err(e) = self.inner.events.send(Event::ByteProvide(
+                iroh_bytes::provider::Event::CollectionAdded { hash },
+            )) {
+                warn!("failed to send CollectionAdded event: {:?}", e);
+            };
         }
-
-        if let Err(e) = self.inner.events.send(Event::ByteProvide(
-            iroh_bytes::provider::Event::CollectionAdded { hash },
-        )) {
-            warn!("failed to send CollectionAdded event: {:?}", e);
-        };
 
         Ok(())
     }
@@ -751,10 +753,14 @@ impl<D: BaoMap + BaoReadonlyDb> RpcHandler<D> {
     }
 }
 
-fn handle_rpc_request<D: BaoReadonlyDb, C: ServiceEndpoint<ProviderService>>(
+fn handle_rpc_request<
+    D: BaoReadonlyDb,
+    E: ServiceEndpoint<ProviderService>,
+    C: CollectionParser,
+>(
     msg: ProviderRequest,
-    chan: RpcChannel<ProviderService, C>,
-    handler: &RpcHandler<D>,
+    chan: RpcChannel<ProviderService, E>,
+    handler: &RpcHandler<D, C>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
@@ -859,15 +865,14 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "flat-db"))]
 mod tests {
+    use crate::database::flat::create_collection;
     use anyhow::bail;
     use futures::StreamExt;
     use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
-
-    use crate::database::flat::create_collection;
 
     use super::*;
 
@@ -894,10 +899,11 @@ mod tests {
         assert!(!ticket.addrs().is_empty());
     }
 
+    #[cfg(feature = "flat-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = Database::from(HashMap::new());
-        let node = Builder::with_db(db)
+        let db = crate::database::flat::Database::from(HashMap::new());
+        let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
             .spawn()

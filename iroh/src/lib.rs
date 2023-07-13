@@ -4,7 +4,9 @@
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 
+#[cfg(feature = "iroh-collection")]
 pub mod collection;
+#[cfg(any(feature = "flat-db", feature = "mem-db"))]
 pub mod database;
 pub mod node;
 pub mod rpc_protocol;

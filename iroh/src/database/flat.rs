@@ -22,7 +22,7 @@ use walkdir::WalkDir;
 
 use crate::collection::Blob;
 use crate::collection::Collection;
-use crate::util::canonicalize_path;
+use crate::util::io::canonicalize_path;
 use crate::util::io::validate_bao;
 use crate::util::io::BaoValidationError;
 use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};

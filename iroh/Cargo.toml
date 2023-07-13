@@ -53,7 +53,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
-metrics = ["iroh-metrics"]
+metrics = ["iroh-metrics", "flat-db", "mem-db", "iroh-collection"]
+flat-db = []
+mem-db = []
+iroh-collection = []
 test = []
 
 [dev-dependencies]
