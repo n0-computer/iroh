@@ -416,6 +416,17 @@ impl Replica {
             .collect()
     }
 
+    // TODO: not horrible
+    pub fn all_with_key_prefix(
+        &self,
+        prefix: impl AsRef<[u8]>,
+    ) -> Vec<(RecordIdentifier, SignedEntry)> {
+        self.all()
+            .into_iter()
+            .filter(|(id, _entry)| id.key().starts_with(prefix.as_ref()))
+            .collect()
+    }
+
     pub fn to_bytes(&self) -> anyhow::Result<Bytes> {
         let entries = self.all().into_iter().map(|(_id, entry)| entry).collect();
         let data = ReplicaData {
@@ -565,6 +576,10 @@ impl SignedEntry {
 
     pub fn entry(&self) -> &Entry {
         &self.entry
+    }
+
+    pub fn content_hash(&self) -> &Hash {
+        self.entry().record().content_hash()
     }
 }
 
