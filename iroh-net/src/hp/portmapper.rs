@@ -15,11 +15,11 @@ use iroh_metrics::{inc, portmap::Metrics};
 
 use crate::{net::interfaces::HomeRouter, util};
 
-use mapping::CurrentMapping;
+use current_mapping::CurrentMapping;
 
-mod mapping;
-mod pcp;
+mod current_mapping;
 mod nat_pmp;
+mod pcp;
 mod upnp;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
@@ -215,7 +215,7 @@ impl Probe {
         local_ip: Ipv4Addr,
         gateway: Ipv4Addr,
     ) -> Probe {
-        tracing::debug!("Starting portmapping probe");
+        debug!("starting portmapping probe");
         let ProbeOutput { upnp, pcp, nat_pmp } = output;
         let Config {
             enable_upnp,
@@ -448,7 +448,7 @@ impl Service {
                 Some(event) = self.current_mapping.next() => {
                     trace!("tick: mapping event {event:?}");
                     match event {
-                        mapping::Event::Renew { external_port } | mapping::Event::Expired { external_port } => {
+                        current_mapping::Event::Renew { external_port } | current_mapping::Event::Expired { external_port } => {
                             self.get_mapping(Some(external_port));
                         },
                     }
