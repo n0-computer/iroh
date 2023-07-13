@@ -9,13 +9,11 @@
 
 use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::{anyhow, bail};
-use bytes::Bytes;
-use clap::Parser;
+use anyhow::bail;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
-use futures::{future::BoxFuture, FutureExt};
-use iroh::sync::{BlobStore, Doc, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
-use iroh_bytes::provider::Database;
+use indicatif::HumanBytes;
+use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
 use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
@@ -27,11 +25,16 @@ use iroh_net::{
     tls::Keypair,
     MagicEndpoint,
 };
-use iroh_sync::sync::{Author, Namespace, NamespaceId, Replica, ReplicaStore, SignedEntry};
+use iroh_sync::sync::{Author, Namespace, SignedEntry};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
+
+use iroh_bytes_handlers::IrohBytesHandlers;
+
+const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -65,12 +68,12 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
     let args = Args::parse();
     run(args).await
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
+    let log_filter = init_logging();
     // parse or generate our keypair
     let keypair = match args.private_key {
         None => Keypair::generate(),
@@ -87,13 +90,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
     };
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
-    // build our magic endpoint
+    // build our magic endpoint and the gossip protocol
     let (endpoint, gossip, initial_endpoints) = {
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
         let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
         // init a channel that will emit once the initial endpoints of our local node are discovered
         let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
-
+        // build the magic endpoint
         let endpoint = MagicEndpoint::builder()
             .keypair(keypair.clone())
             .alpns(vec![
@@ -116,16 +119,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
             .bind(args.bind_port)
             .await?;
 
-        // create the gossip protocol
-        let gossip = {
-            let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
-            // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-            gossip_cell.set(gossip.clone()).unwrap();
-            gossip
-        };
+        // initialize the gossip protocol
+        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+        // insert into the gossip cell to be used in the endpoint callbacks above
+        gossip_cell.set(gossip.clone()).unwrap();
+
         // wait for a first endpoint update so that we know about at least one of our addrs
         let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-        // pass our initial endpoints to the gossip protocol
+        // pass our initial endpoints to the gossip protocol so that they can be announced to peers
         gossip.update_endpoints(&initial_endpoints)?;
         (endpoint, gossip, initial_endpoints)
     };
@@ -147,7 +148,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     };
 
-    // println!("> our endpoints: {initial_endpoints:?}");
     let our_ticket = {
         // add our local endpoints to the ticket and print it for others to join
         let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
@@ -163,171 +163,183 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     // unwrap our storage path or default to temp
     let storage_path = args.storage_path.unwrap_or_else(|| {
-        let dir = format!("/tmp/iroh-example-sync-{}", endpoint.peer_id());
-        let dir = PathBuf::from(dir);
+        let name = format!("iroh-sync-{}", endpoint.peer_id());
+        let dir = std::env::temp_dir().join(name);
         if !dir.exists() {
             std::fs::create_dir(&dir).expect("failed to create temp dir");
         }
         dir
     });
-    println!("> persisting data in {storage_path:?}");
+    println!("> storage directory: {storage_path:?}");
 
-    // create a runtime
-    // we need this because some things need to spawn !Send futures
-    let rt = create_rt()?;
-    // create the sync doc and store
-    // we need to pass the runtime because a !Send task is spawned for
-    // the downloader in the blob store
-    let blobs = BlobStore::new(rt.clone(), storage_path.clone(), endpoint.clone()).await?;
-    let (store, author, doc) =
-        create_or_open_document(&storage_path, blobs.clone(), topic, &keypair).await?;
+    // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
+    let rt = iroh::bytes::runtime::Handle::from_currrent(num_cpus::get())?;
+
+    // create a blob store (with a iroh-bytes database inside)
+    let blobs = BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
+
+    // create a doc store for the iroh-sync docs
+    let author = Author::from(keypair.secret().clone());
+    let docs = DocStore::new(blobs.clone(), author, storage_path.join("docs"));
+
+    // create the live syncer
+    let live_sync = LiveSync::spawn(endpoint.clone(), gossip.clone());
 
     // construct the state that is passed to the endpoint loop and from there cloned
     // into to the connection handler task for incoming connections.
     let state = Arc::new(State {
         gossip: gossip.clone(),
-        replica_store: store.clone(),
-        db: blobs.db().clone(),
-        rt,
+        docs: docs.clone(),
+        bytes: IrohBytesHandlers::new(rt.clone(), blobs.db().clone()),
     });
+
     // spawn our endpoint loop that forwards incoming connections
     tokio::spawn(endpoint_loop(endpoint.clone(), state));
 
-    // create the live syncer
-    let sync_handle = LiveSync::spawn(endpoint.clone(), gossip.clone());
-    sync_handle
-        .sync_doc(doc.replica().clone(), peers.clone())
-        .await?;
+    // open our document and add to the live syncer
+    let namespace = Namespace::from_bytes(topic.as_bytes());
+    println!("> opening doc {}", fmt_hash(namespace.id().as_bytes()));
+    let doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
+    live_sync.add(doc.replica().clone(), peers.clone()).await?;
 
-    // spawn an input thread that reads stdin and parses each line as a `Cmd` command
-    // not using tokio here because they recommend this for "technical reasons"
-    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<Cmd>(1);
-    std::thread::spawn(move || input_loop(cmd_tx));
-
+    // spawn an repl thread that reads stdin and parses each line as a `Cmd` command
+    let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+    std::thread::spawn(move || repl_loop(cmd_tx).expect("input loop crashed"));
     // process commands in a loop
-    println!("> ready to accept commands: set <key> <value> | get <key> | ls | exit");
+    println!("> ready to accept commands");
+    println!("> type `help` for a list of commands");
     loop {
-        let cmd = tokio::select! {
-            Some(cmd) = cmd_rx.recv() => cmd,
-            _ = tokio::signal::ctrl_c() => Cmd::Exit
-
+        // wait for a command from the input repl thread
+        let Some((cmd, to_repl_tx)) = cmd_rx.recv().await else {
+            break;
         };
-        match cmd {
-            Cmd::Set { key, value } => {
-                doc.insert(&key, &author, value.into_bytes().into()).await?;
-            }
-            Cmd::Get { key } => {
-                let entries = doc.replica().all_for_key(key.as_bytes());
-                for (_id, entry) in entries {
-                    let content = fmt_content(&doc, &entry).await?;
-                    println!("{} -> {content}", fmt_entry(&entry),);
-                }
-            }
-            Cmd::Ls => {
-                let all = doc.replica().all();
-                println!("> {} entries", all.len());
-                for (_id, entry) in all {
-                    println!(
-                        "{} -> {}",
-                        fmt_entry(&entry),
-                        fmt_content(&doc, &entry).await?
-                    );
-                }
-            }
-            Cmd::Exit => {
-                break;
-            }
+        // exit command: break early
+        if let Cmd::Exit = cmd {
+            to_repl_tx.send(ToRepl::Exit).ok();
+            break;
         }
+
+        // handle the command, but select against Ctrl-C signal so that commands can be aborted
+        tokio::select! {
+            biased;
+            _ = tokio::signal::ctrl_c() => {
+                println!("> aborted");
+            }
+            res = handle_command(cmd, &doc, &log_filter) => if let Err(err) = res {
+                println!("> error: {err}");
+            },
+        };
+        // notify to the repl that we want to get the next command
+        to_repl_tx.send(ToRepl::Continue).ok();
     }
 
-    let res = sync_handle.cancel().await;
-    if let Err(err) = res {
+    // exit: cancel the sync and store blob database and document
+    if let Err(err) = live_sync.cancel().await {
         println!("> syncer closed with error: {err:?}");
     }
-
     println!("> persisting document and blob database at {storage_path:?}");
     blobs.save().await?;
-    save_document(&storage_path, doc.replica()).await?;
+    docs.save(&doc).await?;
 
     Ok(())
 }
 
+async fn handle_command(cmd: Cmd, doc: &Doc, log_filter: &LogLevelReload) -> anyhow::Result<()> {
+    match cmd {
+        Cmd::Set { key, value } => {
+            doc.insert_bytes(&key, value.into_bytes().into()).await?;
+        }
+        Cmd::Get { key, print_content } => {
+            let entries = doc.replica().all_for_key(key.as_bytes());
+            for (_id, entry) in entries {
+                println!("{}", fmt_entry(&entry));
+                if print_content {
+                    println!("{}", fmt_content(&doc, &entry).await);
+                }
+            }
+        }
+        Cmd::Ls { prefix } => {
+            let entries = match prefix {
+                None => doc.replica().all(),
+                Some(prefix) => doc.replica().all_with_key_prefix(prefix.as_bytes()),
+            };
+            println!("> {} entries", entries.len());
+            for (_id, entry) in entries {
+                println!("{}", fmt_entry(&entry),);
+            }
+        }
+        Cmd::Log { directive } => {
+            let next_filter = EnvFilter::from_str(&directive)?;
+            log_filter.modify(|layer| *layer = next_filter)?;
+        }
+        Cmd::Exit => {}
+    }
+    Ok(())
+}
+
+#[derive(Parser)]
 pub enum Cmd {
-    Set { key: String, value: String },
-    Get { key: String },
-    Ls,
+    /// Set an entry
+    Set {
+        /// Key to the entry (parsed as UTF-8 string).
+        key: String,
+        /// Content to store for this entry (parsed as UTF-8 string)
+        value: String,
+    },
+    /// Get entries by key
+    ///
+    /// Shows the author, content hash and content length for all entries for this key.
+    Get {
+        /// Key to the entry (parsed as UTF-8 string).
+        key: String,
+        /// Print the value (but only if it is valid UTF-8 and smaller than 1MB)
+        #[clap(short = 'c', long)]
+        print_content: bool,
+    },
+    /// List entries
+    Ls {
+        /// Optionally list only entries whose key starts with PREFIX.
+        prefix: Option<String>,
+    },
+    /// Change the log level
+    Log {
+        /// The log level or log filtering directive
+        ///
+        /// Valid log levels are: "trace", "debug", "info", "warn", "error"
+        ///
+        /// You can also set one or more filtering directives to enable more fine-grained log
+        /// filtering. The supported filtering directives and their semantics are documented here:
+        /// https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives
+        ///
+        /// To disable logging completely, set to the empty string (via empty double quotes: "").
+        #[clap(verbatim_doc_comment)]
+        directive: String,
+    },
+    /// Quit
     Exit,
 }
 impl FromStr for Cmd {
     type Err = anyhow::Error;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split(' ');
-        match [parts.next(), parts.next(), parts.next()] {
-            [Some("set"), Some(key), Some(value)] => Ok(Self::Set {
-                key: key.into(),
-                value: value.into(),
-            }),
-            [Some("get"), Some(key), None] => Ok(Self::Get { key: key.into() }),
-            [Some("ls"), None, None] => Ok(Self::Ls),
-            [Some("exit"), None, None] => Ok(Self::Exit),
-            _ => Err(anyhow!("invalid command")),
-        }
+        let args = shell_words::split(s)?;
+        let matches = Cmd::command()
+            .multicall(true)
+            .subcommand_required(true)
+            .try_get_matches_from(args)?;
+        let cmd = Cmd::from_arg_matches(&matches)?;
+        Ok(cmd)
     }
-}
-
-async fn create_or_open_document(
-    storage_path: &PathBuf,
-    blobs: BlobStore,
-    topic: TopicId,
-    keypair: &Keypair,
-) -> anyhow::Result<(ReplicaStore, Author, Doc)> {
-    let author = Author::from(keypair.secret().clone());
-    let namespace = Namespace::from_bytes(topic.as_bytes());
-    let store = ReplicaStore::default();
-
-    let replica_path = replica_path(storage_path, namespace.id());
-    let replica = if replica_path.exists() {
-        let bytes = tokio::fs::read(replica_path).await?;
-        store.open_replica(&bytes)?
-    } else {
-        store.new_replica(namespace)
-    };
-
-    // do some logging
-    replica.on_insert(Box::new(move |origin, entry| {
-        println!("> insert from {origin:?}: {}", fmt_entry(&entry));
-    }));
-
-    let doc = Doc::new(replica, blobs, DownloadMode::Always);
-    Ok((store, author, doc))
-}
-
-async fn save_document(base_path: &PathBuf, replica: &Replica) -> anyhow::Result<()> {
-    let replica_path = replica_path(base_path, &replica.namespace());
-    tokio::fs::create_dir_all(replica_path.parent().unwrap()).await?;
-    let bytes = replica.to_bytes()?;
-    tokio::fs::write(replica_path, bytes).await?;
-    Ok(())
-}
-
-fn replica_path(storage_path: &PathBuf, namespace: &NamespaceId) -> PathBuf {
-    storage_path
-        .join("docs")
-        .join(hex::encode(namespace.as_bytes()))
 }
 
 #[derive(Debug)]
 struct State {
-    rt: iroh_bytes::runtime::Handle,
     gossip: GossipHandle,
-    replica_store: ReplicaStore,
-    db: Database,
+    docs: DocStore,
+    bytes: IrohBytesHandlers,
 }
 
 async fn endpoint_loop(endpoint: MagicEndpoint, state: Arc<State>) -> anyhow::Result<()> {
     while let Some(conn) = endpoint.accept().await {
-        // spawn a new task for each incoming connection.
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(err) = handle_connection(conn, state).await {
@@ -343,96 +355,50 @@ async fn handle_connection(mut conn: quinn::Connecting, state: Arc<State>) -> an
     println!("> incoming connection with alpn {alpn}");
     match alpn.as_bytes() {
         GOSSIP_ALPN => state.gossip.handle_connection(conn.await?).await,
-        SYNC_ALPN => iroh::sync::handle_connection(conn, state.replica_store.clone()).await,
-        alpn if alpn == iroh_bytes::protocol::ALPN => {
-            handle_iroh_byes_connection(conn, state).await
-        }
+        SYNC_ALPN => state.docs.handle_connection(conn).await,
+        alpn if alpn == iroh_bytes::protocol::ALPN => state.bytes.handle_connection(conn).await,
         _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }
 }
 
-async fn handle_iroh_byes_connection(
-    conn: quinn::Connecting,
-    state: Arc<State>,
-) -> anyhow::Result<()> {
-    use iroh_bytes::{
-        protocol::{GetRequest, RequestToken},
-        provider::{
-            CustomGetHandler, EventSender, IrohCollectionParser, RequestAuthorizationHandler,
-        },
-    };
-    iroh_bytes::provider::handle_connection(
-        conn,
-        state.db.clone(),
-        NoopEventSender,
-        IrohCollectionParser,
-        Arc::new(NoopCustomGetHandler),
-        Arc::new(NoopRequestAuthorizationHandler),
-        state.rt.clone(),
-    )
-    .await;
+#[derive(Debug)]
+enum ToRepl {
+    Continue,
+    Exit,
+}
 
-    #[derive(Debug, Clone)]
-    struct NoopEventSender;
-    impl EventSender for NoopEventSender {
-        fn send(&self, _event: iroh_bytes::provider::Event) -> Option<iroh_bytes::provider::Event> {
-            None
-        }
-    }
-    #[derive(Debug)]
-    struct NoopCustomGetHandler;
-    impl CustomGetHandler for NoopCustomGetHandler {
-        fn handle(
-            &self,
-            _token: Option<RequestToken>,
-            _request: Bytes,
-        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
-            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
-        }
-    }
-    #[derive(Debug)]
-    struct NoopRequestAuthorizationHandler;
-    impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
-        fn authorize(
-            &self,
-            token: Option<RequestToken>,
-            _request: &iroh_bytes::protocol::Request,
-        ) -> BoxFuture<'static, anyhow::Result<()>> {
-            async move {
-                if let Some(token) = token {
-                    anyhow::bail!(
-                        "no authorization handler defined, but token was provided: {:?}",
-                        token
-                    );
-                }
-                Ok(())
+fn repl_loop(cmd_tx: mpsc::Sender<(Cmd, oneshot::Sender<ToRepl>)>) -> anyhow::Result<()> {
+    use rustyline::{error::ReadlineError, Config, DefaultEditor};
+    let mut rl = DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
+    loop {
+        // prepare a channel to receive a signal from the main thread when a command completed
+        let (to_repl_tx, to_repl_rx) = oneshot::channel();
+        let readline = rl.readline(">> ");
+        match readline {
+            Ok(line) if line.is_empty() => continue,
+            Ok(line) => {
+                rl.add_history_entry(line.as_str())?;
+                match Cmd::from_str(&line) {
+                    Ok(cmd) => cmd_tx.blocking_send((cmd, to_repl_tx))?,
+                    Err(err) => {
+                        println!("{err}");
+                        continue;
+                    }
+                };
             }
-            .boxed()
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
+                cmd_tx.blocking_send((Cmd::Exit, to_repl_tx))?;
+            }
+            Err(ReadlineError::WindowResized) => continue,
+            Err(err) => return Err(err.into()),
+        }
+        // wait for reply from main thread
+        match to_repl_rx.blocking_recv()? {
+            ToRepl::Continue => continue,
+            ToRepl::Exit => break,
         }
     }
     Ok(())
-}
-
-fn create_rt() -> anyhow::Result<iroh::bytes::runtime::Handle> {
-    let rt = iroh::bytes::runtime::Handle::from_currrent(num_cpus::get())?;
-    Ok(rt)
-}
-
-fn input_loop(line_tx: tokio::sync::mpsc::Sender<Cmd>) -> anyhow::Result<()> {
-    let mut buffer = String::new();
-    let stdin = std::io::stdin();
-    loop {
-        stdin.read_line(&mut buffer)?;
-        let cmd = match Cmd::from_str(buffer.trim()) {
-            Ok(cmd) => cmd,
-            Err(err) => {
-                println!("> failed to parse command: {}", err);
-                continue;
-            }
-        };
-        line_tx.blocking_send(cmd)?;
-        buffer.clear();
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -472,6 +438,19 @@ impl FromStr for Ticket {
     }
 }
 
+type LogLevelReload = tracing_subscriber::reload::Handle<EnvFilter, Registry>;
+fn init_logging() -> LogLevelReload {
+    use tracing_subscriber::{filter, fmt, prelude::*, reload};
+    let filter = filter::EnvFilter::from_default_env();
+    let (filter, reload_handle) = reload::Layer::new(filter);
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::Layer::default())
+        .init();
+    reload_handle
+}
+
+
 // helpers
 
 fn fmt_entry(entry: &SignedEntry) -> String {
@@ -480,20 +459,25 @@ fn fmt_entry(entry: &SignedEntry) -> String {
     let author = fmt_hash(id.author().as_bytes());
     let hash = entry.entry().record().content_hash();
     let hash = fmt_hash(hash.as_bytes());
-    format!("@{author}: {key} = {hash}")
+    let len = HumanBytes(entry.entry().record().content_len());
+    format!("@{author}: {key} = {hash} ({len})",)
 }
-async fn fmt_content(doc: &Doc, entry: &SignedEntry) -> anyhow::Result<String> {
-    let content = match doc.get_content(entry).await {
-        None => "<missing content>".to_string(),
-        Some(content) => match String::from_utf8(content.into()) {
-            Ok(str) => str,
-            Err(_err) => "<invalid utf8>".to_string(),
-        },
-    };
-    Ok(content)
+async fn fmt_content(doc: &Doc, entry: &SignedEntry) -> String {
+    let len = entry.entry().record().content_len();
+    if len > MAX_DISPLAY_CONTENT_LEN {
+        format!("<{}>", HumanBytes(len))
+    } else {
+        match doc.get_content_bytes(entry).await {
+            None => "<missing content>".to_string(),
+            Some(content) => match String::from_utf8(content.into()) {
+                Ok(str) => str,
+                Err(_err) => format!("<invalid utf8 {}>", HumanBytes(len)),
+            },
+        }
+    }
 }
-fn fmt_hash(hash: &[u8]) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(hash);
+fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
+    let mut text = data_encoding::BASE32_NOPAD.encode(hash.as_ref());
     text.make_ascii_lowercase();
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
 }
@@ -530,4 +514,90 @@ fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
         UseIpv6::TryDns,
         0
     ))
+}
+
+/// handlers for iroh_bytes connections
+mod iroh_bytes_handlers {
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use futures::{future::BoxFuture, FutureExt};
+    use iroh_bytes::{
+        protocol::{GetRequest, RequestToken},
+        provider::{
+            CustomGetHandler, Database, EventSender, IrohCollectionParser,
+            RequestAuthorizationHandler,
+        },
+    };
+    #[derive(Debug, Clone)]
+    pub struct IrohBytesHandlers {
+        db: Database,
+        rt: iroh_bytes::runtime::Handle,
+        event_sender: NoopEventSender,
+        get_handler: Arc<NoopCustomGetHandler>,
+        auth_handler: Arc<NoopRequestAuthorizationHandler>,
+    }
+    impl IrohBytesHandlers {
+        pub fn new(rt: iroh_bytes::runtime::Handle, db: Database) -> Self {
+            Self {
+                db,
+                rt,
+                event_sender: NoopEventSender,
+                get_handler: Arc::new(NoopCustomGetHandler),
+                auth_handler: Arc::new(NoopRequestAuthorizationHandler),
+            }
+        }
+        pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+            iroh_bytes::provider::handle_connection(
+                conn,
+                self.db.clone(),
+                self.event_sender.clone(),
+                IrohCollectionParser,
+                self.get_handler.clone(),
+                self.auth_handler.clone(),
+                self.rt.clone(),
+            )
+            .await;
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct NoopEventSender;
+    impl EventSender for NoopEventSender {
+        fn send(&self, _event: iroh_bytes::provider::Event) -> Option<iroh_bytes::provider::Event> {
+            None
+        }
+    }
+    #[derive(Debug)]
+    struct NoopCustomGetHandler;
+    impl CustomGetHandler for NoopCustomGetHandler {
+        fn handle(
+            &self,
+            _token: Option<RequestToken>,
+            _request: Bytes,
+        ) -> BoxFuture<'static, anyhow::Result<GetRequest>> {
+            async move { Err(anyhow::anyhow!("no custom get handler defined")) }.boxed()
+        }
+    }
+    #[derive(Debug)]
+    struct NoopRequestAuthorizationHandler;
+    impl RequestAuthorizationHandler for NoopRequestAuthorizationHandler {
+        fn authorize(
+            &self,
+            token: Option<RequestToken>,
+            _request: &iroh_bytes::protocol::Request,
+        ) -> BoxFuture<'static, anyhow::Result<()>> {
+            async move {
+                if let Some(token) = token {
+                    anyhow::bail!(
+                        "no authorization handler defined, but token was provided: {:?}",
+                        token
+                    );
+                }
+                Ok(())
+            }
+            .boxed()
+        }
+    }
 }
