@@ -14,8 +14,6 @@ pub mod util;
 pub(crate) mod test_utils;
 
 pub use crate::util::Hash;
-pub use iroh_net as net;
-
 use bao_tree::BlockSize;
 
 /// Block size used by iroh, 2^4*1024 = 16KiB

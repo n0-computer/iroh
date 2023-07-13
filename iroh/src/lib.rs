@@ -4,6 +4,7 @@
 pub use iroh_bytes as bytes;
 pub use iroh_net as net;
 
+pub mod dial;
 pub mod node;
 pub mod rpc_protocol;
 pub mod util;

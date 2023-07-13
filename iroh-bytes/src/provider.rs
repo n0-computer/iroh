@@ -31,11 +31,9 @@ use crate::util::{io::canonicalize_path, progress::Progress, Hash, RpcError};
 
 pub mod collection;
 pub mod database;
-mod ticket;
 
 pub use database::Database;
 pub use database::FNAME_PATHS;
-pub use ticket::Ticket;
 
 use self::database::BaoMap;
 

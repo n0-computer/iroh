@@ -8,7 +8,8 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
-use iroh::bytes::{provider::Ticket, Hash};
+use iroh::bytes::Hash;
+use iroh::dial::Ticket;
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;

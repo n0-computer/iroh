@@ -26,8 +26,7 @@ use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
         database::{BaoMap, BaoMapEntry, BaoReadonlyDb},
-        CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, Ticket,
-        ValidateProgress,
+        CustomGetHandler, Database, ProvideProgress, RequestAuthorizationHandler, ValidateProgress,
     },
     runtime,
     util::{progress::Progress, Hash},
@@ -47,6 +46,7 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
+use crate::dial::Ticket;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,

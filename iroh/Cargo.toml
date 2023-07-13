@@ -45,6 +45,7 @@ num_cpus = { version = "1.15.0", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+data-encoding = "2.4.0"
 
 
 [features]
