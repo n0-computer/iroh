@@ -669,8 +669,8 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
                     .ok()??;
                 Some(ListCollectionsResponse {
                     hash,
-                    total_blobs_count: stats.num_blobs.unwrap_or_default(),
-                    total_blobs_size: stats.total_blob_size.unwrap_or_default(),
+                    total_blobs_count: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
                 })
             }
         })
