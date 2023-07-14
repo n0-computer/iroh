@@ -28,8 +28,9 @@ pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 pub struct ProvideRequest {
     /// The path to the data to provide.
     ///
-    /// This should be an absolute path.
-    /// The node and the cli should be on the same filesystem.
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs. Usually the cli will run on the same machine as the
+    /// node, so this should be an absolute path on the cli machine.
     pub path: PathBuf,
 }
 
@@ -78,7 +79,7 @@ impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
 
 /// List all collections
 ///
-///
+/// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListCollectionsRequest;
 
@@ -128,7 +129,9 @@ impl RpcMsg<ProviderService> for ShutdownRequest {
     type Response = ();
 }
 
-/// A request to get the id of the node
+/// A request to get information about the identity of the node
+///
+/// See [`IdResponse`] for the response.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdRequest;
 
