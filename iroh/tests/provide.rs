@@ -34,7 +34,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
     collection::{CollectionParser, CollectionStats, LinkStream},
-    get::{self, fsm, fsm::ConnectedNext, Stats},
+    get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
     provider::{self, BaoReadonlyDb, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
@@ -142,8 +142,8 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given peer id and addresses, using a
 /// randomly generated keypair.
-fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> get::Options {
-    get::Options {
+fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
+    iroh::dial::Options {
         keypair: Keypair::generate(),
         peer_id,
         addrs,
@@ -434,7 +434,9 @@ async fn test_blob_reader_partial() -> Result<()> {
     let peer_id = node.peer_id();
 
     let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-        let connection = get::dial(get_options(peer_id, node_addr)).await.unwrap();
+        let connection = iroh::dial::dial(get_options(peer_id, node_addr))
+            .await
+            .unwrap();
         let response = fsm::start(connection, GetRequest::all(hash).into());
         // connect
         let connected = response.next().await.unwrap();
@@ -551,7 +553,7 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
 
 /// Run a get request with the default collection parser
 async fn run_get_request(
-    opts: get::Options,
+    opts: iroh::dial::Options,
     request: AnyGetRequest,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
     run_custom_get_request(opts, request, IrohCollectionParser).await
@@ -559,11 +561,11 @@ async fn run_get_request(
 
 /// Run a get request with a custom collection parser
 async fn run_custom_get_request<C: CollectionParser>(
-    opts: get::Options,
+    opts: iroh::dial::Options,
     request: AnyGetRequest,
     collection_parser: C,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
-    let connection = get::dial(opts).await?;
+    let connection = iroh::dial::dial(opts).await?;
     let initial = fsm::start(connection, request);
     use fsm::*;
     let mut items = BTreeMap::new();
@@ -744,7 +746,7 @@ async fn test_custom_request_blob() {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
-        let connection = get::dial(get_options(peer_id, addrs)).await?;
+        let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
