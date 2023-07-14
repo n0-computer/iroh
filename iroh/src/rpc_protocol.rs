@@ -5,6 +5,8 @@
 //! This file contains request messages, response messages and definitions of
 //! the interaction pattern. Some requests like version and shutdown have a single
 //! response, while others like provide have a stream of responses.
+//!
+//! Note that this is subject to change. The RPC protocol is not yet stable.
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
@@ -86,9 +88,13 @@ pub struct ListCollectionsResponse {
     /// Hash of the collection
     pub hash: Hash,
     /// Number of children in the collection
-    pub total_blobs_count: u64,
+    ///
+    /// This is an optional field, because the data is not always available.
+    pub total_blobs_count: Option<u64>,
     /// Total size of the raw data referred to by all links
-    pub total_blobs_size: u64,
+    ///
+    /// This is an optional field, because the data is not always available.
+    pub total_blobs_size: Option<u64>,
 }
 
 impl Msg<ProviderService> for ListCollectionsRequest {
