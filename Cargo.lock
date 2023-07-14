@@ -506,6 +506,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 
 [[package]]
+name = "collection"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -823,6 +833,12 @@ dependencies = [
  "syn 2.0.25",
  "unicode-xid",
 ]
+
+[[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
 name = "digest"
@@ -1332,6 +1348,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
+name = "hello-world"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1620,6 +1646,7 @@ dependencies = [
  "clap",
  "config",
  "console",
+ "data-encoding",
  "derive_more_preview",
  "dirs-next",
  "duct",
@@ -1634,7 +1661,9 @@ dependencies = [
  "multibase",
  "nix",
  "num_cpus",
+ "portable-atomic",
  "postcard",
+ "proptest",
  "quic-rpc",
  "quinn",
  "rand",
@@ -1643,6 +1672,7 @@ dependencies = [
  "serde",
  "tempfile",
  "testdir",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -1666,11 +1696,9 @@ dependencies = [
  "hex",
  "http-body",
  "iroh-io",
- "iroh-net",
  "multibase",
  "num_cpus",
  "once_cell",
- "portable-atomic",
  "postcard",
  "proptest",
  "quinn",
@@ -1681,15 +1709,12 @@ dependencies = [
  "serde-error",
  "smallvec",
  "subtle",
- "tempfile",
- "testdir",
  "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]
@@ -1752,6 +1777,7 @@ dependencies = [
  "once_cell",
  "os_info",
  "postcard",
+ "pretty_assertions",
  "quinn",
  "quinn-proto",
  "quinn-udp",
@@ -2625,6 +2651,16 @@ dependencies = [
  "lazy_static",
  "regex",
  "ucd-parse",
+]
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af7cee1a6c8a5b9208b3cb1061f10c0cb689087b3d8ce85fb9d2dd7a29b6ba66"
+dependencies = [
+ "diff",
+ "yansi",
 ]
 
 [[package]]
@@ -3882,6 +3918,7 @@ dependencies = [
  "libc",
  "mio",
  "num_cpus",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.4.9",
@@ -4715,6 +4752,12 @@ checksum = "d7d8a75eaf6557bb84a65ace8609883db44a29951042ada9b393151532e41fcb"
 dependencies = [
  "xml-rs",
 ]
+
+[[package]]
+name = "yansi"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "yasna"

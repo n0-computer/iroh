@@ -7,13 +7,45 @@ use std::fmt::{self, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
+use iroh_bytes::protocol::RequestToken;
+use iroh_bytes::Hash;
 use iroh_net::hp::derp::DerpMap;
 use iroh_net::tls::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::RequestToken;
-use crate::{get, Hash};
+/// Options for the client
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// The keypair of the node
+    pub keypair: Keypair,
+    /// The addresses to connect to
+    pub addrs: Vec<SocketAddr>,
+    /// The peer id to dial
+    pub peer_id: PeerId,
+    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
+    pub keylog: bool,
+    /// The configuration of the derp services
+    pub derp_map: Option<DerpMap>,
+}
+
+/// Create a new endpoint and dial a peer, returning the connection
+///
+/// Note that this will create an entirely new endpoint, so it should be only
+/// used for short lived connections. If you want to connect to multiple peers,
+/// it is preferable to create an endpoint and use `connect` on the endpoint.
+pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
+    let endpoint = iroh_net::MagicEndpoint::builder()
+        .keypair(opts.keypair)
+        .derp_map(opts.derp_map)
+        .keylog(opts.keylog)
+        .bind(0)
+        .await?;
+    endpoint
+        .connect(opts.peer_id, &iroh_bytes::protocol::ALPN, &opts.addrs)
+        .await
+        .context("failed to connect to provider")
+}
 
 /// A token containing everything to get a file from the provider.
 ///
@@ -31,6 +63,8 @@ pub struct Ticket {
     ///
     /// This will never be empty.
     addrs: Vec<SocketAddr>,
+    /// True to treat the hash as a collection and retrieve all blobs in it.
+    recursive: bool,
 }
 
 impl Ticket {
@@ -40,6 +74,7 @@ impl Ticket {
         peer: PeerId,
         addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
+        recursive: bool,
     ) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
         Ok(Self {
@@ -47,6 +82,7 @@ impl Ticket {
             peer,
             addrs,
             token,
+            recursive,
         })
     }
 
@@ -77,6 +113,21 @@ impl Ticket {
         self.token.as_ref()
     }
 
+    /// Set the [`RequestToken`] for this ticket.
+    pub fn with_token(self, token: Option<RequestToken>) -> Self {
+        Self { token, ..self }
+    }
+
+    /// True if the ticket is for a collection and should retrieve all blobs in it.
+    pub fn recursive(&self) -> bool {
+        self.recursive
+    }
+
+    /// Set recursive to for this ticket
+    pub fn with_recursive(self, recursive: bool) -> Self {
+        Self { recursive, ..self }
+    }
+
     /// The addresses on which the provider can be reached.
     ///
     /// This is guaranteed to be non-empty.
@@ -85,19 +136,20 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>) {
+    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>, bool) {
         let Ticket {
             hash,
             peer,
             token,
             addrs,
+            recursive,
         } = self;
-        (hash, peer, addrs, token)
+        (hash, peer, addrs, token, recursive)
     }
 
-    /// Convert this ticket into a [`get::Options`], adding the given keypair.
-    pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> get::Options {
-        get::Options {
+    /// Convert this ticket into a [`Options`], adding the given keypair.
+    pub fn as_get_options(&self, keypair: Keypair, derp_map: Option<DerpMap>) -> Options {
+        Options {
             peer_id: self.peer,
             addrs: self.addrs.clone(),
             keypair,
@@ -146,6 +198,7 @@ mod tests {
             peer,
             addrs: vec![addr],
             token: Some(token),
+            recursive: true,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

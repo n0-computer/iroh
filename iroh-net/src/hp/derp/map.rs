@@ -76,7 +76,12 @@ impl From<Url> for DerpMap {
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     fn from(url: Url) -> Self {
-        Self::default_from_node(url, DEFAULT_DERP_STUN_PORT, UseIpv4::None, UseIpv6::None)
+        Self::default_from_node(
+            url,
+            DEFAULT_DERP_STUN_PORT,
+            UseIpv4::TryDns,
+            UseIpv6::TryDns,
+        )
     }
 }
 
@@ -87,7 +92,7 @@ impl fmt::Display for DerpMap {
 }
 
 /// A geographic region running DERP relay node(s).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpRegion {
     /// A unique integer for a geographic region
     pub region_id: u16,
@@ -99,16 +104,34 @@ pub struct DerpRegion {
     pub region_code: String,
 }
 
+impl DerpRegion {
+    /// Whether this region has a full DERP node configured.
+    ///
+    /// It is possible for a region to only have STUN servers configured and no full blown
+    /// DERP server.  In this case this will return false.
+    pub fn has_derp_node(&self) -> bool {
+        for node in self.nodes.iter() {
+            if !node.stun_only {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Information on a specific derp server.
 ///
 /// Includes the region in which it can be found, as well as how to dial the server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
-    /// The name of this derp server
+    /// The name of this derp server.
+    ///
+    /// This name MUST be unique among all configured DERP servers.
     pub name: String,
     /// The numeric region ID
     pub region_id: u16,
     /// The [`Url`] where this derp server can be dialed
+    #[debug("{}", url)]
     pub url: Url,
     /// Whether this derp server should only be used for STUN requests
     pub stun_only: bool,
@@ -116,22 +139,24 @@ pub struct DerpNode {
     pub stun_port: u16,
     /// Optional stun-specific IP address
     pub stun_test_ip: Option<IpAddr>,
-    /// Optionally forces an IPv4 address to use, instead of using DNS.
-    /// If [`UseIpv4::None`], A record(s) from DNS lookups of HostName are used.
-    /// If [`UseIpv4::Disabled`], IPv4 is not used;
+    /// Whether to dial this server on IPv4.
     pub ipv4: UseIpv4,
-    /// Optionally forces an IPv6 address to use, instead of using DNS.
-    /// If [`UseIpv6::None`], A record(s) from DNS lookups of HostName are used.
-    /// If [`UseIpv6::Disabled`], IPv6 is not used;
+    /// Whether to dial this server on IPv6.
     pub ipv6: UseIpv6,
 }
 
+impl fmt::Display for DerpNode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 /// Whether we should use IPv4 when communicating with this derp server
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum UseIpv4 {
     /// Indicates we do not have an IPv4 address, but the server may still
     /// be able to communicate over IPv4 by resolving the hostname over DNS
-    None,
+    TryDns,
     /// Do not attempt to contact the derp server using IPv4
     Disabled,
     /// The IPv4 address of the derp server
@@ -146,11 +171,11 @@ impl UseIpv4 {
 }
 
 /// Whether we should use IPv6 when communicating with this derp server
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum UseIpv6 {
     /// Indicates we do not have an IPv6 address, but the server may still
     /// be able to communicate over IPv6 by resolving the hostname over DNS
-    None,
+    TryDns,
     /// Do not attempt to contact the derp server using IPv6
     Disabled,
     /// The IPv6 address of the derp server

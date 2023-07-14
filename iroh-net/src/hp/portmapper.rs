@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
-use tracing::{debug, trace};
+use tracing::{debug, info_span, trace, Instrument};
 
 use iroh_metrics::{inc, portmap::Metrics};
 
@@ -126,7 +126,10 @@ impl Client {
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
-            tokio::spawn(async move { service.run().await }).abort_handle(),
+            tokio::spawn(
+                async move { service.run().await }.instrument(info_span!("portmapper.service")),
+            )
+            .abort_handle(),
         );
 
         Client {

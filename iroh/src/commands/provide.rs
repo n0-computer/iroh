@@ -8,14 +8,12 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use iroh::{
+    collection::IrohCollectionParser,
+    database::flat::{Database, FNAME_PATHS},
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{
-    protocol::RequestToken,
-    provider::{Database, FNAME_PATHS},
-    runtime,
-};
+use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
 use iroh_net::{hp::derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
@@ -91,7 +89,7 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
             let stream = controller.server_streaming(ProvideRequest { path }).await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
-            let ticket = provider.ticket(hash, token).await?;
+            let ticket = provider.ticket(hash).await?.with_token(token);
             println!("All-in-one ticket: {ticket}");
             anyhow::Ok(tmp_path)
         })
@@ -119,15 +117,16 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide(
-    db: Database,
+async fn provide<D: BaoReadonlyDb>(
+    db: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<Database>> {
+) -> Result<Node<D>> {
     let keypair = get_keypair(key).await?;
 
     let mut builder = Node::builder(db)
+        .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
     if let Some(dm) = opts.derp_map {
