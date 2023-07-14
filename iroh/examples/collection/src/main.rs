@@ -4,11 +4,14 @@
 //! recursively using the iroh CLI.
 //!
 //! This is using an in memory database and a random peer id.
+//! run this example from the project root:
+//!     $ cargo run -p collection
 use iroh::bytes::util::runtime;
 use iroh::collection::{Blob, Collection, IrohCollectionParser};
 use iroh::database::mem;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+// set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
@@ -20,10 +23,10 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
-    // create a new database and add some data
+    // create a new database and add two blobs
     let (mut db, names) = mem::Database::new([
-        ("file1", b"the first file. ".to_vec()),
-        ("file2", b"the second file".to_vec()),
+        ("blob1", b"the first blob of bytes".to_vec()),
+        ("blob2", b"the second blob of bytes".to_vec()),
     ]);
     // create blobs from the data
     let blobs = names
@@ -47,17 +50,20 @@ async fn main() -> anyhow::Result<()> {
         .spawn()
         .await?;
     // create a ticket
+    // tickets wrap all details needed to get a collection
     let ticket = node.ticket(hash).await?;
     // print some info about the node
-    println!(
-        "Node {} serving {} on {:?}",
-        ticket.peer(),
-        ticket.hash(),
-        ticket.addrs()
-    );
+    println!("serving hash:    {}", ticket.hash()); // BLAKE3 hash of the collection
+    println!("node PeerID:     {}", ticket.peer());
+    println!("node listening addresses:");
+    for addr in ticket.addrs() {
+        println!("\t{:?}", addr);
+    }
     // print the ticket, containing all the above information
-    println!("Ticket: {}", ticket);
-    // wait for the node to finish
+    println!("in another terminal, run:");
+    println!("\t$ cargo run -- get --ticket {}", ticket);
+    // wait for the node to finish, this will block indefinitely
+    // stop with SIGINT (ctrl+c)
     node.await?;
     Ok(())
 }
