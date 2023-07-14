@@ -254,14 +254,14 @@ impl MagicEndpoint {
 
     /// Connect to a remote endpoint.
     ///
-    /// The PeerId, the ALPN protocol, and the DERP region are required. If you happen to know dialable addresses of
+    /// The PeerId, the ALPN protocol are required. If you happen to know dialable addresses of
     /// the remote endpoint, they can be specified and will be used to try and establish a direct
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.
     ///
-    /// If the `derp_region` is nonzero and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
-    /// If the `derp_region` is zero, it assumes that you understand no hole punching can occur to
-    /// establish a connection.
+    /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
+    ///
+    /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(
         &self,
         peer_id: PeerId,

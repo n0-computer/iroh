@@ -218,7 +218,7 @@ impl Inner {
 
     /// Sets the derp region with the best latency.
     ///
-    /// If we are not connected to any derp regions, set this to "0".
+    /// If we are not connected to any derp regions, set this to `None`.
     pub(super) async fn set_my_derp(&self, new: Option<u16>) {
         let mut old = self.my_derp.write().await;
         if let Some(my_derp) = new {
@@ -1631,9 +1631,11 @@ impl Actor {
         true
     }
 
-    /// Returns a non-zero but deterministic DERP node to
-    /// connect to. This is only used if netcheck couldn't find the nearest one
-    /// For instance, if UDP is blocked and thus STUN latency checks aren't working
+    /// Returns a deterministic DERP node to connect to. This is only used if netcheck
+    /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
+    /// latency checks aren't working.
+    ///
+    /// If no [`DerpMap`] exists, returns `None`.
     async fn pick_derp_fallback(&self) -> Option<u16> {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;

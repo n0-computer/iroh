@@ -43,7 +43,6 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
         .keylog(opts.keylog)
         .bind(0)
         .await?;
-    // TODO(ramfox): add derp region to dial opts
     endpoint
         .connect(
             opts.peer_id,
