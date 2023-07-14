@@ -493,7 +493,8 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
-        let derp_node = Arc::new(derp_map.regions[&1].nodes[0].clone());
+        let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
+        let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
         let if_state = crate::net::interfaces::State::new().await;
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
@@ -504,15 +505,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(100),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                 ],
             },
@@ -521,18 +522,18 @@ mod tests {
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
-                        delay: Duration::from_millis(300),
-                        node: derp_node.clone(),
+                        delay: Duration::from_millis(600),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(400),
-                        node: derp_node.clone(),
+                        delay: Duration::from_millis(700),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(500),
-                        node: derp_node.clone(),
+                        delay: Duration::from_millis(800),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                 ],
@@ -542,16 +543,73 @@ mod tests {
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
+                        delay: Duration::from_millis(600),
+                        node: derp_node_1.clone(),
+                    },
+                    Probe::Icmp {
+                        delay: Duration::from_millis(700),
+                        node: derp_node_1.clone(),
+                    },
+                    Probe::Icmp {
+                        delay: Duration::from_millis(800),
+                        node: derp_node_1.clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-stunipv4".into(),
+                proto: ProbeProto::StunIpv4,
+                probes: vec![
+                    Probe::StunIpv4 {
+                        delay: Duration::ZERO,
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv4 {
+                        delay: Duration::from_millis(100),
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv4 {
+                        delay: Duration::from_millis(200),
+                        node: derp_node_2.clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-https".into(),
+                proto: ProbeProto::Https,
+                probes: vec![
+                    Probe::Https {
                         delay: Duration::from_millis(300),
-                        node: derp_node.clone(),
+                        node: derp_node_2.clone(),
+                        region: derp_map.regions[&2].clone(),
+                    },
+                    Probe::Https {
+                        delay: Duration::from_millis(400),
+                        node: derp_node_2.clone(),
+                        region: derp_map.regions[&2].clone(),
+                    },
+                    Probe::Https {
+                        delay: Duration::from_millis(500),
+                        node: derp_node_2.clone(),
+                        region: derp_map.regions[&2].clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-icmp".into(),
+                proto: ProbeProto::Icmp,
+                probes: vec![
+                    Probe::Icmp {
+                        delay: Duration::from_millis(300),
+                        node: derp_node_2.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(400),
-                        node: derp_node.clone(),
+                        node: derp_node_2.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(500),
-                        node: derp_node.clone(),
+                        node: derp_node_2.clone(),
                     },
                 ],
             },
@@ -565,18 +623,36 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(100),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                 ],
-            })
+            });
+            expected_plan.add(ProbeSet {
+                name: "region-2-stunipv6".into(),
+                proto: ProbeProto::StunIpv6,
+                probes: vec![
+                    Probe::StunIpv6 {
+                        delay: Duration::ZERO,
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_millis(100),
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_millis(200),
+                        node: derp_node_2.clone(),
+                    },
+                ],
+            });
         }
 
         println!("expected:");
@@ -592,10 +668,12 @@ mod tests {
     #[tokio::test]
     async fn test_plan_with_report() {
         let derp_map = default_derp_map();
-        let derp_node = Arc::new(derp_map.regions[&1].nodes[0].clone());
+        let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
+        let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
         let if_state = crate::net::interfaces::State::new().await;
         let mut latencies = RegionLatencies::new();
         latencies.update_region(1, Duration::from_millis(2));
+        latencies.update_region(2, Duration::from_millis(2));
         let last_report = Report {
             udp: true,
             ipv6: true,
@@ -623,19 +701,19 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(52_400),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(104_800),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_micros(157_200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                 ],
             },
@@ -645,22 +723,22 @@ mod tests {
                 probes: vec![
                     Probe::Https {
                         delay: Duration::from_micros(207_200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(259_600),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(312_000),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_micros(364_400),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                 ],
@@ -671,19 +749,63 @@ mod tests {
                 probes: vec![
                     Probe::Icmp {
                         delay: Duration::from_micros(207_200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(259_600),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(312_000),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::Icmp {
                         delay: Duration::from_micros(364_400),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-stunipv4".into(),
+                proto: ProbeProto::StunIpv4,
+                probes: vec![
+                    Probe::StunIpv4 {
+                        delay: Duration::ZERO,
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv4 {
+                        delay: Duration::from_micros(52_400),
+                        node: derp_node_2.clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-https".into(),
+                proto: ProbeProto::Https,
+                probes: vec![
+                    Probe::Https {
+                        delay: Duration::from_micros(102_400),
+                        node: derp_node_2.clone(),
+                        region: derp_map.regions[&2].clone(),
+                    },
+                    Probe::Https {
+                        delay: Duration::from_micros(154_800),
+                        node: derp_node_2.clone(),
+                        region: derp_map.regions[&2].clone(),
+                    },
+                ],
+            },
+            ProbeSet {
+                name: "region-2-icmp".into(),
+                proto: ProbeProto::Icmp,
+                probes: vec![
+                    Probe::Icmp {
+                        delay: Duration::from_micros(102_400),
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::Icmp {
+                        delay: Duration::from_micros(154_800),
+                        node: derp_node_2.clone(),
                     },
                 ],
             },
@@ -697,19 +819,41 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(52_400),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(104_800),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_micros(157_200),
-                        node: derp_node.clone(),
+                        node: derp_node_1.clone(),
+                    },
+                ],
+            });
+            expected_plan.add(ProbeSet {
+                name: "region-2-stunipv6".into(),
+                proto: ProbeProto::StunIpv6,
+                probes: vec![
+                    Probe::StunIpv6 {
+                        delay: Duration::ZERO,
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(52_400),
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(104_800),
+                        node: derp_node_2.clone(),
+                    },
+                    Probe::StunIpv6 {
+                        delay: Duration::from_micros(157_200),
+                        node: derp_node_2.clone(),
                     },
                 ],
             })
