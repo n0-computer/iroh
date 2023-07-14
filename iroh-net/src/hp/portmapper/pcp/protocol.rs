@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rand::RngCore;
 use tracing::{debug, trace};
 
@@ -23,22 +24,22 @@ pub const SERVER_PORT: u16 = 5351;
 pub const MAX_RESP_SIZE: usize = 1100;
 
 /// Size of a [`Request`] sent by this client, in bytes.
-// NOTE: 1byte for the version +
-//       1byte for the opcode +
-//       2bytes reserved +
-//       4bytes for the lifetime +
-//       16bytes for the client's ip
-const REQ_SIZE: usize = 1 + 1 + 2 + 4 + 16;
+const REQ_SIZE: usize = // parts:
+    1 + // version
+    1 + // opcode
+    2 + // reserved
+    4 + // lifetime
+    16; // local ip
 
 /// Minimum size of an encoded [`Response`] sent by a server to this client.
-// NOTE: 1byte for the version +
-//       1byte for the opcode ORd with [`RESPONSE_INDICATOR`] +
-//       1byte reserved +
-//       1byte for the result code +
-//       4bytes for the lifetime +
-//       4bytes for the epoch time +
-//       12bytes reserved
-const MIN_RESP_SIZE: usize = 1 + 1 + 1 + 1 + 4 + 4 + 12;
+const MIN_RESP_SIZE: usize = // parts
+    1 + // version
+    1 + // opcode ORd with [`RESPONSE_INDICATOR`]
+    1 + // reserved
+    1 + // result code
+    4 + // lifetime
+    4 + // epoch time
+    12; // reserved
 
 /// Indicator ORd into the [`Opcode`] to indicate a response packet.
 const RESPONSE_INDICATOR: u8 = 1u8 << 7;
@@ -187,13 +188,13 @@ pub struct MapData {
 
 impl MapData {
     /// Size of the opcode-specific data of a [`Opcode::Map`] request.
-    // NOTE: 12bytes for the nonce +
-    //       1byte for the protocol +
-    //       3bytes reserved +
-    //       2bytes for the local port +
-    //       2 butes for the external port +
-    //       16bytes for the external address
-    pub const ENCODED_SIZE: usize = 12 + 1 + 3 + 2 + 2 + 16;
+    pub const ENCODED_SIZE: usize = // parts
+        12 + // nonce
+        1 + // protocol
+        3 + // reserved
+        2 + // local port
+        2 + // external port
+        16; // external address
     pub fn encode(&self) -> [u8; Self::ENCODED_SIZE] {
         let MapData {
             nonce,
