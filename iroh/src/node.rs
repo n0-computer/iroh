@@ -542,6 +542,20 @@ impl<D: BaoReadonlyDb> Node<D> {
         self.inner.keypair.public().into()
     }
 
+    /// Dial a given peer
+    pub async fn dial(
+        &self,
+        alpn: &[u8],
+        peer_id: PeerId,
+        known_addrs: Vec<SocketAddr>,
+    ) -> Result<quinn::Connection> {
+        self.inner
+            .endpoint
+            .connect(peer_id, alpn, &known_addrs)
+            .await
+            .context("failed to dial")
+    }
+
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
     /// progress.
     ///

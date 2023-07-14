@@ -16,3 +16,6 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
+
+[profile.ffi]
+strip = "symbols"

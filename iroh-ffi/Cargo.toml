@@ -3,15 +3,11 @@ name = "iroh_ffi"
 version = "0.1.0"
 edition = "2021"
 publish = false
-rust-version = "1.64"
 readme = "README.md"
 description = "IPFS reimagined"
 license = "MIT/Apache-2.0"
-authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
+authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
-
-[profile.release]
-strip = "symbols"
 
 [lib]
 name="iroh"

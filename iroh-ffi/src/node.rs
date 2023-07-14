@@ -17,10 +17,6 @@ pub struct IrohNode {
 }
 
 impl IrohNode {
-    // pub fn new() -> Result<Self> {
-    //     todo!()
-    // }
-
     pub fn async_runtime(&self) -> Arc<Runtime> {
         self.async_runtime.clone()
     }
