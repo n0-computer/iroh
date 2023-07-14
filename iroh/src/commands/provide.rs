@@ -89,7 +89,7 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
             let stream = controller.server_streaming(ProvideRequest { path }).await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
-            let ticket = provider.ticket(hash, token).await?;
+            let ticket = provider.ticket(hash).await?.with_token(token);
             println!("All-in-one ticket: {ticket}");
             anyhow::Ok(tmp_path)
         })
