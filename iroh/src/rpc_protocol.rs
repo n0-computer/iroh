@@ -1,4 +1,10 @@
-#![allow(missing_docs)]
+//! This defines the RPC protocol used for communication between a CLI and an iroh node.
+//!
+//! RPC using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
+//!
+//! This file contains request messages, response messages and definitions of
+//! the interaction pattern. Some requests like version and shutdown have a single
+//! response, while others like provide have a stream of responses.
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
@@ -13,8 +19,15 @@ use serde::{Deserialize, Serialize};
 
 pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 
+/// A request to the node to provide the data at the given path
+///
+/// Will produce a stream of [`ProvideProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideRequest {
+    /// The path to the data to provide.
+    ///
+    /// This should be an absolute path.
+    /// The node and the cli should be on the same filesystem.
     pub path: PathBuf,
 }
 
@@ -26,6 +39,7 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
     type Response = ProvideProgress;
 }
 
+/// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ValidateRequest;
 
@@ -37,13 +51,18 @@ impl ServerStreamingMsg<ProviderService> for ValidateRequest {
     type Response = ValidateProgress;
 }
 
+/// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListBlobsRequest;
 
+/// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListBlobsResponse {
+    /// Location of the blob
     pub path: String,
+    /// The hash of the blob
     pub hash: Hash,
+    /// The size of the blob
     pub size: u64,
 }
 
@@ -55,13 +74,20 @@ impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
     type Response = ListBlobsResponse;
 }
 
+/// List all collections
+///
+///
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListCollectionsRequest;
 
+/// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListCollectionsResponse {
+    /// Hash of the collection
     pub hash: Hash,
+    /// Number of children in the collection
     pub total_blobs_count: u64,
+    /// Total size of the raw data referred to by all links
     pub total_blobs_size: u64,
 }
 
@@ -73,9 +99,11 @@ impl ServerStreamingMsg<ProviderService> for ListCollectionsRequest {
     type Response = ListCollectionsResponse;
 }
 
+/// A request to watch for the node status
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WatchRequest;
 
+/// A request to get the version of the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;
 
@@ -83,8 +111,10 @@ impl RpcMsg<ProviderService> for VersionRequest {
     type Response = VersionResponse;
 }
 
+/// A request to shutdown the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ShutdownRequest {
+    /// Force shutdown
     pub force: bool,
 }
 
@@ -92,6 +122,7 @@ impl RpcMsg<ProviderService> for ShutdownRequest {
     type Response = ();
 }
 
+/// A request to get the id of the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdRequest;
 
@@ -99,6 +130,7 @@ impl RpcMsg<ProviderService> for IdRequest {
     type Response = IdResponse;
 }
 
+/// A request to get the addresses of the node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddrsRequest;
 
@@ -106,20 +138,28 @@ impl RpcMsg<ProviderService> for AddrsRequest {
     type Response = AddrsResponse;
 }
 
+/// The response to a watch request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WatchResponse {
+    /// The version of the node
     pub version: String,
 }
 
+/// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IdResponse {
+    /// The peer id of the node
     pub peer_id: Box<PeerId>,
+    /// The addresses of the node
     pub listen_addrs: Vec<SocketAddr>,
+    /// The version of the node
     pub version: String,
 }
 
+/// The response to an addrs request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddrsResponse {
+    /// The addresses of the node
     pub addrs: Vec<SocketAddr>,
 }
 
@@ -131,8 +171,10 @@ impl ServerStreamingMsg<ProviderService> for WatchRequest {
     type Response = WatchResponse;
 }
 
+/// The response to a version request
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionResponse {
+    /// The version of the node
     pub version: String,
 }
 
@@ -140,7 +182,8 @@ pub struct VersionResponse {
 #[derive(Debug, Clone)]
 pub struct ProviderService;
 
-/// Request enum
+/// The request enum, listing all possible requests.
+#[allow(missing_docs)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderRequest {
     Watch(WatchRequest),
@@ -154,7 +197,8 @@ pub enum ProviderRequest {
     Validate(ValidateRequest),
 }
 
-/// Response enum
+/// The response enum, listing all possible responses.
+#[allow(missing_docs)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
     Watch(WatchResponse),
