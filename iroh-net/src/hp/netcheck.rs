@@ -15,7 +15,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
 use crate::util::CancelOnDrop;
@@ -194,7 +194,8 @@ impl Client {
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
-        let task = tokio::spawn(async move { actor.run().await });
+        let task =
+            tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
         let drop_guard = CancelOnDrop::new("netcheck actor", task.abort_handle());
         Ok(Client {
             addr,
@@ -419,7 +420,6 @@ impl Actor {
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
-    #[instrument(name = "netcheck.actor", skip_all)]
     async fn run(&mut self) {
         debug!("netcheck actor starting");
         while let Some(msg) = self.receiver.recv().await {

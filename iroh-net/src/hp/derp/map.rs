@@ -122,7 +122,7 @@ impl DerpRegion {
 /// Information on a specific derp server.
 ///
 /// Includes the region in which it can be found, as well as how to dial the server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
     /// The name of this derp server.
     ///
@@ -131,6 +131,7 @@ pub struct DerpNode {
     /// The numeric region ID
     pub region_id: u16,
     /// The [`Url`] where this derp server can be dialed
+    #[debug("{}", url)]
     pub url: Url,
     /// Whether this derp server should only be used for STUN requests
     pub stun_only: bool,

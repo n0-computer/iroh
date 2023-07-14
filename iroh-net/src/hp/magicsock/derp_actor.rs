@@ -183,7 +183,7 @@ impl DerpActor {
                 return;
             }
 
-            debug!("setting new derp map: {:?}", dm);
+            debug!(?dm, "setting new derp map");
 
             let old = if let Some(dm) = dm {
                 derp_map.replace(dm)

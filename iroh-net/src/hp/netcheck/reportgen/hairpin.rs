@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::hp::netcheck::{self, reportgen, Inflight};
 use crate::hp::stun;
@@ -48,7 +48,8 @@ impl Client {
             reportstate,
         };
         let addr = actor.addr();
-        let task = tokio::spawn(async move { actor.run().await });
+        let task =
+            tokio::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
         Self {
             addr,
             _drop_guard: CancelOnDrop::new("hairpin actor", task.abort_handle()),
@@ -104,7 +105,6 @@ impl Actor {
         }
     }
 
-    #[instrument(name = "hairpin.actor", skip_all)]
     async fn run(&mut self) {
         match self.run_inner().await {
             Ok(_) => debug!("hairpin actor finished successfully"),
