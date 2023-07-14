@@ -669,8 +669,8 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
                     .ok()??;
                 Some(ListCollectionsResponse {
                     hash,
-                    total_blobs_count: stats.num_blobs.unwrap_or_default(),
-                    total_blobs_size: stats.total_blob_size.unwrap_or_default(),
+                    total_blobs_count: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
                 })
             }
         })
@@ -912,7 +912,6 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
 
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
-    use crate::database::flat::create_collection;
     use anyhow::bail;
     use futures::StreamExt;
     use std::collections::HashMap;
@@ -930,8 +929,8 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
-        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let (db, hashes) = crate::database::mem::Database::new([("test", b"hello")]);
+        let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&rt)
