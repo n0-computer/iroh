@@ -74,7 +74,7 @@ impl Cli {
                         hash: ticket.hash(),
                         opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
                         token: ticket.token().cloned(),
-                        single: false,
+                        single: !ticket.recursive(),
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
