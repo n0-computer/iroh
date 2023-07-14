@@ -42,7 +42,7 @@ impl DerpMap {
         };
 
         dm.regions.insert(
-            1,
+            region_id,
             DerpRegion {
                 region_id,
                 nodes: vec![DerpNode {
