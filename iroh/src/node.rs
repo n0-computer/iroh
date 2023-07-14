@@ -564,10 +564,10 @@ impl<D: BaoReadonlyDb> Node<D> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash, token: Option<RequestToken>) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs, token)
+        Ticket::new(hash, self.peer_id(), addrs, None, true)
     }
 
     /// Aborts the node.
@@ -938,7 +938,7 @@ mod tests {
             .await
             .unwrap();
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, None).await.unwrap();
+        let ticket = node.ticket(hash).await.unwrap();
         println!("addrs: {:?}", ticket.addrs());
         assert!(!ticket.addrs().is_empty());
     }

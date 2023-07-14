@@ -63,6 +63,8 @@ pub struct Ticket {
     ///
     /// This will never be empty.
     addrs: Vec<SocketAddr>,
+    /// True to treat the hash as a collection and retrieve all blobs in it.
+    recursive: bool,
 }
 
 impl Ticket {
@@ -72,6 +74,7 @@ impl Ticket {
         peer: PeerId,
         addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
+        recursive: bool,
     ) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
         Ok(Self {
@@ -79,6 +82,7 @@ impl Ticket {
             peer,
             addrs,
             token,
+            recursive,
         })
     }
 
@@ -109,6 +113,21 @@ impl Ticket {
         self.token.as_ref()
     }
 
+    /// Set the [`RequestToken`] for this ticket.
+    pub fn with_token(self, token: Option<RequestToken>) -> Self {
+        Self { token, ..self }
+    }
+
+    /// True if the ticket is for a collection and should retrieve all blobs in it.
+    pub fn recursive(&self) -> bool {
+        self.recursive
+    }
+
+    /// Set recursive to for this ticket
+    pub fn with_recursive(self, recursive: bool) -> Self {
+        Self { recursive, ..self }
+    }
+
     /// The addresses on which the provider can be reached.
     ///
     /// This is guaranteed to be non-empty.
@@ -117,14 +136,15 @@ impl Ticket {
     }
 
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>) {
+    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>, bool) {
         let Ticket {
             hash,
             peer,
             token,
             addrs,
+            recursive,
         } = self;
-        (hash, peer, addrs, token)
+        (hash, peer, addrs, token, recursive)
     }
 
     /// Convert this ticket into a [`Options`], adding the given keypair.
@@ -178,6 +198,7 @@ mod tests {
             peer,
             addrs: vec![addr],
             token: Some(token),
+            recursive: true,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

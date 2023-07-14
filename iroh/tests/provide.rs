@@ -515,7 +515,7 @@ async fn test_run_ticket() {
         .unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let no_token_ticket = node.ticket(hash, None).await.unwrap();
+    let no_token_ticket = node.ticket(hash).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let opts = no_token_ticket.as_get_options(Keypair::generate(), None);
         let request = GetRequest::all(no_token_ticket.hash()).into();
@@ -527,7 +527,7 @@ async fn test_run_ticket() {
     .expect("timeout")
     .expect("getting without token failed in an unexpected way");
 
-    let ticket = node.ticket(hash, token).await.unwrap();
+    let ticket = node.ticket(hash).await.unwrap().with_token(token);
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash)
             .with_token(ticket.token().cloned())
