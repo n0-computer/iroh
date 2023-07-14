@@ -18,4 +18,5 @@ panic = 'abort'
 incremental = false
 
 [profile.ffi]
+inherits = 'release'
 strip = "symbols"

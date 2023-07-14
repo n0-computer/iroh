@@ -1,31 +1,32 @@
-use anyhow::Result;
+use std::sync::Arc;
+
 use safer_ffi::prelude::*;
-use tokio::Runtime;
+use tokio::runtime::Runtime as TokioRuntime;
 
 use iroh::{
+    database::mem,
+    net::tls::Keypair,
     node::{Node, DEFAULT_BIND_ADDR},
-    provider::Database,
 };
-use iroh_net::tls::Keypair;
 
 #[derive_ReprC(rename = "iroh_node")]
 #[repr(opaque)]
 /// @class iroh_node_t
 pub struct IrohNode {
-    inner: Node,
+    inner: Node<mem::Database>,
     async_runtime: Arc<TokioRuntime>,
 }
 
 impl IrohNode {
-    pub fn async_runtime(&self) -> Arc<Runtime> {
+    pub fn async_runtime(&self) -> Arc<TokioRuntime> {
         self.async_runtime.clone()
     }
 
-    pub fn inner(&self) -> &Node {
+    pub fn inner(&self) -> &Node<mem::Database> {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &mut Node {
+    pub fn inner_mut(&mut self) -> &mut Node<mem::Database> {
         &mut self.inner
     }
 }
@@ -39,24 +40,38 @@ pub fn iroh_initialize() -> Option<repr_c::Box<IrohNode>> {
         .thread_name("main-runtime")
         .worker_threads(2)
         .enable_all()
-        .build()?;
+        .build()
+        .ok()?;
 
     let tokio = tokio::runtime::Handle::current();
     let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
-    let rt = iroh::bytes::runtime::Handle::new(tokio, tpc);
+    let rt = iroh::bytes::util::runtime::Handle::new(tokio, tpc);
 
-    let db = Database::default();
+    let db = mem::Database::default();
     let keypair = Keypair::generate();
-    let node = Node::builder(db)
-        .bind_addr(DEFAULT_BIND_ADDR)
-        .keypair(keypair)
-        .runtime(rt)
-        .spawn()
-        .await?;
+    let node = tokio_rt
+        .block_on(async {
+            Node::builder(db)
+                .bind_addr(DEFAULT_BIND_ADDR.into())
+                .keypair(keypair)
+                .runtime(&rt)
+                .spawn()
+                .await
+        })
+        .unwrap();
 
-    repr_c::Box::new(IrohNode {
-        inner: node,
-        runtime: tokio_rt,
-    })
-    .ok()
+    Some(
+        Box::new(IrohNode {
+            inner: node,
+            async_runtime: Arc::new(tokio_rt),
+        })
+        .into(),
+    )
+}
+
+#[ffi_export]
+/// @memberof iroh_node_t
+/// Deallocate a ns_noosphere_t instance.
+pub fn iroh_free(node: repr_c::Box<IrohNode>) {
+    drop(node)
 }

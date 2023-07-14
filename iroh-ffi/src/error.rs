@@ -1,9 +1,8 @@
-use crate::error::IrohError;
 use safer_ffi::prelude::*;
 
-impl From<anyhow::Error> for repr_c::Box<IrohError> {
-    fn from(error: anyhow::Error) -> Self {
-        Box::new(IrohError { inner: error }).into()
+impl From<IrohError> for repr_c::Box<IrohError> {
+    fn from(error: IrohError) -> Self {
+        Box::new(IrohError { inner: error.inner }).into()
     }
 }
 
@@ -27,10 +26,8 @@ impl From<u32> for IrohErrorCode {
 }
 
 impl From<&IrohError> for IrohErrorCode {
-    fn from(error: &IrohError) -> Self {
-        match error {
-            IrohError::Other(_) => IrohErrorCode::Other,
-        }
+    fn from(_error: &IrohError) -> Self {
+        IrohErrorCode::Other
     }
 }
 
@@ -40,6 +37,16 @@ impl From<&IrohError> for IrohErrorCode {
 /// An opaque struct representing an error.
 pub struct IrohError {
     inner: anyhow::Error,
+}
+
+impl IrohError {
+    pub fn new(err: anyhow::Error) -> Self {
+        IrohError { inner: err }
+    }
+
+    pub fn inner(self) -> anyhow::Error {
+        self.inner
+    }
 }
 
 #[ffi_export]
@@ -66,5 +73,5 @@ pub fn iroh_error_message_get(error: &IrohError) -> char_p::Box {
 /// @memberof ns_error_t
 /// Returns an error code that identifies the error.
 pub fn ns_error_code_get(error: &IrohError) -> u32 {
-    IrohErrorCode::from(&error.inner) as u32
+    IrohErrorCode::from(error) as u32
 }

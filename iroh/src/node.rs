@@ -547,11 +547,11 @@ impl<D: BaoReadonlyDb> Node<D> {
         &self,
         alpn: &[u8],
         peer_id: PeerId,
-        known_addrs: Vec<SocketAddr>,
+        known_addrs: &Vec<SocketAddr>,
     ) -> Result<quinn::Connection> {
         self.inner
             .endpoint
-            .connect(peer_id, alpn, &known_addrs)
+            .connect(peer_id, alpn, known_addrs)
             .await
             .context("failed to dial")
     }

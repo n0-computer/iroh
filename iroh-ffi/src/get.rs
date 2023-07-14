@@ -1,34 +1,56 @@
-use iroh::dial::{dial, Ticket};
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use anyhow::Result;
+use iroh_io::{AsyncSliceWriter, File};
+use range_collections::RangeSet2;
+use safer_ffi::prelude::*;
+
+use iroh::{
+    bytes::{
+        get::fsm,
+        protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
+        Hash,
+    },
+    dial::Ticket,
+    net::tls::PeerId,
+};
+
+use crate::{error::IrohError, node::IrohNode};
 
 #[ffi_export]
 /// @memberof iroh_node_t
 // TODO(b5): optional token arg
 fn iroh_get(
-    iroh_node: &mut IrohNode,
+    node: &mut IrohNode,
     hash: char_p::Ref<'_>,
     peer: char_p::Ref<'_>,
     peer_addr: char_p::Ref<'_>,
     out_path: char_p::Ref<'_>,
     callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
-) -> u32 {
+) {
+    let node1 = node.inner().clone();
     let rt = node.async_runtime();
-    node.async_runtime().spawn(async move {
+    let hash = hash.to_string();
+    let peer = peer.to_string();
+    let peer_addr = peer_addr.to_string();
+    let out_path = PathBuf::from(out_path.to_string());
+
+    node.async_runtime().clone().spawn(async move {
         let result = async move {
-            let hash = hash.to_str().parse::<Hash>()?;
-            let peer = peer.to_str().parse::<PeerId>()?;
-            let peer_addr = peer_addr.to_str().parse()?;
-            let conn = node
-                .inner()
-                .clone()
-                .dial(peer, &[peer_addr], &iroh_bytes::protocol::ALPN);
-            let out_path = PathBuf::from_str(out_path.to_str()).unwrap();
-            get_blob_to_file(conn, hash, None).await
+            let hash = hash.parse::<Hash>()?;
+            let peer = peer.parse::<PeerId>()?;
+            let peer_addr = peer_addr.parse()?;
+            let conn = node1
+                .dial(&iroh::bytes::protocol::ALPN, peer, &vec![peer_addr])
+                .await?;
+            get_blob_to_file(conn, hash, None, out_path).await
         }
         .await;
 
         match result {
-            Ok() => rt.spawn_blocking(move || callback(None)),
-            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::from(error).into()))),
+            Ok(()) => rt.spawn_blocking(move || callback(None)),
+            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::new(error).into()))),
         };
     });
 }
@@ -42,25 +64,30 @@ pub fn iroh_get_ticket(
     out_path: char_p::Ref<'_>,
     callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
 ) {
+    let ticket = ticket.to_string();
+    let out_path = PathBuf::from(out_path.to_string());
+
     let rt = node.async_runtime();
     node.async_runtime().spawn(async move {
         let result = async {
-            let out_path = PathBuf::from_str(out_path.to_str())?;
-            // let keypair = node.inner().
-            let ticket = Ticket::from_str(ticket.to_str())?;
+            let ticket = Ticket::from_str(ticket.as_str())?;
             // TODO(b5): use the node endpoint(s) to dial
-            let conn = node.inner().clone().dial(
-                ticket.peer(),
-                ticket.addrs(),
-                &iroh_bytes::protocol::ALPN,
-            );
-            get_blob_to_file(conn, ticket.hash(), ticket.token(), out_path).await
+            let conn = node
+                .inner()
+                .clone()
+                .dial(
+                    &iroh::bytes::protocol::ALPN,
+                    ticket.peer(),
+                    &ticket.addrs().to_vec(),
+                )
+                .await?;
+            get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await
         }
         .await;
 
         match result {
-            Ok() => rt.spawn_blocking(move || callback(None)),
-            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::from(error).into()))),
+            Ok(()) => rt.spawn_blocking(move || callback(None)),
+            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::new(error).into()))),
         };
     });
 }
@@ -78,7 +105,7 @@ async fn get_blob_to_file(
         RangeSpecSeq::new([RangeSet2::all()]),
         out_path,
     )
-    .await?
+    .await
 }
 
 // TODO(b5): This currently assumes "all" ranges, needs to be adjusted to honor
@@ -90,12 +117,12 @@ async fn get_blob_ranges_to_file(
     ranges: RangeSpecSeq,
     out_path: PathBuf,
 ) -> Result<()> {
-    let request = Request::Get(GetRequest::new(hash, RangeSpecSeq::new([RangeSet2::all()])));
+    let request = Request::Get(GetRequest::new(hash, ranges)).with_token(token);
     let response = fsm::start(conn, request);
     let connected = response.next().await?;
 
     let fsm::ConnectedNext::StartRoot(curr) = connected.next().await? else {
-                return Ok(None)
+                return Ok(())
             };
     let header = curr.next();
 
