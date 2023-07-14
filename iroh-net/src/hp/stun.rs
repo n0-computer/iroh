@@ -180,8 +180,8 @@ pub mod test {
             let port = addr.port();
 
             let (ipv4, ipv6) = match host {
-                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::None),
-                IpAddr::V6(v6) => (UseIpv4::None, UseIpv6::Some(v6)),
+                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
+                IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
             };
 
             let node = DerpNode {

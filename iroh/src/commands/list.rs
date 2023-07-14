@@ -38,16 +38,18 @@ impl Commands {
                 let mut response = client.server_streaming(ListCollectionsRequest).await?;
                 while let Some(collection) = response.next().await {
                     let collection = collection?;
+                    let total_blobs_count = collection.total_blobs_count.unwrap_or_default();
+                    let total_blobs_size = collection.total_blobs_size.unwrap_or_default();
                     println!(
                         "{}: {} {} ({})",
                         collection.hash,
-                        collection.total_blobs_count,
-                        if collection.total_blobs_count > 1 {
+                        total_blobs_count,
+                        if total_blobs_count > 1 {
                             "blobs"
                         } else {
                             "blob"
                         },
-                        HumanBytes(collection.total_blobs_size),
+                        HumanBytes(total_blobs_size),
                     );
                 }
             }

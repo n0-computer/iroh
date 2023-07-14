@@ -27,7 +27,7 @@ pub fn default_derp_region() -> DerpRegion {
         stun_only: false,
         stun_port: DEFAULT_DERP_STUN_PORT,
         ipv4: UseIpv4::Some(DEFAULT_DERP_IPV4),
-        ipv6: UseIpv6::None,
+        ipv6: UseIpv6::TryDns,
         stun_test_ip: None,
     };
     DerpRegion {

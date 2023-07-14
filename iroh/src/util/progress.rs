@@ -16,12 +16,11 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use bytes::Bytes;
+use iroh_bytes::util::io::TrackingWriter;
 use iroh_io::AsyncSliceWriter;
 use portable_atomic::{AtomicU16, AtomicU64};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
-
-use super::io::TrackingWriter;
 
 /// A generic progress event emitter.
 ///
@@ -259,6 +258,7 @@ impl<T> Clone for Progress<T> {
 
 impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
     /// Create a new progress sender.
+    #[allow(dead_code)]
     pub fn new(sender: mpsc::Sender<T>) -> Self {
         Self(Some(sender))
     }
@@ -298,6 +298,7 @@ pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
 }
 
 impl<R: Read, F: Fn(ProgressReaderUpdate)> ProgressReader<R, F> {
+    #[allow(dead_code)]
     pub fn new(inner: R, cb: F) -> Self {
         Self {
             inner,

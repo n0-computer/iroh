@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::inc;
 use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
@@ -15,20 +15,15 @@ use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info, instrument, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::net::ip::to_canonical;
 use crate::util::CancelOnDrop;
 
-use self::probe::ProbeProto;
-
-use super::derp::{DerpMap, DerpNode, UseIpv4, UseIpv6};
-use super::dns::DNS_RESOLVER;
+use super::derp::DerpMap;
 use super::portmapper;
 use super::stun;
 
-mod probe;
 mod reportgen;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -199,7 +194,8 @@ impl Client {
     pub async fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
         let mut actor = Actor::new(port_mapper)?;
         let addr = actor.addr();
-        let task = tokio::spawn(async move { actor.run().await });
+        let task =
+            tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
         let drop_guard = CancelOnDrop::new("netcheck actor", task.abort_handle());
         Ok(Client {
             addr,
@@ -254,7 +250,7 @@ impl Client {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
-                derp_map: dm.clone(),
+                derp_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
                 response_tx: tx,
@@ -264,71 +260,6 @@ impl Client {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
         }
-    }
-}
-
-/// Returns the IP address to use to communicate to this derp node.
-///
-/// *proto* specifies the protocol we want to use to talk to the node.
-async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
-    let mut port = n.stun_port;
-    if port == 0 {
-        port = DEFAULT_DERP_STUN_PORT;
-    }
-    if let Some(ip) = n.stun_test_ip {
-        if proto == ProbeProto::Ipv4 && ip.is_ipv6() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        if proto == ProbeProto::Ipv6 && ip.is_ipv4() {
-            bail!("STUN test IP set has mismatching protocol");
-        }
-        return Ok(SocketAddr::new(ip, port));
-    }
-
-    match proto {
-        ProbeProto::Ipv4 => {
-            if let UseIpv4::Some(ip) = n.ipv4 {
-                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
-            }
-        }
-        ProbeProto::Ipv6 => {
-            if let UseIpv6::Some(ip) = n.ipv6 {
-                return Ok(SocketAddr::new(IpAddr::V6(ip), port));
-            }
-        }
-        _ => {
-            // TODO: original code returns None here, but that seems wrong?
-        }
-    }
-
-    match n.url.host() {
-        Some(url::Host::Domain(hostname)) => {
-            async move {
-                debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
-
-                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
-                    for addr in addrs {
-                        if addr.is_ipv4() && proto == ProbeProto::Ipv4 {
-                            let addr = to_canonical(addr);
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if addr.is_ipv6() && proto == ProbeProto::Ipv6 {
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                        if proto == ProbeProto::Https {
-                            // For now just return the first one
-                            return Ok(SocketAddr::new(addr, port));
-                        }
-                    }
-                }
-                Err(anyhow!("no suitable addr found for derp config"))
-            }
-            .instrument(debug_span!("dns"))
-            .await
-        }
-        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
-        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
-        None => Err(anyhow!("no valid hostname available")),
     }
 }
 
@@ -489,7 +420,6 @@ impl Actor {
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
-    #[instrument(name = "netcheck.actor", skip_all)]
     async fn run(&mut self) {
         debug!("netcheck actor starting");
         while let Some(msg) = self.receiver.recv().await {
@@ -904,7 +834,9 @@ mod tests {
     use bytes::BytesMut;
     use tokio::time;
 
-    use crate::hp::derp::DerpRegion;
+    use crate::defaults::DEFAULT_DERP_STUN_PORT;
+    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::hp::ping::Pinger;
     use crate::test_utils::setup_logging;
 
     use super::*;
@@ -977,8 +909,8 @@ mod tests {
                         url: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
-                        ipv4: UseIpv4::None,
-                        ipv6: UseIpv6::None,
+                        ipv4: UseIpv4::TryDns,
+                        ipv6: UseIpv6::TryDns,
                         stun_test_ip: None,
                     })
                     .collect(),
@@ -1020,38 +952,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_udp_tokio() -> Result<()> {
-        let local_addr = "127.0.0.1";
-        let bind_addr = "0.0.0.0";
-
-        let server = UdpSocket::bind(format!("{bind_addr}:0")).await?;
-        let addr = server.local_addr()?;
-
-        let server_task = tokio::task::spawn(async move {
-            let mut buf = vec![0u8; 32];
-            println!("server recv");
-            let (n, addr) = server.recv_from(&mut buf).await.unwrap();
-            println!("server send");
-            server.send_to(&buf[..n], addr).await.unwrap();
-        });
-
-        let client = UdpSocket::bind(format!("{bind_addr}:0")).await?;
-        let data = b"foobar";
-        println!("client: send");
-        let server_addr = format!("{local_addr}:{}", addr.port());
-        client.send_to(data, server_addr).await?;
-        let mut buf = vec![0u8; 32];
-        println!("client recv");
-        let (n, addr_r) = client.recv_from(&mut buf).await?;
-        assert_eq!(&buf[..n], data);
-        assert_eq!(addr_r.port(), addr.port());
-
-        server_task.await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
@@ -1064,6 +964,8 @@ mod tests {
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
+        let have_pinger = Pinger::new().await.is_ok();
+
         let want = Report {
             // The ip_v4_can_send flag gets set differently across platforms.
             // On Windows this test detects false, while on Linux detects true.
@@ -1073,6 +975,14 @@ mod tests {
             os_has_ipv6: r.os_has_ipv6,
             // Captive portal test is irrelevant; accept what the current report has.
             captive_portal: r.captive_portal,
+            // We will fall back to sending ICMP pings.  These should succeed when we have a
+            // working pinger.
+            icmpv4: have_pinger,
+            // If we had a pinger, we'll have some latencies filled in and a preferred derp
+            region_latency: have_pinger
+                .then(|| r.region_latency.clone())
+                .unwrap_or_default(),
+            preferred_derp: have_pinger.then_some(r.preferred_derp).unwrap_or_default(),
             ..Default::default()
         };
 
