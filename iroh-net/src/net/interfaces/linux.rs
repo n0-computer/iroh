@@ -107,8 +107,10 @@ fn parse_android_ip_route(stdout: &str) -> Option<&str> {
 
 #[cfg(not(target_os = "android"))]
 async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
+    use tracing::{info_span, Instrument};
+
     let (connection, handle, _receiver) = rtnetlink::new_connection()?;
-    let task = tokio::spawn(connection);
+    let task = tokio::spawn(connection.instrument(info_span!("rtnetlink.conn")));
 
     let default = default_route_netlink_family(&handle, rtnetlink::IpVersion::V4).await?;
     let default = match default {

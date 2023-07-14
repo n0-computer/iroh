@@ -22,7 +22,7 @@ use tokio::{
     sync::{self, mpsc, Mutex},
     time,
 };
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::{
     hp::{
@@ -254,14 +254,22 @@ impl EndpointUpdateState {
 
 impl Conn {
     /// Creates a magic `Conn` listening on `opts.port`.
-    /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
-    #[instrument(skip_all, fields(name))]
+    ///
+    /// As the set of possible endpoints for a Conn changes, the [`Callbacks::on_endpoints`]
+    /// callback of [`Options::callbacks`] is called.
+    ///
+    /// [`Callbacks::on_endpoint`]: crate::hp::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
         let name = format!(
             "magic-{}",
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
+        Self::with_name(name.clone(), opts)
+            .instrument(info_span!("conn", %name))
+            .await
+    }
 
+    async fn with_name(name: String, opts: Options) -> Result<Self> {
         let port_mapper = portmapper::Client::new().await;
 
         let Options {
@@ -323,51 +331,60 @@ impl Conn {
             let udp_actor =
                 UdpActor::new(&udp_state, inner.clone(), pconn4.clone(), pconn6.clone());
             let net_checker = net_checker.clone();
-            tokio::task::spawn(async move {
-                udp_actor
-                    .run(udp_actor_receiver, net_checker, ip_sender)
-                    .await;
-            })
+            tokio::task::spawn(
+                async move {
+                    udp_actor
+                        .run(udp_actor_receiver, net_checker, ip_sender)
+                        .await;
+                }
+                .instrument(info_span!("udp.actor")),
+            )
         };
 
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
-        let derp_actor_task = tokio::task::spawn(async move {
-            derp_actor.run(derp_actor_receiver).await;
-        });
+        let derp_actor_task = tokio::task::spawn(
+            async move {
+                derp_actor.run(derp_actor_receiver).await;
+            }
+            .instrument(info_span!("derp.actor")),
+        );
 
         let conn = inner.clone();
-        let main_actor_task = tokio::task::spawn(async move {
-            let actor = Actor {
-                msg_receiver: actor_receiver,
-                msg_sender: actor_sender,
-                derp_actor_sender,
-                udp_actor_sender,
-                network_receiver,
-                ip_receiver,
-                conn,
-                net_map: None,
-                derp_recv_sender: network_recv_ch_sender,
-                endpoints_update_state: EndpointUpdateState::new(),
-                last_endpoints: Vec::new(),
-                last_endpoints_time: None,
-                on_endpoint_refreshed: HashMap::new(),
-                periodic_re_stun_timer: new_re_stun_timer(),
-                net_info_last: None,
-                disco_info: HashMap::new(),
-                peer_map: Default::default(),
-                port_mapper,
-                pconn4,
-                pconn6,
-                udp_state,
-                no_v4_send: false,
-                net_checker,
-            };
+        let main_actor_task = tokio::task::spawn(
+            async move {
+                let actor = Actor {
+                    msg_receiver: actor_receiver,
+                    msg_sender: actor_sender,
+                    derp_actor_sender,
+                    udp_actor_sender,
+                    network_receiver,
+                    ip_receiver,
+                    conn,
+                    net_map: None,
+                    derp_recv_sender: network_recv_ch_sender,
+                    endpoints_update_state: EndpointUpdateState::new(),
+                    last_endpoints: Vec::new(),
+                    last_endpoints_time: None,
+                    on_endpoint_refreshed: HashMap::new(),
+                    periodic_re_stun_timer: new_re_stun_timer(),
+                    net_info_last: None,
+                    disco_info: HashMap::new(),
+                    peer_map: Default::default(),
+                    port_mapper,
+                    pconn4,
+                    pconn6,
+                    udp_state,
+                    no_v4_send: false,
+                    net_checker,
+                };
 
-            if let Err(err) = actor.run().await {
-                warn!("derp handler errored: {:?}", err);
+                if let Err(err) = actor.run().await {
+                    warn!("derp handler errored: {:?}", err);
+                }
             }
-        });
+            .instrument(info_span!("actor")),
+        );
 
         let c = Conn {
             inner,
@@ -830,7 +847,6 @@ struct Actor {
 }
 
 impl Actor {
-    #[instrument(level = "error", skip_all, fields(self.name = %self.conn.name))]
     async fn run(mut self) -> Result<()> {
         // Let the the hearbeat only start a couple seconds later
         let mut endpoint_heartbeat_timer = time::interval_at(
@@ -1209,7 +1225,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
         self.send_derp_actor(DerpActorMessage::Send {
             region_id: port,
@@ -1219,7 +1235,7 @@ impl Actor {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn re_stun(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, re_stun_calls);
 
@@ -1240,7 +1256,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
 
@@ -1293,7 +1309,7 @@ impl Actor {
 
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
         self.port_mapper.procure_mapping();
         let portmap_watcher = self.port_mapper.watch_external_address();
@@ -1444,7 +1460,7 @@ impl Actor {
     }
 
     /// Updates `NetInfo.HavePortMap` to true.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn set_net_info_have_port_map(&mut self) {
         if let Some(ref mut net_info_last) = self.net_info_last {
             if net_info_last.have_port_map {
@@ -1462,7 +1478,7 @@ impl Actor {
     /// since the last state.
     ///
     /// callNetInfoCallback takes ownership of ni.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn call_net_info_callback(&mut self, ni: cfg::NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
@@ -1473,7 +1489,7 @@ impl Actor {
         self.call_net_info_callback_locked(ni);
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     fn call_net_info_callback_locked(&mut self, ni: cfg::NetInfo) {
         self.net_info_last = Some(ni.clone());
         if let Some(ref on_net_info) = self.conn.on_net_info {
@@ -1482,7 +1498,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
         let derp_map = self.conn.derp_map.read().await.clone();
         if derp_map.is_none() {
@@ -1495,7 +1511,7 @@ impl Actor {
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
-        info!("START REPORT");
+        debug!("requesting netcheck report");
         let report = time::timeout(Duration::from_secs(10), async move {
             net_checker.get_report(derp_map, pconn4, pconn6).await
         })
@@ -1503,7 +1519,6 @@ impl Actor {
         self.conn
             .ipv6_reported
             .store(report.ipv6, Ordering::Relaxed);
-        info!("STOP REPORT");
         let r = &report;
         debug!(
             "setting no_v4_send {} -> {}",
@@ -1801,7 +1816,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn send_disco_message(
         &mut self,
         dst: SendAddr,
@@ -1858,7 +1873,7 @@ impl Actor {
     }
 
     /// Sends either to UDP or DERP, depending on the IP.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn send_addr(
         &mut self,
         addr: SendAddr,
@@ -1908,7 +1923,7 @@ impl Actor {
     ///
     /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
     /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn handle_disco_message(
         &mut self,
         source: [u8; disco::KEY_LEN],
@@ -2038,7 +2053,7 @@ impl Actor {
 
     /// di is the DiscoInfo of the source of the ping.
     /// derp_node_src is non-zero if the ping arrived via DERP.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn handle_ping(
         &mut self,
         dm: disco::Ping,
@@ -2119,7 +2134,7 @@ impl Actor {
         self.send_derp_actor(DerpActorMessage::SetDerpMap(dm));
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     fn set_network_map(&mut self, nm: netmap::NetworkMap) {
         if self.conn.is_closed() {
             return;
@@ -2204,7 +2219,7 @@ impl Actor {
         self.pconn4.port()
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all)]
     async fn send_raw(
         &self,
         addr: SocketAddr,
