@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     // tickets wrap all details needed to get a collection
     let ticket = node.ticket(hash).await?;
     // print some info about the node
-    println!("serving hash:    {}", ticket.hash()); // BLAKE3 hash of the collection
+    println!("serving hash:    {}", ticket.hash());
     println!("node PeerID:     {}", ticket.peer());
     println!("node listening addresses:");
     for addr in ticket.addrs() {
