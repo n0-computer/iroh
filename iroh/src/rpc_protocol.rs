@@ -61,7 +61,7 @@ pub struct ListCollectionsRequest;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListCollectionsResponse {
     pub hash: Hash,
-    pub total_blobs_count: usize,
+    pub total_blobs_count: u64,
     pub total_blobs_size: u64,
 }
 
