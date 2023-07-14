@@ -1,6 +1,9 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
-use super::opcode_data;
+use super::{
+    opcode_data::{self, OpcodeData},
+    Opcode, Version,
+};
 
 /// ResultCode in a [`Response`] whe it's successful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -86,7 +89,7 @@ pub struct Response {
     /// Epoch time of the server.
     epoch_time: u32,
     /// Data of the resoponse.
-    data: opcode_data::OpcodeData,
+    data: OpcodeData,
 }
 
 /// Errors that can occur when decoding a [`Response`] from a server.
@@ -142,7 +145,7 @@ impl Response {
             return Err(Error::DecodeError(DecodeError::Malformed));
         }
 
-        let version: super::Version = buf[0]
+        let version: Version = buf[0]
             .try_into()
             .map_err(|_| Error::DecodeError(DecodeError::InvalidVersion))?;
 
@@ -150,7 +153,7 @@ impl Response {
         if !(opcode & Self::RESPONSE_INDICATOR == Self::RESPONSE_INDICATOR) {
             return Err(Error::DecodeError(DecodeError::NotAResponse));
         }
-        let opcode: super::Opcode = (opcode & !Self::RESPONSE_INDICATOR)
+        let opcode: Opcode = (opcode & !Self::RESPONSE_INDICATOR)
             .try_into()
             .map_err(|_| Error::DecodeError(DecodeError::InvalidOpcode))?;
 
@@ -173,7 +176,7 @@ impl Response {
 
         // buf[12..24] reserved
 
-        let data = opcode_data::OpcodeData::decode(opcode, &buf[24..])
+        let data = OpcodeData::decode(opcode, &buf[24..])
             .map_err(|_| Error::DecodeError(DecodeError::InvalidOpcodeData))?;
 
         Ok(Response {
