@@ -1,0 +1,132 @@
+//! Encoding and decoding of the data associated with an [`Opcode`].
+
+use std::net::Ipv6Addr;
+
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+
+use super::Opcode;
+
+/// Data associated to an [`Opcode`]
+#[derive(Debug)]
+pub enum OpcodeData {
+    /// Data for an [`Opcode::Annouce`] request.
+    Annouce,
+    /// Data for an [`Opcode::Map`] request.
+    MapData(MapData),
+}
+
+/// [`OpcodeData`] associated to a [`Opcode::Map`].
+#[derive(Debug)]
+pub struct MapData {
+    /// Nonce of the request. Used to verify responses in the client side, and modifications in the
+    /// server side.
+    nonce: [u8; 12],
+    /// Protocol for which the mapping is being requested.
+    protocol: MapProtocol,
+    /// Locol port for the mapping.
+    local_port: u16,
+    /// External port of the mapping.
+    external_port: u16,
+    /// External ip of the mapping.
+    external_address: Ipv6Addr,
+}
+
+/// Protocol for which a port mapping is requested.
+// NOTE: technically any IANA protocol is allowed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
+pub enum MapProtocol {
+    Udp = 17,
+}
+
+pub struct InvalidOpcodeData;
+
+impl MapData {
+    /// Size of the opcode-specific data of a [`Opcode::Map`] request.
+    pub const ENCODED_SIZE: usize = // parts
+        12 + // nonce
+        1 + // protocol
+        3 + // reserved
+        2 + // local port
+        2 + // external port
+        16; // external address
+
+    /// Encode this [`MapData`].
+    pub fn encode(&self) -> [u8; Self::ENCODED_SIZE] {
+        let MapData {
+            nonce,
+            protocol,
+            local_port,
+            external_port,
+            external_address,
+        } = self;
+        let mut buf = [0; Self::ENCODED_SIZE];
+        buf[0..12].copy_from_slice(nonce);
+        buf[12] = *protocol as u8;
+        // buf[13..16] reserved
+        buf[16..18].copy_from_slice(&local_port.to_be_bytes());
+        buf[18..20].copy_from_slice(&external_port.to_be_bytes());
+        buf[20..].copy_from_slice(&external_address.octets());
+
+        buf
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, InvalidOpcodeData> {
+        if buf.len() < Self::ENCODED_SIZE {
+            return Err(InvalidOpcodeData);
+        }
+
+        let nonce = buf[..12].try_into().expect("slice has the right size");
+        let protocol = buf[12].try_into().map_err(|_| InvalidOpcodeData)?;
+        let local_port_bytes = buf[16..18].try_into().expect("slice has the right size");
+        let local_port = u16::from_be_bytes(local_port_bytes);
+        let external_port_bytes = buf[16..18].try_into().expect("slice has the right size");
+        let external_port = u16::from_be_bytes(external_port_bytes);
+        let external_addr_bytes: [u8; 16] = buf[20..].try_into().expect("buffer size was verified");
+        let external_address = Ipv6Addr::from(external_addr_bytes);
+
+        Ok(MapData {
+            nonce,
+            protocol,
+            local_port,
+            external_port,
+            external_address,
+        })
+    }
+}
+
+impl OpcodeData {
+    /// Get the associated [`Opcode`].
+    pub fn opcode(&self) -> Opcode {
+        match self {
+            OpcodeData::Annouce => Opcode::Announce,
+            OpcodeData::MapData(_) => Opcode::Map,
+        }
+    }
+
+    /// Encode this [`OpcodeData`] into the buffer.
+    pub fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            OpcodeData::Annouce => {}
+            OpcodeData::MapData(map_data) => buf.extend_from_slice(&map_data.encode()),
+        }
+    }
+
+    /// Exact size an encoded [`OpcodeData`] will have.
+    pub const fn encoded_size(&self) -> usize {
+        match self {
+            OpcodeData::Annouce => 0,
+            OpcodeData::MapData(_) => MapData::ENCODED_SIZE,
+        }
+    }
+
+    pub fn decode(opcode: Opcode, buf: &[u8]) -> Result<Self, InvalidOpcodeData> {
+        match opcode {
+            Opcode::Announce => Ok(OpcodeData::Annouce),
+            Opcode::Map => {
+                let map_data = MapData::decode(buf)?;
+                Ok(OpcodeData::MapData(map_data))
+            }
+        }
+    }
+}
