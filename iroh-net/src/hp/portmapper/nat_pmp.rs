@@ -290,7 +290,7 @@ const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 #[derive(Debug)]
 pub struct Mapping {
     external_port: NonZeroU16,
-    externa_addr: Ipv4Addr,
+    external_addr: Ipv4Addr,
     lifetime_seconds: u32,
 }
 
@@ -321,33 +321,56 @@ impl Mapping {
         let mut buffer = vec![0; MAX_RESP_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = Response::decode(&buffer[..read])?;
-        match response {
+
+        // pre-create the mapping since we have most info ready
+        let (external_port, lifetime_seconds) = match response {
             Response::PortMap {
                 proto: MapProtocol::UDP,
                 epoch_time,
                 private_port,
                 external_port,
                 lifetime_seconds,
-            } if private_port == local_port => {
-                // TODO(@divma): this requires two requests, one to get the external port, another to get the external ip address
-                anyhow::bail!("second nat_pmp request unimplemented");
-            }
+            } if private_port == local_port => (external_port, lifetime_seconds),
             _ => anyhow::bail!("server returned unexpected response for mapping request"),
-        }
+        };
+
+        let external_port = external_port
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("received 0 port from server as external port"))?;
+
+        // now send the second response to get the external address
+        let req = Request::ExternalAddress;
+        socket.send(&req.encode()).await?;
+        let mut buffer = vec![0; MAX_RESP_SIZE];
+        let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
+        let response = Response::decode(&buffer[..read])?;
+        let external_addr = match response {
+            Response::PublicAddress {
+                epoch_time,
+                public_ip,
+            } => public_ip,
+            _ => anyhow::bail!("server returned unexpected response for mapping request"),
+        };
+
+        Ok(Mapping {
+            external_port,
+            external_addr,
+            lifetime_seconds,
+        })
     }
 }
 
 impl super::mapping::PortMapped for Mapping {
     fn external(&self) -> (Ipv4Addr, NonZeroU16) {
-        (self.externa_addr, self.external_port)
+        (self.external_addr, self.external_port)
     }
 
     fn half_lifetime(&self) -> Duration {
-        Duration::from_secs(self.lifetime_seconds.into())
+        Duration::from_secs((self.lifetime_seconds / 2).into())
     }
 }
 
-const RECV_TIMEOUT: Duration = Duration::from_millis(500);
+const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     debug!("starting probe");

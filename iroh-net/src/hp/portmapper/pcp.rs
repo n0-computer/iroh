@@ -455,12 +455,12 @@ impl super::mapping::PortMapped for Mapping {
     }
 
     fn half_lifetime(&self) -> Duration {
-        Duration::from_secs(self.lifetime_seconds.into())
+        Duration::from_secs((self.lifetime_seconds / 2).into())
     }
 }
 
-/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
-/// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. See
+/// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
 const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 
 impl Mapping {
