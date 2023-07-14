@@ -522,17 +522,17 @@ mod tests {
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
-                        delay: Duration::from_millis(600),
+                        delay: Duration::from_millis(300),
                         node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(700),
+                        delay: Duration::from_millis(400),
                         node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(800),
+                        delay: Duration::from_millis(500),
                         node: derp_node_1.clone(),
                         region: derp_map.regions[&1].clone(),
                     },
@@ -543,15 +543,15 @@ mod tests {
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
-                        delay: Duration::from_millis(600),
+                        delay: Duration::from_millis(300),
                         node: derp_node_1.clone(),
                     },
                     Probe::Icmp {
-                        delay: Duration::from_millis(700),
+                        delay: Duration::from_millis(400),
                         node: derp_node_1.clone(),
                     },
                     Probe::Icmp {
-                        delay: Duration::from_millis(800),
+                        delay: Duration::from_millis(500),
                         node: derp_node_1.clone(),
                     },
                 ],
@@ -579,17 +579,17 @@ mod tests {
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
-                        delay: Duration::from_millis(300),
+                        delay: Duration::from_millis(600),
                         node: derp_node_2.clone(),
                         region: derp_map.regions[&2].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(400),
+                        delay: Duration::from_millis(700),
                         node: derp_node_2.clone(),
                         region: derp_map.regions[&2].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_millis(500),
+                        delay: Duration::from_millis(800),
                         node: derp_node_2.clone(),
                         region: derp_map.regions[&2].clone(),
                     },
@@ -600,15 +600,15 @@ mod tests {
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
-                        delay: Duration::from_millis(300),
+                        delay: Duration::from_millis(600),
                         node: derp_node_2.clone(),
                     },
                     Probe::Icmp {
-                        delay: Duration::from_millis(400),
+                        delay: Duration::from_millis(700),
                         node: derp_node_2.clone(),
                     },
                     Probe::Icmp {
-                        delay: Duration::from_millis(500),
+                        delay: Duration::from_millis(800),
                         node: derp_node_2.clone(),
                     },
                 ],
@@ -784,12 +784,12 @@ mod tests {
                 proto: ProbeProto::Https,
                 probes: vec![
                     Probe::Https {
-                        delay: Duration::from_micros(102_400),
+                        delay: Duration::from_micros(414_400),
                         node: derp_node_2.clone(),
                         region: derp_map.regions[&2].clone(),
                     },
                     Probe::Https {
-                        delay: Duration::from_micros(154_800),
+                        delay: Duration::from_micros(466_800),
                         node: derp_node_2.clone(),
                         region: derp_map.regions[&2].clone(),
                     },
@@ -800,11 +800,11 @@ mod tests {
                 proto: ProbeProto::Icmp,
                 probes: vec![
                     Probe::Icmp {
-                        delay: Duration::from_micros(102_400),
+                        delay: Duration::from_micros(414_400),
                         node: derp_node_2.clone(),
                     },
                     Probe::Icmp {
-                        delay: Duration::from_micros(154_800),
+                        delay: Duration::from_micros(466_800),
                         node: derp_node_2.clone(),
                     },
                 ],

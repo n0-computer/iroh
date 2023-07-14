@@ -306,7 +306,7 @@ impl MagicEndpoint {
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
     /// when connecting to this peer (in addition to addresses obtained from a derp server).
     ///
-    /// If no UDP addresses are added, and `derp_region` is `None`, it will errpr.
+    /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
         &self,

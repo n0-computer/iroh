@@ -672,12 +672,7 @@ async fn derp_regions(config: Config) -> anyhow::Result<()> {
             fail.push(region_details);
         }
     }
-    success.sort_by(|a, b| {
-        a.latency
-            .expect("checked above")
-            .partial_cmp(&b.latency.expect("checked above"))
-            .unwrap()
-    });
+    success.sort_by_key(|d| d.latency);
     if !success.is_empty() {
         println!("DERP Region Latencies:");
         println!();
