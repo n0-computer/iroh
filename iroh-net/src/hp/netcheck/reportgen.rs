@@ -501,12 +501,7 @@ impl Actor {
         if !self.incremental {
             // Even if we're doing a non-incremental update, we may want to try our
             // preferred DERP region for captive portal detection.
-            let preferred_derp = if let Some(last_report) = self.last_report.as_ref() {
-                last_report.preferred_derp
-            } else {
-                None
-            };
-            // self.last_report.as_ref().map(|l| l.preferred_derp);
+            let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
 
             let dm = self.derp_map.clone();
             self.outstanding_tasks.captive_task = true;

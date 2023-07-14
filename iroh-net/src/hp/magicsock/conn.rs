@@ -1573,13 +1573,13 @@ impl Actor {
             ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
         }
 
-        if ni.preferred_derp.is_none() {
+        if ni.preferred_derp == 0 {
             // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
             ni.preferred_derp = self.pick_derp_fallback().await;
         }
 
         if !self.set_nearest_derp(ni.preferred_derp).await {
-            ni.preferred_derp = None;
+            ni.preferred_derp = 0;
         }
 
         // TODO: set link type
@@ -1588,27 +1588,22 @@ impl Actor {
         Ok(report)
     }
 
-    async fn set_nearest_derp(&mut self, derp_num: Option<u16>) -> bool {
-        let my_derp_num = {
+    async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
+        {
             let derp_map = self.conn.derp_map.read().await;
-            // no derp map and no derp num, return
-            if derp_map.is_none() || derp_num.is_none() {
-                self.conn.set_my_derp(derp_num).await;
+            if derp_map.is_none() {
+                self.conn.set_my_derp(0);
                 return false;
             }
-            let my_derp = self.conn.my_derp().await;
-            // my_derp is some number and derp_num is the same number
+            let my_derp = self.conn.my_derp();
             if derp_num == my_derp {
                 // No change.
                 return true;
             }
-            // we were previously connected to a derp server, and now we are connected to
-            // a different one
-            if my_derp.is_some() {
+            if my_derp != 0 && derp_num != 0 {
                 inc!(MagicsockMetrics, derp_home_change);
             }
-            self.conn.set_my_derp(derp_num).await;
-            let my_derp_num = derp_num.expect("checked above");
+            self.conn.set_my_derp(derp_num);
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
@@ -1616,21 +1611,21 @@ impl Actor {
                 .as_ref()
                 .expect("already checked")
                 .regions
-                .get(&my_derp_num)
+                .get(&derp_num)
             {
                 Some(dr) => {
-                    info!("home is now derp-{} ({})", my_derp_num, dr.region_code);
+                    info!("home is now derp-{} ({})", derp_num, dr.region_code);
                 }
                 None => {
-                    warn!("derp_map.regions[{}] is empty", my_derp_num);
+                    warn!("derp_map.regions[{}] is empty", derp_num);
                 }
             }
-            my_derp_num
-        };
+        }
 
-        self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp_num));
+        let my_derp = self.conn.my_derp();
+        self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp));
         self.send_derp_actor(DerpActorMessage::Connect {
-            region_id: my_derp_num,
+            region_id: derp_num,
             peer: None,
         });
         true

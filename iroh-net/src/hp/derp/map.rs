@@ -74,7 +74,7 @@ impl DerpMap {
     /// Returns a [`DerpMap`] from a [`Url`] and a `region_id`
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    /// Region IDs are specified at <https://number-zero.notion.site/Derp-Regions-a63c309839e64d9ab19c23778a7b9c37>
+    /// Region IDs are specified at <../../../docs/derp_regions.md>
     pub fn from_url(url: Url, region_id: u16) -> Self {
         Self::default_from_node(
             url,
