@@ -1,5 +1,7 @@
 //! Port mapping client and service.
 
+#![allow(unused)]
+
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
@@ -16,8 +18,6 @@ use iroh_metrics::{inc, portmap::Metrics};
 use crate::{net::interfaces::HomeRouter, util};
 
 use current_mapping::CurrentMapping;
-
-use self::mapping::PortMapped;
 
 mod current_mapping;
 mod mapping;
@@ -77,7 +77,6 @@ enum Message {
 }
 
 /// Configures which port mapping protocols are enabled in the [`Service`].
-// TODO(@divma): apply configurations to mappings
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Whether UPnP is enabled.
@@ -427,10 +426,9 @@ impl Service {
     /// Clears the current mapping and releases it.
     async fn invalidate_mapping(&mut self) {
         if let Some(old_mapping) = self.current_mapping.update(None) {
-            // TODO(@divma): common release
-            // if let Err(e) = old_mapping.release().await {
-            //     debug!("failed to release mapping {e}");
-            // }
+            if let Err(e) = old_mapping.release().await {
+                debug!("failed to release mapping {e}");
+            }
         }
     }
 
@@ -472,9 +470,8 @@ impl Service {
                 Some(event) = self.current_mapping.next() => {
                     trace!("tick: mapping event {event:?}");
                     match event {
-                        current_mapping::Event::Renew { external_port } | current_mapping::Event::Expired { external_port } => {
-                            todo!("renewal should try to get the same port using the same protocol?");
-                            // self.get_mapping(Some(external_port));
+                        current_mapping::Event::Renew { external_ip, external_port } | current_mapping::Event::Expired { external_ip, external_port } => {
+                            self.get_mapping(Some((external_ip, external_port)));
                         },
                     }
 
@@ -553,37 +550,31 @@ impl Service {
             }
 
             // get the current external port if any to try to get it again
-            let port = self.current_mapping.external().map(|(_addr, port)| port);
+            let external_addr = self.current_mapping.external();
 
             // since the port has changed, the current mapping is no longer valid and should be
             // released
 
-            if port.is_some() {
+            if external_addr.is_some() {
                 self.invalidate_mapping().await;
             }
 
             // start a new mapping task to account for the new port if necessary
-            // TODO(@divma): think this better
-            if let Ok((ip, gateway)) = ip_and_gateway() {
-                // TODO(@divma): ignoring the external port
-                self.get_mapping(None, ip, gateway);
-            }
+            self.get_mapping(external_addr);
         } else if self.current_mapping.external().is_none() {
-            trace!("updating local port when not changed");
             // if the local port has not changed, but there is no active mapping try to get one
-            todo!("get mapping on fallback");
-            // self.get_mapping(None)
+            self.get_mapping(None)
         }
     }
 
-    fn get_mapping(
-        &mut self,
-        external_addr: Option<(Ipv4Addr, NonZeroU16)>,
-        local_ip: Ipv4Addr,
-        gateway: Ipv4Addr,
-    ) {
+    fn get_mapping(&mut self, external_addr: Option<(Ipv4Addr, NonZeroU16)>) {
         if let Some(local_port) = self.local_port {
             inc!(Metrics, mapping_attempts);
+
+            let (local_ip, gateway) = match ip_and_gateway() {
+                Ok(ip_and_gw) => ip_and_gw,
+                Err(e) => return debug!("can't get mapping: {e}"),
+            };
 
             let ProbeOutput { upnp, pcp, nat_pmp } = self.full_probe.output();
 
@@ -638,8 +629,6 @@ impl Service {
                             // there is no guarantee this will be displayed, so log it anyway
                             debug!("could not start probe: {e}");
                             let _ = result_tx.send(Err(e.to_string()));
-                            // TODO(@divma): metrics
-                            // inc!(Metrics, probes_failed);
                             return;
                         }
                     };

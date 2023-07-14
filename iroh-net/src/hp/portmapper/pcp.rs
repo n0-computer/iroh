@@ -286,7 +286,6 @@ impl Request {
 
     pub fn get_mapping(
         nonce: [u8; 12],
-        lifetime_seconds: std::num::NonZeroU32,
         local_port: u16,
         local_ip: Ipv4Addr,
         preferred_external_port: Option<u16>,
@@ -294,7 +293,7 @@ impl Request {
     ) -> Request {
         Request {
             version: Version::Pcp,
-            lifetime_seconds: lifetime_seconds.into(),
+            lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
             client_addr: local_ip.to_ipv6_mapped(),
             opcode_data: OpcodeData::MapData(MapData {
                 nonce,
@@ -458,11 +457,11 @@ impl super::mapping::PortMapped for Mapping {
     fn half_lifetime(&self) -> Duration {
         Duration::from_secs(self.lifetime_seconds.into())
     }
-
-    fn release(self) -> anyhow::Result<()> {
-        todo!()
-    }
 }
+
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
+/// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 
 impl Mapping {
     pub async fn new(
@@ -471,22 +470,46 @@ impl Mapping {
         gateway: Ipv4Addr,
         preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> anyhow::Result<Self> {
+        let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+        socket.connect((gateway, SERVER_PORT)).await?;
+
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
-        // let lifetime_seconds = 7200;
-        // let req = Request::get_mapping(
-        //     nonce,
-        //     lifetime_seconds,
-        //     port.into(),
-        //     local_ip,
-        //     preferred_external_port.map(|port| port.into()),
-        //     preferred_external_address,
-        // );
-        todo!()
+
+        let (preferred_external_address, preferred_external_port) = match preferred_external_address
+        {
+            Some((ip, port)) => (Some(ip), Some(port.into())),
+            None => (None, None),
+        };
+        let req = Request::get_mapping(
+            nonce,
+            local_port.into(),
+            local_ip,
+            preferred_external_port,
+            preferred_external_address,
+        );
+
+        socket.send(&req.encode()).await?;
+        let mut buffer = vec![0; MAX_RESP_SIZE];
+        let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
+        let response = Response::decode(&buffer[..read])?;
+        match response.opcode {
+            Opcode::Map => match response.result_code {
+                ResultCode::Success => {
+                    anyhow::bail!("unimplemented");
+                    // TODO(@divma): decode the MapData, compare the nonce, local_ip, and
+                    // local_port; report with the result
+                }
+                error_code => anyhow::bail!("{error_code:?}"),
+            },
+            _ => {
+                anyhow::bail!("server returned an unexpected response type for mapping")
+            }
+        }
     }
 }
 
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     debug!("starting probe");
@@ -526,7 +549,7 @@ async fn probe_available_fallible(
     let req = Request::annouce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
     let mut buffer = vec![0; MAX_RESP_SIZE];
-    let read = tokio::time::timeout(PROBE_TIMEOUT, socket.recv(&mut buffer)).await??;
+    let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
     let response = Response::decode(&buffer[..read])?;
     Ok(response)
 }

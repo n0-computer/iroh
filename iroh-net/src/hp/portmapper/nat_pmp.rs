@@ -283,11 +283,58 @@ impl Response {
     }
 }
 
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
+/// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
+
 #[derive(Debug)]
 pub struct Mapping {
     external_port: NonZeroU16,
     externa_addr: Ipv4Addr,
     lifetime_seconds: u32,
+}
+
+impl Mapping {
+    pub async fn new(
+        local_ip: Ipv4Addr,
+        local_port: NonZeroU16,
+        gateway: Ipv4Addr,
+        preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
+    ) -> anyhow::Result<Self> {
+        let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+        socket.connect((gateway, SERVER_PORT)).await?;
+
+        let (preferred_external_address, preferred_external_port) = match preferred_external_address
+        {
+            Some((ip, port)) => (Some(ip), Some(port.into())),
+            None => (None, None),
+        };
+        let local_port: u16 = local_port.into();
+        let req = Request::Mapping {
+            proto: MapProtocol::UDP,
+            local_port,
+            external_port: preferred_external_port.unwrap_or_default(),
+            lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
+        };
+
+        socket.send(&req.encode()).await?;
+        let mut buffer = vec![0; MAX_RESP_SIZE];
+        let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
+        let response = Response::decode(&buffer[..read])?;
+        match response {
+            Response::PortMap {
+                proto: MapProtocol::UDP,
+                epoch_time,
+                private_port,
+                external_port,
+                lifetime_seconds,
+            } if private_port == local_port => {
+                // TODO(@divma): this requires two requests, one to get the external port, another to get the external ip address
+                anyhow::bail!("second nat_pmp request unimplemented");
+            }
+            _ => anyhow::bail!("server returned unexpected response for mapping request"),
+        }
+    }
 }
 
 impl super::mapping::PortMapped for Mapping {
@@ -298,13 +345,9 @@ impl super::mapping::PortMapped for Mapping {
     fn half_lifetime(&self) -> Duration {
         Duration::from_secs(self.lifetime_seconds.into())
     }
-
-    fn release(self) -> anyhow::Result<()> {
-        todo!()
-    }
 }
 
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     debug!("starting probe");
@@ -336,7 +379,7 @@ async fn probe_available_fallible(
     let req = Request::ExternalAddress;
     socket.send(&req.encode()).await?;
     let mut buffer = vec![0; MAX_RESP_SIZE];
-    let read = tokio::time::timeout(PROBE_TIMEOUT, socket.recv(&mut buffer)).await??;
+    let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
     let response = Response::decode(&buffer[..read])?;
 
     Ok(response)

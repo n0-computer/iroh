@@ -44,10 +44,6 @@ impl super::mapping::PortMapped for Mapping {
     fn half_lifetime(&self) -> Duration {
         HALF_LIFETIME
     }
-
-    fn release(self) -> Result<()> {
-        todo!()
-    }
 }
 
 impl Mapping {
@@ -111,8 +107,6 @@ impl Mapping {
             external_port,
         })
     }
-
-    /// Releases the mapping.
     pub(crate) async fn release(self) -> Result<()> {
         let Mapping {
             gateway,

@@ -50,9 +50,15 @@ impl<M: Mapping> ActiveMapping<M> {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Event {
     /// On this event, the mapping is halway through it's lifetime and should be renewed.
-    Renew { external_port: NonZeroU16 },
+    Renew {
+        external_ip: Ipv4Addr,
+        external_port: NonZeroU16,
+    },
     /// Mapping has expired.
-    Expired { external_port: NonZeroU16 },
+    Expired {
+        external_ip: Ipv4Addr,
+        external_port: NonZeroU16,
+    },
 }
 
 /// Holds the current mapping value and ensures that any change is reported accordingly.
@@ -125,18 +131,24 @@ impl<M: Mapping> CurrentMapping<M> {
         }) = &mut self.mapping
         {
             if deadline.as_mut().poll(cx).is_ready() {
-                let external_port = mapping.external().1;
+                let (external_ip, external_port) = mapping.external();
                 // check if the deadline means the mapping is expired or due for renewal
                 return if *expire_after {
                     trace!("mapping expired {mapping:?}");
                     self.update(None);
-                    Poll::Ready(Event::Expired { external_port })
+                    Poll::Ready(Event::Expired {
+                        external_ip,
+                        external_port,
+                    })
                 } else {
                     // mapping is due for renewal
                     *deadline = Box::pin(time::sleep(mapping.half_lifetime()));
                     *expire_after = true;
                     trace!("due for renewal {mapping:?}");
-                    Poll::Ready(Event::Renew { external_port })
+                    Poll::Ready(Event::Renew {
+                        external_ip,
+                        external_port,
+                    })
                 };
             }
         }
@@ -205,6 +217,7 @@ mod tests {
         assert_eq!(
             event,
             Event::Renew {
+                external_ip: TEST_IP,
                 external_port: TEST_PORT
             }
         );
@@ -219,6 +232,7 @@ mod tests {
         assert_eq!(
             event,
             Event::Expired {
+                external_ip: TEST_IP,
                 external_port: TEST_PORT
             }
         );

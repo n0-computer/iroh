@@ -8,7 +8,6 @@ pub(super) trait PortMapped: std::fmt::Debug + Unpin {
     fn external(&self) -> (Ipv4Addr, NonZeroU16);
     /// Half the lifetime of a mapping. This is used to calculate when a mapping should be renewed.
     fn half_lifetime(&self) -> Duration;
-    fn release(self) -> Result<()>;
 }
 
 #[derive(derive_more::Debug)]
@@ -27,7 +26,9 @@ impl Mapping {
         gateway: Ipv4Addr,
         external_addr: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> Result<Self> {
-        todo!()
+        pcp::Mapping::new(local_ip, local_port, gateway, external_addr)
+            .await
+            .map(Self::Pcp)
     }
 
     pub(crate) async fn new_nat_pmp(
@@ -36,7 +37,9 @@ impl Mapping {
         gateway: Ipv4Addr,
         external_addr: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> Result<Self> {
-        todo!()
+        nat_pmp::Mapping::new(local_ip, local_port, gateway, external_addr)
+            .await
+            .map(Self::NatPmp)
     }
 
     pub(crate) async fn new_upnp(
@@ -48,6 +51,20 @@ impl Mapping {
         upnp::Mapping::new(local_ip, local_port, gateway, external_port)
             .await
             .map(Self::Upnp)
+    }
+
+    pub(crate) async fn release(self) -> Result<()> {
+        match self {
+            Mapping::Upnp(m) => m.release().await,
+            Mapping::Pcp(m) => {
+                // TODO(@divma): do
+                anyhow::bail!("unimplemented");
+            }
+            Mapping::NatPmp(m) => {
+                // TODO(@divma): do
+                anyhow::bail!("unimplemented");
+            }
+        }
     }
 }
 
@@ -65,14 +82,6 @@ impl PortMapped for Mapping {
             Mapping::Upnp(m) => m.half_lifetime(),
             Mapping::Pcp(m) => m.half_lifetime(),
             Mapping::NatPmp(m) => m.half_lifetime(),
-        }
-    }
-
-    fn release(self) -> Result<()> {
-        match self {
-            Mapping::Upnp(m) => todo!(),
-            Mapping::Pcp(m) => m.release(),
-            Mapping::NatPmp(m) => m.release(),
         }
     }
 }
