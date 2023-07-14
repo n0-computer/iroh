@@ -132,9 +132,7 @@ pub enum DecodeError {
 
 #[derive(Debug, derive_more::Display, thiserror::Error)]
 pub enum Error {
-    #[display("decode error: {}", 0)]
     DecodeError(DecodeError),
-    #[display("error code: {}", 0)]
     ErrorCode(ErrorCode),
 }
 
