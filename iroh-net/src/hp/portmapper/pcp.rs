@@ -10,14 +10,14 @@ mod protocol;
 #[derive(Debug)]
 pub struct Mapping {
     external_port: NonZeroU16,
-    externa_addr: Ipv4Addr,
+    external_address: Ipv4Addr,
     lifetime_seconds: u32,
-    nonce: [u8; 16],
+    nonce: [u8; 12],
 }
 
 impl super::mapping::PortMapped for Mapping {
     fn external(&self) -> (Ipv4Addr, NonZeroU16) {
-        (self.externa_addr, self.external_port)
+        (self.external_address, self.external_port)
     }
 
     fn half_lifetime(&self) -> Duration {
@@ -52,20 +52,48 @@ impl Mapping {
         );
 
         socket.send(&req.encode()).await?;
-        let mut buffer = vec![0; protocol::MAX_RESP_SIZE];
+        let mut buffer = vec![0; protocol::Response::MAX_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = protocol::Response::decode(&buffer[..read])?;
-        match response.opcode {
-            protocol::Opcode::Map => match response.result_code {
-                protocol::ResultCode::Success => {
-                    anyhow::bail!("unimplemented");
-                    // TODO(@divma): decode the MapData, compare the nonce, local_ip, and
-                    // local_port; report with the result
+
+        let protocol::Response {
+            lifetime_seconds,
+            epoch_time,
+            data,
+        } = response;
+
+        match data {
+            protocol::OpcodeData::MapData(map_data) => {
+                let protocol::MapData {
+                    nonce: received_nonce,
+                    protocol,
+                    local_port,
+                    external_port,
+                    external_address,
+                } = map_data;
+                if nonce != received_nonce {
+                    anyhow::bail!("received nonce does not match sent request");
                 }
-                error_code => anyhow::bail!("{error_code:?}"),
-            },
-            _ => {
-                anyhow::bail!("server returned an unexpected response type for mapping")
+                if protocol != protocol::MapProtocol::Udp {
+                    anyhow::bail!("received mapping is not for UDP");
+                }
+                let external_port = external_port
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("received 0 external port for mapping"))?;
+
+                let external_address = external_address
+                    .to_ipv4_mapped()
+                    .ok_or(anyhow::anyhow!("received external address is not ipv4"))?;
+
+                Ok(Mapping {
+                    external_port,
+                    external_address,
+                    lifetime_seconds,
+                    nonce,
+                })
+            }
+            protocol::OpcodeData::Announce => {
+                anyhow::bail!("received an announce response for a map request")
             }
         }
     }
@@ -78,16 +106,13 @@ pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
     match probe_available_fallible(local_ip, gateway).await {
         Ok(response) => {
             trace!("probe response: {response:?}");
-            match response.opcode {
-                protocol::Opcode::Announce => match response.result_code {
-                    protocol::ResultCode::Success => true,
-                    other => {
-                        // weird state here, since the server is not giving a positive result, but
-                        // it's seemingly available anyway
-                        debug!("probe received error code: {other:?}");
-                        false
-                    }
-                },
+            let protocol::Response {
+                lifetime_seconds,
+                epoch_time,
+                data,
+            } = response;
+            match data {
+                protocol::OpcodeData::Announce => true,
                 _ => {
                     debug!("server returned an unexpected response type for probe");
                     // missbehaving server is not useful
@@ -110,7 +135,7 @@ async fn probe_available_fallible(
     socket.connect((gateway, protocol::SERVER_PORT)).await?;
     let req = protocol::Request::annouce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
-    let mut buffer = vec![0; protocol::MAX_RESP_SIZE];
+    let mut buffer = vec![0; protocol::Response::MAX_SIZE];
     let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
     let response = protocol::Response::decode(&buffer[..read])?;
     Ok(response)

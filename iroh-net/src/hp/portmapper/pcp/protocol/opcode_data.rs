@@ -9,8 +9,8 @@ use super::Opcode;
 /// Data associated to an [`Opcode`]
 #[derive(Debug)]
 pub enum OpcodeData {
-    /// Data for an [`Opcode::Annouce`] request.
-    Annouce,
+    /// Data for an [`Opcode::Announce`] request.
+    Announce,
     /// Data for an [`Opcode::Map`] request.
     MapData(MapData),
 }
@@ -20,15 +20,15 @@ pub enum OpcodeData {
 pub struct MapData {
     /// Nonce of the request. Used to verify responses in the client side, and modifications in the
     /// server side.
-    nonce: [u8; 12],
+    pub nonce: [u8; 12],
     /// Protocol for which the mapping is being requested.
-    protocol: MapProtocol,
+    pub protocol: MapProtocol,
     /// Locol port for the mapping.
-    local_port: u16,
+    pub local_port: u16,
     /// External port of the mapping.
-    external_port: u16,
+    pub external_port: u16,
     /// External ip of the mapping.
-    external_address: Ipv6Addr,
+    pub external_address: Ipv6Addr,
 }
 
 /// Protocol for which a port mapping is requested.
@@ -99,7 +99,7 @@ impl OpcodeData {
     /// Get the associated [`Opcode`].
     pub fn opcode(&self) -> Opcode {
         match self {
-            OpcodeData::Annouce => Opcode::Announce,
+            OpcodeData::Announce => Opcode::Announce,
             OpcodeData::MapData(_) => Opcode::Map,
         }
     }
@@ -107,7 +107,7 @@ impl OpcodeData {
     /// Encode this [`OpcodeData`] into the buffer.
     pub fn encode_into(&self, buf: &mut Vec<u8>) {
         match self {
-            OpcodeData::Annouce => {}
+            OpcodeData::Announce => {}
             OpcodeData::MapData(map_data) => buf.extend_from_slice(&map_data.encode()),
         }
     }
@@ -115,14 +115,14 @@ impl OpcodeData {
     /// Exact size an encoded [`OpcodeData`] will have.
     pub const fn encoded_size(&self) -> usize {
         match self {
-            OpcodeData::Annouce => 0,
+            OpcodeData::Announce => 0,
             OpcodeData::MapData(_) => MapData::ENCODED_SIZE,
         }
     }
 
     pub fn decode(opcode: Opcode, buf: &[u8]) -> Result<Self, InvalidOpcodeData> {
         match opcode {
-            Opcode::Announce => Ok(OpcodeData::Annouce),
+            Opcode::Announce => Ok(OpcodeData::Announce),
             Opcode::Map => {
                 let map_data = MapData::decode(buf)?;
                 Ok(OpcodeData::MapData(map_data))

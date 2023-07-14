@@ -10,26 +10,19 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rand::RngCore;
 use tracing::{debug, trace};
 
-mod opcode_data;
-mod request;
-mod response;
+pub mod opcode_data;
+pub mod request;
+pub mod response;
+
+pub use opcode_data::*;
+pub use request::*;
+pub use response::*;
 
 // PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
 
-/// Port to use when acting as a client. This is the one we bind to.
-pub const CLIENT_PORT: u16 = 5350;
-
 /// Port to use when acting as a server. This is the one we direct requests to.
 pub const SERVER_PORT: u16 = 5351;
-
-/// Size of a [`Request`] sent by this client, in bytes.
-const REQ_SIZE: usize = // parts:
-    1 + // version
-    1 + // opcode
-    2 + // reserved
-    4 + // lifetime
-    16; // local ip
 
 /// NAT-PMP/PCP Version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]

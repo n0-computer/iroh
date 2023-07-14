@@ -75,7 +75,7 @@ impl Request {
             lifetime_seconds: 0,
             client_addr,
             // the pcp announce opcode requests and responses have no opcode-specific payload
-            opcode_data: OpcodeData::Annouce,
+            opcode_data: OpcodeData::Announce,
             pcp_options: vec![],
         }
     }

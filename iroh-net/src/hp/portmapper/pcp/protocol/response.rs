@@ -100,11 +100,11 @@ pub struct Response {
     /// Lifetime in seconds that can be assumed by this response.
     ///
     /// For map requests, this lifetime is how long to assume a mapping will last.
-    lifetime_seconds: u32,
+    pub lifetime_seconds: u32,
     /// Epoch time of the server.
-    epoch_time: u32,
+    pub epoch_time: u32,
     /// Data of the resoponse.
-    data: OpcodeData,
+    pub data: OpcodeData,
 }
 
 /// Errors that can occur when decoding a [`Response`] from a server.
