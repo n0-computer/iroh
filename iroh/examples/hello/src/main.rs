@@ -1,5 +1,7 @@
 //! The smallest possible example to spin up a node and serve a single blob.
 //!
+//! This can be downloaded using the iroh CLI.
+//!
 //! This is using an in memory database and a random peer id.
 use iroh::bytes::util::runtime;
 use iroh::database::mem;
