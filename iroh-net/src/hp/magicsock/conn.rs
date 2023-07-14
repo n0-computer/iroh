@@ -202,30 +202,22 @@ pub struct Inner {
     /// None (or zero regions/nodes) means DERP is disabled.
     pub(super) derp_map: tokio::sync::RwLock<Option<DerpMap>>,
     /// Nearest DERP region ID; 0 means none/unknown.
-    /// None means we are not connected or do not yet know the connection status.
-    // I'm sorry.
-    my_derp: tokio::sync::RwLock<Option<u16>>,
+    my_derp: AtomicU16,
 }
 
 impl Inner {
     /// Returns the derp region we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any derp region.
-    pub(super) async fn my_derp(&self) -> Option<u16> {
-        let my_derp = self.my_derp.read().await;
-        *my_derp
+    pub(super) fn my_derp(&self) -> u16 {
+        self.my_derp.load(Ordering::Relaxed)
     }
 
     /// Sets the derp region with the best latency.
     ///
-    /// If we are not connected to any derp regions, set this to `None`.
-    pub(super) async fn set_my_derp(&self, new: Option<u16>) {
-        let mut old = self.my_derp.write().await;
-        if let Some(my_derp) = new {
-            old.replace(my_derp);
-        } else {
-            old.take();
-        }
+    /// If we are not connected to any derp regions, set this to `0`.
+    pub(super) fn set_my_derp(&self, my_derp: u16) {
+        self.my_derp.store(my_derp, Ordering::Relaxed);
     }
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
@@ -339,7 +331,7 @@ impl Conn {
             network_sender,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map: Default::default(),
-            my_derp: tokio::sync::RwLock::new(None),
+            my_derp: AtomicU16::new(0),
         });
 
         let udp_state = quinn_udp::UdpState::default();
@@ -529,7 +521,12 @@ impl Conn {
     ///
     /// If `None`, then we currently have no verified connection to a DERP node in any region.
     pub async fn my_derp(&self) -> Option<u16> {
-        self.inner.my_derp().await
+        let my_derp = self.inner.my_derp();
+        if my_derp == 0 {
+            None
+        } else {
+            Some(my_derp)
+        }
     }
 
     /// Called when the control client gets a new network map from the control server.
@@ -1635,12 +1632,12 @@ impl Actor {
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
-    /// If no [`DerpMap`] exists, returns `None`.
-    async fn pick_derp_fallback(&self) -> Option<u16> {
+    /// If no [`DerpMap`] exists, returns `0`.
+    async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;
             if derp_map.is_none() {
-                return None;
+                return 0;
             }
             let ids = derp_map
                 .as_ref()
@@ -1648,7 +1645,7 @@ impl Actor {
                 .unwrap_or_default();
             if ids.is_empty() {
                 // No DERP regions in map.
-                return None;
+                return 0;
             }
             ids
         };
@@ -1663,13 +1660,13 @@ impl Actor {
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
-        let my_derp = self.conn.my_derp().await;
-        if my_derp.is_some() {
+        let my_derp = self.conn.my_derp();
+        if my_derp > 0 {
             return my_derp;
         }
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        Some(*ids.choose(&mut rng).unwrap())
+        *ids.choose(&mut rng).unwrap()
     }
 
     /// Records the new endpoints, reporting whether they're changed.

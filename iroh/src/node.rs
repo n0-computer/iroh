@@ -568,7 +568,7 @@ impl<D: BaoReadonlyDb> Node<D> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
         let region = self.inner.endpoint.my_derp().await;
-        Ticket::new(hash, self.peer_id(), addrs, None, region)
+        Ticket::new(hash, self.peer_id(), addrs, None, true, region)
     }
 
     /// Return the DERP region that this provider is connected to

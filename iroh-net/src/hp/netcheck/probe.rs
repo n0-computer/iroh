@@ -174,12 +174,10 @@ impl ProbePlan {
                 do6 = false;
             }
 
-            if let Some(preferred_derp) = last.preferred_derp {
-                if reg.region_id == preferred_derp {
-                    // But if we already had a DERP home, try extra hard to
-                    // make sure it's there so we don't flip flop around.
-                    tries = 4;
-                }
+            if reg.region_id == last.preferred_derp {
+                // But if we already had a DERP home, try extra hard to
+                // make sure it's there so we don't flip flop around.
+                tries = 4;
             }
 
             let mut p4 = Vec::new();

@@ -200,17 +200,14 @@ impl DerpActor {
             // Reconnect any DERP region that changed definitions.
             if let Some(old) = old {
                 let derp_map = derp_map.as_ref().unwrap();
-                let my_derp = self.conn.my_derp().await;
                 for (rid, old_def) in old.regions {
                     if let Some(new_def) = derp_map.regions.get(&rid) {
                         if &old_def == new_def {
                             continue;
                         }
                     }
-                    if let Some(my_derp) = my_derp {
-                        if rid == my_derp {
-                            self.conn.set_my_derp(None).await;
-                        }
+                    if rid == self.conn.my_derp() {
+                        self.conn.set_my_derp(0);
                     }
                     to_close.push(rid);
                 }
@@ -329,14 +326,9 @@ impl DerpActor {
         };
         info!("adding connection to derp-{region_id} for {why}");
 
-        let my_derp = self.conn.my_derp().await;
+        let my_derp = self.conn.my_derp();
         let conn1 = self.conn.clone();
         let ipv6_reported = self.conn.ipv6_reported.clone();
-        let is_preferred = if let Some(my_derp) = my_derp {
-            my_derp == region_id
-        } else {
-            false
-        };
 
         // building a client does not dial
         let dc = derp::http::ClientBuilder::new()
@@ -345,7 +337,7 @@ impl DerpActor {
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
             })
             .can_ack_pings(true)
-            .is_preferred(is_preferred)
+            .is_preferred(my_derp == region_id)
             .get_region(move || {
                 let conn = conn1.clone();
                 Box::pin(async move {
@@ -439,11 +431,8 @@ impl DerpActor {
     /// our current home DERP.
     async fn close_or_reconnect_derp(&mut self, region_id: u16, why: &'static str) {
         self.close_derp(region_id, why).await;
-        let my_derp = self.conn.my_derp().await;
-        if let Some(my_derp) = my_derp {
-            if my_derp == region_id {
-                self.connect_derp(region_id, None).await;
-            }
+        if self.conn.my_derp() == region_id {
+            self.connect_derp(region_id, None).await;
         }
     }
 
@@ -451,13 +440,10 @@ impl DerpActor {
         debug!("cleanup {} derps", self.active_derp.len());
         let now = Instant::now();
 
-        let my_derp = self.conn.my_derp().await;
         let mut to_close = Vec::new();
         for (i, ad) in &self.active_derp {
-            if let Some(my_derp) = my_derp {
-                if *i == my_derp {
-                    continue;
-                }
+            if *i == self.conn.my_derp() {
+                continue;
             }
             if ad.last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
                 to_close.push(*i);
