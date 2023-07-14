@@ -18,42 +18,57 @@ pub enum SuccessCode {
 ///
 /// Refer to [RFC 6887 Result Codes](https://datatracker.ietf.org/doc/html/rfc6887#section-7.4)
 // NOTE: docs for each variant are largely adapted from the RFC's description of each code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, derive_more::Display, thiserror::Error,
+)]
 #[repr(u8)]
 pub enum ErrorCode {
     /// The version number at the start of the PCP Request header is not recognized by the PCP
     /// server.
+    #[display("sent version is not supported")]
     UnsuppVersion = 1,
     /// The requested operation is disabled for this PCP client, or the PCP client requested an
     /// operation that cannot be fulfilled by the PCP server's security policy.
+    #[display("operation not authorized")]
     NotAuthorized = 2,
     /// The request could not be successfully parsed.
+    #[display("could not parse the request")]
     MalformedRequest = 3,
     /// Unsupported Opcode.
+    #[display("opcode is not supported")]
     UnsuppOpcode = 4,
     /// Unsupported option. This error only occurs if the option is in the mandatory-to-process
     /// range.
+    #[display("option is not supported")]
     UnsuppOption = 5,
     /// Malformed option (e.g., appears too many times, invalid length).
+    #[display("option could not be parsed")]
     MalformedOption = 6,
     /// The PCP server or the device it controls is experiencing a network failure of some sort
     /// (e.g., has not yet obtained an external IP address). This is a short lifetime error.
+    #[display("spurious network failure")]
     NetworkFailure = 7,
     /// Request is well-formed and valid, but the server has insufficient resources to complete the
     /// requested operation at this time. This is a short lifetime error.
+    #[display("not enough resources for this request")]
     NoResources = 8,
     /// Unsupported transport protocol, e.g., SCTP in a NAT that handles only UDP and TCP. This is
     /// a long lifetime error.
+    #[display("unsupported protocol")]
     UnsuppProtocol = 9,
     /// This attempt to create a new mapping would exceed this subscriber's port quota. This is a
     /// short lifetime error.
+    #[display("quota exceeded")]
     UserExQuota = 10,
     /// The suggested external port and/or external address cannot be provided.
+    #[display("requested external address cannot be provided")]
     CannotProvideExternal = 11,
     /// The source IP address of the request packet does not match the contents of the PCP Client's
     /// IP Address field.
+    #[display("sender and declared ip do not match")]
     AddressMismatch = 12,
     /// The PCP server was not able to create the filters in this request.<F3>
+    #[display("excessive reporte peers in filter option")]
     ExcessiveRemotePeers = 13,
 }
 
@@ -115,9 +130,11 @@ pub enum DecodeError {
     InvalidOpcodeData,
 }
 
-#[derive(derive_more::From)]
+#[derive(Debug, derive_more::Display, thiserror::Error)]
 pub enum Error {
+    #[display("decode error: {}", 0)]
     DecodeError(DecodeError),
+    #[display("error code: {}", 0)]
     ErrorCode(ErrorCode),
 }
 
