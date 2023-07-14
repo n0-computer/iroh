@@ -1,43 +1,69 @@
-//! Provider API
-
-use std::borrow::Cow;
+//! The server side API
 use std::fmt::Debug;
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::LocalBoxFuture;
-use futures::FutureExt;
-use futures::{
-    future::{self, BoxFuture, Either},
-    Future,
-};
-use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt, File};
+use futures::future::BoxFuture;
+use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
+use tokio::sync::mpsc;
 use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
-use walkdir::WalkDir;
 
-use crate::blobs::Collection;
+use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
-use crate::provider::database::BaoMapEntry;
-use crate::util::{io::canonicalize_path, progress::Progress, Hash, RpcError};
+use crate::util::RpcError;
+use crate::Hash;
 
-pub mod collection;
-pub mod database;
-mod ticket;
+/// An entry for one hash in a bao collection
+///
+/// The entry has the ability to provide you with an (outboard, data)
+/// reader pair. Creating the reader is async and may fail. The futures that
+/// create the readers must be `Send`, but the readers themselves don't have to
+/// be.
+pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
+    /// The hash of the entry
+    fn hash(&self) -> blake3::Hash;
+    /// A future that resolves to a reader that can be used to read the outboard
+    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    /// A future that resolves to a reader that can be used to read the data
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
+}
 
-pub use database::Database;
-pub use database::FNAME_PATHS;
-pub use ticket::Ticket;
+/// A generic collection of blobs with precomputed outboards
+pub trait BaoMap: Clone + Send + Sync + 'static {
+    /// The outboard type. This can be an in memory outboard or an outboard that
+    /// retrieves the data asynchronously from a remote database.
+    type Outboard: bao_tree::io::fsm::Outboard;
+    /// The reader type.
+    type DataReader: AsyncSliceReader;
+    /// The entry type. An entry is a cheaply cloneable handle that can be used
+    /// to open readers for both the data and the outboard
+    type Entry: BaoMapEntry<Self>;
+    /// Get an entry for a hash.
+    ///
+    /// This can also be used for a membership test by just checking if there
+    /// is an entry. Creating an entry should be cheap, any expensive ops should
+    /// be deferred to the creation of the actual readers.
+    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+}
 
-use self::database::BaoMap;
+/// Extension of BaoMap to add misc methods used by the rpc calls
+pub trait BaoReadonlyDb: BaoMap {
+    /// list all blobs in the database. This should include collections, since
+    /// collections are blobs and can be requested as blobs.
+    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// list all roots (collections or other explicitly added things) in the database
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// Validate the database
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+}
 
 /// Events emitted by the provider informing about the current status.
 #[derive(Debug, Clone)]
@@ -128,8 +154,11 @@ pub enum ValidateProgress {
         id: u64,
         /// the hash of the entry
         hash: Hash,
-        /// the path of the entry on the local file system
-        path: Option<PathBuf>,
+        /// location of the entry.
+        ///
+        /// In case of a file, this is the path to the file.
+        /// Otherwise it might be an url or something else to uniquely identify the entry.
+        path: Option<String>,
         /// the size of the entry
         size: u64,
     },
@@ -211,243 +240,6 @@ pub trait CustomGetHandler: Send + Sync + Debug + 'static {
         token: Option<RequestToken>,
         request: Bytes,
     ) -> BoxFuture<'static, anyhow::Result<GetRequest>>;
-}
-
-/// A custom collection parser that allows the user to define what a collection is.
-///
-/// A collection can be anything that contains an ordered sequence of blake3 hashes.
-/// Some collections store links with a fixed size and therefore allow efficient
-/// skipping. Others store links with a variable size and therefore only allow
-/// sequential access.
-///
-/// This API tries to accomodate both use cases. For collections that do not allow
-/// efficient random access, the [`LinkStream::skip`] method can be implemented by just repeatedly
-/// calling `next`.
-///
-/// For collections that do allow efficient random access, the [`LinkStream::skip`] method can be
-/// used to move some internal offset.
-pub trait CollectionParser: Send + Debug + Clone + 'static {
-    /// Parse a collection with this parser
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        format: u64,
-        reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>>;
-}
-
-/// A stream (async iterator) over the hashes of a collection.
-///
-/// Allows to get the next hash or skip a number of hashes.  Does not
-/// implement `Stream` because of the extra `skip` method.
-pub trait LinkStream: Debug {
-    /// Get the next hash in the collection.
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>>;
-    /// Skip a number of hashes in the collection.
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>>;
-}
-
-/// Information about a collection.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CollectionStats {
-    /// The number of blobs in the collection. `None` for unknown.
-    pub num_blobs: Option<u64>,
-    /// The total size of all blobs in the collection. `None` for unknown.
-    pub total_blob_size: Option<u64>,
-}
-
-/// A collection parser that just disables collections entirely.
-#[derive(Debug, Clone)]
-struct NoCollectionParser;
-
-/// A CustomCollection for NoCollectionParser.
-///
-/// This is useful for when you don't want to support collections at all.
-impl CollectionParser for NoCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        _reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        future::err(anyhow::anyhow!("collections not supported")).boxed_local()
-    }
-}
-
-/// Parser for the current iroh default collections
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IrohCollectionParser;
-
-/// Iterator for the current iroh default collections
-#[derive(Debug, Clone)]
-pub struct ArrayLinkStream {
-    hashes: Box<[Hash]>,
-    offset: usize,
-}
-
-impl ArrayLinkStream {
-    /// Create a new iterator over the given hashes.
-    pub fn new(hashes: Box<[Hash]>) -> Self {
-        Self { hashes, offset: 0 }
-    }
-}
-
-impl LinkStream for ArrayLinkStream {
-    fn next(&mut self) -> LocalBoxFuture<'_, anyhow::Result<Option<Hash>>> {
-        let res = if self.offset < self.hashes.len() {
-            let hash = self.hashes[self.offset];
-            self.offset += 1;
-            Some(hash)
-        } else {
-            None
-        };
-        future::ok(res).boxed_local()
-    }
-
-    fn skip(&mut self, n: u64) -> LocalBoxFuture<'_, anyhow::Result<()>> {
-        let res = if let Some(offset) = self
-            .offset
-            .checked_add(usize::try_from(n).unwrap_or(usize::MAX))
-        {
-            self.offset = offset;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("overflow"))
-        };
-        future::ready(res).boxed_local()
-    }
-}
-
-impl CollectionParser for IrohCollectionParser {
-    fn parse<'a, R: AsyncSliceReader + 'a>(
-        &'a self,
-        _format: u64,
-        mut reader: R,
-    ) -> LocalBoxFuture<'a, anyhow::Result<(Box<dyn LinkStream>, CollectionStats)>> {
-        async move {
-            // read to end
-            let data = reader.read_to_end().await?;
-            // parse the collection and just take the hashes
-            let collection = Collection::from_bytes(&data)?;
-            let stats = CollectionStats {
-                num_blobs: Some(collection.blobs.len() as u64),
-                total_blob_size: Some(collection.total_blobs_size),
-            };
-            let hashes = collection
-                .into_inner()
-                .into_iter()
-                .map(|x| x.hash)
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let res: Box<dyn LinkStream> = Box::new(ArrayLinkStream { hashes, offset: 0 });
-            Ok((res, stats))
-        }
-        .boxed_local()
-    }
-}
-
-/// A [`Database`] entry.
-///
-/// This is either stored externally in the file system, or internally in the database.
-///
-/// Internally stored entries are stored in the iroh home directory when the database is
-/// persisted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DbEntry {
-    /// A blob.
-    External {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// Path to the original data, which must not change while in use.
-        ///
-        /// Note that when adding multiple files with the same content, only one of them
-        /// will get added to the store. So the path is not that useful for information.  It
-        /// is just a place to look for the data correspoding to the hash and outboard.
-        // TODO: Change this to a list of paths.
-        path: PathBuf,
-        /// Size of the original data.
-        size: u64,
-    },
-    /// A collection.
-    Internal {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// The inline data.
-        data: Bytes,
-    },
-}
-
-impl DbEntry {
-    /// True if this is an entry that is stored externally.
-    pub fn is_external(&self) -> bool {
-        matches!(self, DbEntry::External { .. })
-    }
-
-    /// Path to the external data, or `None` if this is an internal entry.
-    pub fn blob_path(&self) -> Option<&Path> {
-        match self {
-            DbEntry::External { path, .. } => Some(path),
-            DbEntry::Internal { .. } => None,
-        }
-    }
-
-    /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
-        futures::future::ok(match self {
-            DbEntry::External { outboard, .. } => outboard.clone(),
-            DbEntry::Internal { outboard, .. } => outboard.clone(),
-        })
-    }
-
-    /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
-        let this = self.clone();
-        async move {
-            Ok(match this {
-                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
-                DbEntry::Internal { data, .. } => Either::Left(data),
-            })
-        }
-    }
-
-    /// Returns the size of the blob or collection.
-    ///
-    /// For collections this is the size of the serialized collection.
-    /// For blobs it is the blob size.
-    pub async fn size(&self) -> u64 {
-        match self {
-            DbEntry::External { size, .. } => *size,
-            DbEntry::Internal { data, .. } => data.len() as u64,
-        }
-    }
-}
-
-/// Create data sources from a path.
-pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
-    Ok(if root.is_dir() {
-        let files = WalkDir::new(&root).into_iter();
-        let data_sources = files
-            .map(|entry| {
-                let entry = entry?;
-                let root = root.clone();
-                if !entry.file_type().is_file() {
-                    // Skip symlinks. Directories are handled by WalkDir.
-                    return Ok(None);
-                }
-                let path = entry.into_path();
-                let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource { name, path }))
-            })
-            .filter_map(Result::transpose);
-        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
-        data_sources
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
-    } else {
-        // A single file, use the file name as the name of the blob.
-        vec![DataSource {
-            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-            path: root,
-        }]
-    })
 }
 
 /// Read the request from the getter.
@@ -580,7 +372,7 @@ pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     authorization_handler: Arc<dyn RequestAuthorizationHandler>,
-    rt: crate::runtime::Handle,
+    rt: crate::util::runtime::Handle,
 ) {
     let remote_addr = connecting.remote_address();
     let connection = match connecting.await {
@@ -826,210 +618,5 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
             debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, 0))
         }
-    }
-}
-
-/// Data for a blob
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlobData {
-    /// Outboard data from bao.
-    outboard: Bytes,
-    /// Path to the original data, which must not change while in use.
-    ///
-    /// Note that when adding multiple files with the same content, only one of them
-    /// will get added to the store. So the path is not that useful for information.
-    /// It is just a place to look for the data correspoding to the hash and outboard.
-    path: PathBuf,
-    /// Size of the original data.
-    size: u64,
-}
-
-/// A data source
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct DataSource {
-    /// Custom name
-    name: String,
-    /// Path to the file
-    path: PathBuf,
-}
-
-impl DataSource {
-    /// Creates a new [`DataSource`] from a [`PathBuf`].
-    pub fn new(path: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        DataSource { path, name }
-    }
-    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
-    pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource { path, name }
-    }
-
-    /// Returns blob name for this data source.
-    ///
-    /// If no name was provided when created it is derived from the path name.
-    pub(crate) fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.name)
-    }
-
-    /// Returns the path of this data source.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl From<PathBuf> for DataSource {
-    fn from(value: PathBuf) -> Self {
-        DataSource::new(value)
-    }
-}
-
-impl From<&std::path::Path> for DataSource {
-    fn from(value: &std::path::Path) -> Self {
-        DataSource::new(value.to_path_buf())
-    }
-}
-
-/// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
-/// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, hash) = collection::create_collection(data_sources, Progress::none()).await?;
-    Ok((Database::from(db), hash))
-}
-
-#[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-    use std::collections::HashMap;
-    use std::str::FromStr;
-    use testdir::testdir;
-
-    use crate::blobs::Blob;
-    use crate::provider::database::Snapshot;
-
-    use super::*;
-
-    fn blob(size: usize) -> impl Strategy<Value = Bytes> {
-        proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
-    }
-
-    fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
-        proptest::collection::vec(blob(size), 0..count)
-    }
-
-    fn db(blob_count: usize, blob_size: usize) -> impl Strategy<Value = Database> {
-        let blobs = blobs(blob_count, blob_size);
-        blobs.prop_map(|blobs| {
-            let mut map = HashMap::new();
-            let mut cblobs = Vec::new();
-            let mut total_blobs_size = 0u64;
-            for blob in blobs {
-                let size = blob.len() as u64;
-                total_blobs_size += size;
-                let (outboard, hash) = bao_tree::io::outboard(&blob, crate::IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                let path = PathBuf::from_str(&hash.to_string()).unwrap();
-                cblobs.push(Blob {
-                    name: hash.to_string(),
-                    hash,
-                });
-                map.insert(
-                    hash,
-                    DbEntry::External {
-                        outboard,
-                        size,
-                        path,
-                    },
-                );
-            }
-            let collection = Collection::new(cblobs, total_blobs_size).unwrap();
-            // encode collection and add it
-            {
-                let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::io::outboard(&data, crate::IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                map.insert(hash, DbEntry::Internal { outboard, data });
-            }
-            let db = Database::default();
-            db.union_with(map);
-            db
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn database_snapshot_roundtrip(db in db(10, 1024 * 64)) {
-            let snapshot = db.snapshot();
-            let db2 = Database::from_snapshot(snapshot).unwrap();
-            prop_assert_eq!(db.to_inner(), db2.to_inner());
-        }
-
-        #[test]
-        fn database_persistence_roundtrip(db in db(10, 1024 * 64)) {
-            let dir = tempfile::tempdir().unwrap();
-            let snapshot = db.snapshot();
-            snapshot.persist(&dir).unwrap();
-            let snapshot2 = Snapshot::load(&dir).unwrap();
-            let db2 = Database::from_snapshot(snapshot2).unwrap();
-            let db = db.to_inner();
-            let db2 = db2.to_inner();
-            prop_assert_eq!(db, db2);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_collection() -> Result<()> {
-        let dir: PathBuf = testdir!();
-        let mut expect_blobs = vec![];
-        let hash = blake3::hash(&[]);
-        let hash = Hash::from(hash);
-
-        // DataSource::File
-        let foo = dir.join("foo");
-        tokio::fs::write(&foo, vec![]).await?;
-        let foo = DataSource::new(foo);
-        expect_blobs.push(Blob {
-            name: "foo".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile
-        let bar = dir.join("bar");
-        tokio::fs::write(&bar, vec![]).await?;
-        let bar = DataSource::with_name(bar, "bat".to_string());
-        expect_blobs.push(Blob {
-            name: "bat".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile, empty string name
-        let baz = dir.join("baz");
-        tokio::fs::write(&baz, vec![]).await?;
-        let baz = DataSource::with_name(baz, "".to_string());
-        expect_blobs.push(Blob {
-            name: "".to_string(),
-            hash,
-        });
-
-        let expect_collection = Collection::new(expect_blobs, 0).unwrap();
-
-        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
-
-        let collection = {
-            let c = db.get(&hash).unwrap();
-            if let DbEntry::Internal { data, .. } = c {
-                Collection::from_bytes(&data)?
-            } else {
-                panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
-            }
-        };
-
-        assert_eq!(expect_collection, collection);
-
-        Ok(())
     }
 }

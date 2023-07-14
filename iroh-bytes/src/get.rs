@@ -12,7 +12,6 @@
 //! or you can choose to finish early.
 use std::error::Error;
 use std::fmt::{self, Debug};
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::util::Hash;
@@ -21,8 +20,6 @@ use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::io::DecodeError;
 use bao_tree::ChunkNum;
 use bytes::BytesMut;
-use iroh_net::tls::Keypair;
-use iroh_net::{hp::derp::DerpMap, tls::PeerId};
 use quinn::RecvStream;
 use range_collections::RangeSet2;
 use tracing::{debug, error};
@@ -30,21 +27,6 @@ use tracing::{debug, error};
 use crate::protocol::{write_lp, AnyGetRequest, RangeSpecSeq};
 use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
-
-/// Options for the client
-#[derive(Clone, Debug)]
-pub struct Options {
-    /// The keypair of the node
-    pub keypair: Keypair,
-    /// The addresses to connect to
-    pub addrs: Vec<SocketAddr>,
-    /// The peer id to dial
-    pub peer_id: PeerId,
-    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
-    pub keylog: bool,
-    /// The configuration of the derp services
-    pub derp_map: Option<DerpMap>,
-}
 
 /// Stats about the transfer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,10 +53,7 @@ impl Stats {
 pub mod fsm {
     use std::result;
 
-    use crate::{
-        protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter},
-        util::io::ConcatenateSliceWriter,
-    };
+    use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
 
     use super::*;
 
@@ -82,7 +61,7 @@ pub mod fsm {
         ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
-    use iroh_io::AsyncSliceWriter;
+    use iroh_io::{AsyncSliceWriter, ConcatenateSliceWriter};
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -571,24 +550,6 @@ pub mod fsm {
         /// iterator over the ranges of the collection and the children
         ranges_iter: RangesIter,
     }
-}
-
-/// Create a new endpoint and dial a peer, returning the connection
-///
-/// Note that this will create an entirely new endpoint, so it should be only
-/// used for short lived connections. If you want to connect to multiple peers,
-/// it is preferable to create an endpoint and use `connect` on the endpoint.
-pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
-    let endpoint = iroh_net::MagicEndpoint::builder()
-        .keypair(opts.keypair)
-        .derp_map(opts.derp_map)
-        .keylog(opts.keylog)
-        .bind(0)
-        .await?;
-    endpoint
-        .connect(opts.peer_id, &crate::protocol::ALPN, &opts.addrs)
-        .await
-        .context("failed to connect to provider")
 }
 
 /// Error when processing a response

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
 use console::{style, Emoji};
@@ -83,13 +83,13 @@ impl ValidateProgressState {
         );
     }
 
-    fn add_entry(&mut self, id: u64, hash: Hash, path: Option<PathBuf>, size: u64) {
+    fn add_entry(&mut self, id: u64, hash: Hash, path: Option<String>, size: u64) {
         let pb = self.mp.insert_before(&self.overall, ProgressBar::new(size));
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
         let msg = if let Some(path) = path {
-            path.display().to_string()
+            path
         } else {
             format!("outboard {}", hash)
         };

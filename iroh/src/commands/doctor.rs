@@ -11,7 +11,7 @@ use crate::config::{iroh_data_root, Config};
 use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh_bytes::util::progress::ProgressWriter;
+use iroh::util::progress::ProgressWriter;
 use iroh_net::{
     defaults::DEFAULT_DERP_STUN_PORT,
     hp::{
