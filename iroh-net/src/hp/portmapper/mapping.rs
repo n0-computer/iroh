@@ -20,6 +20,36 @@ pub enum Mapping {
     #[debug(transparent)]
     NatPmp(nat_pmp::Mapping),
 }
+impl Mapping {
+    pub(crate) async fn new_pcp(
+        local_ip: Ipv4Addr,
+        local_port: NonZeroU16,
+        gateway: Ipv4Addr,
+        external_addr: Option<(Ipv4Addr, NonZeroU16)>,
+    ) -> Result<Self> {
+        todo!()
+    }
+
+    pub(crate) async fn new_nat_pmp(
+        local_ip: Ipv4Addr,
+        local_port: NonZeroU16,
+        gateway: Ipv4Addr,
+        external_addr: Option<(Ipv4Addr, NonZeroU16)>,
+    ) -> Result<Self> {
+        todo!()
+    }
+
+    pub(crate) async fn new_upnp(
+        local_ip: Ipv4Addr,
+        local_port: NonZeroU16,
+        gateway: Option<igd::aio::Gateway>,
+        external_port: Option<NonZeroU16>,
+    ) -> Result<Self> {
+        upnp::Mapping::new(local_ip, local_port, gateway, external_port)
+            .await
+            .map(Self::Upnp)
+    }
+}
 
 impl PortMapped for Mapping {
     fn external(&self) -> (Ipv4Addr, NonZeroU16) {

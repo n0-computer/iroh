@@ -20,10 +20,10 @@ pub(super) trait Mapping: std::fmt::Debug + Unpin {
 
 impl Mapping for super::mapping::Mapping {
     fn external(&self) -> (Ipv4Addr, NonZeroU16) {
-        self.external()
+        super::mapping::PortMapped::external(self)
     }
     fn half_lifetime(&self) -> Duration {
-        self.half_lifetime()
+        super::mapping::PortMapped::half_lifetime(self)
     }
 }
 

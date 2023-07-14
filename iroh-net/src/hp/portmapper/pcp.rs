@@ -467,10 +467,9 @@ impl super::mapping::PortMapped for Mapping {
 impl Mapping {
     pub async fn new(
         local_ip: Ipv4Addr,
-        port: NonZeroU16,
+        local_port: NonZeroU16,
         gateway: Ipv4Addr,
-        preferred_external_port: Option<NonZeroU16>,
-        preferred_external_address: Option<Ipv4Addr>,
+        preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> anyhow::Result<Self> {
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
