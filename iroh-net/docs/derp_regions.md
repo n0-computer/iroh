@@ -2,8 +2,6 @@
 
 We currently have 2 derp regions, with a single node in each.
 
-A `region_id` of `0` is reserved for testing and local experimentation.
-
 ## North America
 
 ```rust
