@@ -1,9 +1,6 @@
-use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
+use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
 
-use super::{
-    opcode_data::{self, OpcodeData},
-    Opcode, Version,
-};
+use super::{opcode_data::OpcodeData, Opcode, Version};
 
 /// ResultCode in a [`Response`] whe it's successful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -160,7 +157,7 @@ impl Response {
             return Err(Error::DecodeError(DecodeError::Malformed));
         }
 
-        let version: Version = buf[0]
+        let _version: Version = buf[0]
             .try_into()
             .map_err(|_| Error::DecodeError(DecodeError::InvalidVersion))?;
 

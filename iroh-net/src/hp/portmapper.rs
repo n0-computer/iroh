@@ -1,7 +1,5 @@
 //! Port mapping client and service.
 
-#![allow(unused)]
-
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
@@ -21,6 +19,7 @@ use current_mapping::CurrentMapping;
 
 mod current_mapping;
 mod mapping;
+#[allow(unused)]
 mod nat_pmp;
 mod pcp;
 mod upnp;

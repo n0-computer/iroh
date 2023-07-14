@@ -1,14 +1,6 @@
 //! Definitions and utilities to interact with a NAT-PMP/PCP server.
 
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    num::NonZeroU16,
-    time::Duration,
-};
-
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use rand::RngCore;
-use tracing::{debug, trace};
 
 pub mod opcode_data;
 pub mod request;

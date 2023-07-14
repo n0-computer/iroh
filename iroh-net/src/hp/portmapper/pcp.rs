@@ -7,6 +7,8 @@ use tracing::{debug, trace};
 
 mod protocol;
 
+// nonce is used to issue a release request
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Mapping {
     external_port: NonZeroU16,
@@ -38,17 +40,18 @@ impl Mapping {
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
 
-        let (preferred_external_address, preferred_external_port) = match preferred_external_address
-        {
+        let (requested_address, requested_port) = match preferred_external_address {
             Some((ip, port)) => (Some(ip), Some(port.into())),
             None => (None, None),
         };
+
+        let local_port = local_port.into();
         let req = protocol::Request::get_mapping(
             nonce,
-            local_port.into(),
+            local_port,
             local_ip,
-            preferred_external_port,
-            preferred_external_address,
+            requested_port,
+            requested_address,
         );
 
         socket.send(&req.encode()).await?;
@@ -58,7 +61,7 @@ impl Mapping {
 
         let protocol::Response {
             lifetime_seconds,
-            epoch_time,
+            epoch_time: _,
             data,
         } = response;
 
@@ -67,7 +70,7 @@ impl Mapping {
                 let protocol::MapData {
                     nonce: received_nonce,
                     protocol,
-                    local_port,
+                    local_port: received_local_port,
                     external_port,
                     external_address,
                 } = map_data;
@@ -76,6 +79,9 @@ impl Mapping {
                 }
                 if protocol != protocol::MapProtocol::Udp {
                     anyhow::bail!("received mapping is not for UDP");
+                }
+                if received_local_port != local_port {
+                    anyhow::bail!("received mapping is for a local port that does not match the requested one");
                 }
                 let external_port = external_port
                     .try_into()
@@ -107,8 +113,8 @@ pub async fn probe_available(local_ip: Ipv4Addr, gateway: Ipv4Addr) -> bool {
         Ok(response) => {
             trace!("probe response: {response:?}");
             let protocol::Response {
-                lifetime_seconds,
-                epoch_time,
+                lifetime_seconds: _,
+                epoch_time: _,
                 data,
             } = response;
             match data {
