@@ -10,8 +10,8 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 [lib]
-# name="iroh"
-crate-type = ["rlib", "staticlib", "cdylib"]
+name="iroh"
+crate-type = ["rlib", "staticlib"]
 
 [features]
 c-headers = ["safer-ffi/headers"]

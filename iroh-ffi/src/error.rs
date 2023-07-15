@@ -11,6 +11,7 @@ const IROH_ERROR_OTHER: u32 = 1;
 #[ffi_export]
 #[derive_ReprC(rename = "iroh_error_code")]
 #[repr(u32)]
+#[derive(Debug)]
 /// Constant values for error codes from iroh_error_t.
 pub enum IrohErrorCode {
     Other = IROH_ERROR_OTHER,
@@ -33,6 +34,7 @@ impl From<&IrohError> for IrohErrorCode {
 
 #[derive_ReprC(rename = "iroh_error")]
 #[repr(opaque)]
+#[derive(Debug)]
 /// @class iroh_error_t
 /// An opaque struct representing an error.
 pub struct IrohError {

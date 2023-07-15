@@ -9,6 +9,7 @@ use iroh::{
 
 #[derive_ReprC(rename = "iroh_node")]
 #[repr(opaque)]
+#[derive(Debug)]
 /// @class iroh_node_t
 pub struct IrohNode {
     inner: Node<mem::Database>,

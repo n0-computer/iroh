@@ -4,7 +4,7 @@ use std::str::FromStr;
 use anyhow::Result;
 use iroh_io::{AsyncSliceWriter, File};
 use range_collections::RangeSet2;
-use safer_ffi::{closure::ArcDynFn1, prelude::*};
+use safer_ffi::prelude::*;
 
 use iroh::{
     bytes::{

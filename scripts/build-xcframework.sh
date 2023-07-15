@@ -7,11 +7,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 REPO_ROOT=".."
 RUST_FFI_DIR="../iroh-ffi"
 OUT_DIR="../build"
-RUST_TOOLCHAIN="1.71.0"
+# TODO(b5): explicitly enforce build toolchain for all cargo invocations
+# RUST_TOOLCHAIN="1.71.0"
 
 echo "Generate Iroh C header, copy Module map"
 mkdir -p "${OUT_DIR}/include"
-cargo +${RUST_TOOLCHAIN} test --features c-headers --manifest-path "${RUST_FFI_DIR}/Cargo.toml" -- generate_headers
+cargo run --features c-headers --manifest-path "${RUST_FFI_DIR}/Cargo.toml --bin generate-headers"
 cp ${RUST_FFI_DIR}/libiroh.h ${OUT_DIR}/include/iroh.h
 cp ${REPO_ROOT}/swift/include/module.modulemap ${OUT_DIR}/include/module.modulemap
 
@@ -24,7 +25,7 @@ targets=(
 )
 
 for target in "${targets[@]}"; do
-  cargo +`cat ${REPO_ROOT}/rust-toolchain` build --package iroh_ffi --release --target "${target}" --manifest-path "${RUST_FFI_DIR}/Cargo.toml"
+  cargo build --package iroh_ffi --release --target "${target}" --manifest-path "${RUST_FFI_DIR}/Cargo.toml"
   mkdir -p "${OUT_DIR}/lib_${target}"
   cp "${RUST_FFI_DIR}/target/${target}/release/libiroh.a" "${OUT_DIR}/lib_${target}/libiroh.a"
 done
