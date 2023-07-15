@@ -22,6 +22,12 @@ pub struct Metrics {
     pub upnp_probes_failed: Counter,
     pub upnp_available: Counter,
     pub upnp_gateway_updated: Counter,
+
+    /*
+     * PCP metrics
+     */
+    pub pcp_probes: Counter,
+    pub pcp_available: Counter,
 }
 
 impl Default for Metrics {
@@ -44,6 +50,12 @@ impl Default for Metrics {
             upnp_gateway_updated: Counter::new(
                 "Number of UPnP probes that resulted in a gateway different to the previous one.",
             ),
+
+            /*
+             * PCP metrics
+             */
+            pcp_probes: Counter::new("Number of PCP probes executed."),
+            pcp_available: Counter::new("Number of PCP probes that found it available."),
         }
     }
 }

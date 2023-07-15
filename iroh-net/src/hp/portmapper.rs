@@ -256,9 +256,10 @@ impl Probe {
         let mut pcp_probing_task = util::MaybeFuture {
             inner: (enable_pcp && !pcp).then(|| {
                 Box::pin(async {
+                    inc!(Metrics, pcp_probes);
                     pcp::probe_available(local_ip, gateway)
                         .await
-                        .then(|| Instant::now())
+                        .then(Instant::now)
                 })
             }),
         };
@@ -364,6 +365,7 @@ impl Probe {
             self.last_upnp_gateway_addr = last_upnp_gateway_addr;
         }
         if last_pcp.is_some() {
+            inc!(Metrics, pcp_available);
             self.last_pcp = last_pcp;
         }
         if last_nat_pmp.is_some() {
@@ -636,9 +638,10 @@ impl Service {
                     };
 
                     let config = self.config.clone();
-                    let handle = tokio::spawn(async move {
-                        Probe::new(config, probe_output, local_ip, gateway).await
-                    });
+                    let handle = tokio::spawn(
+                        async move { Probe::new(config, probe_output, local_ip, gateway).await }
+                            .instrument(info_span!("portmapper.probe")),
+                    );
                     let receivers = vec![result_tx];
                     self.probing_task = Some((handle.into(), receivers));
                 }
@@ -647,6 +650,7 @@ impl Service {
     }
 }
 
+/// Gets the local ip and gateway address for port mapping.
 fn ip_and_gateway() -> Result<(Ipv4Addr, Ipv4Addr)> {
     let Some(HomeRouter { gateway, my_ip }) = HomeRouter::new() else {
         anyhow::bail!("no gateway found for probe");

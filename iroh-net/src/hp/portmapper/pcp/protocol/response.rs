@@ -64,7 +64,7 @@ pub enum ErrorCode {
     /// IP Address field.
     #[display("sender and declared ip do not match")]
     AddressMismatch = 12,
-    /// The PCP server was not able to create the filters in this request.<F3>
+    /// The PCP server was not able to create the filters in this request.
     #[display("excessive reporte peers in filter option")]
     ExcessiveRemotePeers = 13,
 }
@@ -110,7 +110,7 @@ pub enum DecodeError {
     /// Request is too short or is otherwise malformed.
     #[display("Response is malformed")]
     Malformed,
-    /// The [`RESPONSE_INDICATOR`] is not present.
+    /// The [`Response::RESPONSE_INDICATOR`] is not present.
     #[display("Packet does not appear to be a response")]
     NotAResponse,
     /// The received opcode is not recognized.
@@ -141,7 +141,7 @@ impl Response {
     /// Minimum size of an encoded [`Response`] sent by a server to this client.
     pub const MIN_SIZE: usize = // parts
         1 + // version
-        1 + // opcode ORd with [`RESPONSE_INDICATOR`]
+        1 + // opcode ORd with [`Response::RESPONSE_INDICATOR`]
         1 + // reserved
         1 + // result code
         4 + // lifetime
@@ -162,7 +162,7 @@ impl Response {
             .map_err(|_| Error::DecodeError(DecodeError::InvalidVersion))?;
 
         let opcode = buf[1];
-        if !(opcode & Self::RESPONSE_INDICATOR == Self::RESPONSE_INDICATOR) {
+        if opcode & Self::RESPONSE_INDICATOR != Self::RESPONSE_INDICATOR {
             return Err(Error::DecodeError(DecodeError::NotAResponse));
         }
         let opcode: Opcode = (opcode & !Self::RESPONSE_INDICATOR)

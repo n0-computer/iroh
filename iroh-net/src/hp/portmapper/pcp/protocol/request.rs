@@ -17,16 +17,14 @@ const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 pub struct Request {
     /// [`Version`] to use in this request.
     pub(super) version: Version,
-    /// Requested lifetime in seconds used by the [`Request::opcode`].
+    /// Requested lifetime in seconds.
     pub(super) lifetime_seconds: u32,
     /// IP Address of the client.
     ///
     /// If the IP is an IpV4 address, is represented as a IpV4-mapped IpV6 address.
     pub(super) client_addr: Ipv6Addr,
-    /// Data associated to the [`Opcode`] in this request.
+    /// Data associated to the [`super::Opcode`] in this request.
     pub(super) opcode_data: OpcodeData,
-    // TODO(@divma): docs
-    pub(super) pcp_options: Vec<u8>,
 }
 
 impl Request {
@@ -45,13 +43,12 @@ impl Request {
             lifetime_seconds,
             client_addr,
             opcode_data,
-            pcp_options,
         } = self;
         let mut buf = Vec::with_capacity(Self::SIZE + opcode_data.encoded_size());
         // buf[0]
-        buf.push(*version as u8);
+        buf.push((*version).into());
         // buf[1]
-        buf.push(opcode_data.opcode() as u8);
+        buf.push(opcode_data.opcode().into());
         // buf[2] reserved
         buf.push(0);
         // buf[3] reserved
@@ -62,7 +59,6 @@ impl Request {
         buf.extend_from_slice(&client_addr.octets());
         // buf[12..]
         opcode_data.encode_into(&mut buf);
-        buf.extend_from_slice(pcp_options);
 
         buf
     }
@@ -76,7 +72,6 @@ impl Request {
             client_addr,
             // the pcp announce opcode requests and responses have no opcode-specific payload
             opcode_data: OpcodeData::Announce,
-            pcp_options: vec![],
         }
     }
 
@@ -102,7 +97,6 @@ impl Request {
                     .unwrap_or(Ipv4Addr::UNSPECIFIED)
                     .to_ipv6_mapped(),
             }),
-            pcp_options: vec![],
         }
     }
 }
