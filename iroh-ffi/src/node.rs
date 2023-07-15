@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use safer_ffi::prelude::*;
-use tokio::runtime::Runtime as TokioRuntime;
 
 use iroh::{
+    bytes::util::runtime::Handle,
     database::mem,
     net::tls::Keypair,
     node::{Node, DEFAULT_BIND_ADDR},
@@ -14,12 +12,12 @@ use iroh::{
 /// @class iroh_node_t
 pub struct IrohNode {
     inner: Node<mem::Database>,
-    async_runtime: Arc<TokioRuntime>,
+    async_runtime: Handle,
 }
 
 impl IrohNode {
-    pub fn async_runtime(&self) -> Arc<TokioRuntime> {
-        self.async_runtime.clone()
+    pub fn async_runtime(&self) -> &Handle {
+        &self.async_runtime
     }
 
     pub fn inner(&self) -> &Node<mem::Database> {
@@ -39,13 +37,13 @@ pub fn iroh_initialize() -> Option<repr_c::Box<IrohNode>> {
         .build()
         .ok()?;
 
-    let tokio = tokio::runtime::Handle::current();
     let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
-    let rt = iroh::bytes::util::runtime::Handle::new(tokio, tpc);
+    let rt = iroh::bytes::util::runtime::Handle::new(tokio_rt.handle().clone(), tpc);
 
     let db = mem::Database::default();
     let keypair = Keypair::generate();
-    let node = tokio_rt
+    let node = rt
+        .main()
         .block_on(async {
             Node::builder(db)
                 .bind_addr(DEFAULT_BIND_ADDR.into())
@@ -59,7 +57,7 @@ pub fn iroh_initialize() -> Option<repr_c::Box<IrohNode>> {
     Some(
         Box::new(IrohNode {
             inner: node,
-            async_runtime: Arc::new(tokio_rt),
+            async_runtime: rt,
         })
         .into(),
     )

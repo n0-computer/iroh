@@ -4,7 +4,7 @@ use std::str::FromStr;
 use anyhow::Result;
 use iroh_io::{AsyncSliceWriter, File};
 use range_collections::RangeSet2;
-use safer_ffi::prelude::*;
+use safer_ffi::{closure::ArcDynFn1, prelude::*};
 
 use iroh::{
     bytes::{
@@ -68,23 +68,34 @@ pub fn iroh_get_ticket(
     let ticket = ticket.to_string();
     let out_path = PathBuf::from(out_path.to_string());
     let keypair = node.inner().keypair();
-    let rt = node.async_runtime();
+    let rt = node.async_runtime().clone();
+    node.async_runtime()
+        .local_pool()
+        .spawn_pinned(move || async move {
+            let result = async {
+                let ticket = Ticket::from_str(&ticket)?;
 
-    node.async_runtime().spawn(async move {
-        let result = async {
-            let ticket = Ticket::from_str(ticket.as_str())?;
-            // TODO(b5): pull DerpMap from node, feed into here:
-            let opts = ticket.as_get_options(keypair, None);
-            let conn = dial(opts, &iroh::bytes::protocol::ALPN).await?;
-            get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await
-        }
-        .await;
+                // TODO(b5): pull DerpMap from node, feed into here:
+                let opts = ticket.as_get_options(keypair, None);
+                let conn = dial(opts, &iroh::bytes::protocol::ALPN).await?;
+                get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await?;
+                Ok(())
+            }
+            .await;
 
-        match result {
-            Ok(()) => rt.spawn_blocking(move || callback(None)),
-            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::new(error).into()))),
-        };
-    });
+            let result = as_opt_err(result);
+            rt.main()
+                .spawn_blocking(move || callback(result))
+                .await
+                .ok();
+        });
+}
+
+fn as_opt_err(res: Result<()>) -> Option<repr_c::Box<IrohError>> {
+    match res {
+        Ok(()) => None,
+        Err(err) => Some(IrohError::new(err).into()),
+    }
 }
 
 async fn get_blob_to_file(
