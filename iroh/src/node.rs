@@ -543,17 +543,24 @@ impl<D: BaoReadonlyDb> Node<D> {
     }
 
     /// Dial a given peer
-    pub async fn dial(
-        &self,
-        alpn: &[u8],
-        peer_id: PeerId,
-        known_addrs: &Vec<SocketAddr>,
-    ) -> Result<quinn::Connection> {
-        self.inner
-            .endpoint
-            .connect(peer_id, alpn, known_addrs)
-            .await
-            .context("failed to dial")
+    /// TODO(b5): I'd like to use this in iroh_ffi to have the node manage
+    /// a single endpoint, but I run into lifetime errors when trying to work
+    /// this way
+    // pub async fn dial(
+    //     &self,
+    //     alpn: &[u8],
+    //     peer_id: PeerId,
+    //     known_addrs: &Vec<SocketAddr>,
+    // ) -> Result<quinn::Connection> {
+    //     self.inner
+    //         .endpoint
+    //         .connect(peer_id, alpn, known_addrs)
+    //         .await
+    //         .context("failed to dial")
+    // }
+
+    pub fn keypair(&self) -> Keypair {
+        self.inner.keypair.clone()
     }
 
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and

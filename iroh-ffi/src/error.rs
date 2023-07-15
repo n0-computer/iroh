@@ -50,8 +50,8 @@ impl IrohError {
 }
 
 #[ffi_export]
-/// @memberof ns_error_t
-/// Deallocate an ns_error_t.
+/// @memberof iroh_error_t
+/// Deallocate an iroh_error_t.
 pub fn iroh_error_free(error: repr_c::Box<IrohError>) {
     drop(error)
 }
@@ -70,8 +70,8 @@ pub fn iroh_error_message_get(error: &IrohError) -> char_p::Box {
 }
 
 #[ffi_export]
-/// @memberof ns_error_t
+/// @memberof iroh_error_t
 /// Returns an error code that identifies the error.
-pub fn ns_error_code_get(error: &IrohError) -> u32 {
+pub fn iroh_error_code_get(error: &IrohError) -> u32 {
     IrohErrorCode::from(error) as u32
 }

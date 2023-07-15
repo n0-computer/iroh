@@ -25,10 +25,6 @@ impl IrohNode {
     pub fn inner(&self) -> &Node<mem::Database> {
         &self.inner
     }
-
-    pub fn inner_mut(&mut self) -> &mut Node<mem::Database> {
-        &mut self.inner
-    }
 }
 
 #[ffi_export]

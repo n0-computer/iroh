@@ -12,75 +12,70 @@ use iroh::{
         protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
         Hash,
     },
-    dial::Ticket,
-    net::tls::PeerId,
+    dial::{dial, Ticket},
+    // net::tls::PeerId,
 };
 
 use crate::{error::IrohError, node::IrohNode};
 
-#[ffi_export]
-/// @memberof iroh_node_t
-// TODO(b5): optional token arg
-fn iroh_get(
-    node: &mut IrohNode,
-    hash: char_p::Ref<'_>,
-    peer: char_p::Ref<'_>,
-    peer_addr: char_p::Ref<'_>,
-    out_path: char_p::Ref<'_>,
-    callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
-) {
-    let node1 = node.inner().clone();
-    let rt = node.async_runtime();
-    let hash = hash.to_string();
-    let peer = peer.to_string();
-    let peer_addr = peer_addr.to_string();
-    let out_path = PathBuf::from(out_path.to_string());
+// #[ffi_export]
+// /// @memberof iroh_node_t
+// // TODO(b5): optional token arg
+// fn iroh_get(
+//     node: &IrohNode,
+//     hash: char_p::Ref<'_>,
+//     peer: char_p::Ref<'_>,
+//     peer_addr: char_p::Ref<'_>,
+//     out_path: char_p::Ref<'_>,
+//     callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
+// ) {
+//     let node1 = node.inner();
+//     let rt = node.async_runtime();
+//     let hash = hash.to_string();
+//     let peer = peer.to_string();
+//     let peer_addr = peer_addr.to_string();
+//     let out_path = PathBuf::from(out_path.to_string());
 
-    node.async_runtime().clone().spawn(async move {
-        let result = async move {
-            let hash = hash.parse::<Hash>()?;
-            let peer = peer.parse::<PeerId>()?;
-            let peer_addr = peer_addr.parse()?;
-            let conn = node1
-                .dial(&iroh::bytes::protocol::ALPN, peer, &vec![peer_addr])
-                .await?;
-            get_blob_to_file(conn, hash, None, out_path).await
-        }
-        .await;
+//     rt.spawn(async move {
+//         let result = async {
+//             let hash = hash.parse::<Hash>()?;
+//             let peer = peer.parse::<PeerId>()?;
+//             let peer_addr = peer_addr.parse()?;
 
-        match result {
-            Ok(()) => rt.spawn_blocking(move || callback(None)),
-            Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::new(error).into()))),
-        };
-    });
-}
+//             let conn = node1
+//                 .dial(&iroh::bytes::protocol::ALPN, peer, &vec![peer_addr])
+//                 .await?;
+//             get_blob_to_file(conn, hash, None, out_path).await
+//         }
+//         .await;
+
+//         match result {
+//             Ok(()) => rt.spawn_blocking(move || callback(None)),
+//             Err(error) => rt.spawn_blocking(move || callback(Some(IrohError::new(error).into()))),
+//         };
+//     });
+// }
 
 #[ffi_export]
 /// @memberof iroh_node_t
 /// Get a collection from a peer.
 pub fn iroh_get_ticket(
-    node: &mut IrohNode,
+    node: &IrohNode,
     ticket: char_p::Ref<'_>,
     out_path: char_p::Ref<'_>,
     callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
 ) {
     let ticket = ticket.to_string();
     let out_path = PathBuf::from(out_path.to_string());
-
+    let keypair = node.inner().keypair();
     let rt = node.async_runtime();
+
     node.async_runtime().spawn(async move {
         let result = async {
             let ticket = Ticket::from_str(ticket.as_str())?;
-            // TODO(b5): use the node endpoint(s) to dial
-            let conn = node
-                .inner()
-                .clone()
-                .dial(
-                    &iroh::bytes::protocol::ALPN,
-                    ticket.peer(),
-                    &ticket.addrs().to_vec(),
-                )
-                .await?;
+            // TODO(b5): pull DerpMap from node, feed into here:
+            let opts = ticket.as_get_options(keypair, None);
+            let conn = dial(opts, &iroh::bytes::protocol::ALPN).await?;
             get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await
         }
         .await;
