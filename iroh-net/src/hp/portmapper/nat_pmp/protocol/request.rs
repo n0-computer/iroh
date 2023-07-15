@@ -1,5 +1,6 @@
 use super::{Opcode, Version};
 
+/// A NAT-PCP Request.
 #[derive(Debug)]
 pub enum Request {
     ExternalAddress,
@@ -11,10 +12,12 @@ pub enum Request {
     },
 }
 
+/// Protocol for which a port mapping is requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum MapProtocol {
-    UDP,
-    TCP,
+    UDP = 1,
+    TCP = 2,
 }
 
 impl Request {
@@ -35,6 +38,9 @@ impl Request {
                     MapProtocol::TCP => Opcode::MapTcp,
                 };
                 let mut buf = vec![Version::NatPmp as u8, opcode as u8];
+                // reserved
+                buf.push(0);
+                buf.push(0);
                 buf.extend_from_slice(&local_port.to_be_bytes());
                 buf.extend_from_slice(&external_port.to_be_bytes());
                 buf.extend_from_slice(&lifetime_seconds.to_be_bytes());
