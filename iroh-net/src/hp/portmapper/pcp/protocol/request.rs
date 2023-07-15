@@ -39,9 +39,9 @@ impl Request {
         } = self;
         let mut buf = Vec::with_capacity(Self::SIZE + opcode_data.encoded_size());
         // buf[0]
-        buf.push(*version as u8);
+        buf.push((*version).into());
         // buf[1]
-        buf.push(opcode_data.opcode() as u8);
+        buf.push(opcode_data.opcode().into());
         // buf[2] reserved
         buf.push(0);
         // buf[3] reserved
