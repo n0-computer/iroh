@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 default-run = "iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.65"
+rust-version = "1.66"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
