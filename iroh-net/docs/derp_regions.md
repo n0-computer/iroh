@@ -4,7 +4,9 @@ A DERP region is a collection of DERP nodes in a relatively similar geographical
 
 A peer may be connected to multiple regions, but it will advertise its home region as the one best used to hole-punch or relay packets through.
 
-When attempting to connect to another peer, it is not required to pass in that peer’s DERP region, but if the other peer is behind a NAT, the only way to attempt to hole punch directly through to it is by passing down a DERP region. It is also possible that the DERP region that the remote Iroh peer is connected to is one that you have no dialing information about. However, that is unlikely to happen if you use the default regions and nodes we have specified here. These also exist as defaults in the code.
+You do not need to know a peer's DERP region in order to connect to them directly, if there are no firewalls or NATs between the two peers trying to connect. However, to have any hole punching, you must have that peer's DERP region.
+
+It may also be possible that the DERP region specified is one that your Iroh node knows nothing about. However, that is unlikely to happen if you use the default regions and nodes we have specified here. These DERP regions are defaults in the code.
 
 We currently have 2 derp regions, with a single node in each.
 
