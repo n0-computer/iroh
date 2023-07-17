@@ -14,18 +14,18 @@ pub struct Metrics {
     /// Bytes received from a `FrameType::SendPacket`
     pub bytes_recv: Counter,
 
-    /// `FrameType::SendPacket` sent
+    /// `FrameType::SendPacket` sent, that are not disco messages
     pub send_packets_sent: Counter,
-    /// `FrameType::SendPacket` received
+    /// `FrameType::SendPacket` received, that are not disco messages
     pub send_packets_recv: Counter,
-    /// `FrameType::SendPacket` dropped
+    /// `FrameType::SendPacket` dropped, that are not disco messages
     pub send_packets_dropped: Counter,
 
     /// `FrameType::SendPacket` sent that are disco messages
     pub disco_packets_sent: Counter,
     /// `FrameType::SendPacket` received that are disco messages
     pub disco_packets_recv: Counter,
-    /// `FrameType::SendPacket` dropped that are also disco messages
+    /// `FrameType::SendPacket` dropped that are disco messages
     pub disco_packets_dropped: Counter,
 
     /// Packets of other `FrameType`s sent
