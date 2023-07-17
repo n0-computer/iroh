@@ -462,11 +462,9 @@ pub fn get_missing_range(
 ) -> std::io::Result<RangeSet2<ChunkNum>> {
     if target_dir.exists() && !temp_dir.exists() {
         // target directory exists yet does not contain the temp dir
-        // refuse to continue
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Target directory exists but does not contain temp directory",
-        ));
+        // we can not resume a partial download, so we just assume that
+        // the user wants to start from scratch
+        return Ok(RangeSet2::all());
     }
     let range = get_missing_range_impl(hash, name, temp_dir, target_dir)?;
     Ok(range)
@@ -527,11 +525,12 @@ pub fn get_missing_ranges(
     hash: Hash,
     target_dir: &Path,
     temp_dir: &Path,
-) -> anyhow::Result<(RangeSpecSeq, Option<Collection>)> {
+) -> std::io::Result<(RangeSpecSeq, Option<Collection>)> {
     if target_dir.exists() && !temp_dir.exists() {
-        // target directory exists yet does not contain the temp dir
-        // refuse to continue
-        anyhow::bail!("Target directory exists but does not contain temp directory");
+        // the target directory exists, but does not contain the temp directory
+        // that would allow us to resume a partial download, so we just assume that
+        // the user wants to start from scratch
+        return Ok((RangeSpecSeq::all(), None));
     }
     // try to load the collection from the temp directory
     //
