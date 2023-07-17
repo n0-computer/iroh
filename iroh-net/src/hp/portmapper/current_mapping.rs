@@ -49,7 +49,7 @@ impl<M: Mapping> ActiveMapping<M> {
 /// Events in the lifetime of the mapping.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Event {
-    /// On this event, the mapping is halway through it's lifetime and should be renewed.
+    /// On this event, the mapping is halfway through its lifetime and should be renewed.
     Renew {
         external_ip: Ipv4Addr,
         external_port: NonZeroU16,
@@ -74,7 +74,7 @@ pub(super) struct CurrentMapping<M = super::mapping::Mapping> {
 }
 
 impl<M: Mapping> CurrentMapping<M> {
-    /// Creates a new [`CurrentMapping`] and returns the watcher over it's external address.
+    /// Creates a new [`CurrentMapping`] and returns the watcher over its external address.
     pub(super) fn new() -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (address_tx, address_rx) = watch::channel(None);
         let wrapper = CurrentMapping {

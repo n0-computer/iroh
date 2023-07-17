@@ -32,7 +32,7 @@ const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 1
 /// Capacity of the channel to communicate with the long-running service.
 const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
 
-/// If a port mapping service has not been seen withing the last [`UNAVAILABILITY_TRUST_DURATION`]
+/// If a port mapping service has not been seen within the last [`UNAVAILABILITY_TRUST_DURATION`]
 /// we allow trying a mapping using said protocol.
 const UNAVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(5);
 

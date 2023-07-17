@@ -127,7 +127,7 @@ pub enum Commands {
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
-        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
+        /// Protocol to use for port mapping. One of ["upnp", "pcp"].
         protocol: String,
         /// Local port to get a mapping.
         local_port: NonZeroU16,

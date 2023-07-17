@@ -23,7 +23,7 @@ pub struct MapData {
     pub nonce: [u8; 12],
     /// Protocol for which the mapping is being requested.
     pub protocol: MapProtocol,
-    /// Locol port for the mapping.
+    /// Local port for the mapping.
     pub local_port: u16,
     /// External port of the mapping.
     pub external_port: u16,
