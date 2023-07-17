@@ -64,6 +64,7 @@ impl Cli {
                 hash,
                 peer,
                 addrs,
+                region,
                 ticket,
                 token,
                 out,
@@ -83,6 +84,7 @@ impl Cli {
                             addrs,
                             peer_id: peer,
                             keylog: self.keylog,
+                            derp_region: region,
                             derp_map: config.derp_map(),
                             keypair: Keypair::generate(),
                         },
@@ -235,6 +237,9 @@ pub enum Commands {
         /// base32-encoded Request token to use for authentication, if any
         #[clap(long)]
         token: Option<RequestToken>,
+        /// DERP region of the provider
+        #[clap(long)]
+        region: Option<u16>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
