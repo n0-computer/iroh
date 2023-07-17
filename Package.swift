@@ -7,6 +7,7 @@ let package = Package(
     name: "iroh",
     platforms: [
         .iOS(.v13),
+        .macOS(.v11)
     ],
     products: [
         // Products define the executables and libraries a package produces,

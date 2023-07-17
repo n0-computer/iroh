@@ -1,4 +1,4 @@
-module Iroh {
+module IrohFFI {
     header "iroh.h"
     export *
 }

@@ -11,7 +11,7 @@ repository = "https://github.com/n0-computer/iroh"
 
 [lib]
 name="iroh"
-crate-type = ["rlib", "staticlib"]
+crate-type = ["staticlib"]
 
 [features]
 c-headers = ["safer-ffi/headers"]

@@ -12,22 +12,24 @@ OUT_DIR="../build"
 
 echo "Generate Iroh C header, copy Module map"
 mkdir -p "${OUT_DIR}/include"
-cargo run --features c-headers --manifest-path "${RUST_FFI_DIR}/Cargo.toml --bin generate-headers"
-cp ${RUST_FFI_DIR}/libiroh.h ${OUT_DIR}/include/iroh.h
+cargo run --features c-headers --bin generate-headers
+mv iroh.h ${OUT_DIR}/include/iroh.h
 cp ${REPO_ROOT}/swift/include/module.modulemap ${OUT_DIR}/include/module.modulemap
 
 echo "Build Iroh Libraries for Apple Platforms"
 
 targets=(
-  "aarch64-apple-ios"
-  "x86_64-apple-ios"
-  "aarch64-apple-ios-sim"
+  # "aarch64-apple-ios"
+  # "x86_64-apple-ios"
+  # "aarch64-apple-ios-sim"
+  "x86_64-apple-darwin"
+  "aarch64-apple-darwin"
 )
 
 for target in "${targets[@]}"; do
-  cargo build --package iroh_ffi --release --target "${target}" --manifest-path "${RUST_FFI_DIR}/Cargo.toml"
-  mkdir -p "${OUT_DIR}/lib_${target}"
-  cp "${RUST_FFI_DIR}/target/${target}/release/libiroh.a" "${OUT_DIR}/lib_${target}/libiroh.a"
+  cargo build --package iroh_ffi --release --target ${target}
+  mkdir -p ${OUT_DIR}/lib_${target}
+  cp "${REPO_ROOT}/target/${target}/release/libiroh_ffi.a" "${OUT_DIR}/lib_${target}/libiroh_ffi.a"
 done
 
 echo "Run Lipo"
@@ -38,20 +40,28 @@ mkdir -p "${OUT_DIR}/lib_ios-simulator-universal"
 # cp "${RUST_FFI_DIR}/target/universal/release/libiroh.a" "${OUT_DIR}/lib_ios-simulator-universal/libiroh.a"
 
 lipo -create \
-  "${OUT_DIR}/lib_x86_64-apple-ios/libiroh.a" \
-  "${OUT_DIR}/lib_aarch64-apple-ios-sim/libiroh.a" \
-  -output "${OUT_DIR}/lib_ios-simulator-universal/libiroh.a"
+  "${OUT_DIR}/lib_x86_64-apple-ios/libiroh_ffi.a" \
+  "${OUT_DIR}/lib_aarch64-apple-ios-sim/libiroh_ffi.a" \
+  -output "${OUT_DIR}/lib_ios-simulator-universal/libiroh_ffi.a"
           
 
 echo "Create XCFramework"
 
-xcodebuild -create-xcframework \
-  -library ${OUT_DIR}/lib_ios-simulator-universal/libiroh.a \
-  -headers ${OUT_DIR}/include/ \
-  -library ${OUT_DIR}/lib_aarch64-apple-ios/libiroh.a \
-  -headers ${OUT_DIR}/include/ \
-  -output ${REPO_ROOT}/LibIroh.xcframework BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+rm -rf ${REPO_ROOT}/target/LibIroh.xcframework
 
-zip -r ${REPO_ROOT}/libiroh-xcframework.zip ${REPO_ROOT}/LibIroh.xcframework
+# xcodebuild -create-xcframework \
+#   -library ${OUT_DIR}/lib_ios-simulator-universal/libiroh_ffi.a \
+#   -headers ${OUT_DIR}/include/ \
+#   -library ${OUT_DIR}/lib_aarch64-apple-ios/libiroh_ffi.a \
+#   -headers ${OUT_DIR}/include/ \
+#   -output ${REPO_ROOT}/target/LibIroh.xcframework
+
+xcodebuild -create-xcframework \
+  -library ${OUT_DIR}/lib_aarch64-apple-darwin/libiroh_ffi.a \
+  -headers ${OUT_DIR}/include/ \
+  -output ${REPO_ROOT}/target/LibIroh.xcframework
+
+# echo "Zip XCFramework"
+# zip -r ${REPO_ROOT}/target/libiroh-xcframework.zip ${REPO_ROOT}/target/LibIroh.xcframework
 
 echo "Done"
