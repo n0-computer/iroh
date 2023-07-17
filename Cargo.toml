@@ -4,8 +4,6 @@ members = [
   "iroh-net",
   "iroh-bytes",
   "iroh-metrics",
-  "iroh/examples/hello-world",
-  "iroh/examples/collection"
 ]
 
 [profile.optimized-release]
