@@ -10,7 +10,7 @@ use std::str::FromStr;
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
-use iroh_net::hp::derp::DerpMap;
+use iroh_net::derp::DerpMap;
 use iroh_net::tls::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 

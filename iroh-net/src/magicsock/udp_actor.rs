@@ -13,7 +13,7 @@ use quinn::AsyncUdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-use crate::hp::{disco, netcheck, stun};
+use crate::{disco, netcheck, stun};
 
 use super::{
     conn::{Inner, Network, SendAddr},

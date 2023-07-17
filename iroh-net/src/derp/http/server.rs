@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, info, warn, Instrument};
 
 use super::HTTP_UPGRADE_PROTOCOL;
-use crate::hp::{
+use crate::{
     derp::{
         http::client::Client as HttpClient,
         http::mesh_clients::{MeshAddrs, MeshClients},
@@ -75,7 +75,7 @@ where
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    server: Option<crate::derp::server::Server<HttpClient>>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
     mesh_clients: Option<MeshClients>,
@@ -271,7 +271,7 @@ impl ServerBuilder {
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
         let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
-            let server = crate::hp::derp::server::Server::new(secret_key.clone(), self.mesh_key);
+            let server = crate::derp::server::Server::new(secret_key.clone(), self.mesh_key);
             let header_map: HeaderMap = HeaderMap::from_iter(
                 self.headers
                     .iter()
@@ -345,7 +345,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::hp::derp::server::Server<HttpClient>>,
+    server: Option<crate::derp::server::Server<HttpClient>>,
     service: DerpService,
     mesh_clients: Option<MeshClients>,
 }
@@ -549,7 +549,7 @@ struct Inner {
 #[derive(derive_more::Debug)]
 enum DerpHandler {
     /// Pass the connection to a [`ClientConnHandler`] to get added to the derp server. The default.
-    ConnHandler(ClientConnHandler<crate::hp::derp::http::Client>),
+    ConnHandler(ClientConnHandler<crate::derp::http::Client>),
     /// Return some static response. Used when the http(s) should be running, but the derp portion
     /// of the server is disabled.
     Override(

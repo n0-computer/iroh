@@ -20,7 +20,7 @@ use super::{
     PROTOCOL_VERSION,
 };
 
-use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -466,7 +466,7 @@ where
             is_prober: self.is_prober,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::hp::derp::send_client_key(
+        crate::derp::send_client_key(
             &mut self.writer,
             &self.secret_key,
             &server_key,
@@ -475,7 +475,7 @@ where
         .await?;
         let mut buf = BytesMut::new();
         let (frame_type, _) =
-            crate::hp::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
+            crate::derp::read_frame(&mut self.reader, MAX_FRAME_SIZE, &mut buf).await?;
         assert_eq!(FrameType::ServerInfo, frame_type);
         let msg = self.secret_key.open_from(&server_key, &buf)?;
         let info: ServerInfo = postcard::from_bytes(&msg)?;

@@ -19,15 +19,15 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
-use crate::hp::derp::client_conn::Io;
-use crate::hp::derp::{
+use crate::derp::client_conn::Io;
+use crate::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
     UseIpv6,
 };
-use crate::hp::dns::DNS_RESOLVER;
-use crate::hp::key;
+use crate::dns::DNS_RESOLVER;
+use crate::key;
 
-use crate::hp::derp::{
+use crate::derp::{
     client::Client as DerpClient, server::PacketForwarderHandler, DerpRegion, ReceivedMessage,
 };
 
@@ -325,7 +325,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active derp connection, returns the already
-    /// connected [`crate::hp::derp::client::Client`].
+    /// connected [`crate::derp::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
         if self.inner.is_closed.load(Ordering::Relaxed) {
             return Err(ClientError::Closed);
@@ -1170,7 +1170,7 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hp::{
+    use crate::{
         derp::{http::ServerBuilder, types::ServerMessage},
         key::node::SecretKey,
     };

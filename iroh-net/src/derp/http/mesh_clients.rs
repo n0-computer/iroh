@@ -2,19 +2,19 @@ use reqwest::Url;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::hp::{
+use crate::{
     derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
     key::node::SecretKey,
 };
 
 use super::Client;
 
-/// Spawns, connects, and manages special [`crate::hp::derp::http::Client`].
+/// Spawns, connects, and manages special [`crate::derp::http::Client`].
 ///
 /// These clients handled incoming network update notifications from remote
-/// [`super::Server`]s. These servers are used as [`crate::hp::derp::PacketForwarder`]s for
+/// [`super::Server`]s. These servers are used as [`crate::derp::PacketForwarder`]s for
 /// peers to which we are not directly connected.
-/// A [`crate::hp::derp::MeshKey`] is used to ensure the remote server belongs to the same mesh network.
+/// A [`crate::derp::MeshKey`] is used to ensure the remote server belongs to the same mesh network.
 #[derive(Debug)]
 pub(crate) struct MeshClients {
     tasks: JoinSet<()>,
@@ -98,7 +98,7 @@ pub enum MeshAddrs {
 
 #[cfg(test)]
 mod tests {
-    use crate::hp::derp::{http::ServerBuilder, ReceivedMessage};
+    use crate::derp::{http::ServerBuilder, ReceivedMessage};
     use anyhow::Result;
     use tracing_subscriber::{prelude::*, EnvFilter};
 

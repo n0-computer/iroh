@@ -12,7 +12,7 @@ use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::hp::{
+use crate::{
     derp::{self, DerpMap, MAX_PACKET_SIZE},
     key::{self, node::PUBLIC_KEY_LENGTH},
 };

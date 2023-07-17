@@ -4,7 +4,7 @@
 
 use std::net::IpAddr;
 
-use super::cfg::NetInfo;
+use super::config::NetInfo;
 
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const RUST_VERSION: &str = env!("RUSTC_VERSION");

@@ -1,4 +1,4 @@
-//! Types from tailscale/tailcfg
+//! Configuration types.
 
 use std::{
     collections::HashMap,

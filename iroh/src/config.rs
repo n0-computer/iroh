@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
     defaults::{default_eu_derp_region, default_na_derp_region},
-    hp::derp::{DerpMap, DerpRegion},
+    derp::{DerpMap, DerpRegion},
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
