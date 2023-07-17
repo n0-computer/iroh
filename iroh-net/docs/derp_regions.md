@@ -8,6 +8,8 @@ When attempting to connect to another peer, it is not required to pass in that p
 
 We currently have 2 derp regions, with a single node in each.
 
+Region ID `65535` is reserved for testing and experiments.
+
 ## North America
 
 ```rust

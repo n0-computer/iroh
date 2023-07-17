@@ -208,7 +208,7 @@ pub struct Inner {
 impl Inner {
     /// Returns the derp region we are connected to, that has the best latency.
     ///
-    /// If `None`, then we are not connected to any derp region.
+    /// If `0`, then we are not connected to any derp region.
     pub(super) fn my_derp(&self) -> u16 {
         self.my_derp.load(Ordering::Relaxed)
     }

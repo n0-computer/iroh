@@ -254,7 +254,7 @@ impl MagicEndpoint {
 
     /// Connect to a remote endpoint.
     ///
-    /// The PeerId, the ALPN protocol are required. If you happen to know dialable addresses of
+    /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
     /// the remote endpoint, they can be specified and will be used to try and establish a direct
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.

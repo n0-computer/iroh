@@ -17,6 +17,9 @@ pub const EU_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(52, 30, 229
 /// EU region id
 pub const EU_REGION_ID: u16 = 2;
 
+/// test region id
+pub const TEST_REGION_ID: u16 = 65535;
+
 /// STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 

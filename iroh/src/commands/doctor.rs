@@ -14,7 +14,7 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::progress::ProgressWriter;
 use iroh_net::{
-    defaults::DEFAULT_DERP_STUN_PORT,
+    defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
     hp::{
         self,
         derp::{DerpMap, UseIpv4, UseIpv6},
@@ -127,7 +127,7 @@ pub enum Commands {
     ///
     /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
     /// adjust the [`Config`].
-    DerpRegions {},
+    DerpRegions,
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -470,7 +470,7 @@ fn configure_local_derp_map() -> DerpMap {
     let url = "http://derp.invalid:3340".parse().unwrap();
     let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
     let derp_ipv6 = UseIpv6::TryDns;
-    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6, 0)
+    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6, TEST_REGION_ID)
 }
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
@@ -772,7 +772,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             remote_endpoint,
         } => {
             let (derp_map, derp_region) = if local_derper {
-                (Some(configure_local_derp_map()), Some(0))
+                (Some(configure_local_derp_map()), Some(TEST_REGION_ID))
             } else {
                 (config.derp_map(), derp_region)
             };
@@ -798,7 +798,7 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             local_port,
             timeout_secs,
         } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
-        Commands::DerpRegions {} => {
+        Commands::DerpRegions => {
             let default_config_path =
                 iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
 
