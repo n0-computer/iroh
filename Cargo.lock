@@ -506,16 +506,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 
 [[package]]
-name = "collection"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "iroh",
- "tokio",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,16 +1336,6 @@ name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
-
-[[package]]
-name = "hello-world"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "iroh",
- "tokio",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "hermit-abi"
@@ -3868,7 +3848,6 @@ dependencies = [
  "libc",
  "mio",
  "num_cpus",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.4.9",
