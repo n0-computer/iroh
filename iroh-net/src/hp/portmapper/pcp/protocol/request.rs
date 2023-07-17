@@ -56,9 +56,9 @@ impl Request {
         buf.push(0);
         // buf[4..8]
         buf.extend_from_slice(&lifetime_seconds.to_be_bytes());
-        // buf[8..12]
+        // buf[8..24]
         buf.extend_from_slice(&client_addr.octets());
-        // buf[12..]
+        // buf[24..]
         opcode_data.encode_into(&mut buf);
 
         buf
