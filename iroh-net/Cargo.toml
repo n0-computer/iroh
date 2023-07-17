@@ -73,6 +73,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # metrics
 iroh-metrics = { path = "../iroh-metrics", optional = true }
+num_enum = "0.6.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-route = "0.17.0"
@@ -85,6 +86,7 @@ wmi = "0.13"
 clap = { version = "4", features = ["derive"] }
 ntest = "*"
 pretty_assertions = "1.4"
+rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

@@ -281,7 +281,7 @@ impl Conn {
     }
 
     async fn with_name(name: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::new().await;
+        let port_mapper = portmapper::Client::default().await;
 
         let Options {
             port,
