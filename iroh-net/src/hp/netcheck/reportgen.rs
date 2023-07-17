@@ -26,13 +26,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use iroh_metrics::inc;
-use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument};
 
+use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use crate::hp::dns::DNS_RESOLVER;
