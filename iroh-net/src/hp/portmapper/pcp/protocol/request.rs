@@ -126,7 +126,7 @@ impl Request {
         let local_ip_bytes: [u8; 16] = buf[8..24].try_into().unwrap();
         let client_addr: Ipv6Addr = local_ip_bytes.into();
 
-        let opcode_data = OpcodeData::decode(opcode, buf).unwrap();
+        let opcode_data = OpcodeData::decode(opcode, &buf[24..]).unwrap();
         Self {
             version,
             lifetime_seconds,
@@ -147,6 +147,15 @@ mod tests {
         let mut gen = rand_chacha::ChaCha8Rng::seed_from_u64(42);
 
         let request = Request::random(super::super::Opcode::Announce, &mut gen);
+        let encoded = request.encode();
+        assert_eq!(request, Request::decode(&encoded));
+    }
+
+    #[test]
+    fn test_encode_decode_map_request() {
+        let mut gen = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        let request = Request::random(super::super::Opcode::Map, &mut gen);
         let encoded = request.encode();
         assert_eq!(request, Request::decode(&encoded));
     }

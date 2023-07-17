@@ -78,7 +78,7 @@ impl MapData {
         let protocol = buf[12].try_into().map_err(|_| InvalidOpcodeData)?;
         let local_port_bytes = buf[16..18].try_into().expect("slice has the right size");
         let local_port = u16::from_be_bytes(local_port_bytes);
-        let external_port_bytes = buf[16..18].try_into().expect("slice has the right size");
+        let external_port_bytes = buf[18..20].try_into().expect("slice has the right size");
         let external_port = u16::from_be_bytes(external_port_bytes);
         let external_addr_bytes: [u8; 16] = buf[20..].try_into().expect("buffer size was verified");
         let external_address = Ipv6Addr::from(external_addr_bytes);
@@ -92,8 +92,16 @@ impl MapData {
         })
     }
 
+    #[cfg(test)]
     fn random<R: rand::Rng>(rng: &mut R) -> MapData {
-        todo!()
+        let octects: [u8; 16] = rng.gen();
+        MapData {
+            nonce: rng.gen(),
+            protocol: MapProtocol::Udp,
+            local_port: rng.gen(),
+            external_port: rng.gen(),
+            external_address: octects.into(),
+        }
     }
 }
 
