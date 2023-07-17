@@ -1,5 +1,25 @@
 # iroh
 
+The iroh crate defines both the `iroh` library and `iroh` command-line interface (CLI).
+
+For more details on Iroh, see https://iroh.computer.
+
+## Building the CLI
+
+Simply run `cargo build` from the project root, it produces the `iroh` CLI by default.
+
+## Using as a rust crate
+
+Because iroh builds the CLI by default, you should disable `default-features` when importing the `iroh` crate via cargo:
+
+```toml
+[dependencies]
+iroh = { version: "...", default-features = false }
+```
+
+## Running Examples
+
+examples are located in `iroh/examples`. Some have their own cargo.toml to show different use cases, and as such are shipped as their own packages. For these run them with `cargo run --package`. eg: `cargo run --package hello-world`
 
 # License
 
