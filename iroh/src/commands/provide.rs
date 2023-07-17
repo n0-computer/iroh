@@ -144,12 +144,16 @@ async fn provide<D: BaoReadonlyDb>(
     } else {
         builder.keypair(keypair).spawn().await?
     };
-
     let eps = provider.local_endpoints().await?;
     println!("Listening addresses:");
     for ep in eps {
         println!("  {}", ep.addr);
     }
+    let region = provider.my_derp().await;
+    println!(
+        "DERP Region: {}",
+        region.map_or("None".to_string(), |r| r.to_string())
+    );
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)

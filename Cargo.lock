@@ -761,9 +761,9 @@ dependencies = [
 
 [[package]]
 name = "default-net"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae47401ee27418babbf80e20de5ff240a19c850ec6000326342cdb198b341687"
+checksum = "cfe553014b8511f63a1324f7cc9b91cf0117289321ad14b4781ef4fed005f30c"
 dependencies = [
  "dlopen2",
  "libc",
@@ -1678,6 +1678,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "walkdir",
 ]
 
@@ -1793,7 +1794,6 @@ dependencies = [
  "serdect",
  "socket2 0.5.3",
  "ssh-key",
- "strum",
  "stun-rs",
  "surge-ping",
  "thiserror",
@@ -3275,12 +3275,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustversion"
-version = "1.0.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc31bd9b61a32c31f9650d18add92aa83a49ba979c143eefd27fe7177b05bd5f"
-
-[[package]]
 name = "rusty-fork"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3670,28 +3664,6 @@ name = "struct_iterable_internal"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9426b2a0c03e6cc2ea8dbc0168dbbf943f88755e409fb91bcb8f6a268305f4a"
-
-[[package]]
-name = "strum"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6069ca09d878a33f883cc06aaa9718ede171841d3832450354410b718b097232"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.25",
-]
 
 [[package]]
 name = "stun-rs"

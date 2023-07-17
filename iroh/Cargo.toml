@@ -49,6 +49,7 @@ multibase = { version = "0.9.1", optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 data-encoding = "2.4.0"
+url = { version = "2.4", features = ["serde"] }
 
 
 [features]
