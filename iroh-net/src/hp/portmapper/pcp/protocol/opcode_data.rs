@@ -9,6 +9,7 @@ pub enum OpcodeData {
     Announce,
 }
 
+#[derive(Debug)]
 pub struct InvalidOpcodeData;
 
 impl OpcodeData {
