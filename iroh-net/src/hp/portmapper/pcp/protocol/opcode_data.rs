@@ -41,7 +41,7 @@ impl OpcodeData {
     }
 
     #[cfg(test)]
-    pub(crate) fn random(opcode: Opcode) -> OpcodeData {
+    pub(crate) fn random<R: rand::Rng>(opcode: Opcode, _rng: &mut R) -> OpcodeData {
         match opcode {
             Opcode::Announce => OpcodeData::Announce,
         }

@@ -70,13 +70,12 @@ impl Request {
     }
 
     #[cfg(test)]
-    fn random(opcode: super::Opcode) -> Self {
-        let opcode_data = OpcodeData::random(opcode);
-        // initiallize in zero using the UNSPECIFIED addr
-        let addr_octects: [u8; 16] = rand::random();
+    fn random<R: rand::Rng>(opcode: super::Opcode, rng: &mut R) -> Self {
+        let opcode_data = OpcodeData::random(opcode, rng);
+        let addr_octects: [u8; 16] = rng.gen();
         Request {
             version: Version::Pcp,
-            lifetime_seconds: rand::random(),
+            lifetime_seconds: rng.gen(),
             client_addr: Ipv6Addr::from(addr_octects),
             opcode_data,
         }
@@ -109,9 +108,13 @@ impl Request {
 mod tests {
     use super::*;
 
+    use rand::SeedableRng;
+
     #[test]
     fn test_encode_decode_addr_request() {
-        let request = Request::random(super::super::Opcode::Announce);
+        let mut gen = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        let request = Request::random(super::super::Opcode::Announce, &mut gen);
         let encoded = request.encode();
         assert_eq!(request, Request::decode(&encoded));
     }

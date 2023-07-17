@@ -1783,6 +1783,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rand",
+ "rand_chacha",
  "rcgen",
  "regex",
  "reqwest",
