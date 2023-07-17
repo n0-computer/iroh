@@ -466,22 +466,25 @@ impl DerpNodeCache {
 ///
 /// This uses the latencies from the last report to determine the order.  Regions with no
 /// data are at the end.
-fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
-    let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
+fn sort_regions<'a>(derp_map: &'a DerpMap, last_report: &Report) -> Vec<&'a DerpRegion> {
+    let mut prev: Vec<_> = derp_map.regions.values().filter(|r| !r.avoid).collect();
     prev.sort_by(|a, b| {
-        let da = last.region_latency.get(a.region_id);
-        let db = last.region_latency.get(b.region_id);
-        match (da, db) {
+        let latencies_a = last_report.region_latency.get(a.region_id);
+        let latencies_b = last_report.region_latency.get(b.region_id);
+        match (latencies_a, latencies_b) {
             (Some(_), None) => {
                 // Non-zero sorts before zero.
-                std::cmp::Ordering::Greater
+                std::cmp::Ordering::Less
             }
             (None, Some(_)) => {
                 // Zero can't sort before anything else.
+                std::cmp::Ordering::Greater
+            }
+            (None, None) => {
+                // For both empty latencies sort by region_id.
                 a.region_id.cmp(&b.region_id)
             }
-            (None, None) => std::cmp::Ordering::Equal,
-            (Some(_), Some(_)) => match da.cmp(&db) {
+            (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
                 std::cmp::Ordering::Equal => a.region_id.cmp(&b.region_id),
                 x => x,
             },
@@ -882,5 +885,92 @@ mod tests {
             // The readable error:
             assert_eq!(plan.to_string(), expected_plan.to_string(), "{}", i);
         }
+    }
+
+    fn create_last_report(latency_1: Option<Duration>, latency_2: Option<Duration>) -> Report {
+        let mut latencies = RegionLatencies::new();
+        if let Some(latency_1) = latency_1 {
+            latencies.update_region(1, latency_1);
+        }
+        if let Some(latency_2) = latency_2 {
+            latencies.update_region(2, latency_2);
+        }
+        Report {
+            udp: true,
+            ipv6: true,
+            ipv4: true,
+            ipv6_can_send: true,
+            ipv4_can_send: true,
+            os_has_ipv6: true,
+            icmpv4: true,
+            mapping_varies_by_dest_ip: Some(false),
+            hair_pinning: Some(true),
+            portmap_probe: None,
+            preferred_derp: 1,
+            region_latency: latencies.clone(),
+            region_v4_latency: latencies.clone(),
+            region_v6_latency: latencies.clone(),
+            global_v4: None,
+            global_v6: None,
+            captive_portal: None,
+        }
+    }
+
+    #[test]
+    fn test_derp_region_sort_two_latencies() {
+        let derp_map = default_derp_map();
+        let last_report = create_last_report(
+            Some(Duration::from_millis(1)),
+            Some(Duration::from_millis(2)),
+        );
+        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+            .iter()
+            .map(|reg| reg.region_id)
+            .collect();
+        assert_eq!(sorted, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_derp_region_sort_equal_latencies() {
+        let derp_map = default_derp_map();
+        let last_report = create_last_report(
+            Some(Duration::from_millis(2)),
+            Some(Duration::from_millis(2)),
+        );
+        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+            .iter()
+            .map(|reg| reg.region_id)
+            .collect();
+        assert_eq!(sorted, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_derp_region_sort_missing_latency() {
+        let derp_map = default_derp_map();
+        let last_report = create_last_report(None, Some(Duration::from_millis(2)));
+        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+            .iter()
+            .map(|reg| reg.region_id)
+            .collect();
+        assert_eq!(sorted, vec![2, 1]);
+
+        let last_report = create_last_report(Some(Duration::from_millis(2)), None);
+        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+            .iter()
+            .map(|reg| reg.region_id)
+            .collect();
+        assert_eq!(sorted, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_derp_region_sort_no_latency() {
+        let derp_map = default_derp_map();
+        let last_report = create_last_report(None, None);
+        let sorted: Vec<_> = sort_regions(&derp_map, &last_report)
+            .iter()
+            .map(|reg| reg.region_id)
+            .collect();
+        // sorted by region id only
+        assert_eq!(sorted, vec![1, 2]);
     }
 }
