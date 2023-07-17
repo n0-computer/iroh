@@ -22,6 +22,4 @@ license-files = [
 ]
 
 [advisories]
-ignore = [
-       "RUSTSEC-2020-0168", # mach is unmaintained
-]
+ignore = []
