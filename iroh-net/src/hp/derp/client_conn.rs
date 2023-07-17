@@ -15,8 +15,11 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
+use iroh_metrics::{inc, inc_by};
+
 use super::server::MaybeTlsStream;
 use super::{
+    metrics::Metrics,
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
     write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,
@@ -413,7 +416,6 @@ where
         Ok(())
     }
 
-    // runs in a go routing in the go impl
     async fn request_mesh_update(&self, updates: Vec<PeerConnState>) -> Result<()> {
         ensure!(
             self.can_mesh,
@@ -428,18 +430,9 @@ where
     /// are only valid until this function returns, do not retain the slices.
     /// Does not flush.
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
-        // TODO: stats:
-        // 	defer func() {
-        // // Stats update.
-        // if err != nil {
-        // 	c.s.recordDrop(contents, packet.src, c.key, dropReasonWriteError)
-        // } else {
-        // 	c.s.packetsSent.Add(1)
-        // 	c.s.bytesSent.Add(int64(len(packet.contents)))
-        // }
-        // }()
         let srckey = packet.src;
         let contents = packet.bytes;
+        inc_by!(Metrics, bytes_sent, contents.len().try_into().unwrap());
         if srckey.is_zero() {
             // TODO: ensure we handle this correctly on the client side
             write_frame_timeout(
@@ -470,27 +463,40 @@ where
             Ok((frame_type, frame_len)) => {
                 // TODO: "note client activity", meaning we update the server that the client with this
                 // public key was the last one to receive data
+                // it will be relevant when we add the ability to hold onto multiple clients
+                // for the same public key
                 let frame = buf.split_to(frame_len);
                 match frame_type {
                     FrameType::NotePreferred => {
                         self.handle_frame_note_preferred(&frame)?;
+                        inc!(Metrics, other_packets_recv);
                     }
                     FrameType::SendPacket => {
                         self.handle_frame_send_packet(&frame).await?;
+                        inc_by!(Metrics, bytes_recv, frame_len as u64);
                     }
                     FrameType::ForwardPacket => {
                         self.handle_frame_forward_packet(&frame).await?;
+                        inc!(Metrics, packets_forwarded_in);
                     }
                     FrameType::WatchConns => {
                         self.handle_frame_watch_conns(&frame).await?;
+                        inc!(Metrics, other_packets_recv);
                     }
                     FrameType::ClosePeer => {
                         self.handle_frame_close_peer(&frame).await?;
+                        inc!(Metrics, other_packets_recv);
                     }
                     FrameType::Ping => {
                         self.handle_frame_ping(&frame).await?;
+                        inc!(Metrics, got_ping);
+                    }
+                    FrameType::Unknown => {
+                        inc!(Metrics, unknown_frames);
+                        buf.clear();
                     }
                     _ => {
+                        inc!(Metrics, other_packets_recv);
                         buf.clear();
                     }
                 }
@@ -571,6 +577,7 @@ where
 
         let data = <[u8; 8]>::try_from(data).unwrap();
         self.send_pong(data).await?;
+        inc!(Metrics, sent_pong);
         Ok(())
     }
 
@@ -610,9 +617,6 @@ where
     /// larger than MAX_PACKET_SIZE
     async fn handle_frame_send_packet(&self, data: &[u8]) -> Result<()> {
         let (dstkey, data) = parse_send_packet(data)?;
-        // TODO: stats:
-        // s.packetsRecv.Add(1)
-        // s.bytesRecv.Add(int64(len(contents)))
         let packet = Packet {
             src: self.key.clone(),
             bytes: Bytes::from(data.to_owned()),
@@ -626,9 +630,11 @@ where
     /// not fit any more messages in its queue.
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
         if looks_like_disco_wrapper(&packet.bytes) {
+            inc!(Metrics, disco_packets_recv);
             self.send_server(ServerMessage::SendDiscoPacket((dstkey, packet)))
                 .await?;
         } else {
+            inc!(Metrics, send_packets_recv);
             self.send_server(ServerMessage::SendPacket((dstkey, packet)))
                 .await?;
         }

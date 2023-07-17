@@ -15,7 +15,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_metrics::{inc, inc_by, magicsock::Metrics as MagicsockMetrics};
+use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -39,6 +39,7 @@ use super::{
     endpoint::{EndpointInfo, Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
+    Metrics as MagicsockMetrics,
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -281,7 +282,7 @@ impl Conn {
     }
 
     async fn with_name(name: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::new().await;
+        let port_mapper = portmapper::Client::default().await;
 
         let Options {
             port,
