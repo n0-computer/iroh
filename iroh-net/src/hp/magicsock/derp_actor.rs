@@ -7,7 +7,7 @@ use std::{
 
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
-use iroh_metrics::{inc, inc_by, magicsock::Metrics as MagicsockMetrics};
+use iroh_metrics::{inc, inc_by};
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -18,6 +18,7 @@ use crate::hp::{
 };
 
 use super::conn::{ActorMessage, Inner};
+use super::Metrics as MagicsockMetrics;
 
 /// How long a non-home DERP connection needs to be idle (last written to) before we close it.
 const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);

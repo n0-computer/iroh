@@ -310,9 +310,10 @@ pub fn init_metrics_collection(
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
             metrics.insert(iroh::metrics::Metrics::new(reg));
-            metrics.insert(iroh_metrics::magicsock::Metrics::new(reg));
-            metrics.insert(iroh_metrics::netcheck::Metrics::new(reg));
-            metrics.insert(iroh_metrics::portmap::Metrics::new(reg));
+            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
         });
 
         return Some(rt.main().spawn(async move {

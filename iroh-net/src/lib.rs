@@ -10,6 +10,7 @@
 pub mod defaults;
 pub mod hp;
 pub mod magic_endpoint;
+pub mod metrics;
 pub mod net;
 pub mod tls;
 pub mod util;
