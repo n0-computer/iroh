@@ -241,6 +241,12 @@ pub enum Commands {
         #[clap(long)]
         region: Option<u16>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
+        ///
+        /// If the directory exists and contains a partial download, the download will
+        /// be resumed.
+        ///
+        /// Otherwise, all files in the collection will be overwritten. Other files
+        /// in the directory will be left untouched.
         #[clap(long, short)]
         out: Option<PathBuf>,
         #[clap(conflicts_with_all = &["hash", "peer", "addrs", "token"])]
