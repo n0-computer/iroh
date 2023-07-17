@@ -81,3 +81,10 @@ tempfile = "3.4"
 name = "iroh"
 required-features = ["cli"]
 
+[[example]]
+name = "collection"
+required-features = ["mem-db", "iroh-collection"]
+
+[[example]]
+name = "hello-world"
+required-features = ["mem-db"]
