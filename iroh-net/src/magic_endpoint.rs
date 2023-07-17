@@ -118,7 +118,7 @@ impl MagicEndpointBuilder {
     ///
     /// The *bind_port* is the port that should be bound locally.
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
-    /// You can pass `0` to let the operating system chosse a free port for you.
+    /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
@@ -245,19 +245,32 @@ impl MagicEndpoint {
         self.conn.local_endpoints().await
     }
 
+    /// Get the DERP region we are connected to with the lowest latency.
+    ///
+    /// Returns `None` if we are not connected to any DERP region.
+    pub async fn my_derp(&self) -> Option<u16> {
+        self.conn.my_derp().await
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// The PeerId and the ALPN protocol are required. If you happen to know dialable addresses of
     /// the remote endpoint, they can be specified and will be used to try and establish a direct
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.
+    ///
+    /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
+    ///
+    /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(
         &self,
         peer_id: PeerId,
         alpn: &[u8],
+        derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, known_addrs).await?;
+        self.add_known_addrs(peer_id, derp_region, known_addrs)
+            .await?;
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
         let addr = self.conn.get_mapping_addr(&node_key).await.ok_or_else(|| {
@@ -292,12 +305,32 @@ impl MagicEndpoint {
     ///
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
     /// when connecting to this peer (in addition to addresses obtained from a derp server).
+    ///
+    /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
+    /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
         &self,
         peer_id: PeerId,
+        derp_region: Option<u16>,
         endpoints: &[SocketAddr],
     ) -> anyhow::Result<()> {
-        const DEFAULT_DERP_REGION: u16 = 1;
+        match (endpoints.is_empty(), derp_region) {
+            (true, None) => {
+                anyhow::bail!(
+                    "No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}"
+                );
+            }
+            (true, Some(region)) if !self.conn.has_derp_region(region).await => {
+                anyhow::bail!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
+            }
+            (false, None) => {
+                tracing::warn!("No DERP region provided, any hole punching required to establish a connection will not be possible.");
+            }
+            (false, Some(region)) if !self.conn.has_derp_region(region).await => {
+                tracing::warn!("We do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
+            }
+            _ => {}
+        }
 
         let node_key: hp::key::node::PublicKey = peer_id.into();
         let netmap = {
@@ -318,7 +351,7 @@ impl MagicEndpoint {
                     addresses,
                     endpoints,
                     key: node_key.clone(),
-                    derp: Some(DEFAULT_DERP_REGION),
+                    derp: derp_region,
                 };
                 netmap.peers.push(node)
             }

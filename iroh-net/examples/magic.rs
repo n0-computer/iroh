@@ -3,7 +3,8 @@ use std::net::SocketAddr;
 use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
-    defaults::default_derp_map,
+    defaults::{default_derp_map, TEST_REGION_ID},
+    hp::derp::DerpMap,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -33,6 +34,7 @@ enum Command {
     Connect {
         peer_id: String,
         addrs: Option<Vec<SocketAddr>>,
+        derp_region: Option<u16>,
     },
 }
 
@@ -51,7 +53,8 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_map = match args.derp_url {
         None => default_derp_map(),
-        Some(url) => url.into(),
+        // use `region_id` 65535, which is reserved for testing and experiments
+        Some(url) => DerpMap::from_url(url, TEST_REGION_ID),
     };
 
     let endpoint = MagicEndpoint::builder()
@@ -89,10 +92,16 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
         }
-        Command::Connect { peer_id, addrs } => {
+        Command::Connect {
+            peer_id,
+            addrs,
+            derp_region,
+        } => {
             let peer_id: PeerId = peer_id.parse()?;
             let addrs = addrs.unwrap_or_default();
-            let conn = endpoint.connect(peer_id, EXAMPLE_ALPN, &addrs).await?;
+            let conn = endpoint
+                .connect(peer_id, EXAMPLE_ALPN, derp_region, &addrs)
+                .await?;
             info!("connected");
 
             let (mut send, mut recv) = conn.open_bi().await?;

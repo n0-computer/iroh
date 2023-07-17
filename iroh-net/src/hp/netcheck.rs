@@ -63,7 +63,7 @@ pub struct Report {
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
-    /// or 0 for unknown
+    /// `0` for unknown
     pub preferred_derp: u16,
     /// keyed by DERP Region ID
     pub region_latency: RegionLatencies,
@@ -896,16 +896,17 @@ mod tests {
         let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
         let mut dm = DerpMap::default();
+        let region_id = 1;
         dm.regions.insert(
-            1,
+            region_id,
             DerpRegion {
-                region_id: 1,
+                region_id,
                 nodes: stun_servers
                     .into_iter()
                     .enumerate()
                     .map(|(i, (host_name, stun_port))| DerpNode {
                         name: format!("default-{}", i),
-                        region_id: 1,
+                        region_id,
                         url: host_name.parse().unwrap(),
                         stun_only: true,
                         stun_port,
