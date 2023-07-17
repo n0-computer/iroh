@@ -2,7 +2,7 @@ use struct_iterable::Iterable;
 
 use crate::core::{Counter, Metric};
 
-/// All metrics tracked on the [`iroh_net::hp::derp::server::Server`]
+/// Metrics tracked for the DERP server
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
