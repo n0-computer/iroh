@@ -115,6 +115,15 @@ pub enum Commands {
         #[clap(long)]
         derp_region: Option<u16>,
     },
+    /// Probe the port mapping protocols.
+    PortMapProbe {
+        /// Whether to enable UPnP.
+        #[clap(long)]
+        enable_upnp: bool,
+        /// Whether to enable PCP.
+        #[clap(long)]
+        enable_pcp: bool,
+    },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
         /// Local port to get a mapping.
@@ -223,7 +232,7 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::new().await;
+    let port_mapper = hp::portmapper::Client::default().await;
     let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = match stun_host {
@@ -599,7 +608,7 @@ async fn accept(
 }
 
 async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::new().await;
+    let port_mapper = portmapper::Client::default().await;
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -617,6 +626,15 @@ async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<(
         Ok(Err(_recv_err)) => anyhow::bail!("Service dropped. This is a bug"),
         Err(_) => anyhow::bail!("Timed out waiting for a port mapping"),
     }
+}
+
+async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
+    println!("probing port mapping protocols with {config:?}");
+    let port_mapper = portmapper::Client::new(config).await;
+    let probe_rx = port_mapper.probe();
+    let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
+    println!("{probe}");
+    Ok(())
 }
 
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
@@ -798,6 +816,18 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             local_port,
             timeout_secs,
         } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
+        Commands::PortMapProbe {
+            enable_upnp,
+            enable_pcp,
+        } => {
+            let config = portmapper::Config {
+                enable_upnp,
+                enable_pcp,
+                enable_nat_pmp: false,
+            };
+
+            port_map_probe(config).await
+        }
         Commands::DerpRegions => {
             let default_config_path =
                 iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
