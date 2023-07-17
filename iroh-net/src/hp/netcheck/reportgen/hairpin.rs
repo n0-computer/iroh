@@ -225,7 +225,7 @@ mod tests {
         };
 
         // Create hairpin actor
-        let actor = Client::new(netcheck_addr, reportstate_addr);
+        let mut actor = Client::new(netcheck_addr, reportstate_addr);
 
         // Hairpinning works by asking the hairpin actor to send a STUN request to our
         // discovered public address.  If the router returns it hairpinning works.  We
