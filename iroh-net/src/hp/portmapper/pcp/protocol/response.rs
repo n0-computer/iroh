@@ -1,9 +1,10 @@
-use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
+use derive_more::Display;
+use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
 use super::{opcode_data::OpcodeData, Opcode, Version};
 
 /// ResultCode in a [`Response`] whe it's successful.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
 pub enum SuccessCode {
     /// Result code indicating a successful response.
@@ -16,7 +17,7 @@ pub enum SuccessCode {
 /// Refer to [RFC 6887 Result Codes](https://datatracker.ietf.org/doc/html/rfc6887#section-7.4)
 // NOTE: docs for each variant are largely adapted from the RFC's description of each code.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, derive_more::Display, thiserror::Error,
+    Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Display, thiserror::Error,
 )]
 #[repr(u8)]
 pub enum ErrorCode {
@@ -69,8 +70,12 @@ pub enum ErrorCode {
     ExcessiveRemotePeers = 13,
 }
 
+/// Result code of a PCP response.
+#[derive(Debug)]
 pub enum ResultCode {
+    /// A success result code. See [`SuccessCode`].
     Success,
+    /// An error code. See [`ErrorCode`].
     Error(ErrorCode),
 }
 
@@ -86,13 +91,22 @@ impl TryFrom<u8> for ResultCode {
     }
 }
 
+impl From<ResultCode> for u8 {
+    fn from(value: ResultCode) -> Self {
+        match value {
+            ResultCode::Success => SuccessCode::Success.into(),
+            ResultCode::Error(e) => e.into(),
+        }
+    }
+}
+
 /// A PCP successful Response/Notification.
 ///
 /// See [RFC 6887 Response Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.2)
 ///
 // NOTE: first two fields are *currently* not used, but are useful for debug purposes
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Response {
     /// Lifetime in seconds that can be assumed by this response.
     ///
@@ -105,7 +119,7 @@ pub struct Response {
 }
 
 /// Errors that can occur when decoding a [`Response`] from a server.
-#[derive(Debug, derive_more::Display, thiserror::Error)]
+#[derive(Debug, derive_more::Display, thiserror::Error, PartialEq, Eq)]
 pub enum DecodeError {
     /// Request is too short or is otherwise malformed.
     #[display("Response is malformed")]
@@ -127,7 +141,7 @@ pub enum DecodeError {
     InvalidOpcodeData,
 }
 
-#[derive(Debug, derive_more::Display, thiserror::Error)]
+#[derive(Debug, derive_more::Display, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     DecodeError(DecodeError),
     ErrorCode(ErrorCode),
@@ -196,5 +210,60 @@ impl Response {
             epoch_time,
             data,
         })
+    }
+
+    #[cfg(test)]
+    fn random(opcode: Opcode) -> Self {
+        let data = OpcodeData::random(opcode);
+        Self {
+            lifetime_seconds: rand::random(),
+            epoch_time: rand::random(),
+            data,
+        }
+    }
+
+    #[cfg(test)]
+    fn encode(&self) -> Vec<u8> {
+        let Response {
+            lifetime_seconds,
+            epoch_time,
+            data,
+        } = self;
+        let mut buf = Vec::with_capacity(Self::MIN_SIZE);
+        // version
+        buf.push(Version::Pcp.into());
+        // response indicator and opcode
+        let opcode: u8 = data.opcode().into();
+        buf.push(Response::RESPONSE_INDICATOR | opcode);
+        // reserved
+        buf.push(0);
+        // result code
+        buf.push(ResultCode::Success.into());
+        // lifetime
+        for b in lifetime_seconds.to_be_bytes() {
+            buf.push(b);
+        }
+        // epoch
+        for b in epoch_time.to_be_bytes() {
+            buf.push(b);
+        }
+        // reserved
+        for _ in 12..Response::MIN_SIZE {
+            buf.push(0)
+        }
+        data.encode_into(&mut buf);
+        buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_external_addr_response() {
+        let response = Response::random(Opcode::Announce);
+        let encoded = response.encode();
+        assert_eq!(Ok(response), Response::decode(&encoded));
     }
 }

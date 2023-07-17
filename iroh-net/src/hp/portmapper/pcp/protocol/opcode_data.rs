@@ -3,7 +3,7 @@
 use super::Opcode;
 
 /// Data associated to an [`Opcode`]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum OpcodeData {
     /// Data for an [`Opcode::Announce`] request.
     Announce,
@@ -36,6 +36,13 @@ impl OpcodeData {
     pub fn decode(opcode: Opcode, _buf: &[u8]) -> Result<Self, InvalidOpcodeData> {
         match opcode {
             Opcode::Announce => Ok(OpcodeData::Announce),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn random(opcode: Opcode) -> OpcodeData {
+        match opcode {
+            Opcode::Announce => OpcodeData::Announce,
         }
     }
 }
