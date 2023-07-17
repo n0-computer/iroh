@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
 /// Hostname of the default NA Derp.
-pub const NA_DERP_HOSTNAME: &str = "derp.iroh.network";
+pub const NA_DERP_HOSTNAME: &str = "derp.iroh.network.";
 /// IPv4 of the default NA Derp.
 pub const NA_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(35, 175, 99, 113);
 /// NA region id
 pub const NA_REGION_ID: u16 = 1;
 
 /// Hostname of the default EU Derp.
-pub const EU_DERP_HOSTNAME: &str = "eu1.derp.iroh.network";
+pub const EU_DERP_HOSTNAME: &str = "eu1.derp.iroh.network.";
 /// IPv4 of the default EU Derp.
 pub const EU_DERP_IPV4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(52, 30, 229, 248);
 /// EU region id
