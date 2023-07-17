@@ -348,8 +348,10 @@ impl Actor {
                     if let Some(ref addr) = self.report.global_v4 {
                         // Only needed for the first IPv4 address discovered, but hairpin
                         // actor ignores subsequent messages.
-                        self.hairpin_actor.start_check(*addr);
-                        self.outstanding_tasks.hairpin = true;
+                        if !self.hairpin_actor.has_started() {
+                            self.hairpin_actor.start_check(*addr);
+                            self.outstanding_tasks.hairpin = true;
+                        }
                     }
                 }
                 Probe::Https { .. } | Probe::Icmp { .. } => (),

@@ -607,6 +607,8 @@ impl Client {
             return Err(ClientError::NoNodeForTarget(target));
         }
         let mut first_err: Option<ClientError> = None;
+        // TODO (ramfox): these dials should probably happen in parallel, and we should return the
+        // first one to respond.
         for node in reg.nodes {
             if node.stun_only {
                 if first_err.is_none() {

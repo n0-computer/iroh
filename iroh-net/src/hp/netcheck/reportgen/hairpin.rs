@@ -35,6 +35,7 @@ const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 #[derive(Debug)]
 pub(super) struct Client {
     addr: Addr,
+    has_started: bool,
     _drop_guard: CancelOnDrop,
 }
 
@@ -52,8 +53,14 @@ impl Client {
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
         Self {
             addr,
+            has_started: false,
             _drop_guard: CancelOnDrop::new("hairpin actor", task.abort_handle()),
         }
+    }
+
+    /// Returns `true` if we have started a hairpin check before.
+    pub(super) fn has_started(&self) -> bool {
+        self.has_started
     }
 
     /// Starts the hairpin check.
@@ -63,7 +70,8 @@ impl Client {
     /// back then hairpinning works, otherwise it does not.
     ///
     /// Will do nothing if this actor is already finished or a check has already started.
-    pub(super) fn start_check(&self, dst: SocketAddr) {
+    pub(super) fn start_check(&mut self, dst: SocketAddr) {
+        self.has_started = true;
         self.addr.try_send(Message::StartCheck(dst)).ok();
     }
 }
@@ -217,7 +225,7 @@ mod tests {
         };
 
         // Create hairpin actor
-        let actor = Client::new(netcheck_addr, reportstate_addr);
+        let mut actor = Client::new(netcheck_addr, reportstate_addr);
 
         // Hairpinning works by asking the hairpin actor to send a STUN request to our
         // discovered public address.  If the router returns it hairpinning works.  We

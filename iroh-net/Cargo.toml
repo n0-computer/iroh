@@ -3,7 +3,7 @@ name = "iroh-net"
 version = "0.4.1"
 edition = "2021"
 readme = "README.md"
-description = "IPFS reimagined"
+description = "networking support for iroh"
 license = "MIT/Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
@@ -17,7 +17,7 @@ backoff = "0.4.0"
 bytes = "1"
 crypto_box = { version = "0.9.0-rc.1", features = ["serde", "chacha20"] }
 curve25519-dalek = "=4.0.0-rc.3"
-default-net = "0.16.1"
+default-net = "0.16.2"
 data-encoding = "2.3.3"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { package = "derive_more_preview", version = "0.1.0", features = ["debug", "display", "from", "try_into", "deref"] }
@@ -73,6 +73,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # metrics
 iroh-metrics = { path = "../iroh-metrics", optional = true }
+num_enum = "0.6.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-route = "0.17.0"
@@ -85,6 +86,7 @@ wmi = "0.13"
 clap = { version = "4", features = ["derive"] }
 ntest = "*"
 pretty_assertions = "1.4"
+rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
