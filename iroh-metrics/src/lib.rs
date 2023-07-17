@@ -10,15 +10,6 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
-/// Expose derpserver metrics
-pub mod derpserver;
-/// Expose magicsock metrics
-pub mod magicsock;
-/// Expose netcheck metrics
-pub mod netcheck;
-/// Expose portmap metrics
-pub mod portmap;
-
 /// Reexport to make matching versions easier.
 pub use struct_iterable;
 

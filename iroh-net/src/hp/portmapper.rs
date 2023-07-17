@@ -11,15 +11,18 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info_span, trace, Instrument};
 
-use iroh_metrics::{inc, portmap::Metrics};
+use iroh_metrics::inc;
 
 use crate::{net::interfaces::HomeRouter, util};
 
 use mapping::CurrentMapping;
 
 mod mapping;
+mod metrics;
 mod pcp;
 mod upnp;
+
+pub use metrics::Metrics;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
 /// not be probed again.

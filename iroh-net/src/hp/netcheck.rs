@@ -10,7 +10,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use iroh_metrics::inc;
-use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
@@ -24,7 +23,11 @@ use super::derp::DerpMap;
 use super::portmapper;
 use super::stun;
 
+mod metrics;
 mod reportgen;
+
+pub use metrics::Metrics;
+use Metrics as NetcheckMetrics;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 

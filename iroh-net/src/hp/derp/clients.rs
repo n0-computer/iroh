@@ -7,10 +7,11 @@ use std::collections::{HashMap, HashSet};
 use futures::future::join_all;
 use tokio::sync::mpsc;
 
-use iroh_metrics::{derpserver::Metrics, inc};
+use iroh_metrics::inc;
 
 use super::{
     client_conn::ClientConnManager,
+    metrics::Metrics,
     types::{Packet, PeerConnState},
 };
 
@@ -67,6 +68,9 @@ impl Client {
     pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
         let res = try_send(&self.conn.client_channels.send_queue, packet);
         if res.is_ok() {
+            // there is a chance that we have a packet forwarder for
+            // this peer, so we must check that route before
+            // marking the packet as "dropped"
             inc!(Metrics, send_packets_sent);
         }
         res
@@ -75,6 +79,9 @@ impl Client {
     pub fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
         let res = try_send(&self.conn.client_channels.disco_send_queue, packet);
         if res.is_ok() {
+            // there is a chance that we have a packet forwarder for
+            // this peer, so we must check that route before
+            // marking the packet as "dropped"
             inc!(Metrics, disco_packets_sent);
         }
         res

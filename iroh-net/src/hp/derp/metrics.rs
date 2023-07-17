@@ -1,6 +1,7 @@
-use struct_iterable::Iterable;
-
-use crate::core::{Counter, Metric};
+use iroh_metrics::{
+    core::{Counter, Metric},
+    struct_iterable::Iterable,
+};
 
 /// Metrics tracked for the DERP server
 #[allow(missing_docs)]

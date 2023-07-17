@@ -15,10 +15,11 @@ use crate::hp::{
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use iroh_metrics::{derpserver::Metrics, inc, inc_by};
+use iroh_metrics::{inc, inc_by};
 
 use super::server::MaybeTlsStream;
 use super::{
+    metrics::Metrics,
     read_frame,
     types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
     write_frame_timeout, FrameType, KEEP_ALIVE, MAX_FRAME_SIZE, MAX_PACKET_SIZE, PREFERRED,

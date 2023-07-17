@@ -16,13 +16,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{instrument, trace};
 
-use iroh_metrics::{derpserver::Metrics, inc};
+use iroh_metrics::inc;
 
 use crate::hp::key::node::{PublicKey, SecretKey};
 
 use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
+    metrics::Metrics,
     types::{PacketForwarder, PeerConnState, ServerMessage},
     MeshKey,
 };

@@ -6,10 +6,12 @@ use std::{
 };
 
 use futures::Future;
-use iroh_metrics::{inc, portmap::Metrics as PortmapMetrics};
+use iroh_metrics::inc;
 use std::time::Duration;
 use tokio::{sync::watch, time};
 use tracing::trace;
+
+use super::Metrics as PortmapMetrics;
 
 /// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {

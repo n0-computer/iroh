@@ -19,12 +19,12 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
-use iroh_metrics::{derpserver::Metrics, inc};
+use iroh_metrics::inc;
 
 use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
-    client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
-    UseIpv6,
+    client::ClientBuilder as DerpClientBuilder, metrics::Metrics, DerpNode, MeshKey,
+    PacketForwarder, UseIpv4, UseIpv6,
 };
 use crate::hp::dns::DNS_RESOLVER;
 use crate::hp::key;
