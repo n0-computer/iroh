@@ -28,7 +28,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
-use iroh_metrics::{core::Core, magicsock};
+use iroh_metrics::core::Core;
+use iroh_net::metrics::MagicsockMetrics;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum PrivateKey {
@@ -304,7 +305,7 @@ impl Gui {
 
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
-            let metrics = core.get_collector::<magicsock::Metrics>().unwrap();
+            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
             tracing::error!("metrics enabled");
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());

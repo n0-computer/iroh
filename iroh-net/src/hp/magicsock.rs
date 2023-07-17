@@ -5,12 +5,14 @@
 mod conn;
 mod derp_actor;
 mod endpoint;
+mod metrics;
 mod rebinding_conn;
 mod timer;
 mod udp_actor;
 
 pub use self::conn::{Callbacks, Conn, Options};
 pub use self::endpoint::EndpointInfo;
+pub use self::metrics::Metrics;
 pub use self::timer::Timer;
 
 // #[cfg(test)]

@@ -7,8 +7,10 @@ use std::{
 use anyhow::Result;
 use igd::aio as aigd;
 
-use iroh_metrics::{inc, portmap::Metrics};
+use iroh_metrics::inc;
 use tracing::debug;
+
+use super::Metrics;
 
 pub use aigd::Gateway;
 

@@ -15,12 +15,14 @@ pub(crate) mod client_conn;
 pub(crate) mod clients;
 pub mod http;
 mod map;
-mod server;
+mod metrics;
+pub(crate) mod server;
 pub(crate) mod types;
 
 pub use self::client::{Client as DerpClient, ReceivedMessage};
 pub use self::http::Client as HttpClient;
 pub use self::map::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+pub use self::metrics::Metrics;
 pub use self::server::{
     ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, PacketForwarderHandler, Server,
 };
