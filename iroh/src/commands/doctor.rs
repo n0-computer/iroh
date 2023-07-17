@@ -614,10 +614,9 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
     // create the config that enables exlusively the required protocol
     let mut enable_upnp = false;
     let mut enable_pcp = false;
-    let mut enable_nat_pmp = false;
+    let enable_nat_pmp = false;
     match protocol.to_ascii_lowercase().as_ref() {
         "upnp" => enable_upnp = true,
-        "nat_pmp" => enable_nat_pmp = true,
         "pcp" => enable_pcp = true,
         other => anyhow::bail!("Unknown port mapping protocol {other}"),
     }

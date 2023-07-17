@@ -571,7 +571,7 @@ impl Service {
                 Err(e) => return debug!("can't get mapping: {e}"),
             };
 
-            let ProbeOutput { upnp, pcp, pmp } = self.full_probe.output();
+            let ProbeOutput { upnp, pcp, pmp: _ } = self.full_probe.output();
 
             debug!("getting a port mapping for {local_ip}:{local_port} -> {external_addr:?}");
             let recently_probed =
