@@ -1,11 +1,7 @@
-<h1 align="center">iroh</h1>
-<div align="center">
- <strong>
-   IPFS reimagined.
- </strong>
-</div>
+<img alt="iroh" src="./.img/iroh_wordmark.svg" />
+https://iroh.computer
 
-<br />
+Bytes, Distributed.
 
 <div align="center">
   <!-- Crates version -->
@@ -27,8 +23,12 @@
 
 <div align="center">
   <h3>
+    <a href="https://iroh.computer/docs">
+      Docs Site
+    </a>
+    <span> | </span>
     <a href="https://docs.rs/iroh">
-      API Docs
+      Rust Docs
     </a>
     <span> | </span>
     <a href="https://github.com/n0-computer/iroh/releases">
@@ -38,25 +38,19 @@
 </div>
 <br/>
 
-## Usage
+Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device. At it's core, it's a peer-2-peer network built on a _magic socket_ that establishes [QUIC](https://en.wikipedia.org/wiki/QUIC) connections between peers. Peers request and provide _blobs_ of opaque bytes that are incrementally verified by their BLAKE3 hash during transfer.
 
-### Cli
-Sending data
-```sh
-$ ./iroh provide <file>
-```
+Iroh _peers_ create _documents_: mutable maps that connect arbitrary keys to BLAKE3 hashes of blobs. Documents can have multiple _editors_ and any number of _readers_. Online peers subscribe to changes that document editors publish for live, incremental updates. Peers sync documents quickly, and fetch linked blobs lazily.
 
-Receiving data
-```sh
-$ ./iroh get <hash>
-```
+## Using Iroh
+
+Iroh is delivered as a library. To use iroh in your project, check out https://iroh.computer/install to get started.
 
 ### As a library
 Disable default features when using `iroh` as a library:
 `iroh = { version: "...", default-features = false }`
 
-This removes dependencies that are only relevant when using `iroh` as
-a cli.
+This removes dependencies that are only relevant when using `iroh` as a cli.
 
 # License
 
