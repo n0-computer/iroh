@@ -19,6 +19,8 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
+use iroh_metrics::{derpserver::Metrics, inc};
+
 use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
     client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
@@ -1113,6 +1115,7 @@ impl PacketForwarder for Client {
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
                     if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
+                        inc!(Metrics, packets_forwarded_out);
                         return;
                     }
                 }

@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use futures::future::join_all;
 use tokio::sync::mpsc;
 
+use iroh_metrics::{derpserver::Metrics, inc};
+
 use super::{
     client_conn::ClientConnManager,
     types::{Packet, PeerConnState},
@@ -32,7 +34,7 @@ const RETRIES: usize = 3;
 // connections doesn't receive data frames."
 #[derive(Debug)]
 struct Client {
-    /// The client connection associated with the PublicKey
+    /// The client connection associated with the [`PublicKey`]
     conn: ClientConnManager,
     /// list of peers we have sent messages to
     sent_to: HashSet<PublicKey>,
@@ -63,19 +65,45 @@ impl Client {
     }
 
     pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.client_channels.send_queue, packet)
+        let res = try_send(&self.conn.client_channels.send_queue, packet);
+        if res.is_ok() {
+            inc!(Metrics, send_packets_sent);
+        }
+        res
     }
 
     pub fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.client_channels.disco_send_queue, packet)
+        let res = try_send(&self.conn.client_channels.disco_send_queue, packet);
+        if res.is_ok() {
+            inc!(Metrics, disco_packets_sent);
+        }
+        res
     }
 
     pub fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
-        try_send(&self.conn.client_channels.peer_gone, key)
+        let res = try_send(&self.conn.client_channels.peer_gone, key);
+        match res {
+            Ok(_) => {
+                inc!(Metrics, other_packets_sent);
+            }
+            Err(_) => {
+                inc!(Metrics, other_packets_dropped);
+            }
+        }
+        res
     }
 
     pub fn send_mesh_updates(&self, updates: Vec<PeerConnState>) -> Result<(), SendError> {
-        try_send(&self.conn.client_channels.mesh_update, updates)
+        let res = try_send(&self.conn.client_channels.mesh_update, updates);
+        match res {
+            Ok(_) => {
+                inc!(Metrics, other_packets_sent);
+            }
+            Err(_) => {
+                inc!(Metrics, other_packets_dropped);
+            }
+        }
+        res
     }
 }
 

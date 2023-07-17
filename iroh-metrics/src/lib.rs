@@ -10,6 +10,8 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
+/// Expose derpserver metrics
+pub mod derpserver;
 /// Expose magicsock metrics
 pub mod magicsock;
 /// Expose netcheck metrics
