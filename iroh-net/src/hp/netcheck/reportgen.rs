@@ -730,7 +730,7 @@ async fn run_probe(
         ))
         .await
         .map_err(|err| {
-            error!("Failed to check of probe would help: {err:#}");
+            error!("Failed to check if probe would help: {err:#}");
             err
         })
         .map_err(|err| ProbeError::AbortSet(err.into(), probe.clone()))?;
