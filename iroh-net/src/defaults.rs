@@ -33,7 +33,7 @@ pub fn default_derp_map() -> DerpMap {
 pub fn default_na_derp_region() -> DerpRegion {
     // The default NA derper run by number0.
     let default_n0_derp = DerpNode {
-        name: "default-1".into(),
+        name: "na-default-1".into(),
         region_id: NA_REGION_ID,
         url: format!("https://{NA_DERP_HOSTNAME}").parse().unwrap(),
         stun_only: false,
@@ -54,7 +54,7 @@ pub fn default_na_derp_region() -> DerpRegion {
 pub fn default_eu_derp_region() -> DerpRegion {
     // The default EU derper run by number0.
     let default_n0_derp = DerpNode {
-        name: "default-1".into(),
+        name: "eu-default-1".into(),
         region_id: EU_REGION_ID,
         url: format!("https://{EU_DERP_HOSTNAME}").parse().unwrap(),
         stun_only: false,
