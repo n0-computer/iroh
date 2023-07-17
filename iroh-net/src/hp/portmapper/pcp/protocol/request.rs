@@ -1,6 +1,13 @@
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
-use super::{opcode_data::OpcodeData, Version};
+use super::{
+    opcode_data::{MapData, MapProtocol, OpcodeData},
+    Version,
+};
+
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. See
+/// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 
 /// A PCP Request.
 ///
@@ -66,6 +73,31 @@ impl Request {
             client_addr,
             // the pcp announce opcode requests and responses have no opcode-specific payload
             opcode_data: OpcodeData::Announce,
+        }
+    }
+
+    pub fn get_mapping(
+        nonce: [u8; 12],
+        local_port: u16,
+        local_ip: Ipv4Addr,
+        preferred_external_port: Option<u16>,
+        preferred_external_address: Option<Ipv4Addr>,
+    ) -> Request {
+        Request {
+            version: Version::Pcp,
+            lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
+            client_addr: local_ip.to_ipv6_mapped(),
+            opcode_data: OpcodeData::MapData(MapData {
+                nonce,
+                protocol: MapProtocol::Udp,
+                local_port,
+                // if the pcp client does not know the external port, or does not have a
+                // preference, it must use 0.
+                external_port: preferred_external_port.unwrap_or_default(),
+                external_address: preferred_external_address
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED)
+                    .to_ipv6_mapped(),
+            }),
         }
     }
 
