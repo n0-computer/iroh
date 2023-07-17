@@ -12,7 +12,7 @@ use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
-use super::conn::{CurrentPortFate, Network};
+use super::{CurrentPortFate, Network};
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.

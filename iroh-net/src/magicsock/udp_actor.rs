@@ -16,8 +16,8 @@ use tracing::{debug, trace, warn};
 use crate::{disco, netcheck, stun};
 
 use super::{
-    conn::{Inner, Network, SendAddr},
     rebinding_conn::RebindingUdpConn,
+    {Inner, Network, SendAddr},
 };
 
 pub(super) enum UdpActorMessage {

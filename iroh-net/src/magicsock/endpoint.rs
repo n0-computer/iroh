@@ -13,7 +13,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{config, disco, key, magicsock::Timer, net::ip::is_unicast_link_local, stun};
 
-use super::conn::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
+use super::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -1105,11 +1105,12 @@ struct PongReply {
 }
 
 #[derive(Debug)]
-pub struct SentPing {
-    pub to: SendAddr,
-    pub at: Instant,
-    pub purpose: DiscoPingPurpose,
-    pub timer: Timer,
+pub(super) struct SentPing {
+    pub(super) to: SendAddr,
+    pub(super) at: Instant,
+    #[allow(dead_code)]
+    pub(super) purpose: DiscoPingPurpose,
+    pub(super) timer: Timer,
 }
 
 /// The reason why a discovery ping message was sent.
