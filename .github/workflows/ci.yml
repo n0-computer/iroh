@@ -272,7 +272,7 @@ jobs:
       run: cargo clippy --workspace --all-features --all-targets
 
     - name: clippy check (no features)
-      run: cargo clippy --workspace --no-default-features --all-targets
+      run: cargo clippy --workspace --no-default-features --lib --bins --tests
 
     - name: clippy check (default features)
       run: cargo clippy --workspace --all-targets
