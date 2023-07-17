@@ -466,22 +466,25 @@ impl DerpNodeCache {
 ///
 /// This uses the latencies from the last report to determine the order.  Regions with no
 /// data are at the end.
-fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
-    let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
+fn sort_regions<'a>(derp_map: &'a DerpMap, last_report: &Report) -> Vec<&'a DerpRegion> {
+    let mut prev: Vec<_> = derp_map.regions.values().filter(|r| !r.avoid).collect();
     prev.sort_by(|a, b| {
-        let da = last.region_latency.get(a.region_id);
-        let db = last.region_latency.get(b.region_id);
-        match (da, db) {
+        let latencies_a = last_report.region_latency.get(a.region_id);
+        let latencies_b = last_report.region_latency.get(b.region_id);
+        match (latencies_a, latencies_b) {
             (Some(_), None) => {
                 // Non-zero sorts before zero.
                 std::cmp::Ordering::Greater
             }
             (None, Some(_)) => {
                 // Zero can't sort before anything else.
+                std::cmp::Ordering::Less
+            }
+            (None, None) => {
+                // For both empty latencies sort by region_id.
                 a.region_id.cmp(&b.region_id)
             }
-            (None, None) => std::cmp::Ordering::Equal,
-            (Some(_), Some(_)) => match da.cmp(&db) {
+            (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
                 std::cmp::Ordering::Equal => a.region_id.cmp(&b.region_id),
                 x => x,
             },
