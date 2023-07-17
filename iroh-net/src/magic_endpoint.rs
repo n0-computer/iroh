@@ -1,4 +1,4 @@
-//! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::Conn].
+//! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
 use std::{
     net::SocketAddr,
@@ -14,7 +14,7 @@ use crate::{
     config,
     derp::DerpMap,
     key,
-    magicsock::{self, Callbacks, Conn},
+    magicsock::{self, Callbacks, MagicSock},
     netmap::NetworkMap,
     tls::{self, Keypair, PeerId},
 };
@@ -154,11 +154,11 @@ fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::Conn].
+/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
-    conn: Conn,
+    conn: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
@@ -182,7 +182,7 @@ impl MagicEndpoint {
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        let conn = magicsock::Conn::new(magicsock::Options {
+        let conn = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
@@ -378,7 +378,7 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn conn(&self) -> &Conn {
+    pub(crate) fn conn(&self) -> &MagicSock {
         &self.conn
     }
     #[cfg(test)]

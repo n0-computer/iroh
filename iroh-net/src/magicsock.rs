@@ -108,7 +108,7 @@ impl From<Network> for socket2::Domain {
     }
 }
 
-/// Contains options for `Conn::listen`.
+/// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub struct Options {
     /// The port to listen on.
@@ -122,7 +122,7 @@ pub struct Options {
     pub callbacks: Callbacks,
 }
 
-/// Contains options for `Conn::listen`.
+/// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug, Default)]
 pub struct Callbacks {
     /// Optionally provides a func to be called when endpoints change.
@@ -156,17 +156,17 @@ impl Default for Options {
 /// connection and upgrade to it.  It will also keep looking for better connections as the
 /// network details of both endpoints change.
 ///
-/// It is usually only necessary to use a single [`Conn`] instance in an application, it
+/// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about peers as
 /// possible.
 #[derive(Clone, Debug)]
-pub struct Conn {
+pub struct MagicSock {
     pub(self) inner: Arc<Inner>,
     // Empty when closed
     actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
 }
 
-/// The actual implementation of `Conn`.
+/// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
 pub(self) struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
@@ -270,10 +270,10 @@ impl EndpointUpdateState {
     }
 }
 
-impl Conn {
-    /// Creates a magic `Conn` listening on `opts.port`.
+impl MagicSock {
+    /// Creates a magic `MagicSock` listening on `opts.port`.
     ///
-    /// As the set of possible endpoints for a Conn changes, the [`Callbacks::on_endpoints`]
+    /// As the set of possible endpoints for a MagicSock changes, the [`Callbacks::on_endpoints`]
     /// callback of [`Options::callbacks`] is called.
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
@@ -409,7 +409,7 @@ impl Conn {
             .instrument(info_span!("actor")),
         );
 
-        let c = Conn {
+        let c = MagicSock {
             inner,
             actor_tasks: Arc::new(Mutex::new(vec![
                 main_actor_task.into(),
@@ -600,7 +600,7 @@ impl Conn {
     }
 }
 
-/// The info and state for the DiscoKey in the Conn.discoInfo map key.
+/// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
 ///
 /// Note that a DiscoKey does not necessarily map to exactly one
 /// node. In the case of shared nodes and users switching accounts, two
@@ -609,7 +609,7 @@ impl Conn {
 pub(self) struct DiscoInfo {
     pub(self) node_key: key::node::PublicKey,
     /// The precomputed key for communication with the peer that has the `node_key` used to
-    /// look up this `DiscoInfo` in Conn.discoInfo.
+    /// look up this `DiscoInfo` in MagicSock.discoInfo.
     /// Not modified once initialized.
     shared_key: key::node::SharedSecret,
 
@@ -648,7 +648,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
     m.values().all(|v| *v == 3)
 }
 
-impl AsyncUdpSocket for Conn {
+impl AsyncUdpSocket for MagicSock {
     #[instrument(skip_all, fields(self.name = %self.inner.name))]
     fn poll_send(
         &self,
@@ -865,7 +865,7 @@ struct Actor {
     /// Functions to run (in their own tasks) when endpoints are refreshed.
     on_endpoint_refreshed:
         HashMap<usize, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
-    /// When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
+    /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
@@ -2516,12 +2516,12 @@ impl Iterator for PacketSplitIter {
 
 /// The fake address used by the QUIC layer to address a peer.
 ///
-/// You can consider this as nothing more than a lookup key for a peer the [`Conn`] knows
+/// You can consider this as nothing more than a lookup key for a peer the [`MagicSock`] knows
 /// about.
 ///
-/// [`Conn`] can reach a peer by several real socket addresses, or maybe even via the derper
+/// [`MagicSock`] can reach a peer by several real socket addresses, or maybe even via the derper
 /// relay.  The QUIC layer however needs to address a peer by a stable [`SocketAddr`] so
-/// that normal socket APIs can function.  Thus when a new peer is introduced to a [`Conn`]
+/// that normal socket APIs can function.  Thus when a new peer is introduced to a [`MagicSock`]
 /// it is given a new fake address.  This is the type of that address.
 ///
 /// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
@@ -2623,10 +2623,10 @@ pub(crate) mod tests {
         conn.local_addr().unwrap().port()
     }
 
-    /// Returns a new Conn.
-    async fn new_test_conn() -> Conn {
+    /// Returns a new MagicSock.
+    async fn new_test_conn() -> MagicSock {
         let port = pick_port().await;
-        Conn::new(Options {
+        MagicSock::new(Options {
             port,
             ..Default::default()
         })
