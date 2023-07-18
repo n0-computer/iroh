@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     collection::IrohCollectionParser,
     database::flat::{Database, FNAME_PATHS},
@@ -170,11 +170,16 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
             } else {
                 let keypair = Keypair::generate();
                 let ser_key = keypair.to_openssh()?;
-                if let Some(parent) = key_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
+
+                // Try to canoncialize if possible
+                let key_path = key_path.canonicalize().unwrap_or(key_path);
+                let key_path_parent = key_path.parent().ok_or_else(|| {
+                    anyhow!("no parent directory found for '{}'", key_path.display())
+                })?;
+                tokio::fs::create_dir_all(&key_path_parent).await?;
+
                 // write to tempfile
-                let (file, temp_file_path) = tempfile::NamedTempFile::new()
+                let (file, temp_file_path) = tempfile::NamedTempFile::new_in(key_path_parent)
                     .context("unable to create tempfile")?
                     .into_parts();
                 let mut file = tokio::fs::File::from_std(file);
