@@ -270,7 +270,7 @@ fn cli_provide_addresses() -> Result<()> {
 
 /// Parameter for `test_provide_get_loop`, that determines how we handle the fetched data from the
 /// `iroh get` command
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Output {
     /// Indicates we should save the content as a file in the given directory, by passing the path
     /// to the `--out` argument in `iroh get`
@@ -330,7 +330,12 @@ fn make_provider(
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
     Ok(provider)
 }
-
+fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
+    for _i in 0..10 {
+        test_provide_get_loop_inner(path, input, output.clone())?;
+    }
+    Ok(())
+}
 /// Test the provide and get loop for success, stderr output, and file contents.
 ///
 /// Can optionally pipe the given `path` content to the provider from stdin & can optionally
@@ -340,7 +345,7 @@ fn make_provider(
 /// completed. Then checks the output of the "provide" and "get" processes against expected
 /// regex output. Finally, test the content fetched from the "get" process is the same as
 /// the "provided" content.
-fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
+fn test_provide_get_loop_inner(path: &Path, input: Input, output: Output) -> Result<()> {
     let out = match output {
         Output::Stdout => None,
         Output::Path => {
