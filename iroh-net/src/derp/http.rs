@@ -48,8 +48,8 @@ mod tests {
     use tokio::task::JoinHandle;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::hp::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
-    use crate::hp::key::node::{PublicKey, SecretKey};
+    use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
+    use crate::key::node::{PublicKey, SecretKey};
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {

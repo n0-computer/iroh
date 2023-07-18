@@ -153,7 +153,7 @@ impl RegionLatencies {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`], the [`crate::hp::magicsock::Conn`] using this
+/// [`Client::receive_stun_packet`], the [`crate::magicsock::MagicSock`] using this
 /// client needs to be wired up to do so.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -290,7 +290,7 @@ pub(crate) enum Message {
         ///
         /// Responses are never read from this socket, they must be passed in via the
         /// [`Message::StunPacket`] message since the socket is also used to receive
-        /// other packets from in the magicsocket (`Conn`).
+        /// other packets from in the magicsocket (`MagicSock`).
         ///
         /// If not provided this will attempt to bind a suitable socket itself.
         stun_sock_v4: Option<Arc<UdpSocket>>,
@@ -838,8 +838,8 @@ mod tests {
     use tokio::time;
 
     use crate::defaults::DEFAULT_DERP_STUN_PORT;
-    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
-    use crate::hp::ping::Pinger;
+    use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::ping::Pinger;
     use crate::test_utils::setup_logging;
 
     use super::*;

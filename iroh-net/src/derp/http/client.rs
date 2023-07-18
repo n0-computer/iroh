@@ -10,6 +10,7 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use hyper::upgrade::Upgraded;
 use hyper::{header::UPGRADE, Body, Request};
+use iroh_metrics::inc;
 use rand::Rng;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -19,19 +20,13 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
-use iroh_metrics::inc;
-
-use crate::hp::derp::client_conn::Io;
-use crate::hp::derp::{
-    client::ClientBuilder as DerpClientBuilder, metrics::Metrics, DerpNode, MeshKey,
-    PacketForwarder, UseIpv4, UseIpv6,
+use crate::derp::{
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
+    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
+    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
-use crate::hp::dns::DNS_RESOLVER;
-use crate::hp::key;
-
-use crate::hp::derp::{
-    client::Client as DerpClient, server::PacketForwarderHandler, DerpRegion, ReceivedMessage,
-};
+use crate::dns::DNS_RESOLVER;
+use crate::key;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -327,7 +322,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active derp connection, returns the already
-    /// connected [`crate::hp::derp::client::Client`].
+    /// connected [`crate::derp::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
         if self.inner.is_closed.load(Ordering::Relaxed) {
             return Err(ClientError::Closed);
@@ -1173,7 +1168,7 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hp::{
+    use crate::{
         derp::{http::ServerBuilder, types::ServerMessage},
         key::node::SecretKey,
     };

@@ -34,14 +34,14 @@ use tracing::{debug, debug_span, error, info, info_span, instrument, trace, warn
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
-use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
-use crate::hp::dns::DNS_RESOLVER;
-use crate::hp::netcheck::{self, Report};
-use crate::hp::ping::Pinger;
-use crate::hp::{portmapper, stun};
+use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::dns::DNS_RESOLVER;
 use crate::net::interfaces;
 use crate::net::ip;
+use crate::netcheck::{self, Report};
+use crate::ping::Pinger;
 use crate::util::{CancelOnDrop, MaybeFuture};
+use crate::{portmapper, stun};
 
 mod hairpin;
 mod probes;

@@ -29,7 +29,8 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_net::{
-    hp::{cfg::Endpoint, derp::DerpMap},
+    config::Endpoint,
+    derp::DerpMap,
     tls::{self, Keypair, PeerId},
     MagicEndpoint,
 };

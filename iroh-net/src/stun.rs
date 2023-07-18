@@ -150,7 +150,7 @@ pub mod test {
         sync::Arc,
     };
 
-    use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
     use super::*;
     use anyhow::Result;

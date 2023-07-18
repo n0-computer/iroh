@@ -12,7 +12,7 @@ use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
-use super::conn::{CurrentPortFate, Network};
+use super::{CurrentPortFate, Network};
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
@@ -226,7 +226,7 @@ async fn listen_packet(network: Network, port: u16) -> std::io::Result<std::net:
 
 #[cfg(test)]
 mod tests {
-    use crate::{hp::key, tls};
+    use crate::{key, tls};
 
     use super::*;
     use anyhow::Result;
@@ -259,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
-        if !crate::hp::netcheck::os_has_ipv6().await {
+        if !crate::netcheck::os_has_ipv6().await {
             return Ok(());
         }
         rebinding_conn_send_recv(Network::Ipv6).await

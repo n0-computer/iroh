@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::hp::netcheck::{self, reportgen, Inflight};
-use crate::hp::stun;
+use crate::netcheck::{self, reportgen, Inflight};
+use crate::stun;
 use crate::util::CancelOnDrop;
 
 /// The amount of time we wait for a hairpinned packet to come back.
