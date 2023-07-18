@@ -15,10 +15,7 @@ use futures::{
 };
 use iroh::{
     collection::{ArrayLinkStream, Blob, Collection, IrohCollectionParser},
-    database::{
-        flat::{create_collection, DataSource},
-        mem,
-    },
+    database::mem,
     node::{Builder, Event, Node, StaticTokenAuthHandler},
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
@@ -153,8 +150,11 @@ fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     }
 }
 
+#[cfg(feature = "flat-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
+    use iroh::database::flat::{create_collection, DataSource};
+
     let dir: PathBuf = testdir!();
     let filename = "hello_world";
     let path = dir.join(filename);
@@ -359,8 +359,11 @@ fn setup_logging() {
         .ok();
 }
 
+#[cfg(feature = "flat-db")]
 #[tokio::test]
 async fn test_server_close() {
+    use iroh::database::flat::create_collection;
+
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     setup_logging();
@@ -413,8 +416,11 @@ async fn test_server_close() {
         .expect("supervisor failed");
 }
 
+#[cfg(feature = "flat-db")]
 #[tokio::test]
 async fn test_blob_reader_partial() -> Result<()> {
+    use iroh::database::flat::create_collection;
+
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     let dir = testdir!();
