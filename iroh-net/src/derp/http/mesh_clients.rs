@@ -116,7 +116,7 @@ mod tests {
             .try_init()
             .ok();
 
-        // TODO(ramfox): figure out why this fails on later rounds
+        // TODO(ramfox): lower this back down to 10 after a few days with no failures
         for i in 0..50 {
             println!("TEST_MESH_NETWORK: round {i}");
             test_mesh_network_once().await?;
