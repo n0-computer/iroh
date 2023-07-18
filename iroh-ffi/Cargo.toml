@@ -1,5 +1,5 @@
 [package]
-name = "iroh_ffi"
+name = "iroh-ffi"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -10,10 +10,11 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 [lib]
-name="iroh"
-crate-type = ["staticlib"]
+name = "iroh"
+crate-type = ["cdylib", "staticlib"]
 
 [features]
+default = []
 c-headers = ["safer-ffi/headers"]
 
 [dependencies]

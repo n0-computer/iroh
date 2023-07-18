@@ -4,13 +4,21 @@ pub mod error;
 pub mod get;
 pub mod node;
 
-#[cfg(feature = "c-headers")]
-pub fn generate_headers() -> std::io::Result<()> {
-    safer_ffi::headers::builder().to_file("iroh.h")?.generate()
-}
-
 #[ffi_export]
 /// Deallocate an Iroh-allocated string.
 pub fn iroh_string_free(string: char_p::Box) {
-    drop(string)
+    drop(string);
+}
+
+// Generates the headers.
+//
+// `cargo test build_headers --features c-headers` to build
+#[safer_ffi::cfg_headers]
+#[test]
+fn build_headers() -> std::io::Result<()> {
+    safer_ffi::headers::builder()
+        .to_file("iroh.h")?
+        .generate()?;
+
+    Ok(())
 }

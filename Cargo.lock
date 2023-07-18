@@ -1790,6 +1790,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "data-encoding",
+ "iroh",
+ "iroh-io",
+ "iroh-net",
+ "libc",
+ "multibase",
+ "num_cpus",
+ "quinn",
+ "range-collections",
+ "safer-ffi",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "iroh-io"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1884,27 +1905,6 @@ dependencies = [
  "wmi",
  "x509-parser",
  "zeroize",
-]
-
-[[package]]
-name = "iroh_ffi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "data-encoding",
- "iroh",
- "iroh-io",
- "iroh-net",
- "libc",
- "multibase",
- "num_cpus",
- "quinn",
- "range-collections",
- "safer-ffi",
- "tempfile",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
