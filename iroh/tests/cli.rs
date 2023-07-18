@@ -6,11 +6,14 @@ use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
 use iroh::dial::Ticket;
+use nix::sys::signal::Signal;
+use nix::unistd::Pid;
 use rand::{RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
@@ -162,6 +165,39 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     test_provide_get_loop(&path, Input::Stdin, Output::Stdout)
 }
 
+#[test]
+fn provide_stress() -> std::io::Result<()> {
+    // start some providers
+    let providers = (0..100)
+        .map(|i| {
+            println!("spawning provide {i}");
+            call_provide()
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    std::thread::sleep(Duration::from_secs(10));
+    for (i, provider) in providers.into_iter().enumerate() {
+        for pid in provider.pids() {
+            println!("killing provide {i} with control-c",);
+            nix::sys::signal::kill(Pid::from_raw(pid as i32), Signal::SIGINT).unwrap();
+        }
+        provider.try_wait()?;
+    }
+    Ok(())
+}
+
+fn call_provide() -> std::io::Result<ReaderHandle> {
+    let dir = testdir!();
+    let iroh_data_dir = dir.join("iroh_data_dir");
+    cmd(
+        iroh_bin(),
+        ["provide", "--addr", ADDR, "--rpc-port", "disabled"],
+    )
+    .env("IROH_DATA_DIR", &iroh_data_dir)
+    .stdin_null()
+    .stderr_capture()
+    .reader()
+}
+
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
@@ -231,30 +267,6 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     assert_eq!(blobs, vec![bar_path, foo_path]);
 
     Ok(())
-}
-
-fn cli_provide_addresses_many() -> Result<()> {
-    let tasks = (0..100).map(|i| {
-        std::thread::Builder::new()
-            .name(format!("cli_provide_addresses_many_{}", i))
-            .spawn(cli_provide_addresses)
-            .unwrap()
-    });
-    let _results = tasks
-        .map(|t| t.join().unwrap())
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(())
-}
-
-#[test]
-fn cli_provide_addresses2() -> Result<()> {
-    println!("{}", std::process::id());
-    cli_provide_addresses()
-}
-
-#[test]
-fn cli_provide_addresses3() -> Result<()> {
-    cli_provide_addresses()
 }
 
 #[test]
