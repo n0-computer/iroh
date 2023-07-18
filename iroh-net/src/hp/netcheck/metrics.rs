@@ -1,6 +1,7 @@
-use struct_iterable::Iterable;
-
-use crate::core::{Counter, Metric};
+use iroh_metrics::{
+    core::{Counter, Metric},
+    struct_iterable::Iterable,
+};
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]

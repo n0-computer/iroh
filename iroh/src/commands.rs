@@ -64,6 +64,7 @@ impl Cli {
                 hash,
                 peer,
                 addrs,
+                region,
                 ticket,
                 token,
                 out,
@@ -83,6 +84,7 @@ impl Cli {
                             addrs,
                             peer_id: peer,
                             keylog: self.keylog,
+                            derp_region: region,
                             derp_map: config.derp_map(),
                             keypair: Keypair::generate(),
                         },
@@ -235,7 +237,16 @@ pub enum Commands {
         /// base32-encoded Request token to use for authentication, if any
         #[clap(long)]
         token: Option<RequestToken>,
+        /// DERP region of the provider
+        #[clap(long)]
+        region: Option<u16>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
+        ///
+        /// If the directory exists and contains a partial download, the download will
+        /// be resumed.
+        ///
+        /// Otherwise, all files in the collection will be overwritten. Other files
+        /// in the directory will be left untouched.
         #[clap(long, short)]
         out: Option<PathBuf>,
         #[clap(conflicts_with_all = &["hash", "peer", "addrs", "token"])]
@@ -299,9 +310,10 @@ pub fn init_metrics_collection(
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
             metrics.insert(iroh::metrics::Metrics::new(reg));
-            metrics.insert(iroh_metrics::magicsock::Metrics::new(reg));
-            metrics.insert(iroh_metrics::netcheck::Metrics::new(reg));
-            metrics.insert(iroh_metrics::portmap::Metrics::new(reg));
+            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
         });
 
         return Some(rt.main().spawn(async move {

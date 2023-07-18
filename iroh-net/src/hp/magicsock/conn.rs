@@ -15,7 +15,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_metrics::{inc, inc_by, magicsock::Metrics as MagicsockMetrics};
+use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -39,6 +39,7 @@ use super::{
     endpoint::{EndpointInfo, Options as EndpointOptions, PeerMap},
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
+    Metrics as MagicsockMetrics,
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -206,12 +207,23 @@ pub struct Inner {
 }
 
 impl Inner {
+    /// Returns the derp region we are connected to, that has the best latency.
+    ///
+    /// If `0`, then we are not connected to any derp region.
     pub(super) fn my_derp(&self) -> u16 {
         self.my_derp.load(Ordering::Relaxed)
     }
 
+    /// Sets the derp region with the best latency.
+    ///
+    /// If we are not connected to any derp regions, set this to `0`.
     pub(super) fn set_my_derp(&self, my_derp: u16) {
         self.my_derp.store(my_derp, Ordering::Relaxed);
+    }
+
+    /// Returns `true` if we have DERP configuration for the given DERP `region`.
+    pub async fn has_derp_region(&self, region: u16) -> bool {
+        self.get_derp_region(region).await.is_some()
     }
 
     pub(super) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
@@ -270,7 +282,7 @@ impl Conn {
     }
 
     async fn with_name(name: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::new().await;
+        let port_mapper = portmapper::Client::default().await;
 
         let Options {
             port,
@@ -504,6 +516,18 @@ impl Conn {
             .await?;
         r.await?;
         Ok(())
+    }
+
+    /// Returns the DERP region with the best latency.
+    ///
+    /// If `None`, then we currently have no verified connection to a DERP node in any region.
+    pub async fn my_derp(&self) -> Option<u16> {
+        let my_derp = self.inner.my_derp();
+        if my_derp == 0 {
+            None
+        } else {
+            Some(my_derp)
+        }
     }
 
     /// Called when the control client gets a new network map from the control server.
@@ -1226,9 +1250,9 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn send_derp(&mut self, port: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
+    fn send_derp(&mut self, region_id: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
         self.send_derp_actor(DerpActorMessage::Send {
-            region_id: port,
+            region_id,
             contents,
             peer,
         });
@@ -1605,9 +1629,11 @@ impl Actor {
         true
     }
 
-    /// Returns a non-zero but deterministic DERP node to
-    /// connect to. This is only used if netcheck couldn't find the nearest one
-    /// For instance, if UDP is blocked and thus STUN latency checks aren't working
+    /// Returns a deterministic DERP node to connect to. This is only used if netcheck
+    /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
+    /// latency checks aren't working.
+    ///
+    /// If no [`DerpMap`] exists, returns `0`.
     async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
             let derp_map = self.conn.derp_map.read().await;
@@ -2657,7 +2683,11 @@ pub(crate) mod tests {
 
     pub async fn run_derp_and_stun(
         stun_ip: IpAddr,
-    ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
+    ) -> Result<(
+        DerpMap,
+        Option<u16>,
+        impl FnOnce() -> BoxFuture<'static, ()>,
+    )> {
         // TODO: pass a mesh_key?
 
         let server_key = key::node::SecretKey::generate();
@@ -2672,15 +2702,16 @@ pub(crate) mod tests {
         println!("DERP listening on {:?}", https_addr);
 
         let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
+        let region_id = 1;
         let m = DerpMap {
             regions: [(
                 1,
                 DerpRegion {
-                    region_id: 1,
+                    region_id,
                     region_code: "test".into(),
                     nodes: vec![DerpNode {
                         name: "t1".into(),
-                        region_id: 1,
+                        region_id,
                         // In test mode, the DERP client does not validate HTTPS certs, so the host
                         // name is irrelevant, but the port is used.
                         url: format!("https://test-node.invalid:{}", https_addr.port())
@@ -2707,7 +2738,7 @@ pub(crate) mod tests {
             }) as BoxFuture<'static, ()>
         };
 
-        Ok((m, cleanup))
+        Ok((m, Some(region_id), cleanup))
     }
 
     /// Magicsock plus wrappers for sending packets
@@ -2865,7 +2896,7 @@ pub(crate) mod tests {
             stun_ip: "127.0.0.1".parse()?,
         };
 
-        let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+        let (derp_map, region, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -2958,7 +2989,7 @@ pub(crate) mod tests {
                     println!("[{}] connecting to {}", a_name, b_addr);
                     let conn = a
                         .endpoint
-                        .connect(b_peer_id, &ALPN, &[b_addr])
+                        .connect(b_peer_id, &ALPN, region, &[b_addr])
                         .await
                         .with_context(|| format!("[{}] connect", a_name))?;
 
@@ -3039,7 +3070,7 @@ pub(crate) mod tests {
         };
 
         for _ in 0..10 {
-            let (derp_map, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+            let (derp_map, _, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;

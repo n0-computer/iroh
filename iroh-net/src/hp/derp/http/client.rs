@@ -19,10 +19,12 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
+use iroh_metrics::inc;
+
 use crate::hp::derp::client_conn::Io;
 use crate::hp::derp::{
-    client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
-    UseIpv6,
+    client::ClientBuilder as DerpClientBuilder, metrics::Metrics, DerpNode, MeshKey,
+    PacketForwarder, UseIpv4, UseIpv6,
 };
 use crate::hp::dns::DNS_RESOLVER;
 use crate::hp::key;
@@ -607,6 +609,8 @@ impl Client {
             return Err(ClientError::NoNodeForTarget(target));
         }
         let mut first_err: Option<ClientError> = None;
+        // TODO (ramfox): these dials should probably happen in parallel, and we should return the
+        // first one to respond.
         for node in reg.nodes {
             if node.stun_only {
                 if first_err.is_none() {
@@ -1111,6 +1115,7 @@ impl PacketForwarder for Client {
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
                     if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
+                        inc!(Metrics, packets_forwarded_out);
                         return;
                     }
                 }

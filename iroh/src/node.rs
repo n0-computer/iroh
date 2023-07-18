@@ -567,7 +567,13 @@ impl<D: BaoReadonlyDb> Node<D> {
     pub async fn ticket(&self, hash: Hash) -> Result<Ticket> {
         // TODO: Verify that the hash exists in the db?
         let addrs = self.local_endpoint_addresses().await?;
-        Ticket::new(hash, self.peer_id(), addrs, None, true)
+        let region = self.inner.endpoint.my_derp().await;
+        Ticket::new(hash, self.peer_id(), addrs, None, true, region)
+    }
+
+    /// Return the DERP region that this provider is connected to
+    pub async fn my_derp(&self) -> Option<u16> {
+        self.inner.endpoint.my_derp().await
     }
 
     /// Aborts the node.

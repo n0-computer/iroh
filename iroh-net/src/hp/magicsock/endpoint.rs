@@ -292,6 +292,16 @@ impl Endpoint {
                 }
             }
         }
+        // NOTE: this should be checked for before dialing
+        // In our current set up, there is no way to report an error.
+        // TODO(ramfox): figure out method of reporting dial errors this far down into the stack
+        if udp_addr.is_none() && derp_addr.is_none() {
+            tracing::error!(
+                "unable to ping endpoint {} {:?}, no UDP or DERP addresses known.",
+                self.id,
+                self.public_key
+            );
+        }
     }
 
     /// Cleanup the expired ping for the passed in txid.

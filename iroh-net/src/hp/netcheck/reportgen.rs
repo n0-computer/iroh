@@ -26,13 +26,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use iroh_metrics::inc;
-use iroh_metrics::netcheck::Metrics as NetcheckMetrics;
 use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument};
 
+use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 use crate::hp::dns::DNS_RESOLVER;
@@ -348,8 +348,10 @@ impl Actor {
                     if let Some(ref addr) = self.report.global_v4 {
                         // Only needed for the first IPv4 address discovered, but hairpin
                         // actor ignores subsequent messages.
-                        self.hairpin_actor.start_check(*addr);
-                        self.outstanding_tasks.hairpin = true;
+                        if !self.hairpin_actor.has_started() {
+                            self.hairpin_actor.start_check(*addr);
+                            self.outstanding_tasks.hairpin = true;
+                        }
                     }
                 }
                 Probe::Https { .. } | Probe::Icmp { .. } => (),

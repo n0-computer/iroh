@@ -16,11 +16,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{instrument, trace};
 
+use iroh_metrics::inc;
+
 use crate::hp::key::node::{PublicKey, SecretKey};
 
 use super::client_conn::ClientConnBuilder;
 use super::{
     clients::Clients,
+    metrics::Metrics,
     types::{PacketForwarder, PeerConnState, ServerMessage},
     MeshKey,
 };
@@ -28,6 +31,7 @@ use super::{
     recv_client_key, types::ServerInfo, write_frame, write_frame_timeout, FrameType, MAGIC,
     PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
 };
+
 // TODO: skiping `verboseDropKeys` for now
 
 static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
@@ -466,6 +470,7 @@ where
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
                                 tracing::warn!("send packet: no way to reach client {key:?}, dropped packet");
+                                inc!(Metrics, send_packets_dropped);
                             }
                         }
                        ServerMessage::SendDiscoPacket((key, packet)) => {
@@ -475,6 +480,7 @@ where
                                 // if this client is in our local network, just try to send the
                                 // packet
                                 if self.clients.send_disco_packet(&key, packet).is_ok() {
+
                                     self.clients.record_send(&src, key);
                                 }
                             } else if let Some(Some(fwd)) = self.client_mesh.get_mut(&key) {
@@ -483,9 +489,11 @@ where
                                 fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
                                 tracing::warn!("send disco packet: no way to reach client {key:?}, dropped packet");
+                                inc!(Metrics, disco_packets_dropped);
                             }
                        }
                        ServerMessage::CreateClient(client_builder) => {
+                           inc!(Metrics, accepts);
                            tracing::trace!("create client: {:?}", client_builder.key);
                            let key = client_builder.key.clone();
                            // add client to mesh
@@ -502,6 +510,7 @@ where
 
                         }
                        ServerMessage::RemoveClient((key, conn_num)) => {
+                           inc!(Metrics, disconnects);
                            tracing::trace!("remove client: {:?}", key);
                            // ensure we still have the client in question
                            if self.clients.has_client(&key, conn_num) {
@@ -518,6 +527,7 @@ where
                            tracing::trace!("add packet forwarder: {:?}", key);
                            // Only one packet forward allowed at a time right now
                            self.client_mesh.insert(key, Some(forwarder));
+                           inc!(Metrics, added_pkt_fwder);
                        },
 
                        ServerMessage::RemovePacketForwarder(key) => {
@@ -525,12 +535,12 @@ where
                            // check if we have a local connection to the client at `key`
                            if self.clients.contains_key(&key) {
                                // remove any current packet forwarder associated with key
-                               // and not that we have a local connection to the client at the
-                               // given key
+                               // but leave the local connection to the given key
                                self.client_mesh.insert(key, None);
                            } else {
                                self.client_mesh.remove(&key);
                            }
+                           inc!(Metrics, removed_pkt_fwder);
                        },
                        ServerMessage::Shutdown => {
                         tracing::info!("server gracefully shutting down...");

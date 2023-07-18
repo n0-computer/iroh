@@ -1,7 +1,7 @@
 //! Port mapping client and service.
 
 use std::{
-    net::SocketAddrV4,
+    net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
     time::{Duration, Instant},
 };
@@ -11,14 +11,18 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info_span, trace, Instrument};
 
-use iroh_metrics::{inc, portmap::Metrics};
+use iroh_metrics::inc;
 
-use crate::util;
+use crate::{net::interfaces::HomeRouter, util};
 
 use mapping::CurrentMapping;
 
 mod mapping;
+mod metrics;
+mod pcp;
 mod upnp;
+
+pub use metrics::Metrics;
 
 /// If a port mapping service has been seen within the last [`AVAILABILITY_TRUST_DURATION`] it will
 /// not be probed again.
@@ -67,6 +71,28 @@ enum Message {
     },
 }
 
+/// Configures which port mapping protocols are enabled in the [`Service`].
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Whether UPnP is enabled.
+    pub enable_upnp: bool,
+    /// Whether PCP is enabled.
+    pub enable_pcp: bool,
+    /// Whether PMP is enabled.
+    pub enable_nat_pmp: bool,
+}
+
+impl Default for Config {
+    /// By default all port mapping protocols are enabled.
+    fn default() -> Self {
+        Config {
+            enable_upnp: true,
+            enable_pcp: true,
+            enable_nat_pmp: true,
+        }
+    }
+}
+
 /// Port mapping client.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -81,11 +107,18 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a client that uses the default configuration.
+    ///
+    /// See [`Config::default`].
+    pub async fn default() -> Self {
+        Self::new(Config::default()).await
+    }
+
     /// Create a new port mapping client.
-    pub async fn new() -> Self {
+    pub async fn new(config: Config) -> Self {
         let (service_tx, service_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
 
-        let (service, watcher) = Service::new(service_rx);
+        let (service, watcher) = Service::new(config, service_rx);
 
         let handle = util::CancelOnDrop::new(
             "portmap_service",
@@ -172,7 +205,7 @@ impl Client {
 struct Probe {
     /// The last [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
-    // TODO(@divma): PCP placeholder.
+    /// Last time PCP was seen.
     last_pcp: Option<Instant>,
     // TODO(@divma): PMP placeholder.
     last_pmp: Option<Instant>,
@@ -180,14 +213,20 @@ struct Probe {
 
 impl Probe {
     /// Create a new probe based on a previous output.
-    async fn new(output: ProbeOutput) -> Probe {
-        let ProbeOutput {
-            upnp,
-            pcp: _,
-            pmp: _,
-        } = output;
+    async fn new(
+        config: Config,
+        output: ProbeOutput,
+        local_ip: Ipv4Addr,
+        gateway: Ipv4Addr,
+    ) -> Probe {
+        let ProbeOutput { upnp, pcp, pmp: _ } = output;
+        let Config {
+            enable_upnp,
+            enable_pcp,
+            enable_nat_pmp: _,
+        } = config;
         let mut upnp_probing_task = util::MaybeFuture {
-            inner: (!upnp).then(|| {
+            inner: (enable_upnp && !upnp).then(|| {
                 Box::pin(async {
                     upnp::probe_available()
                         .await
@@ -196,8 +235,17 @@ impl Probe {
             }),
         };
 
-        // placeholder tasks
-        let pcp_probing_task = async { None };
+        let mut pcp_probing_task = util::MaybeFuture {
+            inner: (enable_pcp && !pcp).then(|| {
+                Box::pin(async {
+                    inc!(Metrics, pcp_probes);
+                    pcp::probe_available(local_ip, gateway)
+                        .await
+                        .then(Instant::now)
+                })
+            }),
+        };
+
         let pmp_probing_task = async { None };
 
         if upnp_probing_task.inner.is_some() {
@@ -205,11 +253,10 @@ impl Probe {
         }
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
-        let mut pcp_done = true;
+        let mut pcp_done = pcp_probing_task.inner.is_none();
         let mut pmp_done = true;
 
         tokio::pin!(pmp_probing_task);
-        tokio::pin!(pcp_probing_task);
 
         let mut probe = Probe::default();
 
@@ -247,8 +294,11 @@ impl Probe {
             .map(|(_gateway_addr, last_probed)| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        // not probing for now
-        let pcp = false;
+        let pcp = self
+            .last_pcp
+            .as_ref()
+            .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
+            .unwrap_or_default();
 
         // not probing for now
         let pmp = false;
@@ -287,6 +337,7 @@ impl Probe {
             self.last_upnp_gateway_addr = last_upnp_gateway_addr;
         }
         if last_pcp.is_some() {
+            inc!(Metrics, pcp_available);
             self.last_pcp = last_pcp;
         }
         if last_pmp.is_some() {
@@ -301,6 +352,7 @@ type ProbeResult = Result<ProbeOutput, String>;
 /// A port mapping client.
 #[derive(Debug)]
 pub struct Service {
+    config: Config,
     /// Local port to map.
     local_port: Option<NonZeroU16>,
     /// Channel over which the service is informed of messages.
@@ -327,9 +379,13 @@ pub struct Service {
 }
 
 impl Service {
-    fn new(rx: mpsc::Receiver<Message>) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
+    fn new(
+        config: Config,
+        rx: mpsc::Receiver<Message>,
+    ) -> (Self, watch::Receiver<Option<SocketAddrV4>>) {
         let (current_mapping, watcher) = CurrentMapping::new();
         let service = Service {
+            config,
             local_port: None,
             rx,
             current_mapping,
@@ -531,8 +587,20 @@ impl Service {
                     let _ = result_tx.send(Ok(probe_output));
                 } else {
                     inc!(Metrics, probes_started);
+
+                    let (local_ip, gateway) = match ip_and_gateway() {
+                        Ok(ip_and_gw) => ip_and_gw,
+                        Err(e) => {
+                            // there is no guarantee this will be displayed, so log it anyway
+                            debug!("could not start probe: {e}");
+                            let _ = result_tx.send(Err(e.to_string()));
+                            return;
+                        }
+                    };
+
+                    let config = self.config.clone();
                     let handle = tokio::spawn(
-                        async move { Probe::new(probe_output).await }
+                        async move { Probe::new(config, probe_output, local_ip, gateway).await }
                             .instrument(info_span!("portmapper.probe")),
                     );
                     let receivers = vec![result_tx];
@@ -541,4 +609,29 @@ impl Service {
             }
         }
     }
+}
+
+/// Gets the local ip and gateway address for port mapping.
+fn ip_and_gateway() -> Result<(Ipv4Addr, Ipv4Addr)> {
+    let Some(HomeRouter { gateway, my_ip }) = HomeRouter::new() else {
+        anyhow::bail!("no gateway found for probe");
+    };
+
+    let local_ip = match my_ip {
+        Some(std::net::IpAddr::V4(ip))
+            if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() =>
+        {
+            ip
+        }
+        other => {
+            debug!("no address suitable for port mapping found ({other:?}), using localhost");
+            Ipv4Addr::LOCALHOST
+        }
+    };
+
+    let std::net::IpAddr::V4(gateway) = gateway else {
+        anyhow::bail!("gateway found is ipv6, ignoring");
+    };
+
+    Ok((local_ip, gateway))
 }

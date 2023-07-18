@@ -559,6 +559,7 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
         [
             (r"Listening addresses:", 1),
             (r"^  \S+", -1),
+            (r"DERP Region:", 1),
             (r"PeerID: [_\w\d-]*", 1),
             (r"", 1),
             (r"Adding .*", 1),

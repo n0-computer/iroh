@@ -3,7 +3,7 @@ name = "iroh"
 version = "0.4.1"
 edition = "2021"
 readme = "README.md"
-description = "IPFS reimagined"
+description = "Bytes. Distributed."
 license = "MIT/Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
@@ -49,6 +49,7 @@ multibase = { version = "0.9.1", optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 data-encoding = "2.4.0"
+url = { version = "2.4", features = ["serde"] }
 
 
 [features]
@@ -81,3 +82,10 @@ genawaiter = { version = "0.99", features = ["futures03"] }
 name = "iroh"
 required-features = ["cli"]
 
+[[example]]
+name = "collection"
+required-features = ["mem-db", "iroh-collection"]
+
+[[example]]
+name = "hello-world"
+required-features = ["mem-db"]
