@@ -331,7 +331,7 @@ fn make_provider(
     Ok(provider)
 }
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
-    for _i in 0..11 {
+    for _i in 0..20 {
         test_provide_get_loop_inner(path, input, output.clone())?;
     }
     Ok(())
