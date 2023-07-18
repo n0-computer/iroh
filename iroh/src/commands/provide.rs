@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
-use iroh_net::{hp::derp::DerpMap, tls::Keypair};
+use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
 use crate::config::iroh_data_root;

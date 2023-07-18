@@ -12,13 +12,13 @@ use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::hp::{
+use crate::{
     derp::{self, DerpMap, MAX_PACKET_SIZE},
     key::{self, node::PUBLIC_KEY_LENGTH},
 };
 
-use super::conn::{ActorMessage, Inner};
 use super::Metrics as MagicsockMetrics;
+use super::{ActorMessage, Inner};
 
 /// How long a non-home DERP connection needs to be idle (last written to) before we close it.
 const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);

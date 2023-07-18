@@ -1,9 +1,15 @@
+//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+//!
+//! Based on tailscale/wgengine/magicsock
+
+// #[cfg(test)]
+// pub(crate) use conn::tests as conn_tests;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    ops::Deref,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
@@ -25,22 +31,32 @@ use tokio::{
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::{
-    hp::{
-        cfg::{self, DERP_MAGIC_IP},
-        derp::{self, DerpMap, DerpRegion},
-        disco, key, netcheck, netmap, portmapper, stun,
-    },
+    config::{self, DERP_MAGIC_IP},
+    derp::{self, DerpMap, DerpRegion},
+    disco, key,
     net::ip::LocalAddresses,
+    netcheck, netmap, portmapper, stun,
     util::AbortingJoinHandle,
 };
 
-use super::{
+use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
-    endpoint::{EndpointInfo, Options as EndpointOptions, PeerMap},
+    endpoint::{Options as EndpointOptions, PeerMap},
+    metrics::Metrics as MagicsockMetrics,
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
-    Metrics as MagicsockMetrics,
 };
+
+mod derp_actor;
+mod endpoint;
+mod metrics;
+mod rebinding_conn;
+mod timer;
+mod udp_actor;
+
+pub use self::endpoint::EndpointInfo;
+pub use self::metrics::Metrics;
+pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -49,13 +65,13 @@ const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(super) enum CurrentPortFate {
+pub(self) enum CurrentPortFate {
     Keep,
     Drop,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(super) enum Network {
+pub(self) enum Network {
     Ipv4,
     Ipv6,
 }
@@ -70,7 +86,7 @@ impl From<IpAddr> for Network {
 }
 
 impl Network {
-    pub(super) fn default_addr(&self) -> IpAddr {
+    pub(self) fn default_addr(&self) -> IpAddr {
         match self {
             Self::Ipv4 => Ipv4Addr::UNSPECIFIED.into(),
             Self::Ipv6 => Ipv6Addr::UNSPECIFIED.into(),
@@ -78,7 +94,7 @@ impl Network {
     }
 
     #[cfg(test)]
-    pub(super) fn local_addr(&self) -> IpAddr {
+    pub(self) fn local_addr(&self) -> IpAddr {
         match self {
             Self::Ipv4 => Ipv4Addr::LOCALHOST.into(),
             Self::Ipv6 => Ipv6Addr::LOCALHOST.into(),
@@ -95,7 +111,7 @@ impl From<Network> for socket2::Domain {
     }
 }
 
-/// Contains options for `Conn::listen`.
+/// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub struct Options {
     /// The port to listen on.
@@ -109,21 +125,21 @@ pub struct Options {
     pub callbacks: Callbacks,
 }
 
-/// Contains options for `Conn::listen`.
+/// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug, Default)]
 pub struct Callbacks {
     /// Optionally provides a func to be called when endpoints change.
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
-    pub on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
+    pub on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
 
     /// Optionally provides a func to be called when a connection is made to a DERP server.
     #[debug("on_derp_active: Option<Box<..>>")]
     pub on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 
-    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    /// A callback that provides a `config::NetInfo` when discovered network conditions change.
     #[debug("on_net_info: Option<Box<..>>")]
-    pub on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
+    pub on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
 }
 
 impl Default for Options {
@@ -143,48 +159,41 @@ impl Default for Options {
 /// connection and upgrade to it.  It will also keep looking for better connections as the
 /// network details of both endpoints change.
 ///
-/// It is usually only necessary to use a single [`Conn`] instance in an application, it
+/// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about peers as
 /// possible.
 #[derive(Clone, Debug)]
-pub struct Conn {
-    inner: Arc<Inner>,
+pub struct MagicSock {
+    pub(self) inner: Arc<Inner>,
     // Empty when closed
     actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
 }
 
-impl Deref for Conn {
-    type Target = Inner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
+/// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
-pub struct Inner {
+pub(self) struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
     /// Sends network messages.
     network_sender: mpsc::Sender<Vec<quinn_udp::Transmit>>,
-    pub(super) name: String,
+    pub(self) name: String,
     #[allow(clippy::type_complexity)]
     #[debug("on_endpoints: Option<Box<..>>")]
-    on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
+    on_endpoints: Option<Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>>,
     #[debug("on_derp_active: Option<Box<..>>")]
-    pub(super) on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
-    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    pub(self) on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
+    /// A callback that provides a `config::NetInfo` when discovered network conditions change.
     #[debug("on_net_info: Option<Box<..>>")]
-    on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
+    on_net_info: Option<Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>>,
 
     /// Used for receiving DERP messages.
     network_recv_ch: flume::Receiver<NetworkReadResult>,
     /// Stores wakers, to be called when derp_recv_ch receives new data.
     network_recv_wakers: std::sync::Mutex<Option<Waker>>,
-    pub(super) network_send_wakers: std::sync::Mutex<Option<Waker>>,
+    pub(self) network_send_wakers: std::sync::Mutex<Option<Waker>>,
 
     public_key: key::node::PublicKey,
     /// Private key for this node.
-    pub(super) private_key: key::node::SecretKey,
+    pub(self) private_key: key::node::SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: Arc<std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>>,
@@ -197,11 +206,11 @@ pub struct Inner {
     /// Close was called.
     closed: AtomicBool,
     /// If the last netcheck report, reports IPv6 to be available.
-    pub(super) ipv6_reported: Arc<AtomicBool>,
+    pub(self) ipv6_reported: Arc<AtomicBool>,
 
     // Sigh, a lock it is..
     /// None (or zero regions/nodes) means DERP is disabled.
-    pub(super) derp_map: tokio::sync::RwLock<Option<DerpMap>>,
+    pub(self) derp_map: tokio::sync::RwLock<Option<DerpMap>>,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
 }
@@ -210,34 +219,34 @@ impl Inner {
     /// Returns the derp region we are connected to, that has the best latency.
     ///
     /// If `0`, then we are not connected to any derp region.
-    pub(super) fn my_derp(&self) -> u16 {
+    pub(self) fn my_derp(&self) -> u16 {
         self.my_derp.load(Ordering::Relaxed)
     }
 
     /// Sets the derp region with the best latency.
     ///
     /// If we are not connected to any derp regions, set this to `0`.
-    pub(super) fn set_my_derp(&self, my_derp: u16) {
+    pub(self) fn set_my_derp(&self, my_derp: u16) {
         self.my_derp.store(my_derp, Ordering::Relaxed);
     }
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    pub async fn has_derp_region(&self, region: u16) -> bool {
+    pub(self) async fn has_derp_region(&self, region: u16) -> bool {
         self.get_derp_region(region).await.is_some()
     }
 
-    pub(super) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
+    pub(self) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         match &*self.derp_map.read().await {
             None => None,
             Some(ref derp_map) => derp_map.regions.get(&region).cloned(),
         }
     }
 
-    pub(super) fn is_closing(&self) -> bool {
+    pub(self) fn is_closing(&self) -> bool {
         self.closing.load(Ordering::Relaxed)
     }
 
-    pub(super) fn is_closed(&self) -> bool {
+    pub(self) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 }
@@ -264,13 +273,13 @@ impl EndpointUpdateState {
     }
 }
 
-impl Conn {
-    /// Creates a magic `Conn` listening on `opts.port`.
+impl MagicSock {
+    /// Creates a magic `MagicSock` listening on `opts.port`.
     ///
-    /// As the set of possible endpoints for a Conn changes, the [`Callbacks::on_endpoints`]
+    /// As the set of possible endpoints for a MagicSock changes, the [`Callbacks::on_endpoints`]
     /// callback of [`Options::callbacks`] is called.
     ///
-    /// [`Callbacks::on_endpoint`]: crate::hp::magicsock::conn::Callbacks::on_endpoints
+    /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
         let name = format!(
             "magic-{}",
@@ -279,6 +288,11 @@ impl Conn {
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("conn", %name))
             .await
+    }
+
+    /// Returns `true` if we have DERP configuration for the given DERP `region`.
+    pub async fn has_derp_region(&self, region: u16) -> bool {
+        self.inner.has_derp_region(region).await
     }
 
     async fn with_name(name: String, opts: Options) -> Result<Self> {
@@ -398,7 +412,7 @@ impl Conn {
             .instrument(info_span!("actor")),
         );
 
-        let c = Conn {
+        let c = MagicSock {
             inner,
             actor_tasks: Arc::new(Mutex::new(vec![
                 main_actor_task.into(),
@@ -413,7 +427,8 @@ impl Conn {
     /// Retrieve information about known peers' endpoints in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::TrackedEndpoints(s))
             .await?;
         let res = r.await?;
@@ -421,9 +436,10 @@ impl Conn {
     }
 
     /// Query for the local endpoints discovered during the last endpoint discovery.
-    pub async fn local_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
+    pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::LocalEndpoints(s))
             .await?;
         let res = r.await?;
@@ -432,13 +448,14 @@ impl Conn {
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        Ok(*self.local_addrs.read().unwrap())
+        Ok(*self.inner.local_addrs.read().unwrap())
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn re_stun(&self, why: &'static str) {
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::ReStun(why))
             .await
             .unwrap();
@@ -451,6 +468,7 @@ impl Conn {
     pub async fn get_mapping_addr(&self, node_key: &key::node::PublicKey) -> Option<SocketAddr> {
         let (s, r) = tokio::sync::oneshot::channel();
         if self
+            .inner
             .actor_sender
             .send(ActorMessage::GetMappingAddr(node_key.clone(), s))
             .await
@@ -464,9 +482,9 @@ impl Conn {
     // TODO
     // /// Handles a "ping" CLI query.
     // #[instrument(skip_all, fields(self.name = %self.name))]
-    // pub async fn ping<F>(&self, peer: cfg::Node, mut res: cfg::PingResult, cb: F)
+    // pub async fn ping<F>(&self, peer: config::Node, mut res: config::PingResult, cb: F)
     // where
-    //     F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    //     F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     // {
     //     res.node_ip = peer.addresses.get(0).copied();
     //     res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
@@ -497,10 +515,11 @@ impl Conn {
     // }
 
     /// Sets the connection's preferred local port.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn set_preferred_port(&self, port: u16) {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::SetPreferredPort(port, s))
             .await
             .unwrap();
@@ -508,10 +527,11 @@ impl Conn {
     }
 
     /// Controls which (if any) DERP servers are used. A `None` value means to disable DERP; it's disabled by default.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn set_derp_map(&self, dm: Option<derp::DerpMap>) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::SetDerpMap(dm, s))
             .await?;
         r.await?;
@@ -533,10 +553,11 @@ impl Conn {
     /// Called when the control client gets a new network map from the control server.
     /// It should not use the DerpMap field of NetworkMap; that's
     /// conditionally sent to set_derp_map instead.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn set_network_map(&self, nm: netmap::NetworkMap) -> Result<()> {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::SetNetworkMap(nm, s))
             .await?;
         r.await?;
@@ -546,15 +567,15 @@ impl Conn {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn close(&self) -> Result<()> {
-        if self.is_closed() {
+        if self.inner.is_closed() {
             return Ok(());
         }
-        self.actor_sender.send(ActorMessage::Shutdown).await?;
+        self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
 
-        self.closing.store(true, Ordering::Relaxed);
-        self.closed.store(true, Ordering::SeqCst);
+        self.inner.closing.store(true, Ordering::Relaxed);
+        self.inner.closed.store(true, Ordering::SeqCst);
         // c.connCtxCancel()
 
         let mut tasks = self.actor_tasks.lock().await;
@@ -570,10 +591,11 @@ impl Conn {
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
     /// It should be followed by a call to ReSTUN.
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn rebind_all(&self) {
         let (s, r) = sync::oneshot::channel();
-        self.actor_sender
+        self.inner
+            .actor_sender
             .send(ActorMessage::RebindAll(s))
             .await
             .unwrap();
@@ -581,16 +603,16 @@ impl Conn {
     }
 }
 
-/// The info and state for the DiscoKey in the Conn.discoInfo map key.
+/// The info and state for the DiscoKey in the MagicSock.discoInfo map key.
 ///
 /// Note that a DiscoKey does not necessarily map to exactly one
 /// node. In the case of shared nodes and users switching accounts, two
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
-pub(super) struct DiscoInfo {
-    pub(super) node_key: key::node::PublicKey,
+pub(self) struct DiscoInfo {
+    pub(self) node_key: key::node::PublicKey,
     /// The precomputed key for communication with the peer that has the `node_key` used to
-    /// look up this `DiscoInfo` in Conn.discoInfo.
+    /// look up this `DiscoInfo` in MagicSock.discoInfo.
     /// Not modified once initialized.
     shared_key: key::node::SharedSecret,
 
@@ -602,7 +624,7 @@ pub(super) struct DiscoInfo {
 }
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
+fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
     if xs.is_empty() && ys.is_empty() {
         return true;
     }
@@ -618,7 +640,7 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
             return true;
         }
     }
-    let mut m: HashMap<&cfg::Endpoint, usize> = HashMap::new();
+    let mut m: HashMap<&config::Endpoint, usize> = HashMap::new();
     for x in xs {
         *m.entry(x).or_default() |= 1;
     }
@@ -629,8 +651,8 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
     m.values().all(|v| *v == 3)
 }
 
-impl AsyncUdpSocket for Conn {
-    #[instrument(skip_all, fields(self.name = %self.name))]
+impl AsyncUdpSocket for MagicSock {
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -640,7 +662,7 @@ impl AsyncUdpSocket for Conn {
         let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
         inc_by!(MagicsockMetrics, send_data, bytes_total as _);
 
-        if self.is_closed() {
+        if self.inner.is_closed() {
             inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
@@ -656,10 +678,11 @@ impl AsyncUdpSocket for Conn {
         // Split up transmits by destination, as the rest of the code assumes single dest.
         let groups = TransmitIter::new(transmits);
         for group in groups {
-            match self.network_sender.try_reserve() {
+            match self.inner.network_sender.try_reserve() {
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     // TODO: add counter?
-                    self.network_send_wakers
+                    self.inner
+                        .network_send_wakers
                         .lock()
                         .unwrap()
                         .replace(cx.waker().clone());
@@ -684,7 +707,7 @@ impl AsyncUdpSocket for Conn {
         Poll::Pending
     }
 
-    #[instrument(skip_all, fields(self.name = %self.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -693,7 +716,7 @@ impl AsyncUdpSocket for Conn {
     ) -> Poll<io::Result<usize>> {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        if self.is_closed() {
+        if self.inner.is_closed() {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
@@ -702,9 +725,10 @@ impl AsyncUdpSocket for Conn {
 
         let mut num_msgs = 0;
         for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
-            match self.network_recv_ch.try_recv() {
+            match self.inner.network_recv_ch.try_recv() {
                 Err(flume::TryRecvError::Empty) => {
-                    self.network_recv_wakers
+                    self.inner
+                        .network_recv_wakers
                         .lock()
                         .unwrap()
                         .replace(cx.waker().clone());
@@ -717,7 +741,7 @@ impl AsyncUdpSocket for Conn {
                     )));
                 }
                 Ok(dm) => {
-                    if self.is_closed() {
+                    if self.inner.is_closed() {
                         break;
                     }
 
@@ -748,7 +772,7 @@ impl AsyncUdpSocket for Conn {
                                 "[QUINN] <- {} ({}b) ({}) ({:?}, {:?})",
                                 meta_out.addr,
                                 meta_out.len,
-                                self.name,
+                                self.inner.name,
                                 meta_out.dst_ip,
                                 source
                             );
@@ -770,7 +794,7 @@ impl AsyncUdpSocket for Conn {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        match &*self.local_addrs.read().unwrap() {
+        match &*self.inner.local_addrs.read().unwrap() {
             (ipv4, None) => {
                 // Pretend to be IPv6, because our QuinnMappedAddrs
                 // need to be IPv6.
@@ -794,10 +818,10 @@ impl Drop for WgGuard {
 }
 
 #[derive(Debug)]
-pub(super) enum ActorMessage {
+pub(self) enum ActorMessage {
     SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
-    LocalEndpoints(sync::oneshot::Sender<Vec<cfg::Endpoint>>),
+    LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
     GetMappingAddr(
         key::node::PublicKey,
         sync::oneshot::Sender<Option<QuicMappedAddr>>,
@@ -836,7 +860,7 @@ struct Actor {
     endpoints_update_state: EndpointUpdateState,
     /// Records the endpoints found during the previous
     /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
-    last_endpoints: Vec<cfg::Endpoint>,
+    last_endpoints: Vec<config::Endpoint>,
 
     /// The last time the endpoints were updated, even if there was no change.
     last_endpoints_time: Option<Instant>,
@@ -844,10 +868,10 @@ struct Actor {
     /// Functions to run (in their own tasks) when endpoints are refreshed.
     on_endpoint_refreshed:
         HashMap<usize, Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
-    /// When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
+    /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
-    net_info_last: Option<cfg::NetInfo>,
+    net_info_last: Option<config::NetInfo>,
     /// The state for an active DiscoKey.
     disco_info: HashMap<key::node::PublicKey, DiscoInfo>,
     /// Tracks the networkmap node entity for each peer discovery key.
@@ -1334,7 +1358,7 @@ impl Actor {
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
     #[instrument(skip_all)]
-    async fn determine_endpoints(&mut self) -> Result<Vec<cfg::Endpoint>> {
+    async fn determine_endpoints(&mut self) -> Result<Vec<config::Endpoint>> {
         self.port_mapper.procure_mapping();
         let portmap_watcher = self.port_mapper.watch_external_address();
         let nr = self.update_net_info().await.context("update_net_info")?;
@@ -1349,7 +1373,7 @@ impl Actor {
                 #[allow(clippy::map_entry)]
                 if !$already.contains_key(&$ipp) {
                     $already.insert($ipp, $et);
-                    $eps.push(cfg::Endpoint {
+                    $eps.push(config::Endpoint {
                         addr: $ipp,
                         typ: $et,
                     });
@@ -1360,12 +1384,12 @@ impl Actor {
         let maybe_port_mapped = *portmap_watcher.borrow();
 
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
+            add_addr!(already, eps, portmap_ext, config::EndpointType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
 
         if let Some(global_v4) = nr.global_v4 {
-            add_addr!(already, eps, global_v4, cfg::EndpointType::Stun);
+            add_addr!(already, eps, global_v4, config::EndpointType::Stun);
 
             // If they're behind a hard NAT and are using a fixed
             // port locally, assume they might've added a static
@@ -1375,11 +1399,11 @@ impl Actor {
             if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                 let mut addr = global_v4;
                 addr.set_port(port);
-                add_addr!(already, eps, addr, cfg::EndpointType::Stun4LocalPort);
+                add_addr!(already, eps, addr, config::EndpointType::Stun4LocalPort);
             }
         }
         if let Some(global_v6) = nr.global_v6 {
-            add_addr!(already, eps, global_v6, cfg::EndpointType::Stun);
+            add_addr!(already, eps, global_v6, config::EndpointType::Stun);
         }
 
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -1430,7 +1454,7 @@ impl Actor {
                                 already,
                                 eps,
                                 SocketAddr::new(ip, port),
-                                cfg::EndpointType::Local
+                                config::EndpointType::Local
                             );
                         }
                     }
@@ -1440,7 +1464,7 @@ impl Actor {
                                 already,
                                 eps,
                                 SocketAddr::new(ip, port),
-                                cfg::EndpointType::Local
+                                config::EndpointType::Local
                             );
                         }
                     }
@@ -1455,7 +1479,7 @@ impl Actor {
                 already,
                 eps,
                 local_addr_v4.unwrap(),
-                cfg::EndpointType::Local
+                config::EndpointType::Local
             );
         }
 
@@ -1466,7 +1490,7 @@ impl Actor {
                 already,
                 eps,
                 local_addr_v6.unwrap(),
-                cfg::EndpointType::Local
+                config::EndpointType::Local
             );
         }
 
@@ -1503,7 +1527,7 @@ impl Actor {
     ///
     /// callNetInfoCallback takes ownership of ni.
     #[instrument(skip_all)]
-    async fn call_net_info_callback(&mut self, ni: cfg::NetInfo) {
+    async fn call_net_info_callback(&mut self, ni: config::NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
                 return;
@@ -1514,7 +1538,7 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    fn call_net_info_callback_locked(&mut self, ni: cfg::NetInfo) {
+    fn call_net_info_callback_locked(&mut self, ni: config::NetInfo) {
         self.net_info_last = Some(ni.clone());
         if let Some(ref on_net_info) = self.conn.on_net_info {
             debug!("net_info update: {:?}", ni);
@@ -1551,7 +1575,7 @@ impl Actor {
         self.no_v4_send = !r.ipv4_can_send;
 
         let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
-        let mut ni = cfg::NetInfo {
+        let mut ni = config::NetInfo {
             derp_latency: Default::default(),
             mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
             hair_pinning: r.hair_pinning,
@@ -1672,7 +1696,7 @@ impl Actor {
 
     /// Records the new endpoints, reporting whether they're changed.
     #[instrument(skip_all, fields(self.name = %self.conn.name))]
-    async fn set_endpoints(&mut self, endpoints: &[cfg::Endpoint]) -> bool {
+    async fn set_endpoints(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
         for (_de, f) in self.on_endpoint_refreshed.drain() {
             tokio::task::spawn(async move {
@@ -2342,7 +2366,7 @@ async fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)>
     Ok((pconn4, pconn6))
 }
 
-fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
+fn log_endpoint_change(endpoints: &[config::Endpoint]) {
     debug!("endpoints changed: {}", {
         let mut s = String::new();
         for (i, ep) in endpoints.iter().enumerate() {
@@ -2357,7 +2381,7 @@ fn log_endpoint_change(endpoints: &[cfg::Endpoint]) {
 
 /// Addresses to which to which we can send. This is either a UDP or a derp address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SendAddr {
+pub(self) enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
     /// Derp, region id.
@@ -2365,18 +2389,18 @@ pub enum SendAddr {
 }
 
 impl SendAddr {
-    pub fn is_derp(&self) -> bool {
+    pub(self) fn is_derp(&self) -> bool {
         matches!(self, Self::Derp(_))
     }
 
-    pub fn as_udp(&self) -> Option<&SocketAddr> {
+    pub(self) fn as_udp(&self) -> Option<&SocketAddr> {
         match self {
             Self::Derp(_) => None,
             Self::Udp(addr) => Some(addr),
         }
     }
 
-    pub fn derp_region(&self) -> Option<u16> {
+    pub(self) fn derp_region(&self) -> Option<u16> {
         match self {
             Self::Derp(region) => Some(*region),
             Self::Udp(_) => None,
@@ -2384,7 +2408,7 @@ impl SendAddr {
     }
 
     /// Returns the mapped version or the actual `SocketAddr`.
-    pub fn as_socket_addr(&self) -> SocketAddr {
+    pub(self) fn as_socket_addr(&self) -> SocketAddr {
         match self {
             Self::Derp(region) => SocketAddr::new(DERP_MAGIC_IP, *region),
             Self::Udp(addr) => *addr,
@@ -2450,6 +2474,7 @@ impl Iterator for TransmitIter<'_> {
 }
 
 /// Splits a packet into its component items.
+#[derive(Debug)]
 pub struct PacketSplitIter {
     bytes: Bytes,
 }
@@ -2494,12 +2519,12 @@ impl Iterator for PacketSplitIter {
 
 /// The fake address used by the QUIC layer to address a peer.
 ///
-/// You can consider this as nothing more than a lookup key for a peer the [`Conn`] knows
+/// You can consider this as nothing more than a lookup key for a peer the [`MagicSock`] knows
 /// about.
 ///
-/// [`Conn`] can reach a peer by several real socket addresses, or maybe even via the derper
+/// [`MagicSock`] can reach a peer by several real socket addresses, or maybe even via the derper
 /// relay.  The QUIC layer however needs to address a peer by a stable [`SocketAddr`] so
-/// that normal socket APIs can function.  Thus when a new peer is introduced to a [`Conn`]
+/// that normal socket APIs can function.  Thus when a new peer is introduced to a [`MagicSock`]
 /// it is given a new fake address.  This is the type of that address.
 ///
 /// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
@@ -2552,11 +2577,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        hp::{
-            derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
-            stun,
-        },
-        tls, MagicEndpoint,
+        derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        stun, tls, MagicEndpoint,
     };
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
@@ -2604,10 +2626,10 @@ pub(crate) mod tests {
         conn.local_addr().unwrap().port()
     }
 
-    /// Returns a new Conn.
-    async fn new_test_conn() -> Conn {
+    /// Returns a new MagicSock.
+    async fn new_test_conn() -> MagicSock {
         let port = pick_port().await;
-        Conn::new(Options {
+        MagicSock::new(Options {
             port,
             ..Default::default()
         })
@@ -2691,8 +2713,8 @@ pub(crate) mod tests {
         // TODO: pass a mesh_key?
 
         let server_key = key::node::SecretKey::generate();
-        let tls_config = crate::hp::derp::http::make_tls_config();
-        let server = crate::hp::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+        let tls_config = crate::derp::http::make_tls_config();
+        let server = crate::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .secret_key(Some(server_key))
             .tls_config(Some(tls_config))
             .spawn()
@@ -2744,7 +2766,7 @@ pub(crate) mod tests {
     /// Magicsock plus wrappers for sending packets
     #[derive(Clone)]
     struct MagicStack {
-        ep_ch: flume::Receiver<Vec<cfg::Endpoint>>,
+        ep_ch: flume::Receiver<Vec<config::Endpoint>>,
         keypair: tls::Keypair,
         endpoint: MagicEndpoint,
     }
@@ -2763,7 +2785,7 @@ pub(crate) mod tests {
 
             let endpoint = MagicEndpoint::builder()
                 .keypair(keypair.clone())
-                .on_endpoints(Box::new(move |eps: &[cfg::Endpoint]| {
+                .on_endpoints(Box::new(move |eps: &[config::Endpoint]| {
                     let _ = ep_s.send(eps.to_vec());
                 }))
                 .on_derp_active(Box::new(move || {
@@ -2809,7 +2831,7 @@ pub(crate) mod tests {
         let eps = Arc::new(Mutex::new(vec![Vec::new(); stacks.len()]));
 
         async fn build_netmap(
-            eps: &[Vec<cfg::Endpoint>],
+            eps: &[Vec<config::Endpoint>],
             ms: &[MagicStack],
             my_idx: usize,
         ) -> netmap::NetworkMap {
@@ -2824,7 +2846,7 @@ pub(crate) mod tests {
                 }
 
                 let addresses = vec![Ipv4Addr::new(1, 0, 0, (i + 1) as u8).into()];
-                peers.push(cfg::Node {
+                peers.push(config::Node {
                     addresses: addresses.clone(),
                     name: Some(format!("node{}", i + 1)),
                     key: peer.public(),
@@ -2837,10 +2859,10 @@ pub(crate) mod tests {
         }
 
         async fn update_eps(
-            eps: Arc<Mutex<Vec<Vec<cfg::Endpoint>>>>,
+            eps: Arc<Mutex<Vec<Vec<config::Endpoint>>>>,
             ms: &[MagicStack],
             my_idx: usize,
-            new_eps: Vec<cfg::Endpoint>,
+            new_eps: Vec<config::Endpoint>,
         ) {
             let eps = &mut *eps.lock().await;
             eps[my_idx] = new_eps;
@@ -3097,8 +3119,8 @@ pub(crate) mod tests {
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.conn().is_closed());
-            assert!(m2.endpoint.conn().is_closed());
+            assert!(m1.endpoint.conn().inner.is_closed());
+            assert!(m2.endpoint.conn().inner.is_closed());
 
             println!("cleaning up");
             cleanup().await;

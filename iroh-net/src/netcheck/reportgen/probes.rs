@@ -11,9 +11,9 @@ use std::sync::Arc;
 use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
-use crate::hp::derp::{DerpMap, DerpNode, DerpRegion};
-use crate::hp::netcheck::Report;
+use crate::derp::{DerpMap, DerpNode, DerpRegion};
 use crate::net::interfaces;
+use crate::netcheck::Report;
 
 /// The retransmit interval used when netcheck first runs.
 ///
@@ -192,7 +192,7 @@ impl fmt::Display for ProbeSet {
 /// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::hp::netcheck::reportgen
+/// [`reportgen`]: crate::netcheck::reportgen
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ProbePlan(BTreeSet<ProbeSet>);
 
@@ -499,7 +499,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::defaults::default_derp_map;
-    use crate::hp::netcheck::RegionLatencies;
+    use crate::netcheck::RegionLatencies;
 
     use super::*;
 

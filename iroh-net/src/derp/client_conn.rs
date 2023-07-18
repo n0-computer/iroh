@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{trace, Instrument};
 
-use crate::hp::{
+use crate::{
     disco::looks_like_disco_wrapper,
     key::node::{PublicKey, PUBLIC_KEY_LENGTH},
 };
@@ -733,7 +733,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
+        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 
@@ -743,7 +743,7 @@ mod tests {
         let (frame_type, frame_len) = read_frame(&mut io_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(FrameType::RecvPacket, frame_type);
         assert_eq!(data.len() + PUBLIC_KEY_LENGTH, frame_len);
-        let (got_key, got_data) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
+        let (got_key, got_data) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(key, got_key);
         assert_eq!(&data[..], got_data);
 
@@ -783,7 +783,7 @@ mod tests {
 
         // send ping, expect pong
         let data = b"pingpong";
-        crate::hp::derp::client::send_ping(&mut io_rw, data).await?;
+        crate::derp::client::send_ping(&mut io_rw, data).await?;
 
         // recv pong
         println!(" recv pong");
@@ -794,18 +794,18 @@ mod tests {
 
         // change preferred to false
         println!("  preferred: false");
-        crate::hp::derp::client::send_note_preferred(&mut io_rw, false).await?;
+        crate::derp::client::send_note_preferred(&mut io_rw, false).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
-        crate::hp::derp::client::send_note_preferred(&mut io_rw, true).await?;
+        crate::derp::client::send_note_preferred(&mut io_rw, true).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         // add this client as a watcher
-        crate::hp::derp::client::watch_connection_changes(&mut io_rw).await?;
+        crate::derp::client::watch_connection_changes(&mut io_rw).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
@@ -817,7 +817,7 @@ mod tests {
         // send message to close a peer
         println!("  close peer");
         let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
-        crate::hp::derp::client::close_peer(&mut io_rw, target.clone()).await?;
+        crate::derp::client::close_peer(&mut io_rw, target.clone()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
@@ -829,7 +829,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::hp::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
@@ -845,11 +845,10 @@ mod tests {
         // send disco packet
         println!("  send disco packet");
         // starts with `MAGIC` & key, then data
-        let mut disco_data = crate::hp::disco::MAGIC.as_bytes().to_vec();
+        let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::hp::derp::client::send_packet(&mut io_rw, &None, target.clone(), &disco_data)
-            .await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), &disco_data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendDiscoPacket((got_target, packet)) => {
@@ -865,7 +864,7 @@ mod tests {
         // forward packet
         println!("  forward packet");
         let fwd_key = PublicKey::from([0x03; PUBLIC_KEY_LENGTH]);
-        crate::hp::derp::client::forward_packet(&mut io_rw, fwd_key.clone(), target.clone(), data)
+        crate::derp::client::forward_packet(&mut io_rw, fwd_key.clone(), target.clone(), data)
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -881,7 +880,7 @@ mod tests {
 
         // forward disco packet
         println!("  forward disco packet");
-        crate::hp::derp::client::forward_packet(
+        crate::derp::client::forward_packet(
             &mut io_rw,
             fwd_key.clone(),
             target.clone(),
@@ -944,7 +943,7 @@ mod tests {
         let data = b"hello world!";
         let target = PublicKey::from([0x10; PUBLIC_KEY_LENGTH]);
 
-        crate::hp::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
+        crate::derp::client::send_packet(&mut io_rw, &None, target.clone(), data).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             ServerMessage::SendPacket((got_target, packet)) => {
