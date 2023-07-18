@@ -10,7 +10,7 @@ mod protocol;
 /// Timeout to receive a response from a PCP server.
 const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. See
+/// Use the recommended port mapping lifetime for PMP, which is 2 hours. See
 /// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
 const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 
