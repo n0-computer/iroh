@@ -312,9 +312,6 @@ pub fn init_metrics_collection(
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
-            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
             metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
         });
 
