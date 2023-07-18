@@ -10,13 +10,17 @@ mod protocol;
 /// Timeout to receive a response from a PCP server.
 const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
-// nonce is used to issue a release request
-#[allow(unused)]
+/// A mapping sucessfully registered with a PCP server.
 #[derive(Debug)]
 pub struct Mapping {
+    /// External port of the mapping.
     external_port: NonZeroU16,
+    /// External address of the mapping.
     external_address: Ipv4Addr,
+    /// Allowed time for this mapping as informed by the server.
     lifetime_seconds: u32,
+    /// The nonce of the mapping, used for modifications with the PCP server, for example releasing
+    /// the mapping.
     nonce: [u8; 12],
 }
 
@@ -31,12 +35,14 @@ impl super::mapping::PortMapped for Mapping {
 }
 
 impl Mapping {
+    /// Attempt to registed a new mapping with the PCP server on the provided gateway.
     pub async fn new(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,
         gateway: Ipv4Addr,
         preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> anyhow::Result<Self> {
+        // create the socket and send the request
         let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
         socket.connect((gateway, protocol::SERVER_PORT)).await?;
 
@@ -57,11 +63,13 @@ impl Mapping {
             requested_address,
         );
 
+        // wait for the response and decode it
         socket.send(&req.encode()).await?;
         let mut buffer = vec![0; protocol::Response::MAX_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = protocol::Response::decode(&buffer[..read])?;
 
+        // verify that the response is correct and matches the request
         let protocol::Response {
             lifetime_seconds,
             epoch_time: _,
