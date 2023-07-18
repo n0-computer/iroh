@@ -12,7 +12,6 @@ pub mod defaults;
 pub mod derp;
 mod disco;
 mod dns;
-pub mod hostinfo;
 pub mod key;
 pub mod magic_endpoint;
 pub mod magicsock;
