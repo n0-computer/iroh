@@ -10,6 +10,7 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use hyper::upgrade::Upgraded;
 use hyper::{header::UPGRADE, Body, Request};
+use iroh_metrics::inc;
 use rand::Rng;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -19,17 +20,13 @@ use tokio::time::Instant;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use url::Url;
 
-use crate::derp::client_conn::Io;
 use crate::derp::{
-    client::ClientBuilder as DerpClientBuilder, DerpNode, MeshKey, PacketForwarder, UseIpv4,
-    UseIpv6,
+    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder, client_conn::Io,
+    metrics::Metrics, server::PacketForwarderHandler, DerpNode, DerpRegion, MeshKey,
+    PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key;
-
-use crate::derp::{
-    client::Client as DerpClient, server::PacketForwarderHandler, DerpRegion, ReceivedMessage,
-};
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1113,6 +1110,7 @@ impl PacketForwarder for Client {
                 debug!("forward packet");
                 if let Ok((client, _)) = packet_forwarder.connect().await {
                     if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
+                        inc!(Metrics, packets_forwarded_out);
                         return;
                     }
                 }

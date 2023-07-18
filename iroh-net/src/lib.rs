@@ -16,6 +16,7 @@ pub mod hostinfo;
 pub mod key;
 pub mod magic_endpoint;
 pub mod magicsock;
+pub mod metrics;
 pub mod net;
 pub mod netcheck;
 pub mod netmap;

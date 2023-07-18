@@ -1,5 +1,10 @@
-//! An http specific Derp Client and Derp Server. Allows for using tls or non tls connection
+//! An http specific DERP Client and DERP Server. Allows for using tls or non tls connection
 //! upgrades.
+//!
+//! For each remote http DERP Server in a given http DERP Server's region, that it can mesh with, the
+//! DERP Server will have one http DERP Client that is connected to each other http DERP Server in the
+//! region. Those http DERP Clients will act as `PacketForwarder`s for the remote http DERP Servers.
+//!
 mod client;
 mod mesh_clients;
 mod server;

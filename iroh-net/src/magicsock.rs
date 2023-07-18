@@ -21,7 +21,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use iroh_metrics::{inc, inc_by, magicsock::Metrics as MagicsockMetrics};
+use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
@@ -42,17 +42,20 @@ use crate::{
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     endpoint::{Options as EndpointOptions, PeerMap},
+    metrics::Metrics as MagicsockMetrics,
     rebinding_conn::RebindingUdpConn,
     udp_actor::{IpPacket, NetworkReadResult, NetworkSource, UdpActor, UdpActorMessage},
 };
 
 mod derp_actor;
 mod endpoint;
+mod metrics;
 mod rebinding_conn;
 mod timer;
 mod udp_actor;
 
 pub use self::endpoint::EndpointInfo;
+pub use self::metrics::Metrics;
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -293,7 +296,7 @@ impl MagicSock {
     }
 
     async fn with_name(name: String, opts: Options) -> Result<Self> {
-        let port_mapper = portmapper::Client::new().await;
+        let port_mapper = portmapper::Client::default().await;
 
         let Options {
             port,
