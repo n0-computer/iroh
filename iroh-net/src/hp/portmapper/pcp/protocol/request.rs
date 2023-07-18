@@ -5,10 +5,6 @@ use super::{
     Version,
 };
 
-/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. See
-/// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
-const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
-
 /// A PCP Request.
 ///
 /// See [RFC 6887 Request Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.1)
@@ -76,16 +72,17 @@ impl Request {
         }
     }
 
-    pub fn get_mapping(
+    pub fn mapping(
         nonce: [u8; 12],
         local_port: u16,
         local_ip: Ipv4Addr,
         preferred_external_port: Option<u16>,
         preferred_external_address: Option<Ipv4Addr>,
+        lifetime_seconds: u32,
     ) -> Request {
         Request {
             version: Version::Pcp,
-            lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
+            lifetime_seconds,
             client_addr: local_ip.to_ipv6_mapped(),
             opcode_data: OpcodeData::MapData(MapData {
                 nonce,

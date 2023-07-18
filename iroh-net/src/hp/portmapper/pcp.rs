@@ -10,9 +10,19 @@ mod protocol;
 /// Timeout to receive a response from a PCP server.
 const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. See
+/// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
+const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
+
 /// A mapping sucessfully registered with a PCP server.
 #[derive(Debug)]
 pub struct Mapping {
+    /// Local ip used to create this mapping.
+    local_ip: Ipv4Addr,
+    /// Local port used to create this mapping.
+    local_port: NonZeroU16,
+    /// Gateway address used to registed this mapping.
+    gateway: Ipv4Addr,
     /// External port of the mapping.
     external_port: NonZeroU16,
     /// External address of the mapping.
@@ -54,17 +64,18 @@ impl Mapping {
             None => (None, None),
         };
 
-        let local_port = local_port.into();
-        let req = protocol::Request::get_mapping(
+        let req = protocol::Request::mapping(
             nonce,
-            local_port,
+            local_port.into(),
             local_ip,
             requested_port,
             requested_address,
+            MAPPING_REQUESTED_LIFETIME_SECONDS,
         );
 
-        // wait for the response and decode it
         socket.send(&req.encode()).await?;
+
+        // wait for the response and decode it
         let mut buffer = vec![0; protocol::Response::MAX_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = protocol::Response::decode(&buffer[..read])?;
@@ -85,13 +96,17 @@ impl Mapping {
                     external_port,
                     external_address,
                 } = map_data;
+
                 if nonce != received_nonce {
                     anyhow::bail!("received nonce does not match sent request");
                 }
+
                 if protocol != protocol::MapProtocol::Udp {
                     anyhow::bail!("received mapping is not for UDP");
                 }
-                if received_local_port != local_port {
+
+                let sent_port: u16 = local_port.into();
+                if received_local_port != sent_port {
                     anyhow::bail!("received mapping is for a local port that does not match the requested one");
                 }
                 let external_port = external_port
@@ -107,12 +122,37 @@ impl Mapping {
                     external_address,
                     lifetime_seconds,
                     nonce,
+                    local_ip,
+                    local_port,
+                    gateway,
                 })
             }
             protocol::OpcodeData::Announce => {
                 anyhow::bail!("received an announce response for a map request")
             }
         }
+    }
+
+    pub async fn release(self) -> anyhow::Result<()> {
+        let Mapping {
+            nonce,
+            local_ip,
+            local_port,
+            gateway,
+            ..
+        } = self;
+
+        // create the socket and send the request
+        let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
+        socket.connect((gateway, protocol::SERVER_PORT)).await?;
+
+        let local_port = local_port.into();
+        let req = protocol::Request::mapping(nonce, local_port, local_ip, None, None, 0);
+
+        socket.send(&req.encode()).await?;
+
+        // mapping deletion is a notification, no point in waiting for the response
+        Ok(())
     }
 }
 

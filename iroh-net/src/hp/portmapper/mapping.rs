@@ -43,10 +43,7 @@ impl Mapping {
     pub(crate) async fn release(self) -> Result<()> {
         match self {
             Mapping::Upnp(m) => m.release().await,
-            Mapping::Pcp(m) => {
-                // TODO(@divma): do
-                anyhow::bail!("unimplemented");
-            }
+            Mapping::Pcp(m) => m.release().await,
         }
     }
 }
