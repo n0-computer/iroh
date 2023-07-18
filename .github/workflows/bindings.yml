@@ -1,0 +1,40 @@
+name: FFI-CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  MSRV: "1.70"
+
+jobs:
+  build_and_test_ffi_bindings:
+    name: Build and test ffi bindings
+    runs-on: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [macOS-latest]
+        rust: [nightly, stable]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+        with:
+          submodules: recursive
+
+      - name: Install ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      
+      - name: Build and test bindings
+        run: |
+          cd iroh-ffi
+          cargo build --release
+          cd c/
+          make build
