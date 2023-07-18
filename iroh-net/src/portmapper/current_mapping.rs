@@ -1,3 +1,5 @@
+//! Holds the current mapping value and ensures that any change is reported accordingly.
+
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,

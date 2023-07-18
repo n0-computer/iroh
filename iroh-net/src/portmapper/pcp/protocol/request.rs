@@ -1,3 +1,5 @@
+//! A PCP request encoding and decoding.
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use super::{
@@ -72,6 +74,7 @@ impl Request {
         }
     }
 
+    /// Create a mapping request.
     pub fn mapping(
         nonce: [u8; 12],
         local_port: u16,

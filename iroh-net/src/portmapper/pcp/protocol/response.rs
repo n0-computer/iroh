@@ -1,3 +1,5 @@
+//! A PCP response encoding and decoding.
+
 use derive_more::Display;
 use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
