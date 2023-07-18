@@ -53,6 +53,12 @@ async fn main_impl() -> Result<()> {
     let metrics_fut = init_metrics_collection(cli.metrics_addr, &rt);
 
     let r = cli.run(&rt, &config).await;
+    if r.is_err() {
+        eprintln!("ERROR: {:?}", r);
+        let Err(e) = r else { panic!() };
+        eprintln!("{}", e.backtrace());
+        std::process::exit(2);
+    }
 
     #[cfg(feature = "metrics")]
     if let Some(metrics_fut) = metrics_fut {

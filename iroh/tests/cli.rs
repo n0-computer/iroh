@@ -1,7 +1,7 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 #![cfg(feature = "cli")]
 use std::env;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -168,12 +168,26 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[test]
 fn provide_stress() -> std::io::Result<()> {
     // start some providers
-    let providers = (0..100)
+    let mut providers = (0..100)
         .map(|i| {
             println!("spawning provide {i}");
             call_provide()
         })
         .collect::<std::io::Result<Vec<_>>>()?;
+    let t0 = std::time::Instant::now();
+    while t0.elapsed().as_secs() < 10 {
+        let mut buf = [0u8; 1024];
+        for provider in providers.iter_mut() {
+            let res = provider.read(&mut buf);
+            if res.is_err() {
+                println!("{:?}", res);
+            }
+            let len = res?;
+            if len > 0 {
+                std::io::stdout().write_all(&buf[..len])?;
+            }
+        }
+    }
     std::thread::sleep(Duration::from_secs(10));
     for (i, provider) in providers.into_iter().enumerate() {
         for pid in provider.pids() {
@@ -193,8 +207,10 @@ fn call_provide() -> std::io::Result<ReaderHandle> {
         ["provide", "--addr", ADDR, "--rpc-port", "disabled"],
     )
     .env("IROH_DATA_DIR", &iroh_data_dir)
+    .env("RUST_LOG", "debug")
     .stdin_null()
-    .stderr_capture()
+    .stderr_to_stdout()
+    .stdout_capture()
     .reader()
 }
 
