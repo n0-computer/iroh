@@ -1,15 +1,15 @@
 [package]
 name = "iroh-bytes"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 readme = "README.md"
-description = "IPFS reimagined"
+description = "blob and collection transfer support for iroh"
 license = "MIT/Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.65"
+rust-version = "1.66"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

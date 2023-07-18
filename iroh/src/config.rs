@@ -9,8 +9,8 @@ use std::{
 use anyhow::{anyhow, Result};
 use config::{Environment, File, Value};
 use iroh_net::{
-    defaults::default_derp_region,
-    hp::derp::{DerpMap, DerpRegion},
+    defaults::{default_eu_derp_region, default_na_derp_region},
+    derp::{DerpMap, DerpRegion},
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -33,7 +33,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            derp_regions: vec![default_derp_region()],
+            // TODO(ramfox): this should probably just be a derp map
+            derp_regions: vec![default_na_derp_region(), default_eu_derp_region()],
         }
     }
 }
@@ -196,6 +197,6 @@ mod tests {
     fn test_default_settings() {
         let config = Config::load::<String, String>(&[][..], "__FOO", Default::default()).unwrap();
 
-        assert_eq!(config.derp_regions.len(), 1);
+        assert_eq!(config.derp_regions.len(), 2);
     }
 }

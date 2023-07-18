@@ -16,8 +16,8 @@ use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
-use iroh_net::defaults::{DEFAULT_DERP_HOSTNAME, DEFAULT_DERP_STUN_PORT};
-use iroh_net::hp::{
+use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
+use iroh_net::{
     derp::{
         self,
         http::{
@@ -167,7 +167,7 @@ struct Config {
     /// The UDP port on which to serve STUN. The listener is bound to the same IP (if any) as
     /// specified in the `addr` field. Defaults to [`DEFAULT_DERP_STUN_PORT`].
     stun_port: u16,
-    /// Certificate hostname. Defaults to [`DEFAULT_DERP_HOSTNAME`].
+    /// Certificate hostname. Defaults to [`NA_DERP_HOSTNAME`].
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
     ///
@@ -236,7 +236,7 @@ impl Default for Config {
             private_key: key::node::SecretKey::generate(),
             addr: "[::]:443".parse().unwrap(),
             stun_port: DEFAULT_DERP_STUN_PORT,
-            hostname: DEFAULT_DERP_HOSTNAME.into(),
+            hostname: NA_DERP_HOSTNAME.into(),
             enable_stun: true,
             enable_derp: true,
             tls: None,
@@ -769,7 +769,7 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use iroh_net::hp::{
+    use iroh_net::{
         derp::{http::ClientBuilder, ReceivedMessage},
         key::node::SecretKey,
     };

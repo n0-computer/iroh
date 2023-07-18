@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
 use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
-use iroh_net::{hp::derp::DerpMap, tls::Keypair};
+use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 
 use crate::config::iroh_data_root;
@@ -144,12 +144,16 @@ async fn provide<D: BaoReadonlyDb>(
     } else {
         builder.keypair(keypair).spawn().await?
     };
-
     let eps = provider.local_endpoints().await?;
     println!("Listening addresses:");
     for ep in eps {
         println!("  {}", ep.addr);
     }
+    let region = provider.my_derp().await;
+    println!(
+        "DERP Region: {}",
+        region.map_or("None".to_string(), |r| r.to_string())
+    );
     println!("PeerID: {}", provider.peer_id());
     println!();
     Ok(provider)

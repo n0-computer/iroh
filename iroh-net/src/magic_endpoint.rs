@@ -1,4 +1,4 @@
-//! An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
+//! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
 use std::{
     net::SocketAddr,
@@ -11,12 +11,11 @@ use quinn_proto::VarInt;
 use tracing::{debug, trace};
 
 use crate::{
-    hp::{
-        self, cfg,
-        derp::DerpMap,
-        magicsock::{Callbacks, Conn},
-        netmap::NetworkMap,
-    },
+    config,
+    derp::DerpMap,
+    key,
+    magicsock::{self, Callbacks, MagicSock},
+    netmap::NetworkMap,
     tls::{self, Keypair, PeerId},
 };
 
@@ -93,7 +92,7 @@ impl MagicEndpointBuilder {
     #[allow(clippy::type_complexity)]
     pub fn on_endpoints(
         mut self,
-        on_endpoints: Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>,
+        on_endpoints: Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>,
     ) -> Self {
         self.callbacks.on_endpoints = Some(on_endpoints);
         self
@@ -105,10 +104,10 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Optionally set a callback function that provides a [cfg::NetInfo] when discovered network conditions change.
+    /// Optionally set a callback function that provides a [config::NetInfo] when discovered network conditions change.
     pub fn on_net_info(
         mut self,
-        on_net_info: Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>,
+        on_net_info: Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>,
     ) -> Self {
         self.callbacks.on_net_info = Some(on_net_info);
         self
@@ -118,7 +117,7 @@ impl MagicEndpointBuilder {
     ///
     /// The *bind_port* is the port that should be bound locally.
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
-    /// You can pass `0` to let the operating system chosse a free port for you.
+    /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> anyhow::Result<MagicEndpoint> {
         let keypair = self.keypair.unwrap_or_else(Keypair::generate);
@@ -155,11 +154,11 @@ fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [hp::magicsock::Conn].
+/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
-    conn: Conn,
+    conn: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
@@ -183,7 +182,7 @@ impl MagicEndpoint {
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        let conn = hp::magicsock::Conn::new(hp::magicsock::Options {
+        let conn = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
@@ -241,8 +240,15 @@ impl MagicEndpoint {
     /// This list contains both the locally-bound addresses and the endpoint's
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
-    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<cfg::Endpoint>> {
+    pub async fn local_endpoints(&self) -> anyhow::Result<Vec<config::Endpoint>> {
         self.conn.local_endpoints().await
+    }
+
+    /// Get the DERP region we are connected to with the lowest latency.
+    ///
+    /// Returns `None` if we are not connected to any DERP region.
+    pub async fn my_derp(&self) -> Option<u16> {
+        self.conn.my_derp().await
     }
 
     /// Connect to a remote endpoint.
@@ -251,15 +257,21 @@ impl MagicEndpoint {
     /// the remote endpoint, they can be specified and will be used to try and establish a direct
     /// connection without involving a DERP server. If no addresses are specified, the endpoint
     /// will try to dial the peer through the configured DERP servers.
+    ///
+    /// If the `derp_region` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_region`, it will error.
+    ///
+    /// If no UDP addresses and no DERP region is provided, it will error.
     pub async fn connect(
         &self,
         peer_id: PeerId,
         alpn: &[u8],
+        derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, known_addrs).await?;
+        self.add_known_addrs(peer_id, derp_region, known_addrs)
+            .await?;
 
-        let node_key: hp::key::node::PublicKey = peer_id.into();
+        let node_key: key::node::PublicKey = peer_id.into();
         let addr = self.conn.get_mapping_addr(&node_key).await.ok_or_else(|| {
             anyhow!("failed to retrieve the mapped address from the magic socket")
         })?;
@@ -292,14 +304,34 @@ impl MagicEndpoint {
     ///
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
     /// when connecting to this peer (in addition to addresses obtained from a derp server).
+    ///
+    /// If no UDP addresses are added, and `derp_region` is `None`, it will error.
+    /// If no UDP addresses are added, and the given `derp_region` cannot be dialed, it will error.
     pub async fn add_known_addrs(
         &self,
         peer_id: PeerId,
+        derp_region: Option<u16>,
         endpoints: &[SocketAddr],
     ) -> anyhow::Result<()> {
-        const DEFAULT_DERP_REGION: u16 = 1;
+        match (endpoints.is_empty(), derp_region) {
+            (true, None) => {
+                anyhow::bail!(
+                    "No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}"
+                );
+            }
+            (true, Some(region)) if !self.conn.has_derp_region(region).await => {
+                anyhow::bail!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
+            }
+            (false, None) => {
+                tracing::warn!("No DERP region provided, any hole punching required to establish a connection will not be possible.");
+            }
+            (false, Some(region)) if !self.conn.has_derp_region(region).await => {
+                tracing::warn!("We do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
+            }
+            _ => {}
+        }
 
-        let node_key: hp::key::node::PublicKey = peer_id.into();
+        let node_key: key::node::PublicKey = peer_id.into();
         let netmap = {
             let mut netmap = self.netmap.lock().unwrap();
             let node = netmap.peers.iter_mut().find(|peer| peer.key == node_key);
@@ -313,12 +345,12 @@ impl MagicEndpoint {
             } else {
                 let endpoints = endpoints.to_vec();
                 let addresses = endpoints.iter().map(|ep| ep.ip()).collect();
-                let node = cfg::Node {
+                let node = config::Node {
                     name: None,
                     addresses,
                     endpoints,
                     key: node_key.clone(),
-                    derp: Some(DEFAULT_DERP_REGION),
+                    derp: derp_region,
                 };
                 netmap.peers.push(node)
             }
@@ -346,7 +378,7 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn conn(&self) -> &Conn {
+    pub(crate) fn conn(&self) -> &MagicSock {
         &self.conn
     }
     #[cfg(test)]
@@ -405,7 +437,7 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
 //     use futures::future::BoxFuture;
 
 //     use super::{accept_conn, MagicEndpoint};
-//     use crate::hp::magicsock::conn_tests::{run_derp_and_stun, setup_logging};
+//     use crate::magicsock::conn_tests::{run_derp_and_stun, setup_logging};
 
 //     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 

@@ -4,7 +4,7 @@ use duct::cmd;
 
 fn main() {
     // Git commit
-    println!("cargo:rustc-env=GIT_COMMIT={}", get_git_commit().unwrap());
+    println!("cargo:rustc-env=GIT_COMMIT={}", get_git_commit());
 
     // Rustc version
     println!(
@@ -13,8 +13,12 @@ fn main() {
     );
 }
 
-fn get_git_commit() -> std::io::Result<String> {
-    cmd!("git", "rev-parse", "HEAD").read()
+fn get_git_commit() -> String {
+    if let Ok(commit) = cmd!("git", "rev-parse", "HEAD").read() {
+        commit
+    } else {
+        "git_unavailable".to_string()
+    }
 }
 
 fn get_rustc_version() -> io::Result<String> {

@@ -147,6 +147,7 @@ fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
         keypair: Keypair::generate(),
         peer_id,
         addrs,
+        derp_region: None,
         keylog: false,
         derp_map: None,
     }
@@ -861,7 +862,7 @@ async fn test_token_passthrough() -> Result<()> {
             .bind(0)
             .await?;
         endpoint
-            .connect(peer_id, &iroh_bytes::protocol::ALPN, &addrs)
+            .connect(peer_id, &iroh_bytes::protocol::ALPN, None, &addrs)
             .await
             .context("failed to connect to provider")?;
         let request = GetRequest::all(hash).with_token(token).into();

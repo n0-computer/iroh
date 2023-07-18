@@ -10,7 +10,7 @@ use std::str::FromStr;
 use anyhow::{ensure, Context, Result};
 use iroh_bytes::protocol::RequestToken;
 use iroh_bytes::Hash;
-use iroh_net::hp::derp::DerpMap;
+use iroh_net::derp::DerpMap;
 use iroh_net::tls::{Keypair, PeerId};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,8 @@ pub struct Options {
     pub keylog: bool,
     /// The configuration of the derp services
     pub derp_map: Option<DerpMap>,
+    /// The DERP region of the node
+    pub derp_region: Option<u16>,
 }
 
 /// Create a new endpoint and dial a peer, returning the connection
@@ -42,7 +44,7 @@ pub async fn dial(opts: Options, alpn: &[u8]) -> anyhow::Result<quinn::Connectio
         .bind(0)
         .await?;
     endpoint
-        .connect(opts.peer_id, alpn, &opts.addrs)
+        .connect(opts.peer_id, alpn, opts.derp_region, &opts.addrs)
         .await
         .context("failed to connect to provider")
 }
@@ -65,6 +67,8 @@ pub struct Ticket {
     addrs: Vec<SocketAddr>,
     /// True to treat the hash as a collection and retrieve all blobs in it.
     recursive: bool,
+    /// DERP region of the provider
+    derp_region: Option<u16>,
 }
 
 impl Ticket {
@@ -75,6 +79,7 @@ impl Ticket {
         addrs: Vec<SocketAddr>,
         token: Option<RequestToken>,
         recursive: bool,
+        derp_region: Option<u16>,
     ) -> Result<Self> {
         ensure!(!addrs.is_empty(), "addrs list can not be empty");
         Ok(Self {
@@ -83,6 +88,7 @@ impl Ticket {
             addrs,
             token,
             recursive,
+            derp_region,
         })
     }
 
@@ -135,16 +141,31 @@ impl Ticket {
         &self.addrs
     }
 
+    /// DERP region of the provider
+    pub fn derp_region(&self) -> Option<u16> {
+        self.derp_region
+    }
+
     /// Get the contents of the ticket, consuming it.
-    pub fn into_parts(self) -> (Hash, PeerId, Vec<SocketAddr>, Option<RequestToken>, bool) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        Hash,
+        PeerId,
+        Vec<SocketAddr>,
+        Option<RequestToken>,
+        bool,
+        Option<u16>,
+    ) {
         let Ticket {
             hash,
             peer,
             token,
             addrs,
             recursive,
+            derp_region,
         } = self;
-        (hash, peer, addrs, token, recursive)
+        (hash, peer, addrs, token, recursive, derp_region)
     }
 
     /// Convert this ticket into a [`Options`], adding the given keypair.
@@ -154,6 +175,7 @@ impl Ticket {
             addrs: self.addrs.clone(),
             keypair,
             keylog: true,
+            derp_region: self.derp_region,
             derp_map,
         }
     }
@@ -193,12 +215,14 @@ mod tests {
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = RequestToken::new(vec![1, 2, 3, 4, 5, 6]).unwrap();
+        let derp_region = Some(0);
         let ticket = Ticket {
             hash,
             peer,
             addrs: vec![addr],
             token: Some(token),
             recursive: true,
+            derp_region,
         };
         let base32 = ticket.to_string();
         println!("Ticket: {base32}");

@@ -1,16 +1,16 @@
 [package]
 name = "iroh"
-version = "0.4.1"
+version = "0.5.1"
 edition = "2021"
 readme = "README.md"
-description = "IPFS reimagined"
+description = "Bytes. Distributed."
 license = "MIT/Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 default-run = "iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.65"
+rust-version = "1.66"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -22,9 +22,9 @@ flume = "0.10.14"
 futures = "0.3.25"
 hex = { version = "0.4.3" }
 iroh-io = { version = "0.2.1" }
-iroh-net = { path = "../iroh-net" }
-iroh-bytes = { path = "../iroh-bytes" }
-iroh-metrics = { path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.5.1", path = "../iroh-net" }
+iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
+iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -49,6 +49,7 @@ multibase = { version = "0.9.1", optional = true }
 tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 data-encoding = "2.4.0"
+url = { version = "2.4", features = ["serde"] }
 
 
 [features]
@@ -75,8 +76,16 @@ iroh-io = { version = "0.2.1" }
 postcard = "1"
 proptest = "1.2.0"
 tempfile = "3.4"
+genawaiter = { version = "0.99", features = ["futures03"] }
 
 [[bin]]
 name = "iroh"
 required-features = ["cli"]
 
+[[example]]
+name = "collection"
+required-features = ["mem-db", "iroh-collection"]
+
+[[example]]
+name = "hello-world"
+required-features = ["mem-db"]

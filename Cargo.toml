@@ -5,8 +5,6 @@ members = [
   "iroh-ffi",
   "iroh-metrics",
   "iroh-net",
-  "iroh/examples/hello-world",
-  "iroh/examples/collection",
 ]
 
 [profile.optimized-release]
