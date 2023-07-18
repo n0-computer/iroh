@@ -2573,12 +2573,13 @@ pub(crate) mod tests {
     use std::net::Ipv4Addr;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::{
         derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
-        stun, tls, MagicEndpoint,
+        stun,
+        test_utils::setup_logging,
+        tls, MagicEndpoint,
     };
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
@@ -2902,17 +2903,9 @@ pub(crate) mod tests {
         })
     }
 
-    pub fn setup_logging() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        setup_logging();
+        let log_guard = setup_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -3080,12 +3073,13 @@ pub(crate) mod tests {
         println!("cleaning up");
         cleanup().await;
         cleanup_mesh();
+        drop(log_guard);
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        setup_logging();
+        let log_guard = setup_logging();
 
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
@@ -3126,12 +3120,13 @@ pub(crate) mod tests {
             cleanup().await;
             cleanup_mesh();
         }
+        drop(log_guard);
         Ok(())
     }
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        setup_logging();
+        let log_guard = setup_logging();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
             let key = key::node::SecretKey::generate();
@@ -3270,12 +3265,13 @@ pub(crate) mod tests {
             roundtrip!(m2, m1, data);
         }
 
+        drop(log_guard);
         Ok(())
     }
 
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        setup_logging();
+        let log_guard = setup_logging();
 
         async fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = key::node::SecretKey::generate();
@@ -3418,6 +3414,7 @@ pub(crate) mod tests {
             roundtrip!(m2, m1, data);
         }
 
+        drop(log_guard);
         Ok(())
     }
 }
