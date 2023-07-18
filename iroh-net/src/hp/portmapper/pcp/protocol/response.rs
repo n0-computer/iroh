@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_decode_known_response_vector() {
-        // only test vector in the tailscale impl
+        // only test vector in the tailscale impl: a map response
         let encoded = [
             2, 129, 0, 0, 0, 0, 28, 32, 0, 2, 155, 237, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 129,
             112, 9, 24, 241, 208, 251, 45, 157, 76, 10, 188, 17, 0, 0, 0, 4, 210, 4, 210, 0, 0, 0,
@@ -281,5 +281,14 @@ mod tests {
         ];
         let response = Response::decode(&encoded).unwrap();
         assert_eq!(&response.encode(), &encoded);
+    }
+
+    #[test]
+    fn test_encode_decode_map_response() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        let response = Response::random(Opcode::Map, &mut rng);
+        let encoded = response.encode();
+        assert_eq!(Ok(response), Response::decode(&encoded));
     }
 }
