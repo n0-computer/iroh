@@ -1,19 +1,18 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::Result;
-use iroh_io::{AsyncSliceWriter, File};
-use range_collections::RangeSet2;
+use anyhow::{bail, ensure, Result};
+use bytes::Bytes;
+use iroh_io::AsyncSliceWriter;
 use safer_ffi::prelude::*;
 
 use iroh::{
     bytes::{
         get::fsm,
-        protocol::{GetRequest, RangeSpecSeq, Request, RequestToken},
-        Hash,
+        protocol::{AnyGetRequest, GetRequest},
     },
+    collection::Collection,
     dial::{dial, Ticket},
-    // net::tls::PeerId,
 };
 
 use crate::{error::IrohError, node::IrohNode};
@@ -75,9 +74,9 @@ pub fn iroh_get_ticket(
                 let ticket = Ticket::from_str(&ticket)?;
 
                 // TODO(b5): pull DerpMap from node, feed into here:
-                let opts = ticket.as_get_options(keypair, None);
-                let conn = dial(opts).await?;
-                get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await?;
+                let dial_opts = ticket.as_get_options(keypair, None);
+                let conn = dial(dial_opts).await?;
+                get_collection_to_folder(conn, ticket, out_path).await?;
                 anyhow::Ok(())
             })
             .await??;
@@ -94,51 +93,58 @@ fn as_opt_err(res: Result<()>) -> Option<repr_c::Box<IrohError>> {
     }
 }
 
-async fn get_blob_to_file(
-    conn: quinn::Connection,
-    hash: Hash,
-    token: Option<RequestToken>,
+async fn get_collection_to_folder(
+    connection: quinn::Connection,
+    ticket: Ticket,
     out_path: PathBuf,
 ) -> Result<()> {
-    get_blob_ranges_to_file(
-        conn,
-        hash,
-        token,
-        RangeSpecSeq::new([RangeSet2::all()]),
-        out_path,
-    )
-    .await
-}
+    use fsm::*;
 
-// TODO(b5): This currently assumes "all" ranges, needs to be adjusted to honor
-// RangeSpecSeq args other than "all"
-async fn get_blob_ranges_to_file(
-    conn: quinn::Connection,
-    hash: Hash,
-    token: Option<RequestToken>,
-    ranges: RangeSpecSeq,
-    out_path: PathBuf,
-) -> Result<()> {
-    let request = Request::Get(GetRequest::new(hash, ranges)).with_token(token);
-    let response = fsm::start(conn, request);
-    let connected = response.next().await?;
+    ensure!(!out_path.is_file(), "out_path must not be a file");
+    tokio::fs::create_dir_all(&out_path).await?;
 
-    let fsm::ConnectedNext::StartRoot(curr) = connected.next().await? else {
-                return Ok(())
-            };
-    let header = curr.next();
+    let request =
+        AnyGetRequest::Get(GetRequest::all(ticket.hash())).with_token(ticket.token().cloned());
 
-    let path = out_path.clone();
-    let mut file = File::create(move || {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(&path)
-    })
-    .await?;
+    let initial = fsm::start(connection, request);
 
-    let (curr, _size) = header.next().await?;
-    let _curr = curr.write_all(&mut file).await?;
-    file.sync().await?;
+    let connected = initial.next().await?;
+    // we assume that the request includes the entire collection
+    let (mut next, _root, collection) = {
+        let ConnectedNext::StartRoot(sc) = connected.next().await? else {
+            bail!("request did not include collection");
+        };
+
+        let (done, data) = sc.next().concatenate_into_vec().await?;
+        let data = Bytes::from(data);
+        let collection = Collection::from_bytes(&data)?;
+
+        (done.next(), data, collection)
+    };
+
+    // download all the children
+    let mut blobs = collection.blobs().iter();
+    let finishing = loop {
+        let start = match next {
+            EndBlobNext::MoreChildren(start) => start,
+            EndBlobNext::Closing(finishing) => break finishing,
+        };
+
+        // get the hash of the next blob, or finish if there are no more
+        let Some(blob) = blobs.next() else {
+            break start.finish();
+        };
+
+        let start = start.next(blob.hash);
+        let file_path = out_path.join(&blob.name);
+        let mut file = iroh_io::File::create(move || std::fs::File::create(&file_path)).await?;
+
+        let done = start.write_all(&mut file).await?;
+        file.sync().await?;
+
+        next = done.next();
+    };
+    let _stats = finishing.next().await?;
+
     Ok(())
 }
