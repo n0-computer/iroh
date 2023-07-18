@@ -1648,7 +1648,7 @@ checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
 
 [[package]]
 name = "iroh"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "bao-tree",
