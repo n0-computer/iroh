@@ -16,6 +16,7 @@ use iroh::{
 use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
+use tokio::io::AsyncWriteExt;
 
 use crate::config::iroh_data_root;
 
@@ -164,7 +165,7 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
         Some(key_path) => {
             if key_path.exists() {
                 let keystr = tokio::fs::read(key_path).await?;
-                let keypair = Keypair::try_from_openssh(keystr)?;
+                let keypair = Keypair::try_from_openssh(keystr).context("invalid keyfile")?;
                 Ok(keypair)
             } else {
                 let keypair = Keypair::generate();
@@ -172,7 +173,22 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
                 if let Some(parent) = key_path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
-                tokio::fs::write(key_path, ser_key).await?;
+                // write to tempfile
+                let (file, temp_file_path) = tempfile::NamedTempFile::new()
+                    .context("unable to create tempfile")?
+                    .into_parts();
+                let mut file = tokio::fs::File::from_std(file);
+                file.write_all(ser_key.as_bytes())
+                    .await
+                    .context("unable to write keyfile")?;
+                file.flush().await?;
+                drop(file);
+
+                // move file
+                tokio::fs::rename(temp_file_path, key_path)
+                    .await
+                    .context("failed to rename keyfile")?;
+
                 Ok(keypair)
             }
         }
