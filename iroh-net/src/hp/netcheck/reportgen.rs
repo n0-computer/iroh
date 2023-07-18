@@ -134,10 +134,7 @@ pub(super) struct Addr {
 impl Addr {
     /// Blocking send to the actor, to be used from a non-actor future.
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
-        self.sender.send(msg).await.map_err(|err| {
-            error!("reportstate actor lost");
-            err
-        })
+        self.sender.send(msg).await
     }
 }
 
@@ -255,7 +252,7 @@ impl Actor {
                 }
 
                 _ = &mut probe_timer => {
-                    debug!("probes timed out");
+                    warn!("probes timed out");
                     self.handle_abort_probes();
                 }
 
@@ -336,7 +333,7 @@ impl Actor {
     }
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
-        debug!("finished probe: {:?}", probe_report);
+        info!("finished probe: {:?}", probe_report);
         let derp_node = probe_report.probe.node();
         if let Some(latency) = probe_report.delay {
             self.report
@@ -419,9 +416,20 @@ impl Actor {
                 timeout *= 2;
             }
             let reportcheck = self.addr();
+            info!(
+                reports=self.report.region_latency.len(),
+                delay=?timeout,
+                "Have enough probe reports, aborting further probes soon",
+            );
             tokio::spawn(async move {
                 time::sleep(timeout).await;
-                reportcheck.send(Message::AbortProbes).await.ok();
+                // Because we do this after a timeout it is entirely normal that the actor
+                // is no longer there by the time we send this message.
+                reportcheck
+                    .send(Message::AbortProbes)
+                    .await
+                    .map_err(|err| trace!("Failed to abort all probes: {err:#}"))
+                    .ok();
             });
         }
 
@@ -721,9 +729,16 @@ async fn run_probe(
             would_help_tx,
         ))
         .await
+        .map_err(|err| {
+            error!("Failed to check if probe would help: {err:#}");
+            err
+        })
         .map_err(|err| ProbeError::AbortSet(err.into(), probe.clone()))?;
     if !would_help_rx.await.map_err(|_| {
-        ProbeError::AbortSet(anyhow!("ReportCheck actor dropped sender"), probe.clone())
+        ProbeError::AbortSet(
+            anyhow!("ReportCheck actor dropped sender while waiting for ProbeWouldHelp response"),
+            probe.clone(),
+        )
     })? {
         return Err(ProbeError::AbortSet(
             anyhow!("ReportCheck says probe set no longer useful"),
