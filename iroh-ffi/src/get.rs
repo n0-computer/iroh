@@ -63,32 +63,28 @@ pub fn iroh_get_ticket(
     node: &IrohNode,
     ticket: char_p::Ref<'_>,
     out_path: char_p::Ref<'_>,
-    callback: extern "C" fn(Option<repr_c::Box<IrohError>>),
-) {
+) -> Option<repr_c::Box<IrohError>> {
     let ticket = ticket.to_string();
     let out_path = PathBuf::from(out_path.to_string());
     let keypair = node.inner().keypair();
-    let rt = node.async_runtime().clone();
-    node.async_runtime()
-        .local_pool()
-        .spawn_pinned(move || async move {
-            let result = async {
+
+    let result: anyhow::Result<_> = node.async_runtime().main().block_on(async move {
+        node.async_runtime()
+            .local_pool()
+            .spawn_pinned(move || async move {
                 let ticket = Ticket::from_str(&ticket)?;
 
                 // TODO(b5): pull DerpMap from node, feed into here:
                 let opts = ticket.as_get_options(keypair, None);
                 let conn = dial(opts, &iroh::bytes::protocol::ALPN).await?;
                 get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await?;
-                Ok(())
-            }
-            .await;
+                anyhow::Ok(())
+            })
+            .await??;
+        Ok(())
+    });
 
-            let result = as_opt_err(result);
-            rt.main()
-                .spawn_blocking(move || callback(result))
-                .await
-                .ok();
-        });
+    as_opt_err(result)
 }
 
 fn as_opt_err(res: Result<()>) -> Option<repr_c::Box<IrohError>> {

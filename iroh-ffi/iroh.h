@@ -82,12 +82,11 @@ iroh_free (
  *  @memberof iroh_node_t
  *  Get a collection from a peer.
  */
-void
+iroh_error_t *
 iroh_get_ticket (
     iroh_node_t const * node,
     char const * ticket,
-    char const * out_path,
-    void (*callback)(iroh_error_t *));
+    char const * out_path);
 
 /** \brief
  *  @memberof iroh_node_t
