@@ -35,7 +35,7 @@ use self::windows::default_route;
 /// Represents a network interface.
 #[derive(Debug)]
 pub struct Interface {
-    iface: default_net::interface::Interface,
+    pub(crate) iface: default_net::interface::Interface,
 }
 
 impl PartialEq for Interface {
