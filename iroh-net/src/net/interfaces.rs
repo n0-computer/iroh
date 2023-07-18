@@ -35,7 +35,7 @@ use self::windows::default_route;
 /// Represents a network interface.
 #[derive(Debug)]
 pub struct Interface {
-    pub(crate) iface: default_net::interface::Interface,
+    iface: default_net::interface::Interface,
 }
 
 impl PartialEq for Interface {
@@ -69,6 +69,38 @@ impl Interface {
             .cloned()
             .map(IpNet::V4)
             .chain(self.iface.ipv6.iter().cloned().map(IpNet::V6))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fake() -> Self {
+        use std::net::Ipv4Addr;
+
+        use default_net::interface::{InterfaceType, MacAddr};
+        use default_net::Gateway;
+
+        Self {
+            iface: default_net::Interface {
+                index: 2,
+                name: String::from("wifi0"),
+                friendly_name: None,
+                description: None,
+                if_type: InterfaceType::Ethernet,
+                mac_addr: Some(MacAddr::new([2, 3, 4, 5, 6, 7])),
+                ipv4: vec![Ipv4Net {
+                    addr: Ipv4Addr::from([192, 168, 0, 189]),
+                    prefix_len: 24,
+                    netmask: Ipv4Addr::from([255, 255, 255, 0]),
+                }],
+                ipv6: vec![],
+                flags: 69699,
+                transmit_speed: None,
+                receive_speed: None,
+                gateway: Some(Gateway {
+                    mac_addr: MacAddr::new([2, 3, 4, 5, 6, 8]),
+                    ip_addr: IpAddr::V4(Ipv4Addr::from([192, 168, 0, 1])),
+                }),
+            },
+        }
     }
 }
 
@@ -180,6 +212,31 @@ impl State {
             have_v6,
             is_expensive: false,
             default_route_interface,
+            http_proxy: None,
+            pac: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fake() -> Self {
+        let fake = Interface::fake();
+        let ifname = fake.iface.name.clone();
+        Self {
+            interface_ips: [(
+                ifname.clone(),
+                fake.iface
+                    .ipv4
+                    .iter()
+                    .map(|net| IpNet::V4(net.clone()))
+                    .collect(),
+            )]
+            .into_iter()
+            .collect(),
+            interface: [(ifname.clone(), fake)].into_iter().collect(),
+            have_v6: false,
+            have_v4: true,
+            is_expensive: false,
+            default_route_interface: Some(ifname),
             http_proxy: None,
             pac: None,
         }

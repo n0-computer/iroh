@@ -496,75 +496,20 @@ fn sort_regions<'a>(derp_map: &'a DerpMap, last_report: &Report) -> Vec<&'a Derp
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use default_net::interface::{InterfaceType, MacAddr};
-    use default_net::ip::Ipv4Net;
-    use default_net::Gateway;
     use pretty_assertions::assert_eq;
 
     use crate::defaults::default_derp_map;
-    use crate::net::interfaces::{self, Interface, IpNet};
+    use crate::net::interfaces;
     use crate::netcheck::RegionLatencies;
 
     use super::*;
-
-    fn fake_if_state() -> interfaces::State {
-        // Normally constructed using crate::net::interfaces::State::new()
-        interfaces::State {
-            interface_ips: [(
-                String::from("wifi0"),
-                vec![IpNet::V4(Ipv4Net {
-                    addr: Ipv4Addr::from([192, 168, 0, 189]),
-                    prefix_len: 24,
-                    netmask: Ipv4Addr::from([255, 255, 255, 0]),
-                })],
-            )]
-            .into_iter()
-            .collect(),
-            interface: [(
-                String::from("wifi0"),
-                Interface {
-                    iface: default_net::interface::Interface {
-                        index: 2,
-                        name: String::from("wifi0"),
-                        friendly_name: None,
-                        description: None,
-                        if_type: InterfaceType::Ethernet,
-                        mac_addr: Some(MacAddr::new([2, 3, 4, 5, 6, 7])),
-                        ipv4: vec![Ipv4Net {
-                            addr: Ipv4Addr::from([192, 168, 0, 189]),
-                            prefix_len: 24,
-                            netmask: Ipv4Addr::from([255, 255, 255, 0]),
-                        }],
-                        ipv6: vec![],
-                        flags: 69699,
-                        transmit_speed: None,
-                        receive_speed: None,
-                        gateway: Some(Gateway {
-                            mac_addr: MacAddr::new([2, 3, 4, 5, 6, 8]),
-                            ip_addr: IpAddr::V4(Ipv4Addr::from([192, 168, 0, 1])),
-                        }),
-                    },
-                },
-            )]
-            .into_iter()
-            .collect(),
-            have_v6: false,
-            have_v4: true,
-            is_expensive: false,
-            default_route_interface: Some(String::from("wifi0")),
-            http_proxy: None,
-            pac: None,
-        }
-    }
 
     #[tokio::test]
     async fn test_initial_probeplan() {
         let derp_map = default_derp_map();
         let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
         let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
-        let if_state = fake_if_state();
+        let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
         let expected_plan: ProbePlan = [
@@ -703,7 +648,7 @@ mod tests {
             let derp_map = default_derp_map();
             let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
             let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
-            let if_state = fake_if_state();
+            let if_state = interfaces::State::fake();
             let mut latencies = RegionLatencies::new();
             latencies.update_region(1, Duration::from_millis(2));
             latencies.update_region(2, Duration::from_millis(2));
