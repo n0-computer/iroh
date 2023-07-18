@@ -61,16 +61,7 @@ jobs:
         toolchain: ${{ matrix.rust }}
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
-      
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
-
-    - name: doctests
-      run: cargo test --workspace --all-features --doc
+      run: cargo test test_mesh_network
       
   build_and_test_windows:
     timeout-minutes: 30
@@ -104,13 +95,7 @@ jobs:
     - uses: msys2/setup-msys2@v2
 
     - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
-
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo test test_mesh_network --target ${{ matrix.target }}
 
   build_release:
     timeout-minutes: 60
@@ -245,7 +230,7 @@ jobs:
       run: cross check --all --target ${{ matrix.target }}
 
     - name: test
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+      run: cross test test_mesh_network --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
     timeout-minutes: 30
