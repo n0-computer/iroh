@@ -3,6 +3,7 @@
 use std::env;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -259,7 +260,7 @@ fn cli_provide_addresses() -> Result<()> {
 
     // test output
     let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
-        // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
+        .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
         .stdout_capture()
         .run()?;
     let stdout = String::from_utf8(get_output.stdout).unwrap();
