@@ -61,7 +61,7 @@ pub mod fsm {
         ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
     };
     use derive_more::From;
-    use iroh_io::{AsyncSliceWriter, ConcatenateSliceWriter};
+    use iroh_io::AsyncSliceWriter;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -367,11 +367,23 @@ pub mod fsm {
         pub async fn concatenate_into_vec(
             self,
         ) -> result::Result<(AtEndBlob, Vec<u8>), DecodeError> {
-            let (curr, size) = self.next().await?;
-            let res = Vec::with_capacity(size as usize);
-            let mut writer = ConcatenateSliceWriter::new(res);
-            let res = curr.write_all(&mut writer).await?;
-            Ok((res, writer.into_inner()))
+            let (mut curr, size) = self.next().await?;
+            let mut res = Vec::with_capacity(size as usize);
+            let done = loop {
+                match curr.next().await {
+                    BlobContentNext::More((next, data)) => {
+                        if let BaoContentItem::Leaf(leaf) = data? {
+                            res.extend_from_slice(&leaf.data);
+                        }
+                        curr = next;
+                    }
+                    BlobContentNext::Done(done) => {
+                        // we are done with the root blob
+                        break done;
+                    }
+                }
+            };
+            Ok((done, res))
         }
 
         /// Write the entire blob to a slice writer

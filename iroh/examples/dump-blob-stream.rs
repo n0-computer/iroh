@@ -86,7 +86,9 @@ fn stream_blob(
 /// blocks.
 ///
 /// The root blob is not streamed. It must be fully included in the response.
-fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> + Unpin + 'static {
+fn stream_children(
+    initial: AtInitial,
+) -> impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static {
     async fn inner(initial: AtInitial, co: &Co<io::Result<Bytes>>) -> io::Result<()> {
         // connect
         let connected = initial.next().await?;
