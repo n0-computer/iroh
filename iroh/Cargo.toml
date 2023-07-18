@@ -76,6 +76,7 @@ iroh-io = { version = "0.2.1" }
 postcard = "1"
 proptest = "1.2.0"
 tempfile = "3.4"
+genawaiter = { version = "0.99", features = ["futures03"] }
 
 [[bin]]
 name = "iroh"
