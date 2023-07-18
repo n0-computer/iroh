@@ -197,7 +197,8 @@ fn make_rpc_endpoint(
             vec![RPC_ALPN.to_vec()],
         )?,
         rpc_addr,
-    ).context("unable to bind to RPC endpoint")?;
+    )
+    .context("unable to bind to RPC endpoint")?;
     let rpc_endpoint =
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
     Ok(rpc_endpoint)

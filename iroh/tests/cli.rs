@@ -233,7 +233,6 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
 fn cli_provide_addresses_many() -> Result<()> {
     let tasks = (0..100).map(|i| {
         std::thread::Builder::new()
@@ -245,6 +244,17 @@ fn cli_provide_addresses_many() -> Result<()> {
         .map(|t| t.join().unwrap())
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(())
+}
+
+#[test]
+fn cli_provide_addresses2() -> Result<()> {
+    println!("{}", std::process::id());
+    cli_provide_addresses()
+}
+
+#[test]
+fn cli_provide_addresses3() -> Result<()> {
+    cli_provide_addresses()
 }
 
 #[test]
