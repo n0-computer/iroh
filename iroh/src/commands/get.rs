@@ -67,7 +67,7 @@ impl GetInteractive {
         let collection_info = Some((1, 0));
 
         let request = self.new_request(query).with_token(self.token.clone());
-        let connection = iroh::dial::dial(self.opts, &iroh_bytes::protocol::ALPN).await?;
+        let connection = iroh::dial::dial(self.opts).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
@@ -155,7 +155,7 @@ impl GetInteractive {
         };
 
         let request = self.new_request(query).with_token(self.token.clone());
-        let connection = iroh::dial::dial(self.opts, &iroh_bytes::protocol::ALPN).await?;
+        let connection = iroh::dial::dial(self.opts).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
@@ -322,7 +322,7 @@ impl GetInteractive {
 
         let pb = make_download_pb();
         let request = self.new_request(query).with_token(self.token.clone());
-        let connection = iroh::dial::dial(self.opts, &iroh_bytes::protocol::ALPN).await?;
+        let connection = iroh::dial::dial(self.opts).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));

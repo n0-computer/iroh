@@ -36,7 +36,7 @@ pub struct Options {
 /// Note that this will create an entirely new endpoint, so it should be only
 /// used for short lived connections. If you want to connect to multiple peers,
 /// it is preferable to create an endpoint and use `connect` on the endpoint.
-pub async fn dial(opts: Options, alpn: &[u8]) -> anyhow::Result<quinn::Connection> {
+pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .keypair(opts.keypair)
         .derp_map(opts.derp_map)
@@ -44,7 +44,12 @@ pub async fn dial(opts: Options, alpn: &[u8]) -> anyhow::Result<quinn::Connectio
         .bind(0)
         .await?;
     endpoint
-        .connect(opts.peer_id, alpn, opts.derp_region, &opts.addrs)
+        .connect(
+            opts.peer_id,
+            &iroh_bytes::protocol::ALPN,
+            opts.derp_region,
+            &opts.addrs,
+        )
         .await
         .context("failed to connect to provider")
 }

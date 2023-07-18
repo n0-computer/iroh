@@ -76,7 +76,7 @@ pub fn iroh_get_ticket(
 
                 // TODO(b5): pull DerpMap from node, feed into here:
                 let opts = ticket.as_get_options(keypair, None);
-                let conn = dial(opts, &iroh::bytes::protocol::ALPN).await?;
+                let conn = dial(opts).await?;
                 get_blob_to_file(conn, ticket.hash(), ticket.token().cloned(), out_path).await?;
                 anyhow::Ok(())
             })

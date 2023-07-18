@@ -89,3 +89,11 @@ required-features = ["mem-db", "iroh-collection"]
 [[example]]
 name = "hello-world"
 required-features = ["mem-db"]
+
+[[example]]
+name = "dump-blob-stream"
+required-features = ["iroh-collection"]
+
+[[example]]
+name = "dump-blob-fsm"
+required-features = []

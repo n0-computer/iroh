@@ -441,10 +441,9 @@ async fn test_blob_reader_partial() -> Result<()> {
     let peer_id = node.peer_id();
 
     let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-        let connection =
-            iroh::dial::dial(get_options(peer_id, node_addr), &iroh_bytes::protocol::ALPN)
-                .await
-                .unwrap();
+        let connection = iroh::dial::dial(get_options(peer_id, node_addr))
+            .await
+            .unwrap();
         let response = fsm::start(connection, GetRequest::all(hash).into());
         // connect
         let connected = response.next().await.unwrap();
@@ -573,7 +572,7 @@ async fn run_custom_get_request<C: CollectionParser>(
     request: AnyGetRequest,
     collection_parser: C,
 ) -> anyhow::Result<(Bytes, BTreeMap<u64, Bytes>, Stats)> {
-    let connection = iroh::dial::dial(opts, &iroh_bytes::protocol::ALPN).await?;
+    let connection = iroh::dial::dial(opts).await?;
     let initial = fsm::start(connection, request);
     use fsm::*;
     let mut items = BTreeMap::new();
@@ -754,8 +753,7 @@ async fn test_custom_request_blob() {
             token: None,
             data: Bytes::from(&b"hello"[..]),
         });
-        let connection =
-            iroh::dial::dial(get_options(peer_id, addrs), &iroh_bytes::protocol::ALPN).await?;
+        let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else { panic!() };
