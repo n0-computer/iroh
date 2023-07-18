@@ -11,7 +11,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.70"
+  MSRV: "1.66"
 
 jobs:
   netsim:

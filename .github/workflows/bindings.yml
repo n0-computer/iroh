@@ -10,7 +10,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.70"
+  MSRV: "1.66"
 
 jobs:
   build_and_test_ffi_bindings:
@@ -31,6 +31,31 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+
+      - name: Create a copy of iroh.h
+        run: |
+          cd iroh-ffi
+          cp iroh.h iroh.compare.h
+      
+      - name: tests (all features)
+        run: |
+          cd iroh-ffi
+          cargo test --all-features --lib --bins --tests
+        
+      - name: tests (no features)
+        run: |
+          cd iroh-ffi
+          cargo test --no-default-features --lib --bins --tests
+
+      - name: tests (default features)
+        run: |
+          cd iroh-ffi
+          cargo test --lib --bins --tests
+
+      - name: doctests
+        run: |
+          cd iroh-ffi
+          cargo test --all-features --doc
       
       - name: Build and test bindings
         run: |
@@ -38,3 +63,9 @@ jobs:
           cargo build --release
           cd c/
           make build
+      
+      - name: Compare iroh.h
+        run: |
+          cd iroh-ffi
+          diff iroh.h iroh.compare.h
+          cmp --silent iroh.h iroh.compare.h || echo "iroh.h file has changed."
