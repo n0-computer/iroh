@@ -3,13 +3,13 @@ name = "iroh-metrics"
 version = "0.4.1"
 edition = "2021"
 readme = "README.md"
-description = "IPFS reimagined"
+description = "metrics for iroh"
 license = "MIT/Apache-2.0"
 authors = ["arqu <asmir@n0.computer>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.65"
+rust-version = "1.66"
 
 [dependencies]
 prometheus-client = { version = "0.21.0", optional = true }
