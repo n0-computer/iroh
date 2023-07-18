@@ -233,6 +233,20 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
 }
 
 #[test]
+fn cli_provide_addresses_many() -> Result<()> {
+    let tasks = (0..100).map(|i| {
+        std::thread::Builder::new()
+            .name(format!("cli_provide_addresses_many_{}", i))
+            .spawn(cli_provide_addresses)
+            .unwrap()
+    });
+    let _results = tasks
+        .map(|t| t.join().unwrap())
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(())
+}
+
+#[test]
 fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
