@@ -606,3 +606,9 @@ impl From<anyhow::Error> for GetResponseError {
         Self::Generic(cause)
     }
 }
+
+impl From<GetResponseError> for std::io::Error {
+    fn from(cause: GetResponseError) -> Self {
+        Self::new(std::io::ErrorKind::Other, cause)
+    }
+}

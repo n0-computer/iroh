@@ -5,7 +5,7 @@ use std::env::args;
 use std::str::FromStr;
 
 use iroh::dial::Ticket;
-use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext, AtInitial};
+use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_io::ConcatenateSliceWriter;
 use iroh_net::tls::Keypair;
