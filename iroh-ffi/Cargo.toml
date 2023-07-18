@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 readme = "README.md"
-description = "IPFS reimagined"
+description = "Bytes. Distributed. In C."
 license = "MIT/Apache-2.0"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.66"
 
 [lib]
 name = "iroh"
