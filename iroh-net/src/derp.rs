@@ -1,11 +1,10 @@
 //! Package derp implements the Designated Encrypted Relay for Packets (DERP)
-//! protocol.
+//! protocol written by Tailscale.
 //
 //! DERP routes packets to clients using curve25519 keys as addresses.
 //
-//! DERP is used by Tailscale nodes to proxy encrypted WireGuard
-//! packets through the Tailscale cloud servers when a direct path
-//! cannot be found or opened. DERP is a last resort. Both side
+//! DERP is used by proxy encrypted QUIC packets through the DERP servers when
+//! a direct path cannot be found or opened. DERP is a last resort. Both side
 //! between very aggressive NATs, firewalls, no IPv6, etc? Well, DERP.
 //! Based on tailscale/derp/derp.go
 
@@ -36,7 +35,7 @@ use postcard::experimental::max_size::MaxSize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::hp::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
+use crate::key::node::{PublicKey, SecretKey, PUBLIC_KEY_LENGTH};
 use types::ClientInfo;
 
 /// The maximum size of a packet sent over DERP.
@@ -142,6 +141,8 @@ enum FrameType {
     /// Sent from server to client for the server to declare that it's restarting.
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
+    ///
+    /// Handled on the `[derp::Client]`, but currently never sent on the `[derp::Server]`
     Restarting = 15,
     /// 32B src pub key + 32B dst pub key + packet bytes
     ForwardPacket = 16,

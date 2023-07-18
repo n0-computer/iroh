@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::hp::netcheck::{self, reportgen, Inflight};
-use crate::hp::stun;
+use crate::netcheck::{self, reportgen, Inflight};
+use crate::stun;
 use crate::util::CancelOnDrop;
 
 /// The amount of time we wait for a hairpinned packet to come back.
@@ -40,13 +40,13 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(netcheck: netcheck::Addr, reportstate: reportgen::Addr) -> Self {
+    pub(super) fn new(netcheck: netcheck::Addr, reportgen: reportgen::Addr) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let mut actor = Actor {
             msg_tx,
             msg_rx,
             netcheck,
-            reportstate,
+            reportgen,
         };
         let addr = actor.addr();
         let task =
@@ -103,7 +103,7 @@ struct Actor {
     msg_tx: mpsc::Sender<Message>,
     msg_rx: mpsc::Receiver<Message>,
     netcheck: netcheck::Addr,
-    reportstate: reportgen::Addr,
+    reportgen: reportgen::Addr,
 }
 
 impl Actor {
@@ -160,9 +160,10 @@ impl Actor {
             Err(_) => false, // Elapsed
         };
 
-        self.reportstate
+        self.reportgen
             .send(super::Message::HairpinResult(hairpinning_works))
-            .await?;
+            .await
+            .context("Failed to send hairpin result to reportgen actor")?;
 
         Ok(())
     }

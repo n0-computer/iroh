@@ -1,7 +1,7 @@
 //! Default values used in [`iroh-net`][`crate`]
 use std::collections::HashMap;
 
-use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
 
 /// Hostname of the default NA Derp.
 pub const NA_DERP_HOSTNAME: &str = "derp.iroh.network.";

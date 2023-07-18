@@ -14,13 +14,11 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::progress::ProgressWriter;
 use iroh_net::{
+    config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
-    hp::{
-        self,
-        derp::{DerpMap, UseIpv4, UseIpv6},
-        key::node::SecretKey,
-        portmapper,
-    },
+    derp::{DerpMap, UseIpv4, UseIpv6},
+    key::node::SecretKey,
+    netcheck, portmapper,
     tls::{Keypair, PeerId, PublicKey},
     MagicEndpoint,
 };
@@ -235,8 +233,8 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::default().await;
-    let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
+    let port_mapper = portmapper::Client::default().await;
+    let mut client = netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -498,11 +496,11 @@ async fn make_endpoint(
     tracing::info!("derp map {:#?}", derp_map);
 
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
-    let on_net_info = |ni: hp::cfg::NetInfo| {
+    let on_net_info = |ni: config::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
     };
 
-    let on_endpoints = move |ep: &[hp::cfg::Endpoint]| {
+    let on_endpoints = move |ep: &[config::Endpoint]| {
         tracing::info!("got endpoint {:#?}", ep);
     };
 
@@ -655,7 +653,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 }
 
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
-    let key = iroh_net::hp::key::node::SecretKey::generate();
+    let key = iroh_net::key::node::SecretKey::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
@@ -669,7 +667,7 @@ async fn derp_regions(config: Config) -> anyhow::Result<()> {
                 region_id: region.region_id,
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
-            let client = match iroh_net::hp::derp::http::ClientBuilder::new()
+            let client = match iroh_net::derp::http::ClientBuilder::new()
                 .get_region(move || {
                     let region = region.clone();
                     Box::pin(async move { Some(region) })

@@ -11,12 +11,9 @@ use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
-use crate::{
-    hp::{cfg, disco, key, magicsock::Timer, stun},
-    net::ip::is_unicast_link_local,
-};
+use crate::{config, disco, key, magicsock::Timer, net::ip::is_unicast_link_local, stun};
 
-use super::conn::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
+use super::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -81,9 +78,9 @@ pub(super) struct Endpoint {
 
 #[derive(derive_more::Debug)]
 pub struct PendingCliPing {
-    pub res: cfg::PingResult,
+    pub res: config::PingResult,
     #[debug("cb: Box<..>")]
-    pub cb: Box<dyn Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
+    pub cb: Box<dyn Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
 }
 
 #[derive(Debug)]
@@ -256,9 +253,9 @@ impl Endpoint {
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
     #[allow(unused)]
-    pub async fn cli_ping<F>(&mut self, mut res: cfg::PingResult, cb: F)
+    pub async fn cli_ping<F>(&mut self, mut res: config::PingResult, cb: F)
     where
-        F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+        F: Fn(config::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
         if self.expired {
             res.err = Some("endpoint expired".to_string());
@@ -485,7 +482,7 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node(&mut self, n: &cfg::Node) {
+    pub fn update_from_node(&mut self, n: &config::Node) {
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {
@@ -1108,11 +1105,12 @@ struct PongReply {
 }
 
 #[derive(Debug)]
-pub struct SentPing {
-    pub to: SendAddr,
-    pub at: Instant,
-    pub purpose: DiscoPingPurpose,
-    pub timer: Timer,
+pub(super) struct SentPing {
+    pub(super) to: SendAddr,
+    pub(super) at: Instant,
+    #[allow(dead_code)]
+    pub(super) purpose: DiscoPingPurpose,
+    pub(super) timer: Timer,
 }
 
 /// The reason why a discovery ping message was sent.

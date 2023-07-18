@@ -1,6 +1,6 @@
 //! Based on tailscale/types/netmap
 
-use super::cfg;
+use super::config;
 
 /// The local view of the iroh network.
 ///
@@ -8,5 +8,5 @@ use super::cfg;
 #[derive(Clone, Debug)]
 pub struct NetworkMap {
     /// Known peers in the network.
-    pub peers: Vec<cfg::Node>,
+    pub peers: Vec<config::Node>,
 }

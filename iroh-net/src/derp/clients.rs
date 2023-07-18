@@ -1,7 +1,7 @@
 //! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
-use crate::hp::key::node::PublicKey;
+use crate::key::node::PublicKey;
 use std::collections::{HashMap, HashSet};
 
 use futures::future::join_all;
@@ -290,7 +290,7 @@ impl Clients {
 mod tests {
     use super::*;
 
-    use crate::hp::derp::{
+    use crate::derp::{
         client_conn::ClientConnBuilder, read_frame, FrameType, PacketForwarder, MAX_PACKET_SIZE,
     };
 
@@ -316,7 +316,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: crate::hp::derp::server::MaybeTlsStream::Test(io),
+                io: crate::derp::server::MaybeTlsStream::Test(io),
                 can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
@@ -346,7 +346,7 @@ mod tests {
         let mut buf = BytesMut::new();
         let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
+        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, &got_frame[..]);
 
@@ -354,7 +354,7 @@ mod tests {
         clients.send_disco_packet(&a_key.clone(), expect_packet)?;
         let (frame_type, _) = read_frame(&mut a_rw, MAX_PACKET_SIZE, &mut buf).await?;
         assert_eq!(frame_type, FrameType::RecvPacket);
-        let (got_key, got_frame) = crate::hp::derp::client::parse_recv_frame(buf.clone())?;
+        let (got_key, got_frame) = crate::derp::client::parse_recv_frame(buf.clone())?;
         assert_eq!(b_key, got_key);
         assert_eq!(data, &got_frame[..]);
 
