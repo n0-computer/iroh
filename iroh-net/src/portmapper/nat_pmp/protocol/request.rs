@@ -28,7 +28,7 @@ pub enum Request {
 #[repr(u8)]
 pub enum MapProtocol {
     /// UDP mapping.
-    UDP = 1,
+    Udp = 1,
 }
 
 impl Request {
@@ -46,7 +46,7 @@ impl Request {
                 lifetime_seconds,
             } => {
                 let opcode = match proto {
-                    MapProtocol::UDP => Opcode::MapUdp,
+                    MapProtocol::Udp => Opcode::MapUdp,
                 };
                 let mut buf = vec![Version::NatPmp.into(), opcode.into()];
                 buf.push(0); // reserved
@@ -64,7 +64,7 @@ impl Request {
         match opcode {
             Opcode::DetermineExternalAddress => Request::ExternalAddress,
             Opcode::MapUdp => Request::Mapping {
-                proto: MapProtocol::UDP,
+                proto: MapProtocol::Udp,
                 local_port: rng.gen(),
                 external_port: rng.gen(),
                 lifetime_seconds: rng.gen(),
@@ -93,7 +93,7 @@ impl Request {
                 let lifetime_bytes: [u8; 4] = buf[8..12].try_into().unwrap();
                 let lifetime_seconds = u32::from_be_bytes(lifetime_bytes);
                 Request::Mapping {
-                    proto: MapProtocol::UDP,
+                    proto: MapProtocol::Udp,
                     local_port,
                     external_port,
                     lifetime_seconds,

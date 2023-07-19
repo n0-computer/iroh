@@ -55,7 +55,7 @@ impl Mapping {
         socket.connect((gateway, protocol::SERVER_PORT)).await?;
 
         let req = Request::Mapping {
-            proto: MapProtocol::UDP,
+            proto: MapProtocol::Udp,
             local_port: local_port.into(),
             external_port: external_port.map(Into::into).unwrap_or_default(),
             lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
@@ -70,7 +70,7 @@ impl Mapping {
 
         let (external_port, lifetime_seconds) = match response {
             Response::PortMap {
-                proto: MapProtocol::UDP,
+                proto: MapProtocol::Udp,
                 epoch_time: _,
                 private_port,
                 external_port,
@@ -105,7 +105,7 @@ impl Mapping {
             external_addr,
             lifetime_seconds,
             local_ip,
-            local_port: local_port.into(),
+            local_port,
             gateway,
         })
     }
@@ -128,7 +128,7 @@ impl Mapping {
         socket.connect((gateway, protocol::SERVER_PORT)).await?;
 
         let req = Request::Mapping {
-            proto: MapProtocol::UDP,
+            proto: MapProtocol::Udp,
             local_port: local_port.into(),
             external_port: 0,
             lifetime_seconds: 0,

@@ -147,7 +147,7 @@ impl Response {
                 }
             }
             Opcode::MapUdp => {
-                let proto = MapProtocol::UDP;
+                let proto = MapProtocol::Udp;
 
                 let epoch_bytes = buf[4..8].try_into().expect("slice has the right len");
                 let epoch_time = u32::from_be_bytes(epoch_bytes);
@@ -185,7 +185,7 @@ impl Response {
                 }
             }
             Opcode::MapUdp => Response::PortMap {
-                proto: MapProtocol::UDP,
+                proto: MapProtocol::Udp,
                 epoch_time: rng.gen(),
                 private_port: rng.gen(),
                 external_port: rng.gen(),
