@@ -4,29 +4,29 @@
 import PackageDescription
 
 let package = Package(
-    name: "iroh",
+    name: "IrohSwift",
     platforms: [
-        .iOS(.v13),
-        .macOS(.v11)
+        .iOS(.v16),
+        .macOS(.v13)
     ],
     products: [
         // Products define the executables and libraries a package produces,
         // making them visible to other packages.
         .library(
-            name: "Iroh",
-            targets: ["Iroh"]),
+            name: "IrohSwift",
+            targets: ["IrohSwift"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "Iroh",
+            name: "IrohSwift",
             dependencies: ["LibIroh"],
-            path: "swift/Sources/Iroh"),
+            path: "swift/Sources/IrohSwift"),
         .testTarget(
             name: "IrohTests",
-            dependencies: ["Iroh"],
-            path: "swift/Tests/IrohTests"),
+            dependencies: ["IrohSwift"],
+            path: "swift/Tests/IrohSwiftTests"),
         .binaryTarget(
             name: "LibIroh",
             path: "target/LibIroh.xcframework"),
