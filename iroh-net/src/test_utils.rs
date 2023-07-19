@@ -1,10 +1,7 @@
 //! Internal utilities to support testing.
 
-use std::future::Future;
-
 use tokio::runtime::RuntimeFlavor;
 use tracing::level_filters::LevelFilter;
-use tracing_futures::WithSubscriber;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
@@ -47,14 +44,14 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
     testing_subscriber().set_default()
 }
 
-/// Invoke the future with test logging configured.
-///
-/// This can be used to execute any future which uses tracing for logging, it sets up the
-/// logging as [`setup_logging`] does but in a way which will work for both single and
-/// multi-threaded tokio runtimes.
-pub(crate) async fn with_logging<F: Future>(f: F) -> F::Output {
-    f.with_subscriber(testing_subscriber()).await
-}
+// /// Invoke the future with test logging configured.
+// ///
+// /// This can be used to execute any future which uses tracing for logging, it sets up the
+// /// logging as [`setup_logging`] does but in a way which will work for both single and
+// /// multi-threaded tokio runtimes.
+// pub(crate) async fn with_logging<F: Future>(f: F) -> F::Output {
+//     f.with_subscriber(testing_subscriber()).await
+// }
 
 /// Returns the a [`tracing::Subscriber`] configured for our tests.
 ///
