@@ -147,16 +147,26 @@ pub struct Config {
     pub neighbor_request_timeout: Duration,
 }
 impl Default for Config {
+    /// Default values for the HyParView layer
     fn default() -> Self {
         Self {
+            // From the paper (p9)
             active_view_capacity: 5,
+            // From the paper (p9)
             passive_view_capacity: 30,
+            // From the paper (p9)
             active_random_walk_length: Ttl(6),
+            // From the paper (p9)
             passive_random_walk_length: Ttl(3),
+            // From the paper (p9)
             shuffle_random_walk_length: Ttl(6),
+            // From the paper (p9)
             shuffle_active_view_count: 3,
+            // From the paper (p9)
             shuffle_passive_view_count: 4,
+            // Wild guess
             shuffle_interval: Duration::from_secs(60),
+            // Wild guess
             neighbor_request_timeout: Duration::from_millis(500),
         }
     }
