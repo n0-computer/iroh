@@ -1,3 +1,7 @@
+//! The protocol state of the `iroh-gossip` protocol
+//!
+//! This mod
+
 use std::{
     collections::{hash_map, HashMap, HashSet},
     fmt,
@@ -11,10 +15,12 @@ use crate::proto::{topic, Config, PeerAddress};
 
 use super::PeerData;
 
+/// The identifier for a topic
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
 pub struct TopicId([u8; 32]);
 
 impl TopicId {
+    /// Returns a byte slice of this [`TopicId`].
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
@@ -53,19 +59,28 @@ impl fmt::Debug for TopicId {
     }
 }
 
+/// Protocol wire message
+///
+/// This is the wire frame of the `iroh-gossip` protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message<PA> {
     topic: TopicId,
     message: topic::Message<PA>,
 }
 
+/// A timer to be registered into the runtime
+///
+/// As the implementation of the protocol is an IO-less state machine, registering timers does not
+/// happen within the protocol implementation. Instead, these `Timer` structs are emitted as
+/// [`OutEvent`]s. The implementor must register the timer in its runtime to be emitted on the specified [`Instant`],
+/// and once triggered inject an [`InEvent::TimerExpired`] into the protocol state.
 #[derive(Clone, Debug)]
 pub struct Timer<PA> {
     topic: TopicId,
     timer: topic::Timer<PA>,
 }
 
-/// Input event to the state handler.
+/// Input event to the protocol state.
 #[derive(Clone, Debug)]
 pub enum InEvent<PA> {
     /// Message received from the network.
@@ -80,6 +95,7 @@ pub enum InEvent<PA> {
     UpdatePeerData(PeerData),
 }
 
+/// Output event from the protocol state.
 #[derive(Debug, Clone)]
 pub enum OutEvent<PA> {
     /// Send a message on the network
@@ -121,6 +137,14 @@ impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
     }
 }
 
+/// The state of the `iroh-gossip` protocol.
+///
+/// The implementation works as an IO-less state machine. The implementor injects events through
+/// [`Self::handle`], which returns an iterator of [`OutEvent`]s to be processed.
+///
+/// This struct contains a map of [`topic::State`] for each topic that was joined. It mostly acts as
+/// a forwarder of [`InEvent`]s to matching topic state. Each topic's state is completely
+/// independent; thus the actual protocol logic lives with [`topic::State`].
 pub struct State<PA, R> {
     me: PA,
     me_data: PeerData,
@@ -132,6 +156,12 @@ pub struct State<PA, R> {
 }
 
 impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
+    /// Create a new protocol state instance.
+    ///
+    /// `me` is the [`PeerAddress`] of the local node, `peer_data` is the initial [`PeerData`]
+    /// (which can be updated over time).
+    /// For the protocol to perform as recommended in the papers, the [`Config`] should be
+    /// identical for all nodes in the network.
     pub fn new(me: PA, me_data: PeerData, config: Config, rng: R) -> Self {
         Self {
             me,
@@ -144,24 +174,26 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
         }
     }
 
-    pub fn endpoint(&self) -> &PA {
+    /// Get a reference to the node's [`PeerAddress`]
+    pub fn me(&self) -> &PA {
         &self.me
     }
 
-    pub fn state(&self, topic: &TopicId) -> Option<&topic::State<PA, R>> {
+    /// Get a reference to the protocol state for a topic.
+    fn state(&self, topic: &TopicId) -> Option<&topic::State<PA, R>> {
         self.states.get(topic)
     }
 
-    pub fn state_mut(&mut self, topic: &TopicId) -> Option<&mut topic::State<PA, R>> {
-        self.states.get_mut(topic)
-    }
-
+    /// Check if a topic has any active (connected) peers.
     pub fn has_active_peers(&self, topic: &TopicId) -> bool {
         self.state(topic)
             .map(|s| s.has_active_peers())
             .unwrap_or(false)
     }
 
+    /// Handle an [`InEvent`]
+    ///
+    /// This returns an iterator of [`OutEvent`]s that must be processed.
     pub fn handle(
         &mut self,
         event: InEvent<PA>,

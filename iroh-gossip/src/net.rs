@@ -1,3 +1,5 @@
+//! Networking for the `iroh-gossip` protocol
+
 use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, Context};
@@ -22,7 +24,8 @@ mod util;
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"n0/iroh-gossip/0";
 /// Maximum message size is limited to 1024 bytes for now.
-pub(crate) const MAX_MESSAGE_SIZE: usize = 1024;
+pub const MAX_MESSAGE_SIZE: usize = 1024;
+
 /// Channel capacity for topic subscription broadcast channels (one per topic)
 const SUBSCRIBE_ALL_CAP: usize = 64;
 /// Channel capacity for all subscription broadcast channels (single)
@@ -34,12 +37,16 @@ const TO_ACTOR_CAP: usize = 64;
 /// Channel capacity for the InEvent message queue (single)
 const IN_EVENT_CAP: usize = 1024;
 
-pub type InEvent = proto::InEvent<PeerId>;
-pub type OutEvent = proto::OutEvent<PeerId>;
+
+/// Events emitted from the gossip protocol
 pub type Event = proto::Event<PeerId>;
+/// Commands for the gossip protocol
 pub type Command = proto::Command<PeerId>;
-pub type Timer = proto::Timer<PeerId>;
-pub type ProtoMessage = proto::Message<PeerId>;
+
+type InEvent = proto::InEvent<PeerId>;
+type OutEvent = proto::OutEvent<PeerId>;
+type Timer = proto::Timer<PeerId>;
+type ProtoMessage = proto::Message<PeerId>;
 
 /// Publish and subscribe on gossiping topics.
 ///
@@ -198,6 +205,12 @@ impl GossipHandle {
     }
 }
 
+/// Addressing information for peers
+///
+/// This struct is serialized and transmitted to peers in `Join` and `ForwardJoin` messages.
+/// It contains the information needed by `iroh-net` to connect to peers.
+///
+/// TODO: Add `region` id
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IrohInfo {
     addrs: Vec<SocketAddr>,
@@ -270,7 +283,7 @@ struct GossipActor {
 
 impl GossipActor {
     pub async fn run(mut self) -> anyhow::Result<()> {
-        let me = *self.state.endpoint();
+        let me = *self.state.me();
         loop {
             tokio::select! {
                 biased;
@@ -325,7 +338,7 @@ impl GossipActor {
     }
 
     async fn handle_to_actor_msg(&mut self, msg: ToActor, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.endpoint();
+        let me = *self.state.me();
         debug!(me = ?me, "handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
@@ -394,7 +407,7 @@ impl GossipActor {
     }
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
-        let me = *self.state.endpoint();
+        let me = *self.state.me();
         debug!(me = ?me, "handle in_event  {event:?}");
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
