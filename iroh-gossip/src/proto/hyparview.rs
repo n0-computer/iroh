@@ -27,6 +27,7 @@ pub enum InEvent<PA> {
     PeerDisconnected(PA),
     RequestJoin(PA),
     UpdatePeerData(PeerData),
+    Quit,
 }
 
 /// Output event for HyParView
@@ -215,6 +216,7 @@ where
             InEvent::UpdatePeerData(data) => {
                 self.me_data = data;
             }
+            InEvent::Quit => self.handle_quit(io),
         }
 
         // this will only happen on the first call
@@ -269,6 +271,20 @@ where
             },
             io,
         );
+    }
+
+    fn handle_quit(&mut self, io: &mut impl IO<PA>) {
+        let peers = self.active_view.iter().cloned().collect::<Vec<_>>();
+        for peer in peers {
+            self.on_disconnect(
+                peer,
+                Disconnect {
+                    alive: false,
+                    respond: true,
+                },
+                io,
+            );
+        }
     }
 
     fn on_join(&mut self, peer: PA, data: PeerData, now: Instant, io: &mut impl IO<PA>) {

@@ -244,6 +244,11 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                         ));
                     }
                 }
+
+                // when receiving a quit command, note this and drop the topic state after
+                // processing this last event
+                let quit = matches!(event, topic::InEvent::Command(topic::Command::Quit));
+
                 if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
                     e.insert(topic::State::with_rng(
                         self.me,
@@ -259,6 +264,10 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                     for event in out {
                         handle_out_event(topic, event, &mut self.conns, &mut self.outbox);
                     }
+                }
+
+                if quit {
+                    self.states.remove(&topic);
                 }
             }
             // when a peer disconnected on the network level, forward event to all states
