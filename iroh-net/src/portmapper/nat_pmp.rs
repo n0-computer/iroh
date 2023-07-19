@@ -1,3 +1,5 @@
+//! Definitions and utilities to interact with a NAT-PMP server.
+
 use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
 use tracing::{debug, trace};
@@ -9,54 +11,61 @@ mod protocol;
 /// Port to use when acting as a server. This is the one we direct requests to.
 pub const SERVER_PORT: u16 = 5351;
 
-/// Tailscale uses the recommended port mapping lifetime for PMP, which is 2 hours. So we assume a
-/// half lifetime of 1h. See <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
-const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
+/// Recommended lifetime is 2 hours. See [RFC 6886 Requesting a
+/// Mapping](https://datatracker.ietf.org/doc/html/rfc6886#section-3.3).
+const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60 * 2;
 
+/// A mapping sucessfully registered with a NAT-PMP server.
 #[derive(Debug)]
 pub struct Mapping {
+    /// Local ip used to create this mapping.
+    local_ip: Ipv4Addr,
+    /// Local port used to create this mapping.
+    local_port: NonZeroU16,
+    /// Gateway address used to registed this mapping.
+    gateway: Ipv4Addr,
+    /// External port of the mapping.
     external_port: NonZeroU16,
+    /// External address of the mapping.
     external_addr: Ipv4Addr,
+    /// Allowed time for this mapping as informed by the server.
     lifetime_seconds: u32,
 }
 
 impl Mapping {
+    /// Attempt to registed a new mapping with the NAT-PMP server on the provided gateway.
     pub async fn new(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,
         gateway: Ipv4Addr,
-        preferred_external_address: Option<(Ipv4Addr, NonZeroU16)>,
+        external_port: Option<NonZeroU16>,
     ) -> anyhow::Result<Self> {
+        // create the socket and send the request
         let socket = tokio::net::UdpSocket::bind((local_ip, 0)).await?;
         socket.connect((gateway, SERVER_PORT)).await?;
 
-        let (preferred_external_address, preferred_external_port) = match preferred_external_address
-        {
-            Some((ip, port)) => (Some(ip), Some(port.into())),
-            None => (None, None),
-        };
-        let local_port: u16 = local_port.into();
         let req = Request::Mapping {
             proto: MapProtocol::UDP,
-            local_port,
-            external_port: preferred_external_port.unwrap_or_default(),
+            local_port: local_port.into(),
+            external_port: external_port.map(Into::into).unwrap_or_default(),
             lifetime_seconds: MAPPING_REQUESTED_LIFETIME_SECONDS,
         };
 
         socket.send(&req.encode()).await?;
+
+        // wait for the response and decode it
         let mut buffer = vec![0; Response::MAX_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = Response::decode(&buffer[..read])?;
 
-        // pre-create the mapping since we have most info ready
         let (external_port, lifetime_seconds) = match response {
             Response::PortMap {
                 proto: MapProtocol::UDP,
-                epoch_time,
+                epoch_time: _,
                 private_port,
                 external_port,
                 lifetime_seconds,
-            } if private_port == local_port => (external_port, lifetime_seconds),
+            } if private_port == Into::<u16>::into(local_port) => (external_port, lifetime_seconds),
             _ => anyhow::bail!("server returned unexpected response for mapping request"),
         };
 
@@ -64,15 +73,18 @@ impl Mapping {
             .try_into()
             .map_err(|_| anyhow::anyhow!("received 0 port from server as external port"))?;
 
-        // now send the second response to get the external address
+        // now send the second request to get the external address
         let req = Request::ExternalAddress;
         socket.send(&req.encode()).await?;
+
+        // wait for the response and decode it
         let mut buffer = vec![0; Response::MAX_SIZE];
         let read = tokio::time::timeout(RECV_TIMEOUT, socket.recv(&mut buffer)).await??;
         let response = Response::decode(&buffer[..read])?;
+
         let external_addr = match response {
             Response::PublicAddress {
-                epoch_time,
+                epoch_time: _,
                 public_ip,
             } => public_ip,
             _ => anyhow::bail!("server returned unexpected response for mapping request"),
@@ -82,6 +94,9 @@ impl Mapping {
             external_port,
             external_addr,
             lifetime_seconds,
+            local_ip,
+            local_port: local_port.into(),
+            gateway,
         })
     }
 
