@@ -1818,6 +1818,7 @@ dependencies = [
  "tokio-util",
  "toml 0.7.6",
  "tracing",
+ "tracing-futures",
  "tracing-subscriber",
  "trust-dns-resolver",
  "ucd-parse",
