@@ -56,7 +56,7 @@ pub enum Error {
     /// Request is too short or is otherwise malformed.
     #[display("Response is malformed")]
     Malformed,
-    /// The [`RESPONSE_INDICATOR`] is not present.
+    /// The [`Response::RESPONSE_INDICATOR`] is not present.
     #[display("Packet does not appear to be a response")]
     NotAResponse,
     /// The received opcode is not recognized.
