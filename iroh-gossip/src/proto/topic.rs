@@ -1,3 +1,5 @@
+//! This module contains the implementation of the gossiping protocol for an individual topic
+
 use std::{
     collections::VecDeque,
     fmt,
@@ -14,7 +16,7 @@ use super::hyparview::{self, InEvent as SwarmIn};
 use super::plumtree::{self, InEvent as GossipIn};
 use super::{PeerAddress, PeerData};
 
-/// Input event to the state handler.
+/// Input event to the topic state handler.
 #[derive(Clone, Debug)]
 pub enum InEvent<PA> {
     /// Message received from the network.
@@ -41,6 +43,7 @@ pub enum OutEvent<PA> {
     ScheduleTimer(Duration, Timer<PA>),
     /// Close the connection to a peer on the network level.
     DisconnectPeer(PA),
+    /// Emitted when new [`PeerData`] was received for a peer.
     PeerData(PA, PeerData),
 }
 
@@ -68,20 +71,32 @@ impl<PA> From<plumtree::OutEvent<PA>> for OutEvent<PA> {
     }
 }
 
+/// A trait for a concrete type to push `OutEvent`s to.
+///
+/// The implementation is generic over this trait, which allows the upper layer to supply a
+/// container of their choice for `OutEvent`s emitted from the protocol state.
 pub trait IO<PA: Clone> {
+    /// Store the event in the message container
     fn push(&mut self, event: impl Into<OutEvent<PA>>);
 }
 
+/// A protocol message for a particular topic
 #[derive(From, Debug, Serialize, Deserialize, Clone)]
 pub enum Message<PA> {
+    /// A message of the swarm membership layer
     Swarm(hyparview::Message<PA>),
+    /// A message of the gossip broadcast layer
     Gossip(plumtree::Message),
 }
 
+/// An event to be emitted to the application for a particular topic.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Event<PA> {
+    /// We have a new, direct neighbor in the swarm membership layer for this topic
     NeighborUp(PA),
+    /// We dropped direct neighbor in the swarm membership layer for this topic
     NeighborDown(PA),
+    /// A gossip message was received for this topic
     Received(Bytes),
 }
 impl<PA: fmt::Debug> fmt::Debug for Event<PA> {
@@ -111,15 +126,24 @@ impl<PA> From<plumtree::Event> for Event<PA> {
     }
 }
 
+/// A timer to be registered for a particular topic.
+///
+/// This should be treated an an opaque value by the implementor and, once emitted, simply returned
+/// to the protocol through [`InEvent::TimerExpired`].
 #[derive(Clone, From, Debug)]
 pub enum Timer<PA> {
+    /// A timer for the swarm layer
     Swarm(hyparview::Timer<PA>),
+    /// A timer for the gossip layer
     Gossip(plumtree::Timer),
 }
 
+/// A command to the protocol state for a particular topic.
 #[derive(Clone)]
 pub enum Command<PA> {
+    /// Join a peer for this topic
     Join(PA),
+    /// Broadcast a message for this topic
     Broadcast(Bytes),
 }
 
@@ -138,9 +162,12 @@ impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
     }
 }
 
+/// Protocol configuration
 #[derive(Clone, Default)]
 pub struct Config {
+    /// Configuration for the swarm membership layer
     pub membership: hyparview::Config,
+    /// Configuration for the gossip broadcast layer
     pub broadcast: plumtree::Config,
 }
 
@@ -247,18 +274,32 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
         self.outbox.drain(..)
     }
 
+    /// Get stats on how many messages were sent and received
+    ///
+    /// TODO: Remove/replace with metrics?
     pub fn stats(&self) -> &Stats {
         &self.stats
     }
 
+    /// Get statistics for the gossip broacast state
+    ///
+    /// TODO: Remove/replace with metrics?
+    pub fn gossip_stats(&self) -> &plumtree::Stats {
+        &self.gossip.stats()
+    }
+
+    /// Check if this topic has any active (connected) peers.
     pub fn has_active_peers(&self) -> bool {
         !self.swarm.active_view.is_empty()
     }
 }
 
+/// Statistics for the protocol state of a topic
 #[derive(Clone, Debug, Default)]
 pub struct Stats {
+    /// Number of messges sent
     pub messages_sent: usize,
+    /// Number of messages received
     pub messages_received: usize,
 }
 
@@ -463,10 +504,10 @@ mod test {
                 .entry(state.gossip.lazy_push_peers.len())
                 .or_default() += 1;
             *active_distrib
-                .entry(state.swarm.active_view().count())
+                .entry(state.swarm.active_view.len())
                 .or_default() += 1;
             *passive_distrib
-                .entry(state.swarm.passive_view().count())
+                .entry(state.swarm.passive_view.len())
                 .or_default() += 1;
             payload_recv += stats.payload_messages_received;
             control_recv += stats.control_messages_received;
