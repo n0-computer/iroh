@@ -39,6 +39,7 @@ impl Mapping {
             .map(Self::Pcp)
     }
 
+    /// Create a new NAT-PMP mapping.
     pub(crate) async fn new_nat_pmp(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,

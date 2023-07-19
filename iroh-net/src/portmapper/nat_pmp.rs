@@ -43,7 +43,7 @@ impl super::mapping::PortMapped for Mapping {
 }
 
 impl Mapping {
-    /// Attempt to registed a new mapping with the NAT-PMP server on the provided gateway.
+    /// Attempt to register a new mapping with the NAT-PMP server on the provided gateway.
     pub async fn new(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,
