@@ -11,21 +11,27 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 pub use request::*;
 pub use response::*;
 
-/// Nat Version according to [RFC 6887 Version Negotiation](https://datatracker.ietf.org/doc/html/rfc6887#section-9).
-/// TODO(@divma): real link
+/// Port to use when acting as a server. This is the one we direct requests to.
+pub const SERVER_PORT: u16 = 5351;
+
+/// Nat Version according to [RFC 6886 Transition to Port Control Protocol](https://datatracker.ietf.org/doc/html/rfc6886#section-1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Version {
+    /// NAT-PMP version
     NatPmp = 0,
 }
 
+/// Opcode accepted by a NAT-PMP server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Opcode {
-    // 3.2.  Determining the External Address
+    /// Determine the external address of the gateway.
+    ///
+    /// See [RFC 6886 Determining the External Address](https://datatracker.ietf.org/doc/html/rfc6886#section-3.2).
     DetermineExternalAddress = 0,
-    // 3.3.  Requesting a Mapping
+    /// Get a UDP Mapping.
+    ///
+    /// See [RFC 6886 Requesting a Mapping](https://datatracker.ietf.org/doc/html/rfc6886#section-3.3).
     MapUdp = 1,
-    // 3.3.  Requesting a Mapping
-    MapTcp = 2,
 }

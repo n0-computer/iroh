@@ -78,7 +78,7 @@ impl Response {
         2 + // result code
         4 + // epoch time
         2 + // private port
-        2 + // public port 
+        2 + // public port
         4; // lifetime
 
     /// Indicator ORd into the [`Opcode`] to indicate a response packet.
@@ -122,12 +122,8 @@ impl Response {
                     public_ip: ip_bytes.into(),
                 }
             }
-            other @ (Opcode::MapUdp | Opcode::MapTcp) => {
-                let proto = if other == Opcode::MapUdp {
-                    MapProtocol::UDP
-                } else {
-                    MapProtocol::TCP
-                };
+            Opcode::MapUdp => {
+                let proto = MapProtocol::UDP;
 
                 let epoch_bytes = buf[4..8].try_into().expect("slice has the right len");
                 let epoch_time = u32::from_be_bytes(epoch_bytes);

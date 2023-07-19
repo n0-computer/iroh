@@ -45,9 +45,14 @@ impl Mapping {
         gateway: Ipv4Addr,
         external_addr: Option<(Ipv4Addr, NonZeroU16)>,
     ) -> Result<Self> {
-        nat_pmp::Mapping::new(local_ip, local_port, gateway, external_addr)
-            .await
-            .map(Self::NatPmp)
+        nat_pmp::Mapping::new(
+            local_ip,
+            local_port,
+            gateway,
+            external_addr.map(|(_addr, port)| port),
+        )
+        .await
+        .map(Self::NatPmp)
     }
 
     /// Create a new UPnP mapping.
