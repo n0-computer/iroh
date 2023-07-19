@@ -21,6 +21,7 @@ pub enum Mapping {
     /// A PCP mapping.
     #[debug(transparent)]
     Pcp(pcp::Mapping),
+    /// A NAT-PMP mapping.
     #[debug(transparent)]
     NatPmp(nat_pmp::Mapping),
 }
@@ -66,10 +67,7 @@ impl Mapping {
         match self {
             Mapping::Upnp(m) => m.release().await,
             Mapping::Pcp(m) => m.release().await,
-            Mapping::NatPmp(m) => {
-                // TODO(@divma): do
-                anyhow::bail!("unimplemented");
-            }
+            Mapping::NatPmp(m) => m.release().await,
         }
     }
 }

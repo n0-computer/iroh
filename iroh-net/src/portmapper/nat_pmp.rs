@@ -84,6 +84,10 @@ impl Mapping {
             lifetime_seconds,
         })
     }
+
+    pub(crate) async fn release(self) -> anyhow::Result<()> {
+        anyhow::bail!("unimplemented")
+    }
 }
 
 impl super::mapping::PortMapped for Mapping {
