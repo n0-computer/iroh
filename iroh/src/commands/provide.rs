@@ -13,7 +13,7 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
+use iroh_bytes::{protocol::RequestToken, provider::BaoDb, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
@@ -118,7 +118,7 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide<D: BaoReadonlyDb>(
+async fn provide<D: BaoDb>(
     db: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,

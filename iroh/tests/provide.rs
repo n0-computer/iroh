@@ -33,7 +33,7 @@ use iroh_bytes::{
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{self, BaoReadonlyDb, CustomGetHandler, RequestAuthorizationHandler},
+    provider::{self, BaoDb, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
 };
@@ -44,7 +44,7 @@ fn test_runtime() -> runtime::Handle {
     runtime::Handle::from_currrent(1).unwrap()
 }
 
-fn test_node<D: BaoReadonlyDb>(
+fn test_node<D: BaoDb>(
     db: D,
     addr: SocketAddr,
 ) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {

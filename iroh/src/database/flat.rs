@@ -13,7 +13,7 @@ use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, StreamExt};
 use iroh_bytes::protocol::MAX_MESSAGE_SIZE;
-use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
+use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs};
 use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
@@ -176,6 +176,48 @@ impl BaoReadonlyDb for Database {
 
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
         self.validate0(tx).boxed()
+    }
+}
+
+impl BaoDb for Database {
+    type Vfs = LocalFs;
+
+    fn vfs(&self) -> &Self::Vfs {
+        &LocalFs
+    }
+
+    fn insert_pair(
+        &self,
+        hash: Hash,
+        data: PathBuf,
+        outboard: Option<PathBuf>,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let outboard = std::fs::read(outboard.unwrap())?.into();
+            let size = std::fs::metadata(data.as_path())?.len();
+            let entry = DbEntry::External {
+                outboard,
+                path: data,
+                size,
+            };
+            println!("{} {:?}", hash, entry);
+            let mut inner = db.0.write().unwrap();
+            inner.insert(hash, entry);
+            Ok(())
+        })
+        .map(make_io_error)
+        .boxed()
+    }
+}
+
+fn make_io_error<T>(
+    r: std::result::Result<io::Result<T>, tokio::task::JoinError>,
+) -> io::Result<T> {
+    match r {
+        Ok(Ok(t)) => Ok(t),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
     }
 }
 

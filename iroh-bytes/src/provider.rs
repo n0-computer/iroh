@@ -7,7 +7,8 @@ use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
-use iroh_io::AsyncSliceReader;
+use futures::FutureExt;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
@@ -216,6 +217,15 @@ pub enum ProvideProgress {
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
+/// Progress updates for the provide operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ShareProgress {
+    /// We are done with the whole operation
+    AllDone,
+    /// We got an error and need to abort
     Abort(RpcError),
 }
 
@@ -618,5 +628,114 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
             debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, 0))
         }
+    }
+}
+
+///
+pub trait Vfs: Clone + Debug + Send + Sync + 'static {
+    ///
+    type Id: Debug + Clone + Send + Sync + 'static;
+    ///
+    type ReadRaw: AsyncSliceReader;
+    ///
+    type WriteRaw: AsyncSliceWriter;
+    /// create a handle for internal data
+    ///
+    /// `name_hint` is a hint for the internal name (base).
+    /// `purpose` can also be used as a hint for the internal name (extension).
+    fn create(
+        &self,
+        name_hint: &[u8],
+        purpose: Purpose,
+        temp: bool,
+    ) -> BoxFuture<'_, io::Result<Self::Id>>;
+    /// open an internal handle for reading
+    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
+    /// open an internal handle for writing
+    fn open_write(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>>;
+    /// delete an internal handle
+    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>>;
+}
+
+///
+#[derive(Debug, Clone, Copy)]
+pub enum Purpose {
+    /// File is going to be used to store data
+    Data,
+    /// File is going to be used to store a bao outboard
+    Outboard,
+    /// File is going to be used to store metadata
+    Meta,
+}
+
+///
+pub type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
+
+///
+pub trait BaoDb: BaoReadonlyDb {
+    /// The Vfs type to use
+    type Vfs: Vfs;
+    /// The Vfs of this database
+    fn vfs(&self) -> &Self::Vfs;
+    /// Insert a new blob into the database
+    fn insert_pair(
+        &self,
+        hash: Hash,
+        data: VfsId<Self>,
+        outboard: Option<VfsId<Self>>,
+    ) -> BoxFuture<'_, io::Result<()>>;
+}
+
+/// A local filesystem based Vfs
+#[derive(Debug, Clone)]
+pub struct LocalFs;
+
+impl Vfs for LocalFs {
+    type Id = std::path::PathBuf;
+    type ReadRaw = iroh_io::File;
+    type WriteRaw = iroh_io::File;
+
+    fn create(
+        &self,
+        name_hint: &[u8],
+        purpose: Purpose,
+        temporary: bool,
+    ) -> BoxFuture<'_, io::Result<Self::Id>> {
+        use rand::Rng;
+        let dir = std::env::temp_dir();
+        let rand = rand::thread_rng().gen::<[u8; 16]>();
+        let temp = if temporary { ".temp" } else { "" };
+        fn extension(purpose: Purpose) -> &'static str {
+            match purpose {
+                Purpose::Data => "data",
+                Purpose::Outboard => "outboard",
+                Purpose::Meta => "meta",
+            }
+        }
+        let name =
+            hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + extension(purpose) + temp;
+        let filename = dir.join(name);
+        futures::future::ok(filename).boxed()
+    }
+
+    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
+        let handle = handle.clone();
+        iroh_io::File::create(move || std::fs::File::open(handle.as_path())).boxed()
+    }
+
+    fn open_write(&self, handle: &std::path::PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
+        let handle = handle.clone();
+        iroh_io::File::create(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(handle.as_path())
+        })
+        .boxed()
+    }
+
+    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>> {
+        let handle = handle.clone();
+        tokio::fs::remove_file(handle).boxed()
     }
 }

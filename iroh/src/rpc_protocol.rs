@@ -10,7 +10,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
-use iroh_bytes::Hash;
+use iroh_bytes::{provider::ShareProgress, Hash};
 use iroh_net::tls::PeerId;
 
 use quic_rpc::{
@@ -40,6 +40,31 @@ impl Msg<ProviderService> for ProvideRequest {
 
 impl ServerStreamingMsg<ProviderService> for ProvideRequest {
     type Response = ProvideProgress;
+}
+
+///
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShareRequest {
+    ///
+    pub blobs: Vec<Hash>,
+    ///
+    pub collections: Vec<Hash>,
+    ///
+    pub peer: PeerId,
+    ///
+    pub addrs: Vec<SocketAddr>,
+    ///
+    pub force: bool,
+    ///
+    pub derp_region: Option<u16>,
+}
+
+impl Msg<ProviderService> for ShareRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ShareRequest {
+    type Response = ShareProgress;
 }
 
 /// A request to the node to validate the integrity of all provided data
@@ -200,6 +225,7 @@ pub enum ProviderRequest {
     ListBlobs(ListBlobsRequest),
     ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
+    Share(ShareRequest),
     Id(IdRequest),
     Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
@@ -215,6 +241,7 @@ pub enum ProviderResponse {
     ListBlobs(ListBlobsResponse),
     ListCollections(ListCollectionsResponse),
     Provide(ProvideProgress),
+    Share(ShareProgress),
     Id(IdResponse),
     Addrs(AddrsResponse),
     Validate(ValidateProgress),

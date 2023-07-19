@@ -10,7 +10,10 @@ use bao_tree::io::outboard::PreOrderMemOutboard;
 use bytes::Bytes;
 use futures::future::{self, BoxFuture};
 use futures::FutureExt;
+use iroh_bytes::provider::BaoDb;
+use iroh_bytes::provider::LocalFs;
 use iroh_bytes::provider::ValidateProgress;
+use iroh_bytes::provider::VfsId;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use tokio::sync::mpsc;
@@ -116,5 +119,22 @@ impl BaoReadonlyDb for Database {
         _tx: mpsc::Sender<ValidateProgress>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         future::ok(()).boxed()
+    }
+}
+
+impl BaoDb for Database {
+    type Vfs = LocalFs;
+
+    fn vfs(&self) -> &Self::Vfs {
+        todo!()
+    }
+
+    fn insert_pair(
+        &self,
+        _hash: Hash,
+        _data: VfsId<Self>,
+        _outboard: Option<VfsId<Self>>,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        todo!()
     }
 }

@@ -6,6 +6,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
@@ -60,6 +61,32 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
+            Commands::Share {
+                blob,
+                collection,
+                rpc_port,
+                peer,
+                addr,
+                force,
+                ..
+            } => {
+                let client = make_rpc_client(rpc_port).await?;
+                let mut stream = client
+                    .server_streaming(ShareRequest {
+                        blobs: blob,
+                        collections: collection,
+                        peer,
+                        addrs: addr,
+                        derp_region: None,
+                        force: true,
+                    })
+                    .await?;
+                while let Some(item) = stream.next().await {
+                    let item = item?;
+                    println!("{:?}", item);
+                }
+                Ok(())
+            }
             Commands::Get {
                 hash,
                 peer,
@@ -256,6 +283,33 @@ pub enum Commands {
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
+    },
+    /// Fetch the data identified by HASH from a provider
+    Share {
+        /// Individual blobs retrieve, as a Blake3 CID
+        #[clap(long)]
+        blob: Vec<Hash>,
+        /// Collections to retrieve, as a Blake3 CID
+        #[clap(long)]
+        collection: Vec<Hash>,
+        /// PeerId of the provider
+        #[clap(long, short)]
+        peer: PeerId,
+        /// Addresses of the provider
+        #[clap(long, short)]
+        addr: Vec<SocketAddr>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long)]
+        token: Option<RequestToken>,
+        /// Directory in which to save the file(s), defaults to writing to STDOUT
+        #[clap(long, short)]
+        out: Option<PathBuf>,
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+        /// Force download even if the data is already present
+        #[clap(long, default_value_t = true)]
+        force: bool,
     },
     /// List listening addresses of the provider.
     Addresses {
