@@ -20,7 +20,6 @@ use current_mapping::CurrentMapping;
 mod current_mapping;
 mod mapping;
 mod metrics;
-#[allow(unused)]
 mod nat_pmp;
 mod pcp;
 mod upnp;
@@ -216,7 +215,7 @@ struct Probe {
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
     /// Last time PCP was seen.
     last_pcp: Option<Instant>,
-    /// Last time PMP was seen.
+    /// Last time NAT-PMP was seen.
     last_nat_pmp: Option<Instant>,
 }
 
@@ -271,7 +270,7 @@ impl Probe {
                 Box::pin(async {
                     nat_pmp::probe_available(local_ip, gateway)
                         .await
-                        .then(|| Instant::now())
+                        .then(Instant::now)
                 })
             }),
         };
