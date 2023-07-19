@@ -10,21 +10,19 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use tracing::{debug, warn};
 
-use crate::proto::topic::OutEvent;
-
 use super::{
-    topic::{InEvent, State, Timer},
-    util::TimerMap,
-    Command, Config, Event, PeerAddress,
+    util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerAddress, State, Timer, TopicId,
 };
 
 const TICK_DURATION: Duration = Duration::from_millis(10);
 const DEFAULT_LATENCY: Duration = TICK_DURATION.saturating_mul(3);
 
 /// Test network implementation.
+///
 /// Stores events in VecDeques and processes on ticks.
 /// Timers are checked after each tick. The local time is increased with TICK_DURATION before
 /// each tick.
+///
 /// Note: Panics when sending to an unknown peer.
 pub struct Network<PA, R> {
     start: Instant,
@@ -34,7 +32,7 @@ pub struct Network<PA, R> {
     peers: Vec<State<PA, R>>,
     peers_by_address: HashMap<PA, usize>,
     conns: HashSet<ConnId<PA>>,
-    events: VecDeque<(PA, Event<PA>)>,
+    events: VecDeque<(PA, TopicId, Event<PA>)>,
     timers: TimerMap<(usize, Timer<PA>)>,
     transport: TimerMap<(usize, InEvent<PA>)>,
     latencies: HashMap<ConnId<PA>, Duration>,
@@ -65,19 +63,19 @@ fn push_back<PA: Eq + std::hash::Hash>(
     inqueues.get_mut(peer_pos).unwrap().push_back(event);
 }
 
-impl<PA: PeerAddress + Ord, R: Rng> Network<PA, R> {
+impl<PA: PeerAddress + Ord, R: Rng + Clone> Network<PA, R> {
     pub fn push(&mut self, peer: State<PA, R>) {
         let idx = self.inqueues.len();
         self.inqueues.push(VecDeque::new());
-        self.peers_by_address.insert(*peer.endpoint(), idx);
+        self.peers_by_address.insert(*peer.me(), idx);
         self.peers.push(peer);
     }
 
-    pub fn events(&mut self) -> impl Iterator<Item = (PA, Event<PA>)> + '_ {
+    pub fn events(&mut self) -> impl Iterator<Item = (PA, TopicId, Event<PA>)> + '_ {
         self.events.drain(..)
     }
 
-    pub fn events_sorted(&mut self) -> Vec<(PA, Event<PA>)> {
+    pub fn events_sorted(&mut self) -> Vec<(PA, TopicId, Event<PA>)> {
         sort(self.events().collect())
     }
 
@@ -85,10 +83,10 @@ impl<PA: PeerAddress + Ord, R: Rng> Network<PA, R> {
         sort(self.conns.iter().cloned().map(Into::into).collect())
     }
 
-    pub fn command(&mut self, peer: PA, command: Command<PA>) {
+    pub fn command(&mut self, peer: PA, topic: TopicId, command: Command<PA>) {
         debug!(?peer, "~~ COMMAND {command:?}");
         let idx = *self.peers_by_address.get(&peer).unwrap();
-        push_back(&mut self.inqueues, idx, InEvent::Command(command));
+        push_back(&mut self.inqueues, idx, InEvent::Command(topic, command));
     }
 
     pub fn ticks(&mut self, n: usize) {
@@ -116,7 +114,7 @@ impl<PA: PeerAddress + Ord, R: Rng> Network<PA, R> {
         let mut messages_sent = 0;
         for (idx, queue) in self.inqueues.iter_mut().enumerate() {
             let state = self.peers.get_mut(idx).unwrap();
-            let peer = *state.endpoint();
+            let peer = *state.me();
             while let Some(event) = queue.pop_front() {
                 if let InEvent::RecvMessage(from, _message) = &event {
                     self.conns.insert((*from, peer).into());
@@ -150,9 +148,9 @@ impl<PA: PeerAddress + Ord, R: Rng> Network<PA, R> {
                                 );
                             }
                         }
-                        OutEvent::EmitEvent(event) => {
+                        OutEvent::EmitEvent(topic, event) => {
                             debug!(peer = ?peer, "emit   {event:?}");
-                            self.events.push_back((peer, event));
+                            self.events.push_back((peer, topic, event));
                         }
                         OutEvent::PeerData(_peer, _data) => {}
                     }
@@ -173,28 +171,41 @@ fn latency_between<PA: PeerAddress>(
     DEFAULT_LATENCY
 }
 
-pub fn assert_synchronous_active<PA: PeerAddress, R>(network: &Network<PA, R>) -> bool {
+pub fn assert_synchronous_active<PA: PeerAddress, R: Rng + Clone>(
+    network: &Network<PA, R>,
+) -> bool {
     for state in network.peers.iter() {
-        let peer = *state.endpoint();
-        for other in state.swarm.active_view.iter() {
-            let other_idx = network.peers_by_address.get(other).unwrap();
-            let other_state = &network.peers.get(*other_idx).unwrap().swarm.active_view;
-            if !other_state.contains(&peer) {
-                warn!(peer = ?peer, other = ?other, "missing active_view peer in other");
-                return false;
+        let peer = *state.me();
+        for (topic, state) in state.states() {
+            for other in state.swarm.active_view.iter() {
+                let other_idx = network.peers_by_address.get(other).unwrap();
+                let other_state = &network
+                    .peers
+                    .get(*other_idx)
+                    .unwrap()
+                    .state(&topic)
+                    .unwrap()
+                    .swarm
+                    .active_view;
+                if !other_state.contains(&peer) {
+                    warn!(peer = ?peer, other = ?other, "missing active_view peer in other");
+                    return false;
+                }
             }
-        }
-        for other in state.gossip.eager_push_peers.iter() {
-            let other_idx = network.peers_by_address.get(other).unwrap();
-            let other_state = &network
-                .peers
-                .get(*other_idx)
-                .unwrap()
-                .gossip
-                .eager_push_peers;
-            if !other_state.contains(&peer) {
-                warn!(peer = ?peer, other = ?other, "missing eager_push peer in other");
-                return false;
+            for other in state.gossip.eager_push_peers.iter() {
+                let other_idx = network.peers_by_address.get(other).unwrap();
+                let other_state = &network
+                    .peers
+                    .get(*other_idx)
+                    .unwrap()
+                    .state(&topic)
+                    .unwrap()
+                    .gossip
+                    .eager_push_peers;
+                if !other_state.contains(&peer) {
+                    warn!(peer = ?peer, other = ?other, "missing eager_push peer in other");
+                    return false;
+                }
             }
         }
     }
@@ -202,6 +213,8 @@ pub fn assert_synchronous_active<PA: PeerAddress, R>(network: &Network<PA, R>) -
 }
 
 pub type PeerId = usize;
+
+/// A simple simulator for the gossip protocol
 pub struct Simulator {
     simulator_config: SimulatorConfig,
     protocol_config: Config,
@@ -222,6 +235,9 @@ pub struct RoundStats {
     rmr: f32,
     ldh: u16,
 }
+
+pub const TOPIC: TopicId = TopicId::from_bytes([0u8; 32]);
+
 impl Default for SimulatorConfig {
     fn default() -> Self {
         Self {
@@ -246,7 +262,7 @@ impl Simulator {
     pub fn init(&mut self) {
         for i in 0..self.simulator_config.peers_count {
             let rng = rand::rngs::StdRng::seed_from_u64(i as u64);
-            self.network.push(State::with_rng(
+            self.network.push(State::new(
                 i,
                 Default::default(),
                 self.protocol_config.clone(),
@@ -256,14 +272,14 @@ impl Simulator {
     }
     pub fn bootstrap(&mut self) {
         for i in 1..self.simulator_config.bootstrap_count {
-            self.network.command(i, Command::Join(0));
+            self.network.command(i, TOPIC, Command::Join(0));
         }
         self.network.ticks(self.simulator_config.bootstrap_ticks);
         let _ = self.network.events();
 
         for i in self.simulator_config.bootstrap_count..self.simulator_config.peers_count {
             let contact = i % self.simulator_config.bootstrap_count;
-            self.network.command(i, Command::Join(contact));
+            self.network.command(i, TOPIC, Command::Join(contact));
             self.network.ticks(self.simulator_config.join_ticks);
             let _ = self.network.events();
         }
@@ -277,12 +293,12 @@ impl Simulator {
             self.network
                 .peers
                 .iter()
-                .map(|p| *p.endpoint())
+                .map(|p| *p.me())
                 .filter(|p| *p != from),
         );
         let expected_len = expected.len() as u64;
         self.network
-            .command(from, Command::Broadcast(message.clone()));
+            .command(from, TOPIC, Command::Broadcast(message.clone()));
 
         let mut tick = 0;
         loop {
@@ -297,9 +313,9 @@ impl Simulator {
             let events = self.network.events();
             let received: HashSet<_> = events
                 .filter(
-                    |(_peer, event)| matches!(event,  Event::Received(recv) if recv == &message),
+                    |(_peer, _topic, event)| matches!(event,  Event::Received(recv) if recv == &message),
                 )
-                .map(|(peer, _msg)| peer)
+                .map(|(peer, _topic, _msg)| peer)
                 .collect();
             for peer in received.iter() {
                 expected.remove(peer);
@@ -347,6 +363,7 @@ impl Simulator {
 
     fn reset_stats(&mut self) {
         for state in self.network.peers.iter_mut() {
+            let state = state.state_mut(&TOPIC).unwrap();
             state.gossip.stats = Default::default();
         }
     }
@@ -354,6 +371,7 @@ impl Simulator {
     fn max_ldh(&self) -> u16 {
         let mut max = 0;
         for state in self.network.peers.iter() {
+            let state = state.state(&TOPIC).unwrap();
             let stats = state.gossip.stats();
             max = max.max(stats.max_last_delivery_hop);
         }
@@ -363,6 +381,7 @@ impl Simulator {
     fn total_payload_messages(&self) -> u64 {
         let mut sum = 0;
         for state in self.network.peers.iter() {
+            let state = state.state(&TOPIC).unwrap();
             let stats = state.gossip.stats();
             sum += stats.payload_messages_received;
         }
@@ -397,7 +416,7 @@ pub fn sort<T: Ord + Clone>(items: Vec<T>) -> Vec<T> {
     sorted
 }
 
-pub fn report_round_distribution<PA: PeerAddress, R: Rng>(network: &Network<PA, R>) {
+pub fn report_round_distribution<PA: PeerAddress, R: Rng + Clone>(network: &Network<PA, R>) {
     let mut eager_distrib: BTreeMap<usize, usize> = BTreeMap::new();
     let mut lazy_distrib: BTreeMap<usize, usize> = BTreeMap::new();
     let mut active_distrib: BTreeMap<usize, usize> = BTreeMap::new();
@@ -405,21 +424,23 @@ pub fn report_round_distribution<PA: PeerAddress, R: Rng>(network: &Network<PA, 
     let mut payload_recv = 0;
     let mut control_recv = 0;
     for state in network.peers.iter() {
-        let stats = state.gossip.stats();
-        *eager_distrib
-            .entry(state.gossip.eager_push_peers.len())
-            .or_default() += 1;
-        *lazy_distrib
-            .entry(state.gossip.lazy_push_peers.len())
-            .or_default() += 1;
-        *active_distrib
-            .entry(state.swarm.active_view.len())
-            .or_default() += 1;
-        *passive_distrib
-            .entry(state.swarm.passive_view.len())
-            .or_default() += 1;
-        payload_recv += stats.payload_messages_received;
-        control_recv += stats.control_messages_received;
+        for (_topic, state) in state.states() {
+            let stats = state.gossip.stats();
+            *eager_distrib
+                .entry(state.gossip.eager_push_peers.len())
+                .or_default() += 1;
+            *lazy_distrib
+                .entry(state.gossip.lazy_push_peers.len())
+                .or_default() += 1;
+            *active_distrib
+                .entry(state.swarm.active_view.len())
+                .or_default() += 1;
+            *passive_distrib
+                .entry(state.swarm.passive_view.len())
+                .or_default() += 1;
+            payload_recv += stats.payload_messages_received;
+            control_recv += stats.control_messages_received;
+        }
     }
     // eprintln!("distributions {round_distrib:?}");
     eprintln!("payload_recv {payload_recv} control_recv {control_recv}");

@@ -20,6 +20,13 @@ use super::PeerData;
 pub struct TopicId([u8; 32]);
 
 impl TopicId {
+    /// Create a new `TopicId` from a byte array.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl TopicId {
     /// Returns a byte slice of this [`TopicId`].
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
@@ -180,8 +187,24 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
     }
 
     /// Get a reference to the protocol state for a topic.
-    fn state(&self, topic: &TopicId) -> Option<&topic::State<PA, R>> {
+    pub fn state(&self, topic: &TopicId) -> Option<&topic::State<PA, R>> {
         self.states.get(topic)
+    }
+
+    /// Get a reference to the protocol state for a topic.
+    #[cfg(test)]
+    pub fn state_mut(&mut self, topic: &TopicId) -> Option<&mut topic::State<PA, R>> {
+        self.states.get_mut(topic)
+    }
+
+    /// Get an iterator of all joined topics.
+    pub fn topics(&self) -> impl Iterator<Item = &TopicId> {
+        self.states.keys()
+    }
+
+    /// Get an iterator for the states of all joined topics.
+    pub fn states(&self) -> impl Iterator<Item = (&TopicId, &topic::State<PA, R>)> {
+        self.states.iter()
     }
 
     /// Check if a topic has any active (connected) peers.
