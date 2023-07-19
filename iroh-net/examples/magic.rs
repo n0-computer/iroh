@@ -4,7 +4,7 @@ use clap::Parser;
 use ed25519_dalek::SigningKey as SecretKey;
 use iroh_net::{
     defaults::{default_derp_map, TEST_REGION_ID},
-    hp::derp::DerpMap,
+    derp::DerpMap,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,

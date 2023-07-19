@@ -17,7 +17,7 @@ use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
 use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
-use iroh_net::hp::{
+use iroh_net::{
     derp::{
         self,
         http::{
@@ -769,7 +769,7 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use iroh_net::hp::{
+    use iroh_net::{
         derp::{http::ClientBuilder, ReceivedMessage},
         key::node::SecretKey,
     };

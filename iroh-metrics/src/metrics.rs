@@ -13,15 +13,35 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::{magicsock, inc, inc_by};
-//! use iroh_metrics::core::{Core, Metric};
+//! use iroh_metrics::{inc, inc_by};
+//! use iroh_metrics::core::{Core, Metric, Counter};
+//! use struct_iterable::Iterable;
+//!
+//! #[derive(Debug, Clone, Iterable)]
+//! pub struct Metrics {
+//!     pub things_added: Counter,
+//! }
+//!
+//! impl Default for Metrics {
+//!     fn default() -> Self {
+//!         Self {
+//!             things_added: Counter::new("things_added tracks the number of things we have added"),
+//!         }
+//!     }
+//! }
+//!
+//! impl Metric for Metrics {
+//!    fn name() -> &'static str {
+//!         "my_metrics"
+//!    }
+//! }
 //!
 //! Core::init(|reg, metrics| {
-//!     metrics.insert(magicsock::Metrics::new(reg));
+//!     metrics.insert(Metrics::new(reg));
 //! });
 //!
-//! inc_by!(magicsock::Metrics, num_derp_conns_added, 2);
-//! inc!(magicsock::Metrics, num_derp_conns_added);
+//! inc_by!(Metrics, things_added, 2);
+//! inc!(Metrics, things_added);
 //! ```
 
 #[cfg(feature = "metrics")]

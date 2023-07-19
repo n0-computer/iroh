@@ -14,13 +14,11 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::progress::ProgressWriter;
 use iroh_net::{
+    config,
     defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
-    hp::{
-        self,
-        derp::{DerpMap, UseIpv4, UseIpv6},
-        key::node::SecretKey,
-        portmapper,
-    },
+    derp::{DerpMap, UseIpv4, UseIpv6},
+    key::node::SecretKey,
+    netcheck, portmapper,
     tls::{Keypair, PeerId, PublicKey},
     MagicEndpoint,
 };
@@ -28,7 +26,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
-use iroh_metrics::{core::Core, magicsock};
+use iroh_metrics::core::Core;
+use iroh_net::metrics::MagicsockMetrics;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum PrivateKey {
@@ -115,8 +114,19 @@ pub enum Commands {
         #[clap(long)]
         derp_region: Option<u16>,
     },
+    /// Probe the port mapping protocols.
+    PortMapProbe {
+        /// Whether to enable UPnP.
+        #[clap(long)]
+        enable_upnp: bool,
+        /// Whether to enable PCP.
+        #[clap(long)]
+        enable_pcp: bool,
+    },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
+        /// Protocol to use for port mapping. One of ["upnp", "pcp"].
+        protocol: String,
         /// Local port to get a mapping.
         local_port: NonZeroU16,
         /// How long to wait for an external port to be ready in seconds.
@@ -223,8 +233,8 @@ async fn send_blocks(
 }
 
 async fn report(stun_host: Option<String>, stun_port: u16, config: &Config) -> anyhow::Result<()> {
-    let port_mapper = hp::portmapper::Client::new().await;
-    let mut client = hp::netcheck::Client::new(Some(port_mapper)).await?;
+    let port_mapper = portmapper::Client::default().await;
+    let mut client = netcheck::Client::new(Some(port_mapper)).await?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -295,7 +305,7 @@ impl Gui {
 
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
-            let metrics = core.get_collector::<magicsock::Metrics>().unwrap();
+            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
             tracing::error!("metrics enabled");
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
@@ -486,11 +496,11 @@ async fn make_endpoint(
     tracing::info!("derp map {:#?}", derp_map);
 
     let (on_derp_s, mut on_derp_r) = sync::mpsc::channel(8);
-    let on_net_info = |ni: hp::cfg::NetInfo| {
+    let on_net_info = |ni: config::NetInfo| {
         tracing::info!("got net info {:#?}", ni);
     };
 
-    let on_endpoints = move |ep: &[hp::cfg::Endpoint]| {
+    let on_endpoints = move |ep: &[config::Endpoint]| {
         tracing::info!("got endpoint {:#?}", ep);
     };
 
@@ -598,8 +608,22 @@ async fn accept(
     Ok(())
 }
 
-async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::new().await;
+async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
+    // create the config that enables exlusively the required protocol
+    let mut enable_upnp = false;
+    let mut enable_pcp = false;
+    let enable_nat_pmp = false;
+    match protocol.to_ascii_lowercase().as_ref() {
+        "upnp" => enable_upnp = true,
+        "pcp" => enable_pcp = true,
+        other => anyhow::bail!("Unknown port mapping protocol {other}"),
+    }
+    let config = portmapper::Config {
+        enable_upnp,
+        enable_pcp,
+        enable_nat_pmp,
+    };
+    let port_mapper = portmapper::Client::new(config).await;
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -619,8 +643,17 @@ async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<(
     }
 }
 
+async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
+    println!("probing port mapping protocols with {config:?}");
+    let port_mapper = portmapper::Client::new(config).await;
+    let probe_rx = port_mapper.probe();
+    let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
+    println!("{probe}");
+    Ok(())
+}
+
 async fn derp_regions(config: Config) -> anyhow::Result<()> {
-    let key = iroh_net::hp::key::node::SecretKey::generate();
+    let key = iroh_net::key::node::SecretKey::generate();
     let mut set = tokio::task::JoinSet::new();
     if config.derp_regions.is_empty() {
         println!("No DERP Regions specified in the config file.");
@@ -634,7 +667,7 @@ async fn derp_regions(config: Config) -> anyhow::Result<()> {
                 region_id: region.region_id,
                 hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
             };
-            let client = match iroh_net::hp::derp::http::ClientBuilder::new()
+            let client = match iroh_net::derp::http::ClientBuilder::new()
                 .get_region(move || {
                     let region = region.clone();
                     Box::pin(async move { Some(region) })
@@ -795,9 +828,22 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             accept(private_key, config, derp_map).await
         }
         Commands::PortMap {
+            protocol,
             local_port,
             timeout_secs,
-        } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
+        } => port_map(&protocol, local_port, Duration::from_secs(timeout_secs)).await,
+        Commands::PortMapProbe {
+            enable_upnp,
+            enable_pcp,
+        } => {
+            let config = portmapper::Config {
+                enable_upnp,
+                enable_pcp,
+                enable_nat_pmp: false,
+            };
+
+            port_map_probe(config).await
+        }
         Commands::DerpRegions => {
             let default_config_path =
                 iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
