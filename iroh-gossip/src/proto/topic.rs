@@ -145,6 +145,8 @@ pub enum Command<PA> {
     Join(PA),
     /// Broadcast a message for this topic
     Broadcast(#[debug("<{}b>", _0.len())] Bytes),
+    /// Leave this topic and drop all state
+    Quit,
 }
 
 impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
@@ -212,6 +214,7 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
             InEvent::Command(command) => match command {
                 Command::Join(peer) => self.swarm.handle(SwarmIn::RequestJoin(peer), now, io),
                 Command::Broadcast(data) => self.gossip.handle(GossipIn::Broadcast(data), io),
+                Command::Quit => self.swarm.handle(SwarmIn::Quit, now, io),
             },
             InEvent::RecvMessage(from, message) => {
                 self.stats.messages_received += 1;
