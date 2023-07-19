@@ -37,7 +37,6 @@ const TO_ACTOR_CAP: usize = 64;
 /// Channel capacity for the InEvent message queue (single)
 const IN_EVENT_CAP: usize = 1024;
 
-
 /// Events emitted from the gossip protocol
 pub type Event = proto::Event<PeerId>;
 /// Commands for the gossip protocol
@@ -702,7 +701,6 @@ mod test {
 
             let derp_addr = server.addr();
             let derp_port = derp_addr.port();
-            println!("DERP listening on {:?}", derp_addr);
 
             let (stun_addr, stun_cleanup) = serve(stun_ip).await?;
             let m = DerpMap {
@@ -754,7 +752,6 @@ mod test {
                 _ => unreachable!("using ipv4"),
             }
 
-            println!("listening on {}", addr);
             let (s, r) = oneshot::channel();
             tokio::task::spawn(async move {
                 run_stun(pc, r).await;
