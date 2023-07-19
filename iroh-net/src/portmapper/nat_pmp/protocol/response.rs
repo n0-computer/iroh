@@ -1,44 +1,57 @@
+//! A NAT-PMP response encoding and decoding.
+
 use std::net::Ipv4Addr;
 
-use num_enum::TryFromPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use super::{MapProtocol, Opcode, Version};
 
-#[derive(Debug)]
+/// A NAT-PMP successful Response/Notification.
+#[derive(Debug, PartialEq, Eq)]
 pub enum Response {
+    /// Response to a [`Opcode::DetermineExternalAddress`] request.
     PublicAddress {
         epoch_time: u32,
         public_ip: Ipv4Addr,
     },
+    /// Response to a [`Opcode::MapUdp`] request.
     PortMap {
+        /// Protocol for which the mapping was requested.
         proto: MapProtocol,
+        /// Epoch time of the server.
         epoch_time: u32,
+        /// Local port for which the mapping was created.
         private_port: u16,
+        /// External port registered for this mapping.
         external_port: u16,
+        /// Lifetime in seconds that can be assumed by this mapping.
         lifetime_seconds: u32,
     },
 }
 
-// 3.5.  Result Codes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+/// Result code obtained in a NAT-PMP response.
+///
+/// See [RFC 6886 Result Codes](https://datatracker.ietf.org/doc/html/rfc6886#section-3.5)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u16)]
 pub enum ResultCode {
+    /// A successful response.
     Success = 0,
-    // TODO(@divma): responses having this error have a different packet format. annoying
+    /// The sent version is not supported by the NAT-PMP server.
     UnsupportedVersion = 1,
     /// Functionality is suported but not allowerd: e.g. box supports mapping, but user has turned
     /// feature off.
     NotAuthorizedOrRefused = 2,
-    /// Netfork failures, e.g. NAT box itself has not obtained a DHCP lease.
+    /// Netfork failures, e.g. NAT device itself has not obtained a DHCP lease.
     NetworkFailure = 3,
-    /// NAT box cannot create any more mappings at this time.
+    /// NAT-PMP server cannot create any more mappings at this time.
     OutOfResources = 4,
+    /// Opcode is not supported by the server.
     UnsupportedOpcode = 5,
 }
 
 /// Errors that can occur when decoding a [`Response`] from a server.
-// TODO(@divma): copy docs instead of refer?
-#[derive(Debug, derive_more::Display, thiserror::Error)]
+#[derive(Debug, derive_more::Display, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Request is too short or is otherwise malformed.
     #[display("Response is malformed")]
@@ -46,19 +59,29 @@ pub enum Error {
     /// The [`RESPONSE_INDICATOR`] is not present.
     #[display("Packet does not appear to be a response")]
     NotAResponse,
-    /// See [`InvalidOpcode`].
+    /// The received opcode is not recognized.
     #[display("Invalid Opcode received")]
     InvalidOpcode,
-    /// See [`InvalidVersion`].
+    /// The received version is not recognized.
     #[display("Invalid version received")]
     InvalidVersion,
-    /// See [`InvalidResultCode`].
+    /// The received result code is not recognized.
     #[display("Invalid result code received")]
     InvalidResultCode,
+    /// Received an error code indicating the server does not support the sent version.
+    #[display("Server does not support the version")]
     UnsupportedVersion,
+    /// Received an error code indicating the operation is supported but not authorized.
+    #[display("Operation is supported but not authorized")]
     NotAuthorizedOrRefused,
+    /// Received an error code indicating the server experienced a network failure
+    #[display("Server experienced a network failure")]
     NetworkFailure,
+    /// Received an error code indicating the server cannot create more mappings at this time.
+    #[display("Server is out of resources")]
     OutOfResources,
+    /// Received an error code indicating the Opcode is not supported by the server.
+    #[display("Server does not suport this opcode")]
     UnsupportedOpcode,
 }
 
@@ -82,18 +105,19 @@ impl Response {
         4; // lifetime
 
     /// Indicator ORd into the [`Opcode`] to indicate a response packet.
-    pub const INDICATOR: u8 = 1u8 << 7;
+    pub const RESPONSE_INDICATOR: u8 = 1u8 << 7;
 
+    /// Decode a response.
     pub fn decode(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < Self::MIN_SIZE || buf.len() > Self::MAX_SIZE {
             return Err(Error::Malformed);
         }
         let _: Version = buf[0].try_into().map_err(|_| Error::InvalidVersion)?;
         let opcode = buf[1];
-        if opcode & Self::INDICATOR != Self::INDICATOR {
+        if opcode & Self::RESPONSE_INDICATOR != Self::RESPONSE_INDICATOR {
             return Err(Error::NotAResponse);
         }
-        let opcode: Opcode = (opcode & !Self::INDICATOR)
+        let opcode: Opcode = (opcode & !Self::RESPONSE_INDICATOR)
             .try_into()
             .map_err(|_| Error::InvalidOpcode)?;
 
@@ -148,5 +172,116 @@ impl Response {
         };
 
         Ok(response)
+    }
+
+    #[cfg(test)]
+    fn random<R: rand::Rng>(opcode: Opcode, rng: &mut R) -> Self {
+        match opcode {
+            Opcode::DetermineExternalAddress => {
+                let octects: [u8; 4] = rng.gen();
+                Response::PublicAddress {
+                    epoch_time: rng.gen(),
+                    public_ip: octects.into(),
+                }
+            }
+            Opcode::MapUdp => Response::PortMap {
+                proto: MapProtocol::UDP,
+                epoch_time: rng.gen(),
+                private_port: rng.gen(),
+                external_port: rng.gen(),
+                lifetime_seconds: rng.gen(),
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn encode(&self) -> Vec<u8> {
+        match self {
+            Response::PublicAddress {
+                epoch_time,
+                public_ip,
+            } => {
+                let mut buf = Vec::with_capacity(Self::MIN_SIZE);
+                // version
+                buf.push(Version::NatPmp.into());
+                // response indicator and opcode
+                let opcode: u8 = Opcode::DetermineExternalAddress.into();
+                buf.push(Response::RESPONSE_INDICATOR | opcode);
+                // result code
+                let result_code: u16 = ResultCode::Success.into();
+                for b in result_code.to_be_bytes() {
+                    buf.push(b);
+                }
+                // epoch
+                for b in epoch_time.to_be_bytes() {
+                    buf.push(b);
+                }
+                // public ip
+                for b in public_ip.octets() {
+                    buf.push(b)
+                }
+                buf
+            }
+            Response::PortMap {
+                proto: _,
+                epoch_time,
+                private_port,
+                external_port,
+                lifetime_seconds,
+            } => {
+                let mut buf = Vec::with_capacity(Self::MAX_SIZE);
+                // version
+                buf.push(Version::NatPmp.into());
+                // response indicator and opcode
+                let opcode: u8 = Opcode::MapUdp.into();
+                buf.push(Response::RESPONSE_INDICATOR | opcode);
+                // result code
+                let result_code: u16 = ResultCode::Success.into();
+                for b in result_code.to_be_bytes() {
+                    buf.push(b);
+                }
+                // epoch
+                for b in epoch_time.to_be_bytes() {
+                    buf.push(b);
+                }
+                // internal port
+                for b in private_port.to_be_bytes() {
+                    buf.push(b)
+                }
+                // external port
+                for b in external_port.to_be_bytes() {
+                    buf.push(b)
+                }
+                for b in lifetime_seconds.to_be_bytes() {
+                    buf.push(b)
+                }
+                buf
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use rand::SeedableRng;
+
+    #[test]
+    fn test_decode_external_addr_response() {
+        let mut gen = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        let response = Response::random(Opcode::DetermineExternalAddress, &mut gen);
+        let encoded = response.encode();
+        assert_eq!(Ok(response), Response::decode(&encoded));
+    }
+
+    #[test]
+    fn test_encode_decode_map_response() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        let response = Response::random(Opcode::MapUdp, &mut rng);
+        let encoded = response.encode();
+        assert_eq!(Ok(response), Response::decode(&encoded));
     }
 }
