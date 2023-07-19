@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.4.1"
+version = "0.5.1"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -22,9 +22,9 @@ flume = "0.10.14"
 futures = "0.3.25"
 hex = { version = "0.4.3" }
 iroh-io = { version = "0.2.1" }
-iroh-net = { version = "0.4.1", path = "../iroh-net" }
-iroh-bytes = { version = "0.4.1", path = "../iroh-bytes" }
-iroh-metrics = { version = "0.4.1", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.5.1", path = "../iroh-net" }
+iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
+iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }

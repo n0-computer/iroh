@@ -26,6 +26,7 @@ use iroh_net::{
     },
     key, stun,
 };
+
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
@@ -184,6 +185,9 @@ struct Config {
     limits: Option<Limits>,
     /// Mesh network configuration
     mesh: Option<MeshConfig>,
+    #[cfg(feature = "metrics")]
+    /// Metrics serve address. If not set, metrics are not served.
+    metrics_addr: Option<SocketAddr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -242,6 +246,8 @@ impl Default for Config {
             tls: None,
             limits: None,
             mesh: None,
+            #[cfg(feature = "metrics")]
+            metrics_addr: None,
         }
     }
 }
@@ -295,6 +301,30 @@ impl Config {
     }
 }
 
+#[cfg(feature = "metrics")]
+pub fn init_metrics_collection(
+    metrics_addr: Option<SocketAddr>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    use iroh_metrics::core::Metric;
+
+    let rt = tokio::runtime::Handle::current();
+
+    // doesn't start the server if the address is None
+    if let Some(metrics_addr) = metrics_addr {
+        iroh_metrics::core::Core::init(|reg, metrics| {
+            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+        });
+
+        return Some(rt.spawn(async move {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
+        }));
+    }
+    tracing::info!("Metrics server not started, no address provided");
+    None
+}
+
 /// Only used when in `dev` mode & the given port is `443`
 const DEV_PORT: u16 = 3340;
 /// Only used when tls is enabled & a captive protal port is not given
@@ -309,7 +339,18 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cfg = Config::load(&cli).await?;
-    run(cli.dev, cfg, None).await
+
+    #[cfg(feature = "metrics")]
+    let metrics_fut = init_metrics_collection(cfg.metrics_addr);
+
+    let r = run(cli.dev, cfg, None).await;
+
+    #[cfg(feature = "metrics")]
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+        drop(metrics_fut);
+    }
+    r
 }
 
 async fn run(

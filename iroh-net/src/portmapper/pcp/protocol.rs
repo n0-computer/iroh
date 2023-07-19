@@ -37,4 +37,10 @@ pub enum Opcode {
     ///
     /// See [RFC 6887 ANNOUNCE Opcode](https://datatracker.ietf.org/doc/html/rfc6887#section-14.1)
     Announce = 0,
+    /// Map Opcode,
+    ///
+    /// Used to deal with endpoint-idependent mappings.
+    ///
+    /// See [RFC 6887 MAP Opcode](https://datatracker.ietf.org/doc/html/rfc6887#section-11)
+    Map = 1,
 }
