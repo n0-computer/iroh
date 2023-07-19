@@ -71,6 +71,15 @@ impl Interface {
             .chain(self.iface.ipv6.iter().cloned().map(IpNet::V6))
     }
 
+    /// Creates a fake interface for usage in tests.
+    ///
+    /// Sometimes tests want to be deterministic, e.g. [`ProbePlan`] tests rely on the
+    /// interface state.  This allows tests to be independent of the host interfaces.
+    ///
+    /// It is rather possible that we'll want more variations of this in the future, feel
+    /// free to add parameters or different alternative constructors.
+    ///
+    /// [`ProbePlan`]: crate::netcheck::reportgen::probes::ProbePlan
     #[cfg(test)]
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
@@ -217,6 +226,15 @@ impl State {
         }
     }
 
+    /// Creates a fake interface state for usage in tests.
+    ///
+    /// Sometimes tests want to be deterministic, e.g. [`ProbePlan`] tests rely on the
+    /// interface state.  This allows tests to be independent of the host interfaces.
+    ///
+    /// It is rather possible that we'll want more variations of this in the future, feel
+    /// free to add parameters or different alternative constructors.
+    ///
+    /// [`ProbePlan`]: crate::netcheck::reportgen::probes::ProbePlan
     #[cfg(test)]
     pub(crate) fn fake() -> Self {
         let fake = Interface::fake();
