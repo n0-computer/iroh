@@ -109,10 +109,11 @@ pub enum Message {
     IHave(Vec<IHave>),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, derive_more::Debug)]
 pub struct Gossip {
     id: MessageId,
     round: Round,
+    #[debug("<{}b>", content.len())]
     content: Bytes,
 }
 impl Gossip {
@@ -122,15 +123,6 @@ impl Gossip {
             content: self.content,
             round: self.round.next(),
         }
-    }
-}
-impl fmt::Debug for Gossip {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Gossip")
-            .field("id", &self.id)
-            .field("round", &self.round)
-            .field("content", &format!("<{}>", self.content.len()))
-            .finish()
     }
 }
 

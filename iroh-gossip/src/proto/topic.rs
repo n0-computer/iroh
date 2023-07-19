@@ -139,21 +139,12 @@ pub enum Timer<PA> {
 }
 
 /// A command to the protocol state for a particular topic.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub enum Command<PA> {
     /// Join a peer for this topic
     Join(PA),
     /// Broadcast a message for this topic
-    Broadcast(Bytes),
-}
-
-impl<PA: fmt::Debug> fmt::Debug for Command<PA> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Join(peer) => write!(f, "Join({peer:?})"),
-            Self::Broadcast(msg) => write!(f, "Broadcast(<{}>)", msg.len()),
-        }
-    }
+    Broadcast(#[debug("<{}b>", _0.len())] Bytes),
 }
 
 impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
