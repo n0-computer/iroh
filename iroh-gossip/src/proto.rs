@@ -6,9 +6,12 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 mod hyparview;
 mod plumtree;
-pub mod topic;
 pub mod state;
+pub mod topic;
 pub mod util;
+
+#[cfg(test)]
+mod tests;
 
 pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
 pub use topic::{Command, Config, Event, IO};
