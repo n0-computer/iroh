@@ -1,5 +1,15 @@
 # iroh-gossip
 
+This crate implements the `iroh-gossip` protocol.
+It is based on *epidemic broadcast trees* to disseminate messages among a swarm of peers interested in a *topic*. 
+The implementation is based on the papers [HyParView](https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf) and [PlumTree](https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf).
+
+The crate is made up from two modules:
+The `proto` module is the protocol implementation, as a state machine without any IO.
+The `net` module connects the protocol to the networking stack from `iroh-net`.
+
+The `net` module is optional behind the `net` feature flag (enabled by default).
+
 
 # License
 

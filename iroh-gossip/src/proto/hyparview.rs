@@ -19,6 +19,7 @@ use tracing::debug;
 
 use super::{util::IndexSet, PeerAddress, PeerData, PeerInfo, IO};
 
+/// Input event for HyParView
 #[derive(Debug)]
 pub enum InEvent<PA> {
     RecvMessage(PA, Message<PA>),
@@ -28,6 +29,7 @@ pub enum InEvent<PA> {
     UpdatePeerData(PeerData),
 }
 
+/// Output event for HyParView
 pub enum OutEvent<PA> {
     SendMessage(PA, Message<PA>),
     ScheduleTimer(Duration, Timer<PA>),
@@ -118,18 +120,29 @@ pub struct Disconnect {
     respond: Respond,
 }
 
+/// Configuration for the swarm membership layer
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// Number of peers to which active connections are maintained
     pub active_view_capacity: usize,
+    /// Number of peers for which contact information is remembered,
+    /// but to which we are not actively connected to.
     pub passive_view_capacity: usize,
+    /// Number of hops a `ForwardJoin` message is propagated until the new peer's info
+    /// is added to a peer's active view.
     pub active_random_walk_length: Ttl,
+    /// Number of hops a `ForwardJoin` message is propagated until the new peer's info
+    /// is added to a peer'passive active view.
     pub passive_random_walk_length: Ttl,
+    /// Number of hops a `Shuffle` message is propagated until a peer replies to it.
     pub shuffle_random_walk_length: Ttl,
+    /// Number of active peers to be included in a `Shuffle` request.
     pub shuffle_active_view_count: usize,
+    /// Number of passive peers to be included in a `Shuffle` request.
     pub shuffle_passive_view_count: usize,
+    /// Interval duration for shuffle requests
     pub shuffle_interval: Duration,
-
-    /// Timeout after which a Neighbor request is considered failed
+    /// Timeout after which a `Neighbor` request is considered failed
     pub neighbor_request_timeout: Duration,
 }
 impl Default for Config {
@@ -212,14 +225,6 @@ where
             ));
             self.shuffle_scheduled = true;
         }
-    }
-
-    pub fn active_view(&self) -> impl Iterator<Item = &PA> {
-        self.active_view.iter()
-    }
-
-    pub fn passive_view(&self) -> impl Iterator<Item = &PA> {
-        self.passive_view.iter()
     }
 
     fn handle_message(

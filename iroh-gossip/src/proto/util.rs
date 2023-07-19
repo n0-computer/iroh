@@ -1,3 +1,5 @@
+//! Utilities used in the protocol implementation
+
 use rand::{
     seq::{IteratorRandom, SliceRandom},
     Rng,
@@ -15,7 +17,7 @@ use std::{
 /// always do shift_remove (preserving the order of other elements) and adds a
 /// couple of utility methods to randomly select elements from the set.
 #[derive(Debug, Clone)]
-pub struct IndexSet<T> {
+pub(crate) struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
 }
 

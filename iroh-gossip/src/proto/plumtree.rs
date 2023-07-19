@@ -146,19 +146,42 @@ pub struct Graft {
     round: Round,
 }
 
+/// Configuration for the gossip broadcast layer
+///
+/// Currently, the expectation is that the configuration is the same for all peers in the
+/// network (as recommended in the paper).
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// When receiving an `IHave` message, this timeout is registered. If the message for the
+    /// `IHave` was not received once the timeout is expired, a `Graft` message is sent to the peer
+    /// that sent us the `IHave` to request the message payload.
+    ///
+    /// The plumtree paper notes: "The timeout value is a protocol parameter that should be configured
+    /// considering the diameter of the overlay and a target maximum recovery latency, defined by the
+    /// application requirements." (p.8)
     pub graft_timeout_1: Duration,
+    /// This timeout is registered when sending a `Graft` message. If a reply has not been received
+    /// once the timeout expires, we send another `Graft` message to the next peer that sent us an
+    /// `IHave` for this message.
+    ///
+    /// The plumtree paper notes: "This second timeout value should be smaller that the first, in
+    /// the order of an average round trip time to a neighbor"
     pub graft_timeout_2: Duration,
+    /// Timeout after which `IHave` messages are pushed to peers.
     pub dispatch_timeout: Duration,
+    /// The protocol performs a tree optimization, which promotes lazy peers to eager peers if the
+    /// `Ihave` messages received from them have a lower number of hops from the message's origin
+    /// as the `Broadcast` messages received from our eager peers. The `optimization_threshold` is
+    /// the number of hops that the lazy peers must be closer to the origin than our eager peers
+    /// to be promoted to become an eager peer.
     pub optimization_threshold: Round,
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
             graft_timeout_1: Duration::from_millis(80),
-            graft_timeout_2: Duration::from_secs(40),
-            dispatch_timeout: Duration::from_millis(50),
+            graft_timeout_2: Duration::from_millis(40),
+            dispatch_timeout: Duration::from_millis(40),
             optimization_threshold: Round(7),
         }
     }
@@ -207,8 +230,6 @@ impl<PA: PeerAddress> State<PA> {
             stats: Default::default(),
         }
     }
-
-    // TODO: optimization step from the paper
 
     pub fn handle(&mut self, event: InEvent<PA>, io: &mut impl IO<PA>) {
         match event {
