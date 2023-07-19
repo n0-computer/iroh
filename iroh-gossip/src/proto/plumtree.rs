@@ -169,11 +169,36 @@ pub struct Config {
     pub optimization_threshold: Round,
 }
 impl Default for Config {
+    /// Sensible defaults for the plumtree configuration
+    //
+    /// TODO: Find out what good defaults are for the three timeout here.
+    /// Current numbers are guesses that need validation. The paper does not have concrete
+    /// recommendations for these numbers.
     fn default() -> Self {
         Self {
+            // Paper: "The timeout value is a protocol parameter that should be configured considering
+            // the diameter of the overlay and a target maximum recovery latency, defined by the
+            // application requirements. This is a parameter that should be statically configured
+            // at deployment time." (p. 8)
+            //
+            // Earthstar has 5ms it seems, see https://github.com/earthstar-project/earthstar/blob/1523c640fedf106f598bf79b184fb0ada64b1cc0/src/syncer/plum_tree.ts#L75
+            // However in the paper it is more like a few roundtrips if I read things correctly.
             graft_timeout_1: Duration::from_millis(80),
+
+            // Paper: "This second timeout value should be smaller that the first, in the order of an
+            // average round trip time to a neighbor." (p. 9)
+            //
+            // Earthstar doesn't have this step from my reading.
             graft_timeout_2: Duration::from_millis(40),
-            dispatch_timeout: Duration::from_millis(40),
+
+            // Again, paper does not tell a recommended number here. Likely should be quite small,
+            // as to not delay messages without need. This would also be the time frame in which
+            // `IHave`s are aggregated to save on packets.
+            //
+            // Eartstar dispatches immediately from my reading.
+            dispatch_timeout: Duration::from_millis(5),
+
+            // This number comes from experiment settings the plumtree paper (p. 12)
             optimization_threshold: Round(7),
         }
     }
