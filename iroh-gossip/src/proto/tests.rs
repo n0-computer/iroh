@@ -29,7 +29,7 @@ pub struct Network<PA, R> {
     time: Instant,
     tick_duration: Duration,
     inqueues: Vec<VecDeque<InEvent<PA>>>,
-    peers: Vec<State<PA, R>>,
+    pub(crate) peers: Vec<State<PA, R>>,
     peers_by_address: HashMap<PA, usize>,
     conns: HashSet<ConnId<PA>>,
     events: VecDeque<(PA, TopicId, Event<PA>)>,
@@ -161,6 +161,23 @@ impl<PA: PeerAddress + Ord, R: Rng + Clone> Network<PA, R> {
             tick = self.get_tick(),
             "~~ TICK (messages sent: {messages_sent})"
         );
+    }
+
+    pub fn peer(&self, peer: &PA) -> Option<&State<PA, R>> {
+        self.peers_by_address
+            .get(peer)
+            .cloned()
+            .and_then(|idx| self.peers.get(idx))
+    }
+
+    pub fn get_active(&self, peer: &PA, topic: &TopicId) -> Option<Option<Vec<PA>>> {
+        let peer = self.peer(peer)?;
+        match peer.state(topic) {
+            Some(state) => Some(Some(
+                state.swarm.active_view.iter().cloned().collect::<Vec<_>>(),
+            )),
+            None => Some(None),
+        }
     }
 }
 fn latency_between<PA: PeerAddress>(
@@ -449,3 +466,18 @@ pub fn report_round_distribution<PA: PeerAddress, R: Rng + Clone>(network: &Netw
     eprintln!("active_distrib {active_distrib:?}");
     eprintln!("passive_distrib {passive_distrib:?}");
 }
+
+// pub fn report_active<PA: PeerAddress, R: Rng + Clone>(network: &Network<PA, R>, topic: &TopicId) {
+//     for state in &network.peers {
+//         let me = state.me();
+//         match state.state(topic) {
+//             Some(state) => {
+//                 let peers = state.swarm.active_view.iter().collect::<Vec<_>>();
+//                 eprintln!("{me:?}: {:?}", peers);
+//             }
+//             None => {
+//                 eprintln!("{me:?}: QUIT");
+//             }
+//         }
+//     }
+// }

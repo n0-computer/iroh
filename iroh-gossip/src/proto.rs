@@ -50,7 +50,7 @@ impl<PA> From<(PA, PeerData)> for PeerInfo<PA> {
 #[cfg(test)]
 mod test {
 
-    use std::{env, time::Instant};
+    use std::{collections::HashSet, env, time::Instant};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::{Command, Config, Event, State};
@@ -234,6 +234,69 @@ mod test {
             simulator.gossip_round(from, message)
         }
         simulator.report_round_sums();
+    }
+
+    #[test]
+    fn quit() {
+        setup_logging();
+        // Create a network with 4 nodes and active_view_capacity 2
+        let mut config = Config::default();
+        config.membership.active_view_capacity = 2;
+        let mut network = Network::new(Instant::now());
+        let num = 4;
+        for i in 0..num {
+            network.push(State::new(
+                i,
+                Default::default(),
+                config.clone(),
+                rand::rngs::OsRng {},
+            ));
+        }
+
+        let t: TopicId = [0u8; 32].into();
+
+        // join all nodes
+        network.command(1, t, Command::Join(0));
+        network.command(2, t, Command::Join(1));
+        network.command(3, t, Command::Join(2));
+        network.ticks(10);
+
+        // assert all peers appear in the connections
+        let all_conns: HashSet<i32> = HashSet::from_iter(
+            (0..4)
+                .map(|pa| {
+                    network
+                        .get_active(&pa, &t)
+                        .unwrap()
+                        .into_iter()
+                        .map(|x| x.into_iter())
+                        .flatten()
+                })
+                .flatten(),
+        );
+        assert_eq!(all_conns, HashSet::from_iter([0, 1, 2, 3]));
+        assert!(assert_synchronous_active(&network));
+
+        //  let node 3 leave the swarm
+        network.command(3, t, Command::Quit);
+        network.ticks(4);
+        assert!(network.peer(&3).unwrap().state(&t).is_none());
+
+        // assert all peers without peer 3 appear in the connections
+        let all_conns: HashSet<i32> = HashSet::from_iter(
+            (0..num)
+                .map(|pa| {
+                    network
+                        .get_active(&pa, &t)
+                        .unwrap()
+                        .into_iter()
+                        .map(|x| x.into_iter())
+                        .flatten()
+                })
+                .flatten(),
+        );
+        assert_eq!(all_conns, HashSet::from_iter([0, 1, 2]));
+        assert!(assert_synchronous_active(&network));
     }
 
     fn read_var(name: &str, default: usize) -> usize {
