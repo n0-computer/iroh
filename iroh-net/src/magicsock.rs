@@ -2576,10 +2576,7 @@ pub(crate) mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{
-        derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
-        stun, tls, MagicEndpoint,
-    };
+    use crate::{test_utils::run_derp_and_stun, tls, MagicEndpoint};
 
     fn make_transmit(destination: SocketAddr) -> quinn_udp::Transmit {
         quinn_udp::Transmit {
@@ -2701,66 +2698,6 @@ pub(crate) mod tests {
 
     struct Devices {
         stun_ip: IpAddr,
-    }
-
-    pub async fn run_derp_and_stun(
-        stun_ip: IpAddr,
-    ) -> Result<(
-        DerpMap,
-        Option<u16>,
-        impl FnOnce() -> BoxFuture<'static, ()>,
-    )> {
-        // TODO: pass a mesh_key?
-
-        let server_key = key::node::SecretKey::generate();
-        let tls_config = crate::derp::http::make_tls_config();
-        let server = crate::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
-            .tls_config(Some(tls_config))
-            .spawn()
-            .await?;
-
-        let https_addr = server.addr();
-        println!("DERP listening on {:?}", https_addr);
-
-        let (stun_addr, _, stun_cleanup) = stun::test::serve(stun_ip).await?;
-        let region_id = 1;
-        let m = DerpMap {
-            regions: [(
-                1,
-                DerpRegion {
-                    region_id,
-                    region_code: "test".into(),
-                    nodes: vec![DerpNode {
-                        name: "t1".into(),
-                        region_id,
-                        // In test mode, the DERP client does not validate HTTPS certs, so the host
-                        // name is irrelevant, but the port is used.
-                        url: format!("https://test-node.invalid:{}", https_addr.port())
-                            .parse()
-                            .unwrap(),
-                        stun_only: false,
-                        stun_port: stun_addr.port(),
-                        ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
-                        ipv6: UseIpv6::TryDns,
-                        stun_test_ip: Some(stun_addr.ip()),
-                    }],
-                    avoid: false,
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-
-        let cleanup = move || {
-            Box::pin(async move {
-                println!("CLEANUP");
-                stun_cleanup.send(()).unwrap();
-                server.shutdown().await;
-            }) as BoxFuture<'static, ()>
-        };
-
-        Ok((m, Some(region_id), cleanup))
     }
 
     /// Magicsock plus wrappers for sending packets
@@ -2918,7 +2855,7 @@ pub(crate) mod tests {
             stun_ip: "127.0.0.1".parse()?,
         };
 
-        let (derp_map, region, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+        let (derp_map, region, _cleanup) = run_derp_and_stun(devices.stun_ip).await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -3078,7 +3015,6 @@ pub(crate) mod tests {
         }
 
         println!("cleaning up");
-        cleanup().await;
         cleanup_mesh();
         Ok(())
     }
@@ -3092,7 +3028,7 @@ pub(crate) mod tests {
         };
 
         for _ in 0..10 {
-            let (derp_map, _, cleanup) = run_derp_and_stun(devices.stun_ip).await?;
+            let (derp_map, _, _cleanup) = run_derp_and_stun(devices.stun_ip).await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -3123,7 +3059,6 @@ pub(crate) mod tests {
             assert!(m2.endpoint.conn().inner.is_closed());
 
             println!("cleaning up");
-            cleanup().await;
             cleanup_mesh();
         }
         Ok(())
