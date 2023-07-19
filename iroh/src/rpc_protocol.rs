@@ -10,7 +10,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
-use iroh_bytes::{provider::ShareProgress, Hash};
+use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
 use iroh_net::tls::PeerId;
 
 use quic_rpc::{
@@ -55,6 +55,8 @@ pub struct ShareRequest {
     pub addrs: Vec<SocketAddr>,
     ///
     pub force: bool,
+    ///
+    pub token: Option<RequestToken>,
     ///
     pub derp_region: Option<u16>,
 }

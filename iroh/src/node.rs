@@ -800,6 +800,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             .iter()
             .map(|b| b.hash)
             .collect::<Vec<_>>();
+
         // insert the root into the database
         // this must be done after reading the collection, because db.insert might rename the underlying files
         db.insert_pair(root_hash, data_id.clone(), Some(outboard_id.clone()))
@@ -819,10 +820,15 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             };
             let header = start.next(child_hash);
             // open the two vfs objects
-            let of = vfs.open_write(&outboard_id).await?;
-            let df = vfs.open_write(&data_id).await?;
+            let mut of = vfs.open_write(&outboard_id).await?;
+            let mut df = vfs.open_write(&data_id).await?;
             // use the convenience method to write all to the two vfs objects
-            let end_blob = header.write_all_with_outboard(Some(of), df).await?;
+            let end_blob = header
+                .write_all_with_outboard(Some(&mut of), &mut df)
+                .await?;
+            use iroh_io::AsyncSliceWriter;
+            of.sync().await?;
+            df.sync().await?;
             // insert the child into the database
             db.insert_pair(child_hash, data_id.clone(), Some(outboard_id.clone()));
             next = end_blob.next();
@@ -841,6 +847,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if !force && msg.blobs.iter().all(|hash| db.get(hash).is_some()) {
             return Ok(());
         }
+        println!("opening connection to {}", msg.peer);
         let conn = self
             .inner
             .endpoint
@@ -862,6 +869,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             .map(|collection| (collection, true));
         let all_iter = blobs_iter.chain(collections_iter);
         for (hash, is_root) in all_iter {
+            println!("getting {} recursive:{}", hash, is_root);
             let db = db.clone();
             let conn = conn.clone();
             let task = local.spawn_pinned(move || Self::get(db, conn, hash, is_root));
@@ -871,6 +879,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
+        println!("share: {:#?}", msg);
         genawaiter::sync::Gen::new(|co| async move {
             if let Err(cause) = self.share0(msg, &co).await {
                 co.yield_(ShareProgress::Abort(cause.into())).await;

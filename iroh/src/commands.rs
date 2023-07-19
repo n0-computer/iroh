@@ -67,18 +67,47 @@ impl Cli {
                 rpc_port,
                 peer,
                 addr,
-                force,
+                token,
+                ticket,
+                derp_region,
                 ..
             } => {
+                println!("{:#?}", ticket); // todo: remove
                 let client = make_rpc_client(rpc_port).await?;
+                let (peer, addr, token, derp_region, blob, collection) =
+                    if let Some(ticket) = ticket.as_ref() {
+                        let (blob, collection) = if ticket.recursive() {
+                            (vec![], vec![ticket.hash()])
+                        } else {
+                            (vec![ticket.hash()], vec![])
+                        };
+                        (
+                            ticket.peer(),
+                            ticket.addrs().to_vec(),
+                            ticket.token(),
+                            ticket.derp_region(),
+                            blob,
+                            collection,
+                        )
+                    } else {
+                        (
+                            peer.unwrap(),
+                            addr,
+                            token.as_ref(),
+                            derp_region,
+                            blob,
+                            collection,
+                        )
+                    };
                 let mut stream = client
                     .server_streaming(ShareRequest {
                         blobs: blob,
                         collections: collection,
                         peer,
                         addrs: addr,
-                        derp_region: None,
-                        force: true,
+                        derp_region,
+                        token: token.cloned(),
+                        force: true, // todo: use force from Commands::Share
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -293,14 +322,31 @@ pub enum Commands {
         #[clap(long)]
         collection: Vec<Hash>,
         /// PeerId of the provider
-        #[clap(long, short)]
-        peer: PeerId,
+        #[clap(
+            long,
+            short,
+            conflicts_with = "ticket",
+            required_unless_present = "ticket"
+        )]
+        peer: Option<PeerId>,
         /// Addresses of the provider
-        #[clap(long, short)]
+        #[clap(
+            long,
+            short,
+            conflicts_with = "ticket",
+            required_unless_present = "ticket"
+        )]
         addr: Vec<SocketAddr>,
         /// base32-encoded Request token to use for authentication, if any
-        #[clap(long)]
+        #[clap(long, conflicts_with = "ticket")]
         token: Option<RequestToken>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long, conflicts_with = "ticket")]
+        derp_region: Option<u16>,
+        #[clap(conflicts_with_all = &["peer"])]
+        /// Ticket containing everything to retrieve the data from a provider.
+        #[clap(long)]
+        ticket: Option<Ticket>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
