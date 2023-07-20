@@ -26,7 +26,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 
 2. **Write some code!**
 
-   If this is your first contribution to Iroh, you will need to [fork][forkiroh] and clone it using git. If you need help with the code you are working on, don't hesitate to ask questions in the associated issue. You will be happy to help you.
+   If this is your first contribution to Iroh, you will need to [fork][forkiroh] and clone it using git. If you need help with the code you are working on, don't hesitate to ask questions in the associated issue. We will be happy to help you.
 
 3. **Open the pull request**
 
