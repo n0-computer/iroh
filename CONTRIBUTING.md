@@ -20,15 +20,15 @@ If you would like to have a new feature in Iroh, [create a new issue][newissue].
 
 Code contributions to Iroh are greatly appreciated. Here is the general workflow you should follow:
 
-- **State in the associated issue your desire to work on it**
+1. **State in the associated issue your desire to work on it**
 
   If there is no issue for the work you would like to do, please open one. This helps reduce duplicated efforts and give contributors the help and guidance they might need.
 
-- **Write some code!**
+2. **Write some code!**
 
   If this is your first contribution to Iroh, you will need to [fork][forkiroh] and clone it using git. If you need help with the code you are working on, don't hesitate to ask questions in the associated issue. You will be happy to help you.
 
-- **Open the pull request**
+3. **Open the pull request**
 
   In general, pull requests should be opened as [a draft][draftprs]. This way, the team and community can know what work is being done, and reviewers can give early pointers on the work you are doing. Additionally we ask you to follow these guidelines:
 
@@ -75,13 +75,13 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
       - **Add docummentation**: If your change requires docummentation updates, make sure they are properly added.
       - **Tests**: If you code creates a new feature, when possible add tests for this. If they fix a bug, a regression test is recommended as well.
 
-  - **Review process**
+  4. **Review process**
 
     - Mark your pull request as ready for review.
     - If a team member in particular is guiding you, feel free to directly tag them in your pull request to get a review. Otherwise, wait for someone to pick it up.
     - Attend to constructive criticism and make changes when necessary.
 
-  - **My code is ready to be merged!**
+  5. **My code is ready to be merged!**
 
     Congratulations on becoming an official Iroh contributor!
 
