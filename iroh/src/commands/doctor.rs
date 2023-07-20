@@ -122,10 +122,13 @@ pub enum Commands {
         /// Whether to enable PCP.
         #[clap(long)]
         enable_pcp: bool,
+        /// Whether to enable NAT-PMP.
+        #[clap(long)]
+        enable_nat_pmp: bool,
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
-        /// Protocol to use for port mapping. One of ["upnp", "pcp"].
+        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
         protocol: String,
         /// Local port to get a mapping.
         local_port: NonZeroU16,
@@ -612,9 +615,10 @@ async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> 
     // create the config that enables exlusively the required protocol
     let mut enable_upnp = false;
     let mut enable_pcp = false;
-    let enable_nat_pmp = false;
+    let mut enable_nat_pmp = false;
     match protocol.to_ascii_lowercase().as_ref() {
         "upnp" => enable_upnp = true,
+        "nat_pmp" => enable_nat_pmp = true,
         "pcp" => enable_pcp = true,
         other => anyhow::bail!("Unknown port mapping protocol {other}"),
     }
@@ -835,11 +839,12 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
         Commands::PortMapProbe {
             enable_upnp,
             enable_pcp,
+            enable_nat_pmp,
         } => {
             let config = portmapper::Config {
                 enable_upnp,
                 enable_pcp,
-                enable_nat_pmp: false,
+                enable_nat_pmp,
             };
 
             port_map_probe(config).await
