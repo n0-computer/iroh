@@ -64,4 +64,4 @@ jobs:
         run: |
           cd iroh-ffi
           diff iroh.h iroh.compare.h
-          cmp --silent iroh.h irohz.h || echo -e "iroh.h file has changed."; (exit 1)
+          cmp --silent iroh.h iroh.compare.h || echo -e "iroh.h file has changed."; (exit 1)
