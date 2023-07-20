@@ -41,15 +41,17 @@ Code conitrbutions to Iroh are greatly appreciated. Here is the general workflow
 
     - Iroh pull requests titles look like this: `type(crate): description`
 
-      **`type`** is one of:
-      - `feat`: A new feature.
-      - `test`: Changes that exclusively affect tests, either by adding new ones or correcting existing ones.
-      - `fix`: A bug fix.
-      - `docs`: Documentation only changes.
-      - `refactor`: A code change that neither fixes a bug nor adds a feature
-      - `perf`: A code change that improves performance
-      - `deps`: Dependency only updates
-      - `chore`: Changes to the build process or auxiliary tools and libraries
+      | **`type`** | **When to use** |
+      |--:         |-- |
+      | `feat`     | A new feature |
+      | `test`     | Changes that exclusively affect tests, either by adding new ones or correcting existing ones |
+      | `fix`      | A bug fix |
+      | `docs`     | Documentation only changes |
+      | `refactor` | A code change that neither fixes a bug nor adds a feature |
+      | `perf`     | A code change that improves performance |
+      | `deps`     | Dependency only updates |
+      | `chore`    | Changes to the build process or auxiliary tools and libraries |
+
   
       **`crate`** is the rust crate containing your changes
 
