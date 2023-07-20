@@ -1,8 +1,8 @@
 # Contributing to Iroh
 
-We'd love for you to contribute to our source code and to make Iroh even better.
+We'd love for you to contribute to our source code to make Iroh even better!
 
-When contributing to Iroh, you are expected to follow our [Code of conduct][coc].
+When contributing to Iroh, you are expected to follow our [Code of Conduct][coc].
 
 Here are some of the ways in which you can contribute:
 
@@ -12,9 +12,9 @@ If you want to ask a question to understand a concept regarding Iroh, or need he
 
 ## Issues
 
-If you found an unexpected behavior using Iroh, please browse our existing [issues][issues]. If none fits your case, [create a new one][newissue].
+If you found unexpected behavior while using Iroh, please browse our existing [issues][issues]. If no issues fit your case, [create a new one][newissue].
 
-If you would like to have a new feature in Iroh, [create a new issue][newissue]. This helps have meaningful conversations about design, feasibility and general expectations of how a feature would work. If you plan to work on this yourself, we ask you to state this as well, so that you receive the guidance you need ahead.
+If you would like to suggest a new feature in Iroh, [create a new issue][newissue]. This helps have meaningful conversations about design, feasibility, and general expectations of how a feature would work. If you plan to work on this yourself, we ask you to state this as well, so that you receive the guidance you need.
 
 ## Pull requests
 
@@ -34,7 +34,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
 
    - **General code guidelines**
 
-     - When possible, please documment relevant pieces of code. If docummentation refers to other object (module, function, struct, etc) use ``[`path::to::ReferencedObject`]`` to link it. For more information check the [rustdoc docummentation][rustdoc]
+     - When possible, please document relevant pieces of code. If documentation refers to another object (module, function, struct, etc) use ``[`path::to::ReferencedObject`]`` to link it. For more information check the [rustdoc docummentation][rustdoc]
      - Comment your code. It will be useful for your reviewer and future contributors.
 
    - **Pull request titles**
@@ -53,13 +53,13 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
        | `chore`    | Changes to the build process or auxiliary tools and libraries |
 
   
-       **`crate`** is the rust crate containing your changes
+       **`crate`** is the rust crate containing your changes.
 
        **`description`** is a short sentence that summarizes your changes.
 
    - **Pull request descriptions**
 
-     Once you open a pull request, you will be prompted to follow a template with three simple parts
+     Once you open a pull request, you will be prompted to follow a template with three simple parts:
 
      - **Description**
 
@@ -72,8 +72,8 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
      - **Checklist**
 
        - **Self review**: We ask you to thoroughly review your changes until you are happy with them. This helps speed up the review process.
-       - **Add docummentation**: If your change requires docummentation updates, make sure they are properly added.
-       - **Tests**: If you code creates a new feature, when possible add tests for this. If they fix a bug, a regression test is recommended as well.
+       - **Add documentation**: If your change requires documentation updates, make sure they are properly added.
+       - **Tests**: If your code creates a new feature, when possible add tests for this. If they fix a bug, a regression test is recommended as well.
 
 
 4. **Review process**
