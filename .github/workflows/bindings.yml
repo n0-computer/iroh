@@ -35,6 +35,7 @@ jobs:
       - name: Create a copy of iroh.h
         run: |
           cd iroh-ffi
+          touch iroh.h
           cp iroh.h iroh.compare.h
       
       - name: tests (all features)
