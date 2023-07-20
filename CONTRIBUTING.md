@@ -8,21 +8,21 @@ Here are some of the ways in which you can contribute:
 
 ## Discussions
 
-If you want to ask a question to understand a concept regarding Iroh, or need help working with Iroh, plese check the [Discussions][discussions]. If you don't find a thread that fits your needs, feel free to create a new one. 
+If you want to ask a question to understand a concept regarding Iroh, or need help working with Iroh, please check the [Discussions][discussions]. If you don't find a thread that fits your needs, feel free to create a new one. 
 
 ## Issues
 
-If you found an unexpected beheaviour using Iroh, please browse our existing [issues][issues]. If none fits your case, [create a new one][newissue].
+If you found an unexpected behavior using Iroh, please browse our existing [issues][issues]. If none fits your case, [create a new one][newissue].
 
-If you would like to have a new feature in Iroh, [create a new issue][newissue]. This helps have meaningful conversations about design, feasability and general expectations of how a feature would work. If you plan to work on this yourself, we ask you to state this as well, so that you receive the guidence you need ahead.
+If you would like to have a new feature in Iroh, [create a new issue][newissue]. This helps have meaningful conversations about design, feasibility and general expectations of how a feature would work. If you plan to work on this yourself, we ask you to state this as well, so that you receive the guidance you need ahead.
 
 ## Pull requests
 
-Code conitrbutions to Iroh are greatly appreciated. Here is the general workflow you should follow:
+Code contributions to Iroh are greatly appreciated. Here is the general workflow you should follow:
 
 - **State in the associated issue your desire to work on it**
 
-  If there is no issue for the work you would like to do, please open one. This helps reduce duplicated efforts and give contributors the help and guideance they might need.
+  If there is no issue for the work you would like to do, please open one. This helps reduce duplicated efforts and give contributors the help and guidance they might need.
 
 - **Write some code!**
 
@@ -30,7 +30,7 @@ Code conitrbutions to Iroh are greatly appreciated. Here is the general workflow
 
 - **Open the pull request**
 
-  In general, pull requests should be opened as [a draft][draftprs]. This way, the team and community can know what work is being done, and reviewers can give early pointers on the work you are doing. Aditionally we ask you to follow these guidelines:
+  In general, pull requests should be opened as [a draft][draftprs]. This way, the team and community can know what work is being done, and reviewers can give early pointers on the work you are doing. Additionally we ask you to follow these guidelines:
 
   - **General code guidelines**
 
