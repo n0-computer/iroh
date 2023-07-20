@@ -4,7 +4,7 @@ version = "0.5.0"
 edition = "2021"
 readme = "README.md"
 description = "metrics for iroh"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 authors = ["arqu <asmir@n0.computer>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
