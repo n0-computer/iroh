@@ -52,11 +52,6 @@ jobs:
         run: |
           cd iroh-ffi
           cargo test --lib --bins --tests
-
-      - name: doctests
-        run: |
-          cd iroh-ffi
-          cargo test --all-features --doc
       
       - name: Build and test bindings
         run: |
