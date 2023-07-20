@@ -1,2 +1,28 @@
 [build]
 rustflags = ["-Wmissing_debug_implementations"]
+
+
+[target.x86_64-apple-darwin]
+# linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# linker = "/usr/bin/clang"
+linker = "rust-lld"
+
+[target.aarch64-apple-darwin]
+# linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# linker = "/usr/bin/clang"
+linker = "rust-lld"
+
+[target.aarch64-apple-ios]
+# linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# linker = "/usr/bin/clang"
+linker = "rust-lld"
+
+[target.x86_64-apple-ios]
+# linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# linker = "/usr/bin/clang"
+linker = "rust-lld"
+
+[target.aarch64-apple-ios-sim]
+# linker = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# linker = "/usr/bin/clang"
+linker = "rust-lld"
