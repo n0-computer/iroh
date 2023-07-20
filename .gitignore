@@ -1,3 +1,4 @@
 /target
 iroh.config.toml
 .idea/
+.DS_Store
