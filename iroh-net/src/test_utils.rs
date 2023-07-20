@@ -33,10 +33,7 @@ pub(crate) fn setup_logging() -> tracing::subscriber::DefaultGuard {
         match handle.runtime_flavor() {
             RuntimeFlavor::CurrentThread => (),
             RuntimeFlavor::MultiThread => {
-                panic!(
-                    "setup_logging() does not work in a multi-threaded tokio runtime, \
-                        use with_logging() instead"
-                );
+                panic!("setup_logging() does not work in a multi-threaded tokio runtime");
             }
             _ => panic!("unknown runtime flavour"),
         }
