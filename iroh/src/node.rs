@@ -718,12 +718,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     async fn create_file_pair(db: &D, hash: &Hash, temp: bool) -> io::Result<(VfsId<D>, VfsId<D>)> {
-        // use the hash as name hint
-        let name_hint = hash.as_bytes();
         // create temp file for the data, using the hash as name hint
-        let data = db.vfs().create(name_hint, Purpose::Data, temp).await?;
+        let data = db.vfs().create(Purpose::Data(*hash, temp)).await?;
         // create temp file for the outboard, using the hash as name hint
-        let outboard = db.vfs().create(name_hint, Purpose::Outboard, temp).await?;
+        let outboard = db.vfs().create(Purpose::Outboard(*hash, temp)).await?;
         Ok((data, outboard))
     }
 

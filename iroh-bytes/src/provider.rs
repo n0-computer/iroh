@@ -643,12 +643,7 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     ///
     /// `name_hint` is a hint for the internal name (base).
     /// `purpose` can also be used as a hint for the internal name (extension).
-    fn create(
-        &self,
-        name_hint: &[u8],
-        purpose: Purpose,
-        temp: bool,
-    ) -> BoxFuture<'_, io::Result<Self::Id>>;
+    fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>>;
     /// open an internal handle for reading
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
     /// open an internal handle for writing
@@ -658,14 +653,43 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
 }
 
 ///
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Purpose {
     /// File is going to be used to store data
-    Data,
+    Data(Hash, bool),
     /// File is going to be used to store a bao outboard
-    Outboard,
+    Outboard(Hash, bool),
     /// File is going to be used to store metadata
-    Meta,
+    Meta(Vec<u8>, bool),
+}
+
+impl Purpose {
+    /// true if the purpose is for a temporary file
+    fn temporary(&self) -> bool {
+        match self {
+            Purpose::Data(_, t) => *t,
+            Purpose::Outboard(_, t) => *t,
+            Purpose::Meta(_, t) => *t,
+        }
+    }
+
+    /// some bytes that can be used as a hint for the name of the file
+    fn name_hint(&self) -> &[u8] {
+        match self {
+            Purpose::Data(hash, _) => hash.as_bytes(),
+            Purpose::Outboard(hash, _) => hash.as_bytes(),
+            Purpose::Meta(data, _) => data.as_slice(),
+        }
+    }
+
+    /// suggested file extension
+    fn extension(&self) -> &'static str {
+        match self {
+            Purpose::Data(_, _) => "data",
+            Purpose::Outboard(_, _) => "outboard",
+            Purpose::Meta(_, _) => "meta",
+        }
+    }
 }
 
 ///
@@ -695,25 +719,14 @@ impl Vfs for LocalFs {
     type ReadRaw = iroh_io::File;
     type WriteRaw = iroh_io::File;
 
-    fn create(
-        &self,
-        name_hint: &[u8],
-        purpose: Purpose,
-        temporary: bool,
-    ) -> BoxFuture<'_, io::Result<Self::Id>> {
+    fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
         use rand::Rng;
         let dir = std::env::temp_dir();
         let rand = rand::thread_rng().gen::<[u8; 16]>();
-        let temp = if temporary { ".temp" } else { "" };
-        fn extension(purpose: Purpose) -> &'static str {
-            match purpose {
-                Purpose::Data => "data",
-                Purpose::Outboard => "outboard",
-                Purpose::Meta => "meta",
-            }
-        }
+        let temp = if purpose.temporary() { ".temp" } else { "" };
+        let name_hint = purpose.name_hint();
         let name =
-            hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + extension(purpose) + temp;
+            hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + purpose.extension() + temp;
         let filename = dir.join(name);
         futures::future::ok(filename).boxed()
     }
