@@ -430,11 +430,10 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
     }
 }
 
-// TODO: Reenable when not flaky
+// TODO: These tests could still be flaky, lets fix that:
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    // use futures::future::BoxFuture;
     use tracing::{info, info_span, Instrument};
 
     use crate::test_utils::{run_derp_and_stun, setup_logging};

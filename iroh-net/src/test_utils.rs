@@ -61,18 +61,22 @@ impl std::io::Write for TestWriter {
     }
 }
 
-/// Runs a  DERP server with STUN enabled suitable for tests.
+/// A drop guard to clean up test infrastructure.
 ///
-/// The returned `oneshot::Sender<()>` is a drop guard: the server will be shut down when
-/// dropped.  You could also explicitly send a value to achieve the same if you so desire.
+/// After dropping the test infrastructure will asynchronously shutdown and release its
+/// resources.
+#[derive(Debug)]
+pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
+
+/// Runs a  DERP server with STUN enabled suitable for tests.
 ///
 /// The returned `u16` is the region ID of the DERP server in the returned [`DerpMap`], it
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-pub async fn run_derp_and_stun(
+pub(crate) async fn run_derp_and_stun(
     stun_ip: IpAddr,
-) -> Result<(DerpMap, Option<u16>, oneshot::Sender<()>)> {
+) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
     // TODO: pass a mesh_key?
 
     let server_key = crate::key::node::SecretKey::generate();
@@ -86,7 +90,7 @@ pub async fn run_derp_and_stun(
     let https_addr = server.addr();
     println!("DERP listening on {:?}", https_addr);
 
-    let (stun_addr, _, stun_cleanup) = crate::stun::test::serve(stun_ip).await?;
+    let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(stun_ip).await?;
     let region_id = 1;
     let m = DerpMap {
         regions: [(
@@ -117,11 +121,12 @@ pub async fn run_derp_and_stun(
 
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
+        let _stun_cleanup = stun_drop_guard; // move into this closure
+
         // Wait until we're dropped or receive a message.
         rx.await.ok();
-        stun_cleanup.send(()).ok(); // If receiver is gone it's already cleaned up.
         server.shutdown().await;
     });
 
-    Ok((m, Some(region_id), tx))
+    Ok((m, Some(region_id), CleanupDropGuard(tx)))
 }

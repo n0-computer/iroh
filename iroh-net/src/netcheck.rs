@@ -847,7 +847,8 @@ mod tests {
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = setup_logging();
-        let (stun_addr, stun_stats, done) = stun::test::serve("0.0.0.0".parse().unwrap()).await?;
+        let (stun_addr, stun_stats, _cleanup_guard) =
+            stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
         let mut client = Client::new(None).await?;
         let dm = stun::test::derp_map_of([stun_addr].into_iter());
@@ -878,7 +879,6 @@ mod tests {
             );
         }
 
-        done.send(()).unwrap();
         assert!(
             stun_stats.total().await >= 5,
             "expected at least 5 stun, got {}",
