@@ -15,15 +15,16 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bao_tree::io::outboard_size;
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::Co;
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
-use iroh_bytes::get;
-use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
+use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_bytes::provider::{BaoDb, Purpose, ShareProgress, Vfs, VfsId};
+use iroh_bytes::{get, IROH_BLOCK_SIZE};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
@@ -44,6 +45,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use rand::Rng;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -717,11 +719,26 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn create_file_pair(db: &D, hash: &Hash, temp: bool) -> io::Result<(VfsId<D>, VfsId<D>)> {
+    async fn create_temp_file_pair(
+        db: &D,
+        hash: &Hash,
+        temp: [u8; 16],
+        size: u64,
+    ) -> io::Result<(VfsId<D>, Option<VfsId<D>>)> {
         // create temp file for the data, using the hash as name hint
-        let data = db.vfs().create(Purpose::Data(*hash, temp)).await?;
-        // create temp file for the outboard, using the hash as name hint
-        let outboard = db.vfs().create(Purpose::Outboard(*hash, temp)).await?;
+        let data = db.vfs().create(Purpose::PartialData(*hash, temp)).await?;
+        let outboard_size = outboard_size(size, IROH_BLOCK_SIZE);
+        let outboard = if outboard_size > 8 {
+            // create temp file for the outboard
+            Some(
+                db.vfs()
+                    .create(Purpose::PartialOutboard(*hash, temp))
+                    .await?,
+            )
+        } else {
+            // we don't need an outboard
+            None
+        };
         Ok((data, outboard))
     }
 
@@ -738,10 +755,46 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         }
     }
 
+    async fn get_blob_inner(
+        db: &D,
+        hash: Hash,
+        header: AtBlobHeader,
+    ) -> anyhow::Result<(AtEndBlob, VfsId<D>)> {
+        use iroh_io::AsyncSliceWriter;
+        // read the size
+        let (content, size) = header.next().await?;
+        // create a random id that is common to both files
+        let rand = rand::thread_rng().gen::<[u8; 16]>();
+        // create the temp file pair
+        let (data_id, outboard_id) = Self::create_temp_file_pair(&db, &hash, rand, size).await?;
+        // open the data file in any case
+        let mut df = db.vfs().open_write(&data_id).await?;
+        // open the outboard file (only if we need to)
+        let mut ofo: Option<_> = if let Some(outboard_id) = outboard_id.as_ref() {
+            let mut of = db.vfs().open_write(outboard_id).await?;
+            // write the size
+            of.write_at(0, &size.to_le_bytes()).await?;
+            Some(of)
+        } else {
+            None
+        };
+        // use the convenience method to write all to the two vfs objects
+        let end = content
+            .write_all_with_outboard(ofo.as_mut(), &mut df)
+            .await?;
+        // sync the data file
+        df.sync().await?;
+        // sync the outboard file, if we wrote one
+        if let Some(mut of) = ofo {
+            of.sync().await?;
+        }
+        // actually store the data. it is up to the db to decide if it wants to
+        // rename the files or not.
+        db.insert_entry(hash, data_id.clone(), outboard_id).await?;
+        Ok((end, data_id))
+    }
+
     async fn get_blob(db: D, conn: quinn::Connection, hash: Hash) -> anyhow::Result<()> {
-        let (data_id, outboard_id) = Self::create_file_pair(&db, &hash, true).await?;
-        let of = db.vfs().open_write(&outboard_id).await?;
-        let df = db.vfs().open_write(&data_id).await?;
         let request = get::fsm::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
@@ -754,22 +807,19 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         // move to the header
         let header = start.next();
-        // use the convenience method to write all to the two vfs objects
-        let end = header.write_all_with_outboard(Some(of), df).await?;
+        // do the ceremony of getting the blob and adding it to the database
+        let (end, _data_id) = Self::get_blob_inner(&db, hash, header).await?;
+
         // we have requested a single hash, so we must be at closing
         let EndBlobNext::Closing(end) = end.next() else {
             anyhow::bail!("expected Closing");
         };
         // this closes the bidi stream. Do something with the stats?
         let _stats = end.next().await?;
-        // actually store the data. it is up to the db to decide if it wants to
-        // rename the files or not.
-        db.insert_pair(hash, data_id, Some(outboard_id)).await?;
         anyhow::Ok(())
     }
 
     async fn get_collection(db: D, conn: quinn::Connection, root_hash: Hash) -> anyhow::Result<()> {
-        let vfs = db.vfs();
         let request = get::fsm::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
@@ -782,14 +832,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         // move to the header
         let header = start.next();
-
-        // create a new file pair for the collection
-        let (data_id, outboard_id) = Self::create_file_pair(&db, &root_hash, true).await?;
-        // open the two vfs objects
-        let of = vfs.open_write(&outboard_id).await?;
-        let df = vfs.open_write(&data_id).await?;
-        // use the convenience method to write all to the two vfs objects
-        let end_root = header.write_all_with_outboard(Some(of), df).await?;
+        // read the blob and add it to the database
+        let (end_root, data_id) = Self::get_blob_inner(&db, root_hash, header).await?;
         // read the collection fully for now
         let collection: Bytes = db.vfs().open_read(&data_id).await?.read_to_end().await?;
         let collection = Collection::from_bytes(&collection)?;
@@ -798,11 +842,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             .iter()
             .map(|b| b.hash)
             .collect::<Vec<_>>();
-
-        // insert the root into the database
-        // this must be done after reading the collection, because db.insert might rename the underlying files
-        db.insert_pair(root_hash, data_id.clone(), Some(outboard_id.clone()))
-            .await?;
         let mut next = end_root.next();
         // read all the children
         let finishing = loop {
@@ -817,18 +856,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 None => break start.finish(),
             };
             let header = start.next(child_hash);
-            // open the two vfs objects
-            let mut of = vfs.open_write(&outboard_id).await?;
-            let mut df = vfs.open_write(&data_id).await?;
-            // use the convenience method to write all to the two vfs objects
-            let end_blob = header
-                .write_all_with_outboard(Some(&mut of), &mut df)
-                .await?;
-            use iroh_io::AsyncSliceWriter;
-            of.sync().await?;
-            df.sync().await?;
-            // insert the child into the database
-            db.insert_pair(child_hash, data_id.clone(), Some(outboard_id.clone()));
+            let (end_blob, _data_id) = Self::get_blob_inner(&db, child_hash, header).await?;
             next = end_blob.next();
         };
         // this closes the bidi stream. Do something with the stats?

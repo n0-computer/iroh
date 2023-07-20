@@ -1,5 +1,5 @@
 //! The server side API
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::io;
 use std::sync::Arc;
 
@@ -641,8 +641,8 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     type WriteRaw: AsyncSliceWriter;
     /// create a handle for internal data
     ///
-    /// `name_hint` is a hint for the internal name (base).
-    /// `purpose` can also be used as a hint for the internal name (extension).
+    /// `purpose` is the purpose of the file. The provider may use this to keep
+    /// track of partial downloads.
     fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>>;
     /// open an internal handle for reading
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
@@ -653,40 +653,85 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
 }
 
 ///
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Purpose {
-    /// File is going to be used to store data
-    Data(Hash, bool),
-    /// File is going to be used to store a bao outboard
-    Outboard(Hash, bool),
+    /// Incomplete data for the hash, with an unique id
+    PartialData(Hash, [u8; 16]),
+    /// File is storing data for the hash
+    Data(Hash),
+    /// File is storing a partial outboard
+    PartialOutboard(Hash, [u8; 16]),
+    /// File is storing an outboard
+    ///
+    /// We can have multiple files with the same outboard, in case the outboard
+    /// does not contain hashes. But we don't store those outboards.
+    Outboard(Hash),
     /// File is going to be used to store metadata
-    Meta(Vec<u8>, bool),
+    Meta(Vec<u8>, Option<[u8; 16]>),
+}
+
+struct DD<T: fmt::Display>(T);
+
+impl<T: fmt::Display> fmt::Debug for DD<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for Purpose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PartialData(hash, guid) => f
+                .debug_tuple("PartialData")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
+            Self::Data(hash) => f.debug_tuple("Data").field(&DD(hash)).finish(),
+            Self::PartialOutboard(hash, guid) => f
+                .debug_tuple("PartialOutboard")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
+            Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
+            Self::Meta(arg0, arg1) => f
+                .debug_tuple("Meta")
+                .field(&DD(hex::encode(arg0)))
+                .field(arg1)
+                .finish(),
+        }
+    }
 }
 
 impl Purpose {
     /// true if the purpose is for a temporary file
-    fn temporary(&self) -> bool {
+    pub fn temporary(&self) -> bool {
         match self {
-            Purpose::Data(_, t) => *t,
-            Purpose::Outboard(_, t) => *t,
-            Purpose::Meta(_, t) => *t,
+            Purpose::PartialData(_, _) => true,
+            Purpose::Data(_) => false,
+            Purpose::PartialOutboard(_, _) => true,
+            Purpose::Outboard(_) => false,
+            Purpose::Meta(_, t) => t.is_some(),
         }
     }
 
     /// some bytes that can be used as a hint for the name of the file
     fn name_hint(&self) -> &[u8] {
         match self {
-            Purpose::Data(hash, _) => hash.as_bytes(),
-            Purpose::Outboard(hash, _) => hash.as_bytes(),
+            Purpose::PartialData(hash, _) => hash.as_bytes(),
+            Purpose::Data(hash) => hash.as_bytes(),
+            Purpose::PartialOutboard(hash, _) => hash.as_bytes(),
             Purpose::Meta(data, _) => data.as_slice(),
+            Purpose::Outboard(_) => &[],
         }
     }
 
     /// suggested file extension
     fn extension(&self) -> &'static str {
         match self {
-            Purpose::Data(_, _) => "data",
-            Purpose::Outboard(_, _) => "outboard",
+            Purpose::PartialData(_, _) => "data.temp",
+            Purpose::Data(_) => "data",
+            Purpose::PartialOutboard(_, _) => "outboard.temp",
+            Purpose::Outboard(_) => "outboard",
             Purpose::Meta(_, _) => "meta",
         }
     }
@@ -696,18 +741,31 @@ impl Purpose {
 pub type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
 
 ///
+pub type VfsWriter<T> = <<T as BaoDb>::Vfs as Vfs>::WriteRaw;
+
+/// The mutable part of a BaoDb
 pub trait BaoDb: BaoReadonlyDb {
     /// The Vfs type to use
     type Vfs: Vfs;
     /// The Vfs of this database
     fn vfs(&self) -> &Self::Vfs;
-    /// Insert a new blob into the database
-    fn insert_pair(
+    /// Insert a new complete entry into the database
+    ///
+    /// `hash` is the hash of the entry
+    /// `data` is the complete data of the entry
+    /// `outboard` is an optional outboard for the entry
+    fn insert_entry(
         &self,
         hash: Hash,
         data: VfsId<Self>,
         outboard: Option<VfsId<Self>>,
     ) -> BoxFuture<'_, io::Result<()>>;
+
+    /// Check if we have a partial entry for `hash`, and if so, return it
+    fn get_partial_entry(
+        &self,
+        _hash: Hash,
+    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>>;
 }
 
 /// A local filesystem based Vfs
