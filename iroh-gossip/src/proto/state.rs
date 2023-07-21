@@ -1,6 +1,4 @@
-//! The protocol state of the `iroh-gossip` protocol
-//!
-//! This mod
+//! The protocol state of the `iroh-gossip` protocol.
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
