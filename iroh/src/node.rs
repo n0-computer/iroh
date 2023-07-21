@@ -17,12 +17,13 @@ use std::{io, result};
 
 use anyhow::{Context, Result};
 use bao_tree::io::outboard_size;
+use bao_tree::ChunkNum;
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
-use iroh_bytes::protocol::GetRequest;
+use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::provider::{BaoDb, Purpose, ShareProgress, Vfs, VfsId};
 use iroh_bytes::{get, IROH_BLOCK_SIZE};
 use iroh_bytes::{
@@ -46,6 +47,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use rand::Rng;
+use range_collections::RangeSet2;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
@@ -784,13 +786,18 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         }
     }
 
+    /// Get a blob that was requested completely.
+    ///
+    /// We need to create our own files and handle the case where an outboard
+    /// is not needed.
     async fn get_blob_inner(
         db: &D,
-        hash: Hash,
         header: AtBlobHeader,
         sender: ShareProgressSender,
     ) -> anyhow::Result<(AtEndBlob, VfsId<D>)> {
         use iroh_io::AsyncSliceWriter;
+
+        let hash = header.hash();
         // read the size
         let (content, size) = header.next().await?;
         // create a random id that is common to both files
@@ -842,26 +849,117 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         Ok((end, data_id))
     }
 
+    /// Get a blob that was requested partially.
+    ///
+    /// We get passed the data and outboard ids. Partial downloads are only done
+    /// for large blobs where the outboard is present.
+    async fn get_blob_inner_partial(
+        db: &D,
+        header: AtBlobHeader,
+        data_id: VfsId<D>,
+        outboard_id: VfsId<D>,
+        sender: ShareProgressSender,
+    ) -> anyhow::Result<(AtEndBlob, VfsId<D>)> {
+        // TODO: the data we get is validated at this point, but we need to check
+        // that it actually contains the requested ranges. Or DO WE?
+        use iroh_io::AsyncSliceWriter;
+
+        let hash = header.hash();
+        // read the size
+        let (content, size) = header.next().await?;
+        // open the data file in any case
+        let df = db.vfs().open_write(&data_id).await?;
+        // open the outboard file
+        let mut of = db.vfs().open_write(&outboard_id).await?;
+        // allocate a new id for progress reports for this transfer
+        let id = sender.new_id();
+        sender.send(ShareProgress::Found { id, hash, size }).await?;
+        let sender2 = sender.clone();
+        let on_write = move |offset: u64, _length: usize| {
+            // if try send fails it means that the receiver has been dropped.
+            // in that case we want to abort the write_all_with_outboard.
+            sender2
+                .try_send(ShareProgress::Progress { id, offset })
+                .map_err(|e| {
+                    tracing::info!("aborting download of {}", hash);
+                    e
+                })?;
+            Ok(())
+        };
+        let mut pw = ProgressSliceWriter2::new(df, on_write);
+        // use the convenience method to write all to the two vfs objects
+        let end = content
+            .write_all_with_outboard(Some(&mut of), &mut pw)
+            .await?;
+        // sync the data file
+        pw.sync().await?;
+        // sync the outboard file
+        of.sync().await?;
+        // actually store the data. it is up to the db to decide if it wants to
+        // rename the files or not.
+        db.insert_entry(hash, data_id.clone(), Some(outboard_id))
+            .await?;
+        // notify that we are done
+        sender.send(ShareProgress::Done { id }).await?;
+        Ok((end, data_id))
+    }
+
+    async fn get_missing_ranges(
+        db: &D,
+        data_id: &VfsId<D>,
+        outboard_id: &VfsId<D>,
+    ) -> anyhow::Result<RangeSet2<ChunkNum>> {
+        anyhow::bail!("unable to determine missing ranges");
+    }
+
     async fn get_blob(
         db: D,
         conn: quinn::Connection,
         hash: Hash,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
-        );
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
+        let end = if let Some((data_id, outboard_id)) = db.get_partial_entry(&hash).await? {
+            println!(
+                "got partial data for {}: {:?} {:?}",
+                hash, data_id, outboard_id
+            );
+            let required_ranges = Self::get_missing_ranges(&db, &data_id, &outboard_id)
+                .await
+                .ok()
+                .unwrap_or_else(|| RangeSet2::all());
+            let request = GetRequest::new(hash, RangeSpecSeq::new([required_ranges]));
+            // full request
+            let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            let (end, _data_id) =
+                Self::get_blob_inner_partial(&db, header, data_id, outboard_id, sender).await?;
+            end
+        } else {
+            // full request
+            let request = get::fsm::start(
+                conn,
+                iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
+            );
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            let (end, _data_id) = Self::get_blob_inner(&db, header, sender).await?;
+            end
         };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
-        let (end, _data_id) = Self::get_blob_inner(&db, hash, header, sender).await?;
 
         // we have requested a single hash, so we must be at closing
         let EndBlobNext::Closing(end) = end.next() else {
@@ -891,8 +989,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // move to the header
         let header = start.next();
         // read the blob and add it to the database
-        let (end_root, data_id) =
-            Self::get_blob_inner(&db, root_hash, header, sender.clone()).await?;
+        let (end_root, data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
         // read the collection fully for now
         let collection: Bytes = db.vfs().open_read(&data_id).await?.read_to_end().await?;
         let collection = Collection::from_bytes(&collection)?;
@@ -915,8 +1012,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 None => break start.finish(),
             };
             let header = start.next(child_hash);
-            let (end_blob, _data_id) =
-                Self::get_blob_inner(&db, child_hash, header, sender.clone()).await?;
+            let (end_blob, _data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
             next = end_blob.next();
         };
         // this closes the bidi stream. Do something with the stats?

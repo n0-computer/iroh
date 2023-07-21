@@ -411,6 +411,16 @@ pub mod fsm {
             }
             content.write_all_with_outboard(outboard, data).await
         }
+
+        /// Hash of the blob we are reading
+        pub fn hash(&self) -> Hash {
+            (*self.stream.hash()).into()
+        }
+
+        /// Ranges we have requested
+        pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
+            self.stream.ranges()
+        }
     }
 
     /// State while we are reading content

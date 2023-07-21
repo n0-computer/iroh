@@ -349,19 +349,16 @@ impl BaoDb for MutableDatabase {
         outboard_id: Option<u64>,
     ) -> BoxFuture<'_, io::Result<()>> {
         let mut vfs = self.vfs.0.write().unwrap();
-        println!("insert_entry {} {} {:?}", hash, data_id, outboard_id);
         // get the actual entries
         let Some(data) = vfs.entries.get_mut(&data_id) else {
             panic!();
         };
-        println!("data {} {:?}", data_id, data.purpose);
         assert!(data.purpose.temporary());
         data.purpose = Purpose::Data(hash);
         if let Some(outboard_id) = outboard_id {
             let Some(outboard) = vfs.entries.get_mut(&outboard_id) else {
                 panic!();
             };
-            println!("outboard {} {:?}", outboard_id, outboard.purpose);
             assert!(outboard.purpose.temporary());
             outboard.purpose = Purpose::Outboard(hash)
         }
@@ -369,6 +366,37 @@ impl BaoDb for MutableDatabase {
         let mut inner = self.inner.write().unwrap();
         inner.insert(hash, (data_id, outboard_id));
         futures::future::ok(()).boxed()
+    }
+
+    fn get_partial_entry(
+        &self,
+        hash: &Hash,
+    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
+        let vfs = self.vfs.0.read().unwrap();
+        let data_id = vfs
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| match entry.purpose {
+                Purpose::PartialData(h, uid) if h == *hash => Some((uid, *id)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let outboard_id = vfs
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| match entry.purpose {
+                Purpose::PartialOutboard(h, uid) if h == *hash => Some((uid, *id)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        // find a pair that belongs together
+        // todo: optimize
+        for entry in data_id.into_iter() {
+            if let Some(outboard) = outboard_id.get(&entry.0) {
+                return futures::future::ok(Some((entry.1, *outboard))).boxed();
+            }
+        }
+        futures::future::ok(None).boxed()
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = (Hash, u64)> + Send + Sync + 'static> {
