@@ -10,7 +10,8 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  MSRV: "1.63"
+  RUSTDOCFLAGS: -Dwarnings
+  MSRV: "1.66"
 
 jobs:
   netsim:

@@ -1,0 +1,67 @@
+name: FFI-CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  MSRV: "1.66"
+
+jobs:
+  build_and_test_ffi_bindings:
+    name: Build and test ffi bindings
+    runs-on: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [macOS-latest]
+        rust: [nightly, stable]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+        with:
+          submodules: recursive
+
+      - name: Install ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Create a copy of iroh.h
+        run: |
+          cd iroh-ffi
+          touch iroh.h
+          cp iroh.h iroh.compare.h
+      
+      - name: tests (all features)
+        run: |
+          cd iroh-ffi
+          cargo test --all-features --lib --bins --tests
+        
+      - name: tests (no features)
+        run: |
+          cd iroh-ffi
+          cargo test --no-default-features --lib --bins --tests
+
+      - name: tests (default features)
+        run: |
+          cd iroh-ffi
+          cargo test --lib --bins --tests
+      
+      - name: Build and test bindings
+        run: |
+          cd iroh-ffi
+          cargo build --release
+          cd c/
+          make build
+      
+      - name: Compare iroh.h
+        run: |
+          cd iroh-ffi
+          diff iroh.h iroh.compare.h
+          cmp --silent iroh.h iroh.compare.h || (echo -e "iroh.h file has changed." & (exit 1))
