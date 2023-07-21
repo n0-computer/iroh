@@ -303,8 +303,7 @@ impl BaoMap for MutableDatabase {
         let Ok(outboard) = PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard_bytes.clone().into()) else {
             let size = u64::from_le_bytes(outboard_bytes[0..8].try_into().unwrap());
             let expected_outboard_size = bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE);
-            println!("failed to create outboard {} {} {} {}", size, expected_outboard_size, outboard_bytes.len(), hex::encode(outboard_bytes));
-            return None;
+            panic!("failed to create outboard {} {} {} {}", size, expected_outboard_size, outboard_bytes.len(), hex::encode(outboard_bytes));
         };
         Some(MutableDbEntry {
             hash,
@@ -372,7 +371,7 @@ impl BaoDb for MutableDatabase {
         futures::future::ok(()).boxed()
     }
 
-    fn get_partial_entry(&self, _hash: Hash) -> BoxFuture<'_, io::Result<Option<(u64, u64)>>> {
+    fn get_partial_entry(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<Option<(u64, u64)>>> {
         futures::future::ok(None).boxed()
     }
 }
@@ -395,7 +394,7 @@ impl BaoDb for Database {
 
     fn get_partial_entry(
         &self,
-        _hash: Hash,
+        _hash: &Hash,
     ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
         futures::future::ok(None).boxed()
     }

@@ -212,7 +212,7 @@ impl BaoDb for Database {
 
     fn get_partial_entry(
         &self,
-        _hash: Hash,
+        _hash: &Hash,
     ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
         futures::future::ok(None).boxed()
     }

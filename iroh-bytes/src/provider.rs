@@ -223,6 +223,29 @@ pub enum ProvideProgress {
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShareProgress {
+    /// An item was found with hash `hash`, from now on referred to via `id`
+    Found {
+        /// a new unique id for this entry
+        id: u64,
+        /// the name of the entry
+        hash: Hash,
+        /// the size of the entry in bytes
+        size: u64,
+    },
+    /// We got progress ingesting item `id`
+    Progress {
+        /// the unique id of the entry
+        id: u64,
+        /// the offset of the progress, in bytes
+        offset: u64,
+    },
+    /// We are done with `id`, and the hash is `hash`
+    Done {
+        /// the unique id of the entry
+        id: u64,
+        /// the hash of the entry
+        hash: Hash,
+    },
     /// We are done with the whole operation
     AllDone,
     /// We got an error and need to abort
@@ -764,7 +787,7 @@ pub trait BaoDb: BaoReadonlyDb {
     /// Check if we have a partial entry for `hash`, and if so, return it
     fn get_partial_entry(
         &self,
-        _hash: Hash,
+        _hash: &Hash,
     ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>>;
 }
 

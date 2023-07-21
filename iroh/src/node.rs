@@ -7,19 +7,19 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::future::Future;
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+use std::{io, result};
 
 use anyhow::{Context, Result};
 use bao_tree::io::outboard_size;
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use genawaiter::sync::Co;
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
@@ -46,8 +46,10 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use rand::Rng;
+use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
@@ -59,6 +61,7 @@ use crate::rpc_protocol::{
     ProviderResponse, ProviderService, ShareRequest, ShutdownRequest, ValidateRequest,
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
+use crate::util::progress::ProgressSliceWriter;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -747,11 +750,12 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         hash: Hash,
         recursive: bool,
+        sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         if recursive {
-            Self::get_collection(db, conn, hash).await
+            Self::get_collection(db, conn, hash, sender).await
         } else {
-            Self::get_blob(db, conn, hash).await
+            Self::get_blob(db, conn, hash, sender).await
         }
     }
 
@@ -768,22 +772,30 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // create the temp file pair
         let (data_id, outboard_id) = Self::create_temp_file_pair(&db, &hash, rand, size).await?;
         // open the data file in any case
-        let mut df = db.vfs().open_write(&data_id).await?;
+        let df = db.vfs().open_write(&data_id).await?;
         // open the outboard file (only if we need to)
         let mut ofo: Option<_> = if let Some(outboard_id) = outboard_id.as_ref() {
             let mut of = db.vfs().open_write(outboard_id).await?;
             // write the size
             of.write_at(0, &size.to_le_bytes()).await?;
+            println!("getting blob {} of size {}", hash, size);
             Some(of)
         } else {
             None
         };
+        let (sender, mut receiver) = mpsc::channel(1);
+        let progress = tokio::task::spawn_local(async move {
+            while let Some((offset, size)) = receiver.recv().await {
+                println!("progress: {} {}", offset, size);
+            }
+        });
+        let mut pw = ProgressSliceWriter::new(df, sender);
         // use the convenience method to write all to the two vfs objects
         let end = content
-            .write_all_with_outboard(ofo.as_mut(), &mut df)
+            .write_all_with_outboard(ofo.as_mut(), &mut pw)
             .await?;
         // sync the data file
-        df.sync().await?;
+        pw.sync().await?;
         // sync the outboard file, if we wrote one
         if let Some(mut of) = ofo {
             of.sync().await?;
@@ -791,10 +803,16 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
         db.insert_entry(hash, data_id.clone(), outboard_id).await?;
+        progress.abort();
         Ok((end, data_id))
     }
 
-    async fn get_blob(db: D, conn: quinn::Connection, hash: Hash) -> anyhow::Result<()> {
+    async fn get_blob(
+        db: D,
+        conn: quinn::Connection,
+        hash: Hash,
+        sender: ShareProgressSender,
+    ) -> anyhow::Result<()> {
         let request = get::fsm::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::single(hash)),
@@ -819,7 +837,12 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         anyhow::Ok(())
     }
 
-    async fn get_collection(db: D, conn: quinn::Connection, root_hash: Hash) -> anyhow::Result<()> {
+    async fn get_collection(
+        db: D,
+        conn: quinn::Connection,
+        root_hash: Hash,
+        sender: ShareProgressSender,
+    ) -> anyhow::Result<()> {
         let request = get::fsm::start(
             conn,
             iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
@@ -864,7 +887,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         anyhow::Ok(())
     }
 
-    async fn share0(self, msg: ShareRequest, _co: &Co<ShareProgress>) -> anyhow::Result<()> {
+    async fn share0(self, msg: ShareRequest, sender: ShareProgressSender) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let db = self.inner.db.clone();
         // true to force download even if we have the blobs
@@ -894,23 +917,32 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             .into_iter()
             .map(|collection| (collection, true));
         let all_iter = blobs_iter.chain(collections_iter);
-        for (hash, is_root) in all_iter {
-            println!("getting {} recursive:{}", hash, is_root);
-            let db = db.clone();
-            let conn = conn.clone();
-            let task = local.spawn_pinned(move || Self::get(db, conn, hash, is_root));
-            task.await??;
-        }
+        let _tasks = all_iter
+            .map(|(hash, is_root)| {
+                let db = db.clone();
+                let conn = conn.clone();
+                let sender = sender.clone();
+                let task = local.spawn_pinned(move || Self::get(db, conn, hash, is_root, sender));
+                // wrap in an aborting join handle so all of this stops if we get dropped
+                task
+            })
+            .collect::<Vec<_>>();
         Ok(())
     }
 
     fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
-        println!("share: {:#?}", msg);
-        genawaiter::sync::Gen::new(|co| async move {
-            if let Err(cause) = self.share0(msg, &co).await {
-                co.yield_(ShareProgress::Abort(cause.into())).await;
-            }
-        })
+        async move {
+            let (sender, receiver) = mpsc::channel(1);
+            let sender = ShareProgressSender::new(sender);
+            if let Err(cause) = self.share0(msg, sender.clone()).await {
+                sender
+                    .send(ShareProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
+            };
+            ReceiverStream::new(receiver)
+        }
+        .flatten_stream()
     }
 
     #[cfg(feature = "flat-db")]
@@ -1042,6 +1074,25 @@ fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: Collecti
             }
         }
     });
+}
+
+#[derive(Debug, Clone)]
+struct ShareProgressSender {
+    sender: mpsc::Sender<ShareProgress>,
+    id: Arc<AtomicU64>,
+}
+
+impl ShareProgressSender {
+    fn new(sender: mpsc::Sender<ShareProgress>) -> Self {
+        Self {
+            sender,
+            id: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    async fn send(&self, msg: ShareProgress) -> result::Result<(), SendError<ShareProgress>> {
+        self.sender.send(msg).await
+    }
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.

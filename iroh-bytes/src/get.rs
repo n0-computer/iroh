@@ -445,6 +445,11 @@ pub mod fsm {
             }
         }
 
+        /// The geometry of the tree
+        pub fn tree(&self) -> &bao_tree::BaoTree {
+            self.stream.tree()
+        }
+
         /// Write the entire blob to a slice writer
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
@@ -472,10 +477,14 @@ pub mod fsm {
                         match item? {
                             BaoContentItem::Parent(parent) => {
                                 if let Some(outboard) = outboard.as_mut() {
-                                    let offset = parent.node.post_order_offset() * 64 + 8;
-                                    let (l_hash, r_hash) = parent.pair;
-                                    outboard.write_at(offset, l_hash.as_bytes()).await?;
-                                    outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
+                                    if let Some(offset) =
+                                        content.tree().pre_order_offset(parent.node)
+                                    {
+                                        let offset = offset * 64 + 8;
+                                        let (l_hash, r_hash) = parent.pair;
+                                        outboard.write_at(offset, l_hash.as_bytes()).await?;
+                                        outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
+                                    }
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {

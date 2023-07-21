@@ -10,7 +10,7 @@ use futures::FutureExt;
 
 /// A join handle that owns the task it is running, and aborts it when dropped.
 #[derive(Debug, derive_more::Deref)]
-pub(crate) struct AbortingJoinHandle<T>(tokio::task::JoinHandle<T>);
+pub struct AbortingJoinHandle<T>(tokio::task::JoinHandle<T>);
 
 impl<T> From<tokio::task::JoinHandle<T>> for AbortingJoinHandle<T> {
     fn from(handle: tokio::task::JoinHandle<T>) -> Self {

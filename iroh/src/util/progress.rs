@@ -164,7 +164,7 @@ impl<W: AsyncSliceWriter> ProgressSliceWriter<W> {
     }
 }
 
-impl<W: AsyncSliceWriter + Send + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
+impl<W: AsyncSliceWriter + 'static> AsyncSliceWriter for ProgressSliceWriter<W> {
     type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         self.1.try_send((offset, Bytes::len(&data))).ok();
