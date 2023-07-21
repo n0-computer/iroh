@@ -1,4 +1,49 @@
-//! Protocol implementation, as a state machine without IO
+//! Implementation of the iroh-gossip protocol, as an IO-less state machine
+//!
+//! This module implements the iroh-gossip protocol. The entry point is [`State`], which contains
+//! the protocol state for a node.
+//!
+//! The iroh-gossip protocol is made up from two parts: A swarm membership protocol, based on
+//! [HyParView][hyparview], and a gossip broadcasting protocol, based on [PlumTree][plumtree].
+//!
+//! For a full explanation it is recommended to read the two papers. What follows is a brief
+//! outline of the protocols.
+//!
+//! All protocol messages are namespaced by a [`TopicId`], a 32 byte identifier. Topics are
+//! seperate swarms and broadcast scopes. The HyParView and PlumTree algorithms both work in the
+//! scope of a single topic. Thus, joining multiple topics increases the number of open connections
+//! to peers and the size of the local routing table.
+//!
+//! The **membership protocol** ([HyParView][hyparview]) is a cluster protocol where each peer
+//! maintains a partial view of all nodes in the swarm.
+//! A peer joins the swarm for a tooic by connecting to any known peer that is a member of this 
+//! topic's swarm. Obtaining this initial contact info happens out of band. The peer then sends
+//! a `Join` message to that initial peer. All peers maintain a list of
+//! `active` and `passive` peers. Active peers are those that you maintain active connections to.
+//! Passive peers is an addressbook of additional peers. If one of your active peers goes offline,
+//! its slot is filled with a random peer from the passive set. In the default configuration, the
+//! active view has a size of 5 and the passive view a size of 30.
+//! The HyParView protocol ensures that active connections are always bidirectional, and regularily
+//! exchanges nodes for the passive view in a `Shuffle` operation.
+//! Thus, this protocol exposes a high degree of reliability and auto-recovery in the case of node
+//! failures.
+//!
+//! The **gossip protocol** ([PlumTree][plumtree]) builds upon the membership protocol. It exposes
+//! a method to broadcast messages to all peers in the swarm. On each node, it maintains two sets
+//! of peers: An `eager` set and a `lazy` set. Both are subsets of the `active` view from the
+//! membership protocol. When broadcasting a message from the local node, or upon receiving a
+//! broadcast message, the message is pushed to all peers in the eager set. Additionally, the hash
+//! of the message (which uniquely identifies it), but not the message contnet, is lazily pushed
+//! to all peers  in the `lazy` set. When receiving such lazy pushes (called `Ihaves`), those peers
+//! may request the message content after a timeout if they didn't receive the message by one of
+//! their eager peers before. When requesting a message from a currently-lazy peer, this peer is
+//! also upgraded to be an eager peer from that moment on. This strategy self-optimizes the
+//! messaging graph by latency. Note however that this optimization will work best if the messaging
+//! paths are stable, i.e. if it's always the same peer that broadcasts. If not, the relative
+//! message redundancy will grow and the ideal messaging graph might change frequently.
+//!
+//! [hyparview]: https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
+//! [plumtree]: https://asc.di.fct.unl.pt/~jleitao/pdf/srds07-leitao.pdf
 
 use std::{fmt, hash::Hash};
 
@@ -25,7 +70,8 @@ pub use topic::{Command, Config, Event, IO};
 /// Note that the concrete type will be used in protocol messages. Therefore, implementations of
 /// the protocol are only compatible if the same concrete type is supplied for this trait.
 ///
-/// TODO: Rename to `PeerIdT`?
+/// TODO: Rename to `PeerId`? It does not necessarily refer to a peer's address, as long as the
+/// networking layer can translate the value of its concrete type into an address.
 pub trait PeerAddress: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
 impl<T> PeerAddress for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
 
