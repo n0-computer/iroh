@@ -3086,7 +3086,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_logging();
-
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
         };
