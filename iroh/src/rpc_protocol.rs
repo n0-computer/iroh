@@ -104,6 +104,31 @@ impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
     type Response = ListBlobsResponse;
 }
 
+/// List all blobs, including collections
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListIncompleteBlobsRequest;
+
+/// A response to a list blobs request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListIncompleteBlobsResponse {
+    /// Location of the blob
+    pub path: String,
+    /// The size we got
+    pub size: u64,
+    /// The size we expect
+    pub expected_size: u64,
+    /// The hash of the blob
+    pub hash: Hash,
+}
+
+impl Msg<ProviderService> for ListIncompleteBlobsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ListIncompleteBlobsRequest {
+    type Response = ListIncompleteBlobsResponse;
+}
+
 /// List all collections
 ///
 /// Lists all collections that have been explicitly added to the database.
@@ -225,6 +250,7 @@ pub enum ProviderRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
     ListBlobs(ListBlobsRequest),
+    ListIncompleteBlobs(ListIncompleteBlobsRequest),
     ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
     Share(ShareRequest),
@@ -241,6 +267,7 @@ pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     ListBlobs(ListBlobsResponse),
+    ListIncompleteBlobs(ListIncompleteBlobsResponse),
     ListCollections(ListCollectionsResponse),
     Provide(ProvideProgress),
     Share(ShareProgress),

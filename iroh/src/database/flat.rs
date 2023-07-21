@@ -13,7 +13,7 @@ use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, StreamExt};
 use iroh_bytes::protocol::MAX_MESSAGE_SIZE;
-use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs, VfsId};
+use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs};
 use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
@@ -208,13 +208,6 @@ impl BaoDb for Database {
         })
         .map(make_io_error)
         .boxed()
-    }
-
-    fn get_partial_entry(
-        &self,
-        _hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
-        futures::future::ok(None).boxed()
     }
 }
 

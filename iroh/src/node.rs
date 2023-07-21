@@ -46,7 +46,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use rand::Rng;
-use tokio::sync::mpsc::error::SendError;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_stream::wrappers::ReceiverStream;
@@ -57,11 +57,12 @@ use crate::collection::Collection;
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShareRequest, ShutdownRequest, ValidateRequest,
-    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ListIncompleteBlobsRequest,
+    ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest, ProviderResponse,
+    ProviderService, ShareRequest, ShutdownRequest, ValidateRequest, VersionRequest,
+    VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::util::progress::ProgressSliceWriter;
+use crate::util::progress::ProgressSliceWriter2;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -665,6 +666,30 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         })
     }
 
+    fn list_incomplete_blobs(
+        self,
+        _msg: ListIncompleteBlobsRequest,
+    ) -> impl Stream<Item = ListIncompleteBlobsResponse> + Send + 'static {
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.local_pool().clone();
+        futures::stream::iter(db.partial_blobs()).filter_map(move |(hash, id)| {
+            use iroh_io::AsyncSliceReader;
+            let db = db.clone();
+            let t = local.spawn_pinned(move || async move {
+                let path = format!("{:?}", id);
+                let mut file = db.vfs().open_read(&id).await?;
+                let size = file.len().await?;
+                io::Result::Ok(ListIncompleteBlobsResponse {
+                    hash,
+                    size,
+                    expected_size: 0,
+                    path,
+                })
+            });
+            async move { t.await.ok()?.ok() }
+        })
+    }
+
     fn list_collections(
         self,
         _msg: ListCollectionsRequest,
@@ -763,6 +788,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         db: &D,
         hash: Hash,
         header: AtBlobHeader,
+        sender: ShareProgressSender,
     ) -> anyhow::Result<(AtEndBlob, VfsId<D>)> {
         use iroh_io::AsyncSliceWriter;
         // read the size
@@ -778,18 +804,26 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             let mut of = db.vfs().open_write(outboard_id).await?;
             // write the size
             of.write_at(0, &size.to_le_bytes()).await?;
-            println!("getting blob {} of size {}", hash, size);
             Some(of)
         } else {
             None
         };
-        let (sender, mut receiver) = mpsc::channel(1);
-        let progress = tokio::task::spawn_local(async move {
-            while let Some((offset, size)) = receiver.recv().await {
-                println!("progress: {} {}", offset, size);
-            }
-        });
-        let mut pw = ProgressSliceWriter::new(df, sender);
+        // allocate a new id for progress reports for this transfer
+        let id = sender.new_id();
+        sender.send(ShareProgress::Found { id, hash, size }).await?;
+        let sender2 = sender.clone();
+        let on_write = move |offset: u64, _length: usize| {
+            // if try send fails it means that the receiver has been dropped.
+            // in that case we want to abort the write_all_with_outboard.
+            sender2
+                .try_send(ShareProgress::Progress { id, offset })
+                .map_err(|e| {
+                    tracing::info!("aborting download of {}", hash);
+                    e
+                })?;
+            Ok(())
+        };
+        let mut pw = ProgressSliceWriter2::new(df, on_write);
         // use the convenience method to write all to the two vfs objects
         let end = content
             .write_all_with_outboard(ofo.as_mut(), &mut pw)
@@ -803,7 +837,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
         db.insert_entry(hash, data_id.clone(), outboard_id).await?;
-        progress.abort();
+        // notify that we are done
+        sender.send(ShareProgress::Done { id }).await?;
         Ok((end, data_id))
     }
 
@@ -826,7 +861,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // move to the header
         let header = start.next();
         // do the ceremony of getting the blob and adding it to the database
-        let (end, _data_id) = Self::get_blob_inner(&db, hash, header).await?;
+        let (end, _data_id) = Self::get_blob_inner(&db, hash, header, sender).await?;
 
         // we have requested a single hash, so we must be at closing
         let EndBlobNext::Closing(end) = end.next() else {
@@ -856,7 +891,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // move to the header
         let header = start.next();
         // read the blob and add it to the database
-        let (end_root, data_id) = Self::get_blob_inner(&db, root_hash, header).await?;
+        let (end_root, data_id) =
+            Self::get_blob_inner(&db, root_hash, header, sender.clone()).await?;
         // read the collection fully for now
         let collection: Bytes = db.vfs().open_read(&data_id).await?.read_to_end().await?;
         let collection = Collection::from_bytes(&collection)?;
@@ -879,7 +915,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 None => break start.finish(),
             };
             let header = start.next(child_hash);
-            let (end_blob, _data_id) = Self::get_blob_inner(&db, child_hash, header).await?;
+            let (end_blob, _data_id) =
+                Self::get_blob_inner(&db, child_hash, header, sender.clone()).await?;
             next = end_blob.next();
         };
         // this closes the bidi stream. Do something with the stats?
@@ -1054,6 +1091,10 @@ fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: Collecti
                 chan.server_streaming(msg, handler, RpcHandler::list_blobs)
                     .await
             }
+            ListIncompleteBlobs(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_incomplete_blobs)
+                    .await
+            }
             ListCollections(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::list_collections)
                     .await
@@ -1082,6 +1123,18 @@ struct ShareProgressSender {
     id: Arc<AtomicU64>,
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+enum ShareProgressSendError {
+    #[error("receiver dropped")]
+    ReceiverDropped,
+}
+
+impl From<ShareProgressSendError> for io::Error {
+    fn from(e: ShareProgressSendError) -> Self {
+        io::Error::new(io::ErrorKind::BrokenPipe, e)
+    }
+}
+
 impl ShareProgressSender {
     fn new(sender: mpsc::Sender<ShareProgress>) -> Self {
         Self {
@@ -1090,8 +1143,32 @@ impl ShareProgressSender {
         }
     }
 
-    async fn send(&self, msg: ShareProgress) -> result::Result<(), SendError<ShareProgress>> {
-        self.sender.send(msg).await
+    /// allocate a new id for progress reports for this transfer
+    fn new_id(&self) -> u64 {
+        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// send a message and yield if the receiver is full.
+    /// this will only fail if the receiver is dropped.
+    /// It can be used to send important progress messages where delivery must be guaranteed.
+    /// E.g. start(id)/end(id)
+    async fn send(&self, msg: ShareProgress) -> result::Result<(), ShareProgressSendError> {
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| ShareProgressSendError::ReceiverDropped)
+    }
+
+    /// try to send a message and drop it if the receiver is full.
+    /// this will only fail if the receiver is dropped.
+    /// It can be used to send progress messages where delivery is not important, e.g.
+    /// a self contained progress message.
+    fn try_send(&self, msg: ShareProgress) -> result::Result<(), ShareProgressSendError> {
+        match self.sender.try_send(msg) {
+            Ok(_) => Ok(()),
+            Err(TrySendError::Full(_)) => Ok(()),
+            Err(TrySendError::Closed(_)) => Err(ShareProgressSendError::ReceiverDropped),
+        }
     }
 }
 

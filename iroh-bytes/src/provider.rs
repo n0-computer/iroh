@@ -243,8 +243,6 @@ pub enum ShareProgress {
     Done {
         /// the unique id of the entry
         id: u64,
-        /// the hash of the entry
-        hash: Hash,
     },
     /// We are done with the whole operation
     AllDone,
@@ -788,7 +786,16 @@ pub trait BaoDb: BaoReadonlyDb {
     fn get_partial_entry(
         &self,
         _hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>>;
+    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
+        futures::future::ok(None).boxed()
+    }
+
+    /// list partial blobs in the database
+    fn partial_blobs(
+        &self,
+    ) -> Box<dyn Iterator<Item = (Hash, VfsId<Self>)> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
 }
 
 /// A local filesystem based Vfs

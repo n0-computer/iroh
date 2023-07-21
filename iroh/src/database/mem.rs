@@ -371,8 +371,17 @@ impl BaoDb for MutableDatabase {
         futures::future::ok(()).boxed()
     }
 
-    fn get_partial_entry(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<Option<(u64, u64)>>> {
-        futures::future::ok(None).boxed()
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = (Hash, u64)> + Send + Sync + 'static> {
+        let vfs = self.vfs.0.read().unwrap();
+        let hashes = vfs
+            .entries
+            .iter()
+            .filter_map(|(id, entry)| match entry.purpose {
+                Purpose::PartialData(hash, _) => Some((hash, *id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        Box::new(hashes.into_iter())
     }
 }
 
@@ -390,12 +399,5 @@ impl BaoDb for Database {
         _outboard: Option<VfsId<Self>>,
     ) -> BoxFuture<'_, io::Result<()>> {
         todo!()
-    }
-
-    fn get_partial_entry(
-        &self,
-        _hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
-        futures::future::ok(None).boxed()
     }
 }
