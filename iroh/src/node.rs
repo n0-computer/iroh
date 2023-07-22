@@ -16,8 +16,9 @@ use std::time::Duration;
 use std::{io, result};
 
 use anyhow::{Context, Result};
+use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
-use bao_tree::ChunkNum;
+use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -35,7 +36,6 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
-use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -47,6 +47,7 @@ use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use rand::Rng;
+use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, RwLock};
@@ -54,8 +55,6 @@ use tokio::task::JoinError;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
-
-use crate::collection::Collection;
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -773,16 +772,16 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     async fn get(
-        db: D,
+        self,
         conn: quinn::Connection,
         hash: Hash,
         recursive: bool,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         if recursive {
-            Self::get_collection(db, conn, hash, sender).await
+            self.get_collection(conn, hash, sender).await
         } else {
-            Self::get_blob(db, conn, hash, sender).await
+            self.get_blob(conn, hash, sender).await
         }
     }
 
@@ -906,27 +905,62 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
 
     async fn get_missing_ranges(
         db: &D,
+        hash: blake3::Hash,
         data_id: &VfsId<D>,
         outboard_id: &VfsId<D>,
     ) -> anyhow::Result<RangeSet2<ChunkNum>> {
-        anyhow::bail!("unable to determine missing ranges");
+        use iroh_io::AsyncSliceReader;
+        // compute the valid range from just looking at the data file
+        let mut data_reader = db.vfs().open_read(data_id).await?;
+        let data_size = data_reader.len().await?;
+        let valid_from_data = RangeSet2::from(..ByteNum(data_size).full_chunks());
+        println!("valid_from_data: {:?}", valid_from_data);
+        // compute the valid range from just looking at the outboard file
+        let mut outboard_reader = db.vfs().open_read(outboard_id).await?;
+        let size = outboard_reader.read_at(0, 8).await?;
+        let size = u64::from_le_bytes(size.as_ref().try_into().unwrap());
+        let mut outboard = PreOrderOutboard {
+            root: hash,
+            tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+            data: outboard_reader,
+        };
+        let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
+        println!("valid_from_outboard: {:?}", valid_from_data);
+        let valid: RangeSet2<ChunkNum> = valid_from_data.intersection(&valid_from_outboard);
+        let total_valid: u64 = valid
+            .iter()
+            .map(|x| match x {
+                RangeSetRange::Range(x) => x.end.to_bytes().0 - x.start.to_bytes().0,
+                RangeSetRange::RangeFrom(_) => 0,
+            })
+            .sum();
+        println!(
+            "total_valid: {}/{} {:.4}",
+            total_valid,
+            size,
+            total_valid as f64 / size as f64
+        );
+        let invalid = RangeSet2::all().difference(&valid);
+        Ok(invalid)
     }
 
     async fn get_blob(
-        db: D,
+        &self,
         conn: quinn::Connection,
         hash: Hash,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
+        let db = &self.inner.db;
         let end = if let Some((data_id, outboard_id)) = db.get_partial_entry(&hash).await? {
             println!(
                 "got partial data for {}: {:?} {:?}",
                 hash, data_id, outboard_id
             );
-            let required_ranges = Self::get_missing_ranges(&db, &data_id, &outboard_id)
-                .await
-                .ok()
-                .unwrap_or_else(|| RangeSet2::all());
+            let required_ranges =
+                Self::get_missing_ranges(&db, hash.into(), &data_id, &outboard_id)
+                    .await
+                    .ok()
+                    .unwrap_or_else(|| RangeSet2::all());
             let request = GetRequest::new(hash, RangeSpecSeq::new([required_ranges]));
             // full request
             let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
@@ -971,49 +1005,60 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     async fn get_collection(
-        db: D,
+        &self,
         conn: quinn::Connection,
         root_hash: Hash,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
-        let request = get::fsm::start(
-            conn,
-            iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
-        );
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
+        let db = &self.inner.db;
+        let finishing = if let Some(entry) = db.get(&root_hash) {
+            let reader = entry.data_reader().await?;
+            let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
+            let mut children = vec![];
+            while let Some(hash) = collection.next().await? {
+                children.push(hash);
+            }
+            todo!()
+        } else {
+            let request = get::fsm::start(
+                conn,
+                iroh_bytes::protocol::Request::Get(GetRequest::all(root_hash)),
+            );
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
             anyhow::bail!("expected StartRoot");
         };
-        // move to the header
-        let header = start.next();
-        // read the blob and add it to the database
-        let (end_root, data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
-        // read the collection fully for now
-        let collection: Bytes = db.vfs().open_read(&data_id).await?.read_to_end().await?;
-        let collection = Collection::from_bytes(&collection)?;
-        let children = collection
-            .blobs()
-            .iter()
-            .map(|b| b.hash)
-            .collect::<Vec<_>>();
-        let mut next = end_root.next();
-        // read all the children
-        let finishing = loop {
-            let start = match next {
-                EndBlobNext::MoreChildren(start) => start,
-                EndBlobNext::Closing(finish) => break finish,
-            };
-            let child_offset =
-                usize::try_from(start.child_offset()).context("child offset too large")?;
-            let child_hash = match children.get(child_offset) {
-                Some(blob) => *blob,
-                None => break start.finish(),
-            };
-            let header = start.next(child_hash);
-            let (end_blob, _data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
-            next = end_blob.next();
+            // move to the header
+            let header = start.next();
+            // read the blob and add it to the database
+            let (end_root, data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
+            // read the collection fully for now
+            let reader = db.vfs().open_read(&data_id).await?;
+            let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
+            let mut children = vec![];
+            while let Some(hash) = collection.next().await? {
+                children.push(hash);
+            }
+            let mut next = end_root.next();
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset =
+                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let child_hash = match children.get(child_offset) {
+                    Some(blob) => *blob,
+                    None => break start.finish(),
+                };
+                let header = start.next(child_hash);
+                let (end_blob, _data_id) =
+                    Self::get_blob_inner(&db, header, sender.clone()).await?;
+                next = end_blob.next();
+            }
         };
         // this closes the bidi stream. Do something with the stats?
         let _stats = finishing.next().await?;
@@ -1052,10 +1097,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let all_iter = blobs_iter.chain(collections_iter);
         let _tasks = all_iter
             .map(|(hash, is_root)| {
-                let db = db.clone();
+                let this = self.clone();
                 let conn = conn.clone();
                 let sender = sender.clone();
-                let task = local.spawn_pinned(move || Self::get(db, conn, hash, is_root, sender));
+                let task = local.spawn_pinned(move || this.get(conn, hash, is_root, sender)
+                );
                 // wrap in an aborting join handle so all of this stops if we get dropped
                 task
             })
