@@ -749,24 +749,12 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn create_temp_file_pair(
         db: &D,
         hash: &Hash,
-        temp: [u8; 16],
         size: u64,
     ) -> io::Result<(VfsId<D>, Option<VfsId<D>>)> {
         // create temp file for the data, using the hash as name hint
-        let data = db.vfs().create(Purpose::PartialData(*hash, temp)).await?;
-        let outboard_size = outboard_size(size, IROH_BLOCK_SIZE);
-        let outboard = if outboard_size > 8 {
-            // create temp file for the outboard
-            Some(
-                db.vfs()
-                    .create(Purpose::PartialOutboard(*hash, temp))
-                    .await?,
-            )
-        } else {
-            // we don't need an outboard
-            None
-        };
-        Ok((data, outboard))
+        db.vfs()
+            .create_temp_pair(*hash, size > (IROH_BLOCK_SIZE.bytes() as u64))
+            .await
     }
 
     async fn get(
@@ -797,10 +785,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let hash = header.hash();
         // read the size
         let (content, size) = header.next().await?;
-        // create a random id that is common to both files
-        let rand = rand::thread_rng().gen::<[u8; 16]>();
         // create the temp file pair
-        let (data_id, outboard_id) = Self::create_temp_file_pair(&db, &hash, rand, size).await?;
+        let (data_id, outboard_id) = Self::create_temp_file_pair(&db, &hash, size).await?;
         // open the data file in any case
         let df = db.vfs().open_write(&data_id).await?;
         // open the outboard file (only if we need to)

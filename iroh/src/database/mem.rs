@@ -22,6 +22,7 @@ use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
+use rand::Rng;
 use tokio::sync::mpsc;
 
 /// An in memory database for iroh-bytes.
@@ -202,20 +203,41 @@ impl Vfs for MemVfs {
 
     type WriteRaw = MemVfsEntry;
 
-    fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
-        tracing::trace!("create {:?}", purpose);
+    fn create_temp_pair(
+        &self,
+        hash: Hash,
+        outboard: bool,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         let mut inner = self.0.write().unwrap();
-        let id = inner.next_id;
+        let uuid = rand::thread_rng().gen::<[u8; 16]>();
+        let data_id = inner.next_id;
+        let purpose = Purpose::PartialData(hash, uuid);
         inner.next_id += 1;
         inner.entries.insert(
-            id,
+            data_id,
             MemVfsEntry {
-                id,
+                id: data_id,
                 purpose,
                 data: Arc::new(Mutex::new(BytesMut::new())),
             },
         );
-        futures::future::ok(id).boxed()
+        let outboard_id = if outboard {
+            let outboard_id = inner.next_id;
+            let purpose = Purpose::PartialOutboard(hash, uuid);
+            inner.next_id += 1;
+            inner.entries.insert(
+                outboard_id,
+                MemVfsEntry {
+                    id: outboard_id,
+                    purpose,
+                    data: Arc::new(Mutex::new(BytesMut::new())),
+                },
+            );
+            Some(outboard_id)
+        } else {
+            None
+        };
+        futures::future::ok((data_id, outboard_id)).boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {

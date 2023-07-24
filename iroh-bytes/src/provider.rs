@@ -1,12 +1,13 @@
 //! The server side API
 use std::fmt::{self, Debug};
 use std::io;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::BoxFuture;
+use futures::future::{self, BoxFuture};
 use futures::FutureExt;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
@@ -664,7 +665,11 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     ///
     /// `purpose` is the purpose of the file. The provider may use this to keep
     /// track of partial downloads.
-    fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>>;
+    fn create_temp_pair(
+        &self,
+        hash: Hash,
+        outboard: bool,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
     /// open an internal handle for reading
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
     /// open an internal handle for writing
@@ -688,7 +693,58 @@ pub enum Purpose {
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
     /// File is going to be used to store metadata
-    Meta(Vec<u8>, Option<[u8; 16]>),
+    Meta(Vec<u8>),
+}
+
+impl fmt::Display for Purpose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PartialData(hash, uuid) => {
+                write!(f, "{}-{}.data", hex::encode(hash), hex::encode(uuid))
+            }
+            Self::PartialOutboard(hash, uuid) => {
+                write!(f, "{}-{}.outboard", hex::encode(hash), hex::encode(uuid))
+            }
+            Self::Data(hash) => write!(f, "{}.data", hex::encode(hash)),
+            Self::Outboard(hash) => write!(f, "{}.outboard", hex::encode(hash)),
+            Self::Meta(name) => write!(f, "{}.meta", hex::encode(name)),
+        }
+    }
+}
+
+impl FromStr for Purpose {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let Some((base, ext)) = s.split_once('.') else {
+            return Err(());
+        };
+        let mut hash = [0u8; 32];
+        if let Some((base, uuid_text)) = base.split_once('-') {
+            let mut uuid = [0u8; 16];
+            hex::decode_to_slice(uuid_text, &mut uuid).map_err(|_| ())?;
+            if ext == "data" {
+                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                Ok(Self::PartialData(hash.into(), uuid))
+            } else if ext == "outboard" {
+                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                Ok(Self::PartialOutboard(hash.into(), uuid))
+            } else {
+                Err(())
+            }
+        } else {
+            hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+            if ext == "data" {
+                Ok(Self::Data(hash.into()))
+            } else if ext == "outboard" {
+                Ok(Self::Outboard(hash.into()))
+            } else if ext == "meta" {
+                Ok(Self::Meta(hash.into()))
+            } else {
+                Err(())
+            }
+        }
+    }
 }
 
 struct DD<T: fmt::Display>(T);
@@ -714,11 +770,7 @@ impl fmt::Debug for Purpose {
                 .field(&DD(hex::encode(guid)))
                 .finish(),
             Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
-            Self::Meta(arg0, arg1) => f
-                .debug_tuple("Meta")
-                .field(&DD(hex::encode(arg0)))
-                .field(arg1)
-                .finish(),
+            Self::Meta(arg0) => f.debug_tuple("Meta").field(&DD(hex::encode(arg0))).finish(),
         }
     }
 }
@@ -731,29 +783,18 @@ impl Purpose {
             Purpose::Data(_) => false,
             Purpose::PartialOutboard(_, _) => true,
             Purpose::Outboard(_) => false,
-            Purpose::Meta(_, t) => t.is_some(),
+            Purpose::Meta(_) => false,
         }
     }
 
     /// some bytes that can be used as a hint for the name of the file
-    fn name_hint(&self) -> &[u8] {
+    pub fn name_hint(&self) -> &[u8] {
         match self {
             Purpose::PartialData(hash, _) => hash.as_bytes(),
             Purpose::Data(hash) => hash.as_bytes(),
             Purpose::PartialOutboard(hash, _) => hash.as_bytes(),
-            Purpose::Meta(data, _) => data.as_slice(),
+            Purpose::Meta(data) => data.as_slice(),
             Purpose::Outboard(_) => &[],
-        }
-    }
-
-    /// suggested file extension
-    fn extension(&self) -> &'static str {
-        match self {
-            Purpose::PartialData(_, _) => "data.temp",
-            Purpose::Data(_) => "data",
-            Purpose::PartialOutboard(_, _) => "outboard.temp",
-            Purpose::Outboard(_) => "outboard",
-            Purpose::Meta(_, _) => "meta",
         }
     }
 }
@@ -802,21 +843,37 @@ pub trait BaoDb: BaoReadonlyDb {
 #[derive(Debug, Clone)]
 pub struct LocalFs;
 
+/// suggested file extension
+fn extension(purpose: &Purpose) -> &'static str {
+    match purpose {
+        Purpose::PartialData(_, _) => "data.temp",
+        Purpose::Data(_) => "data",
+        Purpose::PartialOutboard(_, _) => "outboard.temp",
+        Purpose::Outboard(_) => "outboard",
+        Purpose::Meta(_) => "meta",
+    }
+}
+
 impl Vfs for LocalFs {
     type Id = std::path::PathBuf;
     type ReadRaw = iroh_io::File;
     type WriteRaw = iroh_io::File;
 
-    fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
+    fn create_temp_pair(
+        &self,
+        hash: Hash,
+        outboard: bool,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         use rand::Rng;
         let dir = std::env::temp_dir();
         let rand = rand::thread_rng().gen::<[u8; 16]>();
-        let temp = if purpose.temporary() { ".temp" } else { "" };
-        let name_hint = purpose.name_hint();
-        let name =
-            hex::encode(name_hint) + "-" + &hex::encode(rand) + "." + purpose.extension() + temp;
-        let filename = dir.join(name);
-        futures::future::ok(filename).boxed()
+        let data = dir.join(Purpose::PartialData(hash, rand).to_string());
+        let outboard = if outboard {
+            Some(dir.join(Purpose::PartialOutboard(hash, rand).to_string()))
+        } else {
+            None
+        };
+        future::ok((data, outboard)).boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {

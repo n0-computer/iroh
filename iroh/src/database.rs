@@ -3,3 +3,5 @@
 pub mod flat;
 #[cfg(feature = "mem-db")]
 pub mod mem;
+#[cfg(feature = "redb-db")]
+pub mod redb;
