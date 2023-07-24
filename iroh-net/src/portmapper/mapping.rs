@@ -4,7 +4,7 @@ use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
 use anyhow::Result;
 
-use super::{pcp, upnp};
+use super::{nat_pmp, pcp, upnp};
 
 pub(super) trait PortMapped: std::fmt::Debug + Unpin {
     fn external(&self) -> (Ipv4Addr, NonZeroU16);
@@ -21,6 +21,9 @@ pub enum Mapping {
     /// A PCP mapping.
     #[debug(transparent)]
     Pcp(pcp::Mapping),
+    /// A NAT-PMP mapping.
+    #[debug(transparent)]
+    NatPmp(nat_pmp::Mapping),
 }
 
 impl Mapping {
@@ -34,6 +37,23 @@ impl Mapping {
         pcp::Mapping::new(local_ip, local_port, gateway, external_addr)
             .await
             .map(Self::Pcp)
+    }
+
+    /// Create a new NAT-PMP mapping.
+    pub(crate) async fn new_nat_pmp(
+        local_ip: Ipv4Addr,
+        local_port: NonZeroU16,
+        gateway: Ipv4Addr,
+        external_addr: Option<(Ipv4Addr, NonZeroU16)>,
+    ) -> Result<Self> {
+        nat_pmp::Mapping::new(
+            local_ip,
+            local_port,
+            gateway,
+            external_addr.map(|(_addr, port)| port),
+        )
+        .await
+        .map(Self::NatPmp)
     }
 
     /// Create a new UPnP mapping.
@@ -53,6 +73,7 @@ impl Mapping {
         match self {
             Mapping::Upnp(m) => m.release().await,
             Mapping::Pcp(m) => m.release().await,
+            Mapping::NatPmp(m) => m.release().await,
         }
     }
 }
@@ -62,6 +83,7 @@ impl PortMapped for Mapping {
         match self {
             Mapping::Upnp(m) => m.external(),
             Mapping::Pcp(m) => m.external(),
+            Mapping::NatPmp(m) => m.external(),
         }
     }
 
@@ -69,6 +91,7 @@ impl PortMapped for Mapping {
         match self {
             Mapping::Upnp(m) => m.half_lifetime(),
             Mapping::Pcp(m) => m.half_lifetime(),
+            Mapping::NatPmp(m) => m.half_lifetime(),
         }
     }
 }

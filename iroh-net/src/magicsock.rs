@@ -286,7 +286,7 @@ impl MagicSock {
             hex::encode(&opts.private_key.public_key().as_ref()[..8])
         );
         Self::with_name(name.clone(), opts)
-            .instrument(info_span!("conn", %name))
+            .instrument(info_span!("magicsock", %name))
             .await
     }
 
@@ -376,7 +376,7 @@ impl MagicSock {
             .instrument(info_span!("derp.actor")),
         );
 
-        let conn = inner.clone();
+        let inner2 = inner.clone();
         let main_actor_task = tokio::task::spawn(
             async move {
                 let actor = Actor {
@@ -386,7 +386,7 @@ impl MagicSock {
                     udp_actor_sender,
                     network_receiver,
                     ip_receiver,
-                    conn,
+                    inner: inner2,
                     net_map: None,
                     derp_recv_sender: network_recv_ch_sender,
                     endpoints_update_state: EndpointUpdateState::new(),
@@ -567,7 +567,7 @@ impl MagicSock {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(name = %self.inner.name))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
             return Ok(());
@@ -591,7 +591,7 @@ impl MagicSock {
 
     /// Closes and re-binds the UDP sockets and resets the DERP connection.
     /// It should be followed by a call to ReSTUN.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(name = %self.inner.name))]
     pub async fn rebind_all(&self) {
         let (s, r) = sync::oneshot::channel();
         self.inner
@@ -652,7 +652,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
 }
 
 impl AsyncUdpSocket for MagicSock {
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(name = %self.inner.name))]
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -707,7 +707,7 @@ impl AsyncUdpSocket for MagicSock {
         Poll::Pending
     }
 
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
+    #[instrument(skip_all, fields(name = %self.inner.name))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -846,7 +846,7 @@ pub(self) enum ActorMessage {
 }
 
 struct Actor {
-    conn: Arc<Inner>,
+    inner: Arc<Inner>,
     net_map: Option<netmap::NetworkMap>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -930,7 +930,7 @@ impl Actor {
                             }
 
                             let _ = self.derp_recv_sender.send_async(forward).await;
-                            let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
+                            let mut wakers = self.inner.network_recv_wakers.lock().unwrap();
                             while let Some(waker) = wakers.take() {
                                 waker.wake();
                             }
@@ -1052,7 +1052,7 @@ impl Actor {
                         .send_async(passthrough)
                         .await
                         .expect("missing recv sender");
-                    let mut wakers = self.conn.network_recv_wakers.lock().unwrap();
+                    let mut wakers = self.inner.network_recv_wakers.lock().unwrap();
                     if let Some(waker) = wakers.take() {
                         waker.wake();
                     }
@@ -1138,8 +1138,8 @@ impl Actor {
                     dm.src, self.peer_map
                 );
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
-                    conn_sender: self.conn.actor_sender.clone(),
-                    conn_public_key: self.conn.public_key.clone(),
+                    msock_sender: self.inner.actor_sender.clone(),
+                    msock_public_key: self.inner.public_key.clone(),
                     public_key: dm.src.clone(),
                     derp_addr: Some(region_id),
                 });
@@ -1309,11 +1309,11 @@ impl Actor {
         inc!(MagicsockMetrics, update_endpoints);
 
         debug!("starting endpoint update ({})", why);
-        if self.no_v4_send && !self.conn.is_closed() {
+        if self.no_v4_send && !self.inner.is_closed() {
             warn!(
                 "last netcheck reported send error. Rebinding. (no_v4_send: {} conn closed: {})",
                 self.no_v4_send,
-                self.conn.is_closed()
+                self.inner.is_closed()
             );
             self.rebind_all().await;
         }
@@ -1322,7 +1322,7 @@ impl Actor {
             Ok(endpoints) => {
                 if self.set_endpoints(&endpoints).await {
                     log_endpoint_change(&endpoints);
-                    if let Some(ref cb) = self.conn.on_endpoints {
+                    if let Some(ref cb) = self.inner.on_endpoints {
                         cb(&endpoints[..]);
                     }
                 }
@@ -1335,7 +1335,7 @@ impl Actor {
         }
 
         let new_why = self.endpoints_update_state.want_update.take();
-        if !self.conn.is_closed() {
+        if !self.inner.is_closed() {
             if let Some(new_why) = new_why {
                 debug!("endpoint update: needed new ({})", new_why);
                 self.endpoints_update_state
@@ -1395,7 +1395,7 @@ impl Actor {
             // port locally, assume they might've added a static
             // port mapping on their router to the same explicit
             // port that we are running with. Worst case it's an invalid candidate mapping.
-            let port = self.conn.port.load(Ordering::Relaxed);
+            let port = self.inner.port.load(Ordering::Relaxed);
             if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                 let mut addr = global_v4;
                 addr.set_port(port);
@@ -1540,7 +1540,7 @@ impl Actor {
     #[instrument(skip_all)]
     fn call_net_info_callback_locked(&mut self, ni: config::NetInfo) {
         self.net_info_last = Some(ni.clone());
-        if let Some(ref on_net_info) = self.conn.on_net_info {
+        if let Some(ref on_net_info) = self.inner.on_net_info {
             debug!("net_info update: {:?}", ni);
             on_net_info(ni);
         }
@@ -1548,7 +1548,7 @@ impl Actor {
 
     #[instrument(skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
-        let derp_map = self.conn.derp_map.read().await.clone();
+        let derp_map = self.inner.derp_map.read().await.clone();
         if derp_map.is_none() {
             debug!("skipping netcheck, no Derp Map");
             return Ok(Default::default());
@@ -1564,7 +1564,7 @@ impl Actor {
             net_checker.get_report(derp_map, pconn4, pconn6).await
         })
         .await??;
-        self.conn
+        self.inner
             .ipv6_reported
             .store(report.ipv6, Ordering::Relaxed);
         let r = &report;
@@ -1612,12 +1612,12 @@ impl Actor {
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         {
-            let derp_map = self.conn.derp_map.read().await;
+            let derp_map = self.inner.derp_map.read().await;
             if derp_map.is_none() {
-                self.conn.set_my_derp(0);
+                self.inner.set_my_derp(0);
                 return false;
             }
-            let my_derp = self.conn.my_derp();
+            let my_derp = self.inner.my_derp();
             if derp_num == my_derp {
                 // No change.
                 return true;
@@ -1625,7 +1625,7 @@ impl Actor {
             if my_derp != 0 && derp_num != 0 {
                 inc!(MagicsockMetrics, derp_home_change);
             }
-            self.conn.set_my_derp(derp_num);
+            self.inner.set_my_derp(derp_num);
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
@@ -1644,7 +1644,7 @@ impl Actor {
             }
         }
 
-        let my_derp = self.conn.my_derp();
+        let my_derp = self.inner.my_derp();
         self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp));
         self.send_derp_actor(DerpActorMessage::Connect {
             region_id: derp_num,
@@ -1660,7 +1660,7 @@ impl Actor {
     /// If no [`DerpMap`] exists, returns `0`.
     async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
-            let derp_map = self.conn.derp_map.read().await;
+            let derp_map = self.inner.derp_map.read().await;
             if derp_map.is_none() {
                 return 0;
             }
@@ -1685,7 +1685,7 @@ impl Actor {
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
-        let my_derp = self.conn.my_derp();
+        let my_derp = self.inner.my_derp();
         if my_derp > 0 {
             return my_derp;
         }
@@ -1695,7 +1695,7 @@ impl Actor {
     }
 
     /// Records the new endpoints, reporting whether they're changed.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     async fn set_endpoints(&mut self, endpoints: &[config::Endpoint]) -> bool {
         self.last_endpoints_time = Some(Instant::now());
         for (_de, f) in self.on_endpoint_refreshed.drain() {
@@ -1713,7 +1713,7 @@ impl Actor {
         true
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     async fn enqueue_call_me_maybe(&mut self, derp_addr: u16, endpoint_id: usize) {
         let endpoint = self.peer_map.by_id(&endpoint_id);
         if endpoint.is_none() {
@@ -1776,7 +1776,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     async fn rebind_all(&mut self) {
         inc!(MagicsockMetrics, rebind_calls);
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
@@ -1791,7 +1791,7 @@ impl Actor {
 
     /// Resets the preferred address for all peers.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     fn reset_endpoint_states(&mut self) {
         for (_, ep) in self.peer_map.endpoints_mut() {
             ep.note_connectivity_change();
@@ -1800,7 +1800,7 @@ impl Actor {
 
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
         let mut ipv6_addr = None;
 
@@ -1835,14 +1835,14 @@ impl Actor {
         }
         let ipv4_addr = self.pconn4.local_addr()?;
 
-        *self.conn.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
+        *self.inner.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
 
         Ok(())
     }
 
-    #[instrument(skip_all, fields(self.name = %self.conn.name))]
+    #[instrument(skip_all, fields(self.name = %self.inner.name))]
     pub async fn set_preferred_port(&mut self, port: u16) {
-        let existing_port = self.conn.port.swap(port, Ordering::Relaxed);
+        let existing_port = self.inner.port.swap(port, Ordering::Relaxed);
         if existing_port == port {
             return;
         }
@@ -1874,10 +1874,10 @@ impl Actor {
         msg: disco::Message,
     ) -> Result<bool> {
         debug!("sending disco message to {}: {:?}", dst, msg);
-        if self.conn.is_closed() {
+        if self.inner.is_closed() {
             bail!("connection closed");
         }
-        let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, &dst_key);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &dst_key);
         let seal = di.shared_key.seal(&msg.as_bytes());
 
         let is_derp = dst.is_derp();
@@ -1887,7 +1887,7 @@ impl Actor {
             inc!(MagicsockMetrics, send_disco_udp);
         }
 
-        let pkt = disco::encode_message(&self.conn.public_key, seal);
+        let pkt = disco::encode_message(&self.inner.public_key, seal);
         let sent = self.send_addr(dst, Some(&dst_key), pkt.into()).await;
         match sent {
             Ok(0) => {
@@ -1982,7 +1982,7 @@ impl Actor {
         derp_node_src: Option<key::node::PublicKey>,
     ) -> bool {
         debug!("handle_disco_message start {} - {:?}", src, derp_node_src);
-        if self.conn.is_closed() {
+        if self.inner.is_closed() {
             return true;
         }
 
@@ -2000,7 +2000,7 @@ impl Actor {
         // We're now reasonably sure we're expecting communication from
         // this peer, do the heavy crypto lifting to see what they want.
 
-        let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, &sender);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, &sender);
         let payload = di.shared_key.open(sealed_box);
         if payload.is_err() {
             // This might be have been intended for a previous
@@ -2012,7 +2012,7 @@ impl Actor {
             // it's actually a wireguard packet (super unlikely, but).
             debug!(
                 "disco: [{:?}] failed to open box from {:?} (wrong rcpt?) {:?}",
-                self.conn.public_key, sender, payload,
+                self.inner.public_key, sender, payload,
             );
             inc!(MagicsockMetrics, recv_disco_bad_key);
             return true;
@@ -2048,8 +2048,8 @@ impl Actor {
                 // so insert an endpoint for them
                 if unknown_sender {
                     self.peer_map.insert_endpoint(EndpointOptions {
-                        conn_sender: self.conn.actor_sender.clone(),
-                        conn_public_key: self.conn.public_key.clone(),
+                        msock_sender: self.inner.actor_sender.clone(),
+                        msock_public_key: self.inner.public_key.clone(),
                         public_key: sender.clone(),
                         derp_addr: src.derp_region(),
                     });
@@ -2061,7 +2061,7 @@ impl Actor {
                 inc!(MagicsockMetrics, recv_disco_pong);
                 if let Some(ep) = self.peer_map.endpoint_for_node_key_mut(&sender) {
                     let (_, insert) = ep
-                        .handle_pong_conn(&self.conn.public_key, &pong, di, src)
+                        .handle_pong_conn(&self.inner.public_key, &pong, di, src)
                         .await;
                     if let Some((src, key)) = insert {
                         self.peer_map.set_node_key_for_ip_port(&src, &key);
@@ -2088,7 +2088,7 @@ impl Actor {
                     Some(ep) => {
                         info!(
                             "disco: {:?}<-{:?} ({:?})  got call-me-maybe, {} endpoints",
-                            self.conn.public_key,
+                            self.inner.public_key,
                             ep.public_key(),
                             src,
                             cm.my_number.len()
@@ -2111,7 +2111,7 @@ impl Actor {
         src: SendAddr,
         derp_node_src: Option<key::node::PublicKey>,
     ) {
-        let di = get_disco_info(&mut self.disco_info, &self.conn.private_key, sender);
+        let di = get_disco_info(&mut self.disco_info, &self.inner.private_key, sender);
         let likely_heart_beat = Some(src) == di.last_ping_from
             && di
                 .last_ping_time
@@ -2166,7 +2166,7 @@ impl Actor {
         if !likely_heart_beat {
             info!(
                 "disco: {:?}<-{:?} ({dst_key:?}, {src:?})  got ping tx={:?}",
-                self.conn.public_key, di.node_key, dm.tx_id
+                self.inner.public_key, di.node_key, dm.tx_id
             );
         }
 
@@ -2186,7 +2186,7 @@ impl Actor {
 
     #[instrument(skip_all)]
     fn set_network_map(&mut self, nm: netmap::NetworkMap) {
-        if self.conn.is_closed() {
+        if self.inner.is_closed() {
             return;
         }
 
@@ -2213,14 +2213,14 @@ impl Actor {
             if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
                 info!(
                     "inserting endpoint {:?} - {:?} {:#?} {:#?}",
-                    self.conn.public_key,
+                    self.inner.public_key,
                     n.key.clone(),
                     self.peer_map,
                     n,
                 );
                 self.peer_map.insert_endpoint(EndpointOptions {
-                    conn_sender: self.conn.actor_sender.clone(),
-                    conn_public_key: self.conn.public_key.clone(),
+                    msock_sender: self.inner.actor_sender.clone(),
+                    msock_public_key: self.inner.public_key.clone(),
                     public_key: n.key.clone(),
                     derp_addr: n.derp,
                 });
@@ -2747,7 +2747,7 @@ pub(crate) mod tests {
 
         async fn tracked_endpoints(&self) -> Vec<key::node::PublicKey> {
             self.endpoint
-                .conn()
+                .magic_sock()
                 .tracked_endpoints()
                 .await
                 .unwrap_or_default()
@@ -2806,7 +2806,7 @@ pub(crate) mod tests {
 
             for (i, m) in ms.iter().enumerate() {
                 let nm = build_netmap(eps, ms, i).await;
-                let _ = m.endpoint.conn().set_network_map(nm).await;
+                let _ = m.endpoint.magic_sock().set_network_map(nm).await;
             }
         }
 
@@ -2888,8 +2888,8 @@ pub(crate) mod tests {
                 println!("[{}] {:?}", a_name, a.endpoint.local_addr());
                 println!("[{}] {:?}", b_name, b.endpoint.local_addr());
 
-                let a_addr = b.endpoint.conn().get_mapping_addr(&a.public()).await.unwrap();
-                let b_addr = a.endpoint.conn().get_mapping_addr(&b.public()).await.unwrap();
+                let a_addr = b.endpoint.magic_sock().get_mapping_addr(&a.public()).await.unwrap();
+                let b_addr = a.endpoint.magic_sock().get_mapping_addr(&b.public()).await.unwrap();
                 let b_peer_id = b.endpoint.peer_id();
 
                 println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
@@ -3022,7 +3022,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_logging();
-
         let devices = Devices {
             stun_ip: "127.0.0.1".parse()?,
         };
@@ -3055,8 +3054,8 @@ pub(crate) mod tests {
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.conn().inner.is_closed());
-            assert!(m2.endpoint.conn().inner.is_closed());
+            assert!(m1.endpoint.magic_sock().inner.is_closed());
+            assert!(m2.endpoint.magic_sock().inner.is_closed());
 
             println!("cleaning up");
             cleanup_mesh();

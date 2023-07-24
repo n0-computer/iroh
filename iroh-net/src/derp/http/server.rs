@@ -23,7 +23,7 @@ use tokio::{
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::{
@@ -395,7 +395,7 @@ impl ServerState {
             }
             set.shutdown().await;
             debug!("[{http_str}] derp: server has been shutdown.");
-        }.instrument(debug_span!("serve")));
+        }.instrument(info_span!("derp-http-serve")));
 
         // start meshing
         let mesh_clients = if let Some(mut mesh_clients) = self.mesh_clients {
