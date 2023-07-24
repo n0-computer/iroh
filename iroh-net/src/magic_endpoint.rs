@@ -158,7 +158,7 @@ fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
-    conn: MagicSock,
+    msock: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
@@ -182,7 +182,7 @@ impl MagicEndpoint {
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        let conn = magicsock::MagicSock::new(magicsock::Options {
+        let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
@@ -191,21 +191,22 @@ impl MagicEndpoint {
         trace!("created magicsock");
 
         let derp_map = derp_map.unwrap_or_default();
-        conn.set_derp_map(Some(derp_map))
+        msock
+            .set_derp_map(Some(derp_map))
             .await
             .context("setting derp map")?;
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             server_config,
-            conn.clone(),
+            msock.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
             keypair: Arc::new(keypair),
-            conn,
+            msock,
             endpoint,
             netmap: Arc::new(Mutex::new(NetworkMap { peers: vec![] })),
             keylog,
@@ -231,7 +232,7 @@ impl MagicEndpoint {
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
-        self.conn.local_addr()
+        self.msock.local_addr()
     }
 
     /// Get the local and discovered endpoint addresses on which the underlying
@@ -241,14 +242,14 @@ impl MagicEndpoint {
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
     pub async fn local_endpoints(&self) -> anyhow::Result<Vec<config::Endpoint>> {
-        self.conn.local_endpoints().await
+        self.msock.local_endpoints().await
     }
 
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
     pub async fn my_derp(&self) -> Option<u16> {
-        self.conn.my_derp().await
+        self.msock.my_derp().await
     }
 
     /// Connect to a remote endpoint.
@@ -272,9 +273,13 @@ impl MagicEndpoint {
             .await?;
 
         let node_key: key::node::PublicKey = peer_id.into();
-        let addr = self.conn.get_mapping_addr(&node_key).await.ok_or_else(|| {
-            anyhow!("failed to retrieve the mapped address from the magic socket")
-        })?;
+        let addr = self
+            .msock
+            .get_mapping_addr(&node_key)
+            .await
+            .ok_or_else(|| {
+                anyhow!("failed to retrieve the mapped address from the magic socket")
+            })?;
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -319,13 +324,13 @@ impl MagicEndpoint {
                     "No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}"
                 );
             }
-            (true, Some(region)) if !self.conn.has_derp_region(region).await => {
+            (true, Some(region)) if !self.msock.has_derp_region(region).await => {
                 anyhow::bail!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
             }
             (false, None) => {
                 tracing::warn!("No DERP region provided, any hole punching required to establish a connection will not be possible.");
             }
-            (false, Some(region)) if !self.conn.has_derp_region(region).await => {
+            (false, Some(region)) if !self.msock.has_derp_region(region).await => {
                 tracing::warn!("We do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
             }
             _ => {}
@@ -356,7 +361,7 @@ impl MagicEndpoint {
             }
             netmap.clone()
         };
-        self.conn.set_network_map(netmap).await?;
+        self.msock.set_network_map(netmap).await?;
         Ok(())
     }
 
@@ -373,13 +378,13 @@ impl MagicEndpoint {
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> anyhow::Result<()> {
         self.endpoint.close(error_code, reason);
         self.endpoint.wait_idle().await;
-        self.conn.close().await?;
+        self.msock.close().await?;
         Ok(())
     }
 
     #[cfg(test)]
-    pub(crate) fn conn(&self) -> &MagicSock {
-        &self.conn
+    pub(crate) fn magic_sock(&self) -> &MagicSock {
+        &self.msock
     }
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
