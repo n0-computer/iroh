@@ -150,7 +150,10 @@ pub mod test {
         sync::Arc,
     };
 
-    use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::{
+        derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        test_utils::CleanupDropGuard,
+    };
 
     use super::*;
     use anyhow::Result;
@@ -158,7 +161,7 @@ pub mod test {
         net,
         sync::{oneshot, Mutex},
     };
-    use tracing::debug;
+    use tracing::{debug, trace};
 
     // (read_ipv4, read_ipv5)
     #[derive(Debug, Default, Clone)]
@@ -211,15 +214,12 @@ pub mod test {
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.
     ///
     /// See [`serve`] for more details.
-    pub async fn serve_v4() -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
+    pub(crate) async fn serve_v4() -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
         serve(Ipv4Addr::UNSPECIFIED.into()).await
     }
 
     /// Sets up a simple STUN server.
-    ///
-    /// The returned [`oneshot::Sender`] can be used to stop the server, either drop it or
-    /// send a message on it.
-    pub async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
+    pub(crate) async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
         let stats = StunStats::default();
 
         let pc = net::UdpSocket::bind((ip, 0)).await?;
@@ -233,20 +233,20 @@ pub mod test {
             _ => unreachable!("using ipv4"),
         }
 
-        println!("listening on {}", addr);
+        println!("STUN listening on {}", addr);
         let (s, r) = oneshot::channel();
         let stats_c = stats.clone();
         tokio::task::spawn(async move {
             run_stun(pc, stats_c, r).await;
         });
 
-        Ok((addr, stats, s))
+        Ok((addr, stats, CleanupDropGuard(s)))
     }
 
     async fn run_stun(pc: net::UdpSocket, stats: StunStats, mut done: oneshot::Receiver<()>) {
         let mut buf = vec![0u8; 64 << 10];
         loop {
-            debug!("read loop");
+            trace!("read loop");
             tokio::select! {
                 _ = &mut done => {
                     debug!("shutting down");
@@ -254,7 +254,7 @@ pub mod test {
                 }
                 res = pc.recv_from(&mut buf) => match res {
                     Ok((n, addr)) => {
-                        debug!("read packet {}bytes from {}", n, addr);
+                        trace!("read packet {}bytes from {}", n, addr);
                         let pkt = &buf[..n];
                         if !is(pkt) {
                             debug!("received non STUN pkt");

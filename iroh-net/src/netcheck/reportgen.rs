@@ -716,7 +716,7 @@ async fn run_probe(
     pinger: Option<Pinger>,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
-        debug!("delaying probe");
+        trace!("delaying probe");
         tokio::time::sleep(probe.delay()).await;
     }
     debug!("starting probe");
