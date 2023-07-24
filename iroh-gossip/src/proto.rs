@@ -16,7 +16,7 @@
 //!
 //! The **membership protocol** ([HyParView][hyparview]) is a cluster protocol where each peer
 //! maintains a partial view of all nodes in the swarm.
-//! A peer joins the swarm for a tooic by connecting to any known peer that is a member of this 
+//! A peer joins the swarm for a tooic by connecting to any known peer that is a member of this
 //! topic's swarm. Obtaining this initial contact info happens out of band. The peer then sends
 //! a `Join` message to that initial peer. All peers maintain a list of
 //! `active` and `passive` peers. Active peers are those that you maintain active connections to.
@@ -81,7 +81,7 @@ impl<T> PeerAddress for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + D
 /// to a peer that is not included in the peer's [`PeerAddress`].
 pub type PeerData = bytes::Bytes;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct PeerInfo<PA> {
     pub id: PA,
     pub data: PeerData,
