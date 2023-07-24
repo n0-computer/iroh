@@ -360,22 +360,39 @@ impl MagicEndpoint {
         Ok(())
     }
 
-    /// Close the QUIC endpoint and the magic socket.
+    /// Close the QUIC endpoint.
     ///
-    /// This will close all open QUIC connections with the provided error_code and reason. See
-    /// [quinn::Connection] for details on how these are interpreted.
-    ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> anyhow::Result<()> {
+    /// This will close all open QUIC connections and cease accepting new connections.  See
+    /// [`quinn::Connection::close`] for details on how the *error_code* and *reason* are
+    /// interpreted.
+    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         self.endpoint.close(error_code, reason);
-        self.endpoint.wait_idle().await;
-        self.conn.close().await?;
-        Ok(())
+
+        // We can't close the MagicSocket, because we can't shut down the endpoint without
+        // dropping it.  The endpoint runs a driver task in the background which only
+        // finishes once all references to the endpoint are dropped and even then will
+        // invoke one more poll on the socket.  So for quinn to gracefully shut down the
+        // endpoint we need to drop the endpoint.  Once the endpoint is dropped it will also
+        // drop our MagicSocket, this is the only way it can be shut down.
+        //
+        // All that dropping will only happen when the users drops this MagicEndpoint
     }
+
+    /// Wait for all connections on the endpoint to be cleanly shut down
+    ///
+    /// Waiting for this condition before exiting ensures that a good-faith effort is made
+    /// to notify peers of recent connection closes, whereas exiting immediately could force
+    /// them to wait out the idle timeout period.
+    ///
+    /// Does not proactively close existing connections or cause incoming connections to be
+    /// rejected. Consider calling [`MagicEndpoint::close`] if that is desired.
+    pub async fn wait_idle(&self) {
+        self.endpoint.wait_idle().await;
+    }
+
+    // pub fn notify_done(&self) -> NotifyDone {
+    //     todo!()
+    // }
 
     #[cfg(test)]
     pub(crate) fn conn(&self) -> &MagicSock {
@@ -467,7 +484,8 @@ mod tests {
                     let mut buf = [0u8, 5];
                     stream.read_exact(&mut buf).await.unwrap();
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
-                    ep.close(7u8.into(), b"bye").await.unwrap();
+                    ep.close(7u8.into(), b"bye");
+                    // ep.wait_idle().await;
 
                     let res = conn.accept_uni().await;
                     assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
