@@ -45,13 +45,13 @@ pub enum Event<PA> {
     NeighborDown(PA),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Timer<PA> {
     DoShuffle,
     PendingNeighborRequest(PA),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Message<PA> {
     /// Sent to a peer if you want to join the swarm
     Join(PeerData),
@@ -85,20 +85,20 @@ impl Ttl {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ForwardJoin<PA> {
     peer: PeerInfo<PA>,
     ttl: Ttl,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Shuffle<PA> {
     origin: PA,
     nodes: Vec<PeerInfo<PA>>,
     ttl: Ttl,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ShuffleReply<PA> {
     nodes: Vec<PeerInfo<PA>>,
 }
@@ -109,13 +109,13 @@ pub enum Priority {
     Low,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Neighbor {
     priority: Priority,
     data: PeerData,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Disconnect {
     alive: Alive,
     respond: Respond,

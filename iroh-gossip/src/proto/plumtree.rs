@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{PeerAddress, IO};
 
+#[derive(Debug)]
 pub enum InEvent<PA> {
     RecvMessage(PA, Message),
     Broadcast(Bytes),
@@ -29,19 +30,20 @@ pub enum InEvent<PA> {
     PeerDisconnected(PA),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum OutEvent<PA> {
     SendMessage(PA, Message),
     ScheduleTimer(Duration, Timer),
     EmitEvent(Event),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Timer {
     SendGraft(MessageId),
     DispatchLazyPush,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Received(Bytes),
 }
@@ -49,6 +51,15 @@ pub enum Event {
 /// A message identifier, which is the message content's blake3 hash
 #[derive(Serialize, Deserialize, Clone, Copy, Eq)]
 pub struct MessageId([u8; 32]);
+
+impl MessageId {
+    /// Create a `MessageId` by hashing the message content.
+    ///
+    /// This hashes the input with [`blake3::hash`].
+    pub fn from_content(message: &[u8]) -> Self {
+        Self::from(blake3::hash(message))
+    }
+}
 
 impl From<blake3::Hash> for MessageId {
     fn from(hash: blake3::Hash) -> Self {
@@ -94,7 +105,7 @@ impl Round {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Message {
     /// When receiving Gossip, emit as event and forward full message to eager peer
     /// and (after a delay) message IDs to lazy peers.
@@ -109,7 +120,7 @@ pub enum Message {
     IHave(Vec<IHave>),
 }
 
-#[derive(Serialize, Deserialize, Clone, derive_more::Debug)]
+#[derive(Serialize, Deserialize, Clone, derive_more::Debug, PartialEq, Eq)]
 pub struct Gossip {
     id: MessageId,
     round: Round,
@@ -126,13 +137,13 @@ impl Gossip {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct IHave {
     id: MessageId,
     round: Round,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Graft {
     id: Option<MessageId>,
     round: Round,
@@ -295,7 +306,7 @@ impl<PA: PeerAddress> State<PA> {
     /// Will be pushed in full to eager peers.
     /// Pushing the message ids to the lazy peers is delayed by a timer.
     fn do_broadcast(&mut self, data: Bytes, io: &mut impl IO<PA>) {
-        let id = blake3::hash(&data).into();
+        let id = MessageId::from_content(&data);
         let message = Gossip {
             id,
             round: Round(0),
@@ -480,8 +491,8 @@ impl<PA: PeerAddress> State<PA> {
         }
     }
 
-    /// Puts lazy message announcements on top of the queue which will be consumed into batched
-    /// IHave message once dispatch trigger activates (it's cyclic operation).
+    /// Queue lazy message announcements into the queue that will be sent out as batched
+    /// [`Message::IHave`] messages once the [`Timer::DispatchLazyPush`] timer is triggered.
     fn lazy_push(&mut self, gossip: Gossip, sender: &PA, io: &mut impl IO<PA>) {
         for peer in self.lazy_push_peers.iter().filter(|x| *x != sender) {
             self.lazy_push_queue.entry(*peer).or_default().push(IHave {
@@ -496,5 +507,99 @@ impl<PA: PeerAddress> State<PA> {
             ));
             self.dispatch_timer_scheduled = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn optimize_tree() {
+        let mut io = VecDeque::new();
+        let config: Config = Default::default();
+        let mut state = State::new(1, config.clone());
+
+        // we receive an IHave message from peer 2
+        // it has `round: 2` which means that the the peer that sent us the IHave was
+        // two hops away from the original sender of the message
+        let content: Bytes = b"hi".to_vec().into();
+        let id = MessageId::from_content(&content);
+        let event = InEvent::RecvMessage(
+            2u32,
+            Message::IHave(vec![IHave {
+                id,
+                round: Round(2),
+            }]),
+        );
+        state.handle(event, &mut io);
+        io.clear();
+        // we then receive a `Gossip` message with the same `MessageId` from peer 3
+        // the message has `round: 6`, which means it travelled 6 hops until it reached us
+        // this is less hops than to peer 2, but not enough to trigger the optimization
+        // because we use the default config which has `optimization_threshold: 7`
+        let event = InEvent::RecvMessage(
+            3,
+            Message::Gossip(Gossip {
+                id,
+                round: Round(6),
+                content: content.clone(),
+            }),
+        );
+        state.handle(event, &mut io);
+        let expected = {
+            // we expect a dispatch timer schedule and receive event, but no Graft or Prune
+            // messages
+            let mut io = VecDeque::new();
+            io.push(OutEvent::ScheduleTimer(
+                config.dispatch_timeout,
+                Timer::DispatchLazyPush,
+            ));
+            io.push(OutEvent::EmitEvent(Event::Received(content.clone())));
+            io
+        };
+        assert_eq!(io, expected);
+        io.clear();
+
+        // now we run the same flow again but this time peer 3 is 9 hops away from the message's
+        // sender. message's sender. this will trigger the optimization:
+        // peer 2 will be promoted to eager and peer 4 demoted to lazy
+
+        let content: Bytes = b"hi2".to_vec().into();
+        let id = MessageId::from_content(&content);
+        let event = InEvent::RecvMessage(
+            2u32,
+            Message::IHave(vec![IHave {
+                id,
+                round: Round(2),
+            }]),
+        );
+        state.handle(event, &mut io);
+        io.clear();
+
+        let event = InEvent::RecvMessage(
+            3,
+            Message::Gossip(Gossip {
+                id,
+                round: Round(9),
+                content: content.clone(),
+            }),
+        );
+        state.handle(event, &mut io);
+        let expected = {
+            // this time we expect the Graft and Prune messages to be sent, performing the
+            // optimization step
+            let mut io = VecDeque::new();
+            io.push(OutEvent::SendMessage(
+                2,
+                Message::Graft(Graft {
+                    id: None,
+                    round: Round(2),
+                }),
+            ));
+            io.push(OutEvent::SendMessage(3, Message::Prune));
+            io.push(OutEvent::EmitEvent(Event::Received(content.clone())));
+            io
+        };
+        assert_eq!(io, expected);
     }
 }

@@ -32,7 +32,7 @@ pub enum InEvent<PA> {
 }
 
 /// An output event from the state handler.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum OutEvent<PA> {
     /// Send a message on the network
     SendMessage(PA, Message<PA>),
@@ -76,12 +76,19 @@ impl<PA> From<plumtree::OutEvent<PA>> for OutEvent<PA> {
 /// The implementation is generic over this trait, which allows the upper layer to supply a
 /// container of their choice for `OutEvent`s emitted from the protocol state.
 pub trait IO<PA: Clone> {
-    /// Store the event in the message container
+    /// Push an event in the IO container
     fn push(&mut self, event: impl Into<OutEvent<PA>>);
+
+    /// Push all events from an iterator into the IO container
+    fn push_from_iter(&mut self, iter: impl IntoIterator<Item = impl Into<OutEvent<PA>>>) {
+        for event in iter.into_iter() {
+            self.push(event);
+        }
+    }
 }
 
 /// A protocol message for a particular topic
-#[derive(From, Debug, Serialize, Deserialize, Clone)]
+#[derive(From, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Message<PA> {
     /// A message of the swarm membership layer
     Swarm(hyparview::Message<PA>),
@@ -130,7 +137,7 @@ impl<PA> From<plumtree::Event> for Event<PA> {
 ///
 /// This should be treated an an opaque value by the implementor and, once emitted, simply returned
 /// to the protocol through [`InEvent::TimerExpired`].
-#[derive(Clone, From, Debug)]
+#[derive(Clone, From, Debug, PartialEq, Eq)]
 pub enum Timer<PA> {
     /// A timer for the swarm layer
     Swarm(hyparview::Timer<PA>),
@@ -154,7 +161,6 @@ impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
         self.push_back(event.into())
     }
 }
-
 /// Protocol configuration
 #[derive(Clone, Default)]
 pub struct Config {
