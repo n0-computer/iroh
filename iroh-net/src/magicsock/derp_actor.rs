@@ -243,7 +243,7 @@ impl DerpActor {
         contents: Vec<Bytes>,
         peer: key::node::PublicKey,
     ) {
-        debug!("sending derp region: {} - {:?}", region_id, peer);
+        debug!(region_id, %peer, "sending derp");
         {
             let derp_map = &*self.conn.derp_map.read().await;
             if derp_map.is_none() {
@@ -627,7 +627,7 @@ impl ReaderState {
                 return (ReadResult::Break, ReadAction::None);
             }
         };
-        debug!("derp.recv(derp-{}) received: {:?}", self.region, msg);
+        debug!(region_id=%self.region, ?msg, "derp.recv received");
 
         match msg {
             Err(err) => {
