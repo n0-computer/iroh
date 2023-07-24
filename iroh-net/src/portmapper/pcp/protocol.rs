@@ -10,7 +10,7 @@ pub use opcode_data::*;
 pub use request::*;
 pub use response::*;
 
-// PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
+// PCP and NAT-PMP share same ports, reassigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
 
 /// Port to use when acting as a server. This is the one we direct requests to.

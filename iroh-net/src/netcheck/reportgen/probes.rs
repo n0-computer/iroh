@@ -499,6 +499,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::defaults::default_derp_map;
+    use crate::net::interfaces;
     use crate::netcheck::RegionLatencies;
 
     use super::*;
@@ -508,10 +509,10 @@ mod tests {
         let derp_map = default_derp_map();
         let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
         let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
-        let if_state = crate::net::interfaces::State::new().await;
+        let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&derp_map, &if_state);
 
-        let mut expected_plan: ProbePlan = [
+        let expected_plan: ProbePlan = [
             ProbeSet {
                 name: "region-1-stunipv4".into(),
                 proto: ProbeProto::StunIpv4,
@@ -565,7 +566,7 @@ mod tests {
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(500),
-                        node: derp_node_1.clone(),
+                        node: derp_node_1,
                     },
                 ],
             },
@@ -622,51 +623,13 @@ mod tests {
                     },
                     Probe::Icmp {
                         delay: Duration::from_millis(800),
-                        node: derp_node_2.clone(),
+                        node: derp_node_2,
                     },
                 ],
             },
         ]
         .into_iter()
         .collect();
-        if if_state.have_v6 {
-            expected_plan.add(ProbeSet {
-                name: "region-1-stunipv6".into(),
-                proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: derp_node_1.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(100),
-                        node: derp_node_1.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(200),
-                        node: derp_node_1.clone(),
-                    },
-                ],
-            });
-            expected_plan.add(ProbeSet {
-                name: "region-2-stunipv6".into(),
-                proto: ProbeProto::StunIpv6,
-                probes: vec![
-                    Probe::StunIpv6 {
-                        delay: Duration::ZERO,
-                        node: derp_node_2.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(100),
-                        node: derp_node_2.clone(),
-                    },
-                    Probe::StunIpv6 {
-                        delay: Duration::from_millis(200),
-                        node: derp_node_2.clone(),
-                    },
-                ],
-            });
-        }
 
         println!("expected:");
         println!("{expected_plan}");
@@ -685,7 +648,7 @@ mod tests {
             let derp_map = default_derp_map();
             let derp_node_1 = Arc::new(derp_map.regions[&1].nodes[0].clone());
             let derp_node_2 = Arc::new(derp_map.regions[&2].nodes[0].clone());
-            let if_state = crate::net::interfaces::State::new().await;
+            let if_state = interfaces::State::fake();
             let mut latencies = RegionLatencies::new();
             latencies.update_region(1, Duration::from_millis(2));
             latencies.update_region(2, Duration::from_millis(2));
@@ -709,7 +672,7 @@ mod tests {
                 captive_portal: None,
             };
             let plan = ProbePlan::with_last_report(&derp_map, &if_state, &last_report);
-            let mut expected_plan: ProbePlan = [
+            let expected_plan: ProbePlan = [
                 ProbeSet {
                     name: "region-1-stunipv4".into(),
                     proto: ProbeProto::StunIpv4,
@@ -827,52 +790,6 @@ mod tests {
             ]
             .into_iter()
             .collect();
-            if if_state.have_v6 {
-                expected_plan.add(ProbeSet {
-                    name: "region-1-stunipv6".into(),
-                    proto: ProbeProto::StunIpv6,
-                    probes: vec![
-                        Probe::StunIpv6 {
-                            delay: Duration::ZERO,
-                            node: derp_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(52_400),
-                            node: derp_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(104_800),
-                            node: derp_node_1.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(157_200),
-                            node: derp_node_1.clone(),
-                        },
-                    ],
-                });
-                expected_plan.add(ProbeSet {
-                    name: "region-2-stunipv6".into(),
-                    proto: ProbeProto::StunIpv6,
-                    probes: vec![
-                        Probe::StunIpv6 {
-                            delay: Duration::ZERO,
-                            node: derp_node_2.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(52_400),
-                            node: derp_node_2.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(104_800),
-                            node: derp_node_2.clone(),
-                        },
-                        Probe::StunIpv6 {
-                            delay: Duration::from_micros(157_200),
-                            node: derp_node_2.clone(),
-                        },
-                    ],
-                })
-            }
 
             println!("{} round", i);
             println!("expected:");
