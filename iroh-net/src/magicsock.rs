@@ -3052,8 +3052,8 @@ pub(crate) mod tests {
             .context("failed to connect peers")?;
 
             println!("closing endpoints");
-            m1.endpoint.close(0u32.into(), b"done").await?;
-            m2.endpoint.close(0u32.into(), b"done").await?;
+            m1.endpoint.close(0u32.into(), b"done");
+            m2.endpoint.close(0u32.into(), b"done");
 
             assert!(m1.endpoint.conn().inner.is_closed());
             assert!(m2.endpoint.conn().inner.is_closed());
