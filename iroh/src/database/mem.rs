@@ -203,7 +203,7 @@ impl Vfs for MemVfs {
     type WriteRaw = MemVfsEntry;
 
     fn create(&self, purpose: Purpose) -> BoxFuture<'_, io::Result<Self::Id>> {
-        println!("create {:?} {}", purpose, purpose.temporary());
+        tracing::trace!("create {:?}", purpose);
         let mut inner = self.0.write().unwrap();
         let id = inner.next_id;
         inner.next_id += 1;
