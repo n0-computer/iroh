@@ -9,7 +9,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use iroh::collection::IrohCollectionParser;
-use iroh::database::mem;
+use iroh::database::redb;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
 use iroh_net::tls::Keypair;
@@ -44,8 +44,10 @@ fn make_rpc_endpoint(keypair: &Keypair) -> anyhow::Result<impl ServiceEndpoint<P
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
-    // create a new, empty in memory database
-    let db = mem::MutableDatabase::default();
+    let iroh_data_dir = std::env::current_dir()?.join(".iroh");
+    tokio::fs::create_dir_all(&iroh_data_dir).await?;
+    // create a new persistent database
+    let db = redb::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
     // create a random keypair

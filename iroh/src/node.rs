@@ -26,7 +26,6 @@ use crate::rpc_protocol::{
 use crate::util::progress::ProgressSliceWriter2;
 use anyhow::{Context, Result};
 use bao_tree::io::outboard::PreOrderOutboard;
-use bao_tree::io::outboard_size;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
@@ -34,7 +33,7 @@ use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, Purpose, ShareProgress, Vfs, VfsId};
+use iroh_bytes::provider::{BaoDb, ShareProgress, Vfs, VfsId};
 use iroh_bytes::{get, IROH_BLOCK_SIZE};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
@@ -45,6 +44,7 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
+use iroh_io::AsyncSliceReader;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -55,7 +55,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use rand::Rng;
 use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc::error::TrySendError;
@@ -63,7 +62,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -671,12 +670,17 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> impl Stream<Item = ListIncompleteBlobsResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.local_pool().clone();
-        futures::stream::iter(db.partial_blobs()).filter_map(move |(hash, id)| {
-            use iroh_io::AsyncSliceReader;
+        futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
-                let path = format!("{:?}", id);
-                let mut file = db.vfs().open_read(&id).await?;
+                let Some((data_id, _)) = db.get_partial_entry(&hash).await? else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "no partial entry found",
+                    ));
+                };
+                let path = format!("{:?}", data_id);
+                let mut file = db.vfs().open_read(&data_id).await?;
                 let size = file.len().await?;
                 io::Result::Ok(ListIncompleteBlobsResponse {
                     hash,
@@ -746,7 +750,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn create_temp_file_pair(
+    async fn create_temp_pair(
         db: &D,
         hash: &Hash,
         size: u64,
@@ -779,14 +783,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         db: &D,
         header: AtBlobHeader,
         sender: ShareProgressSender,
-    ) -> anyhow::Result<(AtEndBlob, VfsId<D>)> {
+    ) -> anyhow::Result<AtEndBlob> {
         use iroh_io::AsyncSliceWriter;
 
         let hash = header.hash();
         // read the size
         let (content, size) = header.next().await?;
         // create the temp file pair
-        let (data_id, outboard_id) = Self::create_temp_file_pair(&db, &hash, size).await?;
+        let (data_id, outboard_id) = Self::create_temp_pair(&db, &hash, size).await?;
         // open the data file in any case
         let df = db.vfs().open_write(&data_id).await?;
         // open the outboard file (only if we need to)
@@ -826,10 +830,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         }
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_entry(hash, data_id.clone(), outboard_id).await?;
+        db.insert_entry(hash, data_id, outboard_id).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
-        Ok((end, data_id))
+        Ok(end)
     }
 
     /// Get a blob that was requested partially.
@@ -887,13 +891,12 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         Ok(end)
     }
 
-    async fn get_missing_ranges(
+    async fn get_missing_ranges_blob(
         db: &D,
         hash: &Hash,
         data_id: &VfsId<D>,
         outboard_id: &VfsId<D>,
     ) -> anyhow::Result<RangeSet2<ChunkNum>> {
-        use iroh_io::AsyncSliceReader;
         use tracing::info as log;
         let hash = blake3::Hash::from(*hash);
         // compute the valid range from just looking at the data file
@@ -939,7 +942,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 data_id,
                 outboard_id
             );
-            let required_ranges = Self::get_missing_ranges(&db, hash, &data_id, &outboard_id)
+            let required_ranges = Self::get_missing_ranges_blob(&db, hash, &data_id, &outboard_id)
                 .await
                 .ok()
                 .unwrap_or_else(|| RangeSet2::all());
@@ -973,8 +976,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            let (end, _data_id) = Self::get_blob_inner(&db, header, sender).await?;
-            end
+            Self::get_blob_inner(&db, header, sender).await?
         };
 
         // we have requested a single hash, so we must be at closing
@@ -1002,10 +1004,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     data_id,
                     outboard_id
                 );
-                let missing_chunks = Self::get_missing_ranges(&db, hash, &data_id, &outboard_id)
-                    .await
-                    .ok()
-                    .unwrap_or_else(|| RangeSet2::all());
+                let missing_chunks =
+                    Self::get_missing_ranges_blob(&db, hash, &data_id, &outboard_id)
+                        .await
+                        .ok()
+                        .unwrap_or_else(|| RangeSet2::all());
                 BlobInfo::Partial {
                     data_id,
                     outboard_id,
@@ -1029,9 +1032,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         root_hash: &Hash,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
+        use tracing::info as log;
         let db = &self.inner.db;
         let finishing = if let Some(entry) = db.get(&root_hash) {
-            tracing::info!("already got collection - doing partial download");
+            log!("already got collection - doing partial download");
             // got the collection
             let reader = entry.data_reader().await?;
             let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
@@ -1040,15 +1044,19 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 children.push(hash);
             }
             let missing_info = self.get_missing_ranges_collection(&children).await?;
+            if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
+                log!("nothing to do");
+                return Ok(());
+            }
             let missing_iter = std::iter::once(RangeSet2::empty())
                 .chain(missing_info.iter().map(|x| x.missing_chunks()))
                 .collect::<Vec<_>>();
-            info!("requesting chunks {:?}", missing_iter);
+            log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::new(missing_iter));
             let request = get::fsm::start(conn, request.into());
             // create a new bidi stream
             let connected = request.next().await?;
-            tracing::info!("connected");
+            log!("connected");
             // we have not requested the root, so this must be StartChild
             let ConnectedNext::StartChild(start) = connected.next().await? else {
                 anyhow::bail!("expected StartChild");
@@ -1069,10 +1077,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     };
                 let header = start.next(child_hash);
                 let end_blob = match info {
-                    BlobInfo::Missing => {
-                        let (at_end, _) = Self::get_blob_inner(&db, header, sender.clone()).await?;
-                        at_end
-                    }
+                    BlobInfo::Missing => Self::get_blob_inner(&db, header, sender.clone()).await?,
                     BlobInfo::Partial {
                         data_id,
                         outboard_id,
@@ -1107,9 +1112,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
-            let (end_root, data_id) = Self::get_blob_inner(&db, header, sender.clone()).await?;
+            let end_root = Self::get_blob_inner(&db, header, sender.clone()).await?;
             // read the collection fully for now
-            let reader = db.vfs().open_read(&data_id).await?;
+            let entry = db.get(&root_hash).context("just downloaded")?;
+            let reader = entry.data_reader().await?;
             let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
             let mut children = vec![];
             while let Some(hash) = collection.next().await? {
@@ -1129,8 +1135,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     None => break start.finish(),
                 };
                 let header = start.next(child_hash);
-                let (end_blob, _data_id) =
-                    Self::get_blob_inner(&db, header, sender.clone()).await?;
+                let end_blob = Self::get_blob_inner(&db, header, sender.clone()).await?;
                 next = end_blob.next();
             }
         };

@@ -661,10 +661,7 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     type ReadRaw: AsyncSliceReader;
     ///
     type WriteRaw: AsyncSliceWriter;
-    /// create a handle for internal data
     ///
-    /// `purpose` is the purpose of the file. The provider may use this to keep
-    /// track of partial downloads.
     fn create_temp_pair(
         &self,
         hash: Hash,
@@ -716,9 +713,12 @@ impl FromStr for Purpose {
     type Err = ();
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let Some((base, ext)) = s.split_once('.') else {
+        // split into base and extension
+        let Some((base, ext)) = s.rsplit_once('.') else {
             return Err(());
         };
+        // strip optional leading dot
+        let base = base.strip_prefix('.').unwrap_or(base);
         let mut hash = [0u8; 32];
         if let Some((base, uuid_text)) = base.split_once('-') {
             let mut uuid = [0u8; 16];
@@ -831,10 +831,16 @@ pub trait BaoDb: BaoReadonlyDb {
         futures::future::ok(None).boxed()
     }
 
-    /// list partial blobs in the database
-    fn partial_blobs(
+    /// Check if we have a full entry for `hash`, and if so, return it
+    fn get_full_entry(
         &self,
-    ) -> Box<dyn Iterator<Item = (Hash, VfsId<Self>)> + Send + Sync + 'static> {
+        _hash: &Hash,
+    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, Option<VfsId<Self>>)>>> {
+        futures::future::ok(None).boxed()
+    }
+
+    /// list partial blobs in the database
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 }
@@ -842,17 +848,6 @@ pub trait BaoDb: BaoReadonlyDb {
 /// A local filesystem based Vfs
 #[derive(Debug, Clone)]
 pub struct LocalFs;
-
-/// suggested file extension
-fn extension(purpose: &Purpose) -> &'static str {
-    match purpose {
-        Purpose::PartialData(_, _) => "data.temp",
-        Purpose::Data(_) => "data",
-        Purpose::PartialOutboard(_, _) => "outboard.temp",
-        Purpose::Outboard(_) => "outboard",
-        Purpose::Meta(_) => "meta",
-    }
-}
 
 impl Vfs for LocalFs {
     type Id = std::path::PathBuf;

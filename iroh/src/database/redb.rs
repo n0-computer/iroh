@@ -10,8 +10,8 @@ use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
 use futures::{Future, FutureExt};
-use iroh_bytes::provider::ValidateProgress;
-use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs, Purpose, Vfs};
+use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
+use iroh_bytes::provider::{ValidateProgress, VfsId};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
 use rand::Rng;
@@ -20,11 +20,7 @@ use tokio::sync::mpsc;
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
 pub const FNAME_PATHS: &str = "paths.bin";
 
-///
-#[derive(Debug, Clone)]
-pub struct RedbFs(Arc<RwLock<DatabaseInner>>);
-
-impl Vfs for RedbFs {
+impl Vfs for Database {
     type Id = std::path::PathBuf;
     type ReadRaw = iroh_io::File;
     type WriteRaw = iroh_io::File;
@@ -49,9 +45,10 @@ impl Vfs for RedbFs {
         };
         // store the paths in the database. Note that this overwrites any existing entry.
         if let Some(outboard_path) = &outboard_path {
-            lock.incomplete
+            lock.partial
                 .insert(hash, (data_path.clone(), outboard_path.clone()));
         }
+        tracing::info!("creating temp pair: {:?} {:?}", data_path, outboard_path);
         future::ready(Ok((data_path, outboard_path))).boxed()
     }
 
@@ -82,7 +79,7 @@ struct DatabaseInner {
     complete_path: PathBuf,
     partial_path: PathBuf,
     complete: BTreeMap<Hash, DbEntry>,
-    incomplete: BTreeMap<Hash, (PathBuf, PathBuf)>,
+    partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
 }
 
 /// Database containing content-addressed data (blobs or collections).
@@ -185,10 +182,10 @@ impl BaoReadonlyDb for Database {
 }
 
 impl BaoDb for Database {
-    type Vfs = LocalFs;
+    type Vfs = Self;
 
     fn vfs(&self) -> &Self::Vfs {
-        &LocalFs
+        &self
     }
 
     fn insert_entry(
@@ -201,7 +198,7 @@ impl BaoDb for Database {
         tokio::task::spawn_blocking(move || {
             // remove incomplete
             // from here on, if something fails we lost the incomplete entry
-            db.0.write().unwrap().incomplete.remove(&hash);
+            db.0.write().unwrap().partial.remove(&hash);
             // first rename the file - this is atomic
             let data_path =
                 db.0.read()
@@ -242,18 +239,10 @@ impl BaoDb for Database {
     fn get_partial_entry(
         &self,
         hash: &Hash,
-    ) -> BoxFuture<
-        '_,
-        io::Result<
-            Option<(
-                iroh_bytes::provider::VfsId<Self>,
-                iroh_bytes::provider::VfsId<Self>,
-            )>,
-        >,
-    > {
+    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
         let lock = self.0.read().unwrap();
         futures::future::ok(
-            if let Some((data_path, outboard_path)) = lock.incomplete.get(hash) {
+            if let Some((data_path, outboard_path)) = lock.partial.get(hash) {
                 Some((data_path.clone(), outboard_path.clone()))
             } else {
                 None
@@ -262,15 +251,12 @@ impl BaoDb for Database {
         .boxed()
     }
 
-    fn partial_blobs(
-        &self,
-    ) -> Box<dyn Iterator<Item = (Hash, iroh_bytes::provider::VfsId<Self>)> + Send + Sync + 'static>
-    {
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let lock = self.0.read().unwrap();
         let res = lock
-            .incomplete
+            .partial
             .iter()
-            .map(|(hash, (data_path, _))| (*hash, data_path.clone()))
+            .map(|(hash, _)| *hash)
             .collect::<Vec<_>>();
         Box::new(res.into_iter())
     }
@@ -288,7 +274,10 @@ fn make_io_error<T>(
 
 impl Database {
     /// scan a directory for data
-    pub fn load_internal(complete_path: PathBuf, partial_path: PathBuf) -> anyhow::Result<Self> {
+    pub(crate) fn load_internal(
+        complete_path: PathBuf,
+        partial_path: PathBuf,
+    ) -> anyhow::Result<Self> {
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index = BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>)>::new();
@@ -317,7 +306,7 @@ impl Database {
                             *outboard = Some(path);
                         }
                         _ => {
-                            tracing::warn!("skipping unexpected partial file: {:?}", path);
+                            // silently ignore other files, there could be a valid reason for them
                         }
                     }
                 }
@@ -347,7 +336,7 @@ impl Database {
                             *outboard = Some(path);
                         }
                         _ => {
-                            tracing::warn!("skipping unexpected complete file: {:?}", path);
+                            // silently ignore other files, there could be a valid reason for them
                         }
                     }
                 }
@@ -415,7 +404,7 @@ impl Database {
                 },
             );
         }
-        let mut incomplete = BTreeMap::new();
+        let mut partial = BTreeMap::new();
         for (hash, entries) in partial_index {
             let best = entries.into_iter().filter_map(|(_, (data_path, outboard_path))| {
                 let data_path = data_path?;
@@ -433,23 +422,35 @@ impl Database {
             }).max_by_key(|x| x.0);
             if let Some((size, data, outboard)) = best {
                 if size > 0 {
-                    incomplete.insert(hash, (data, outboard));
+                    partial.insert(hash, (data, outboard));
                 }
             }
+        }
+        for hash in complete.keys() {
+            tracing::info!("complete {}", hash);
+            partial.remove(hash);
+        }
+        for hash in partial.keys() {
+            tracing::info!("partial {}", hash);
         }
         Ok(Self(Arc::new(RwLock::new(DatabaseInner {
             complete_path,
             partial_path,
             complete,
-            incomplete,
+            partial,
         }))))
     }
 
     /// Load a database from disk.
-    pub async fn load(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
+    pub async fn load(
+        complete_path: impl AsRef<Path>,
+        partial_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let complete_path = complete_path.as_ref().to_path_buf();
+        let partial_path = partial_path.as_ref().to_path_buf();
         let db =
-            tokio::task::spawn_blocking(move || Self::load_internal(dir.clone(), dir)).await??;
+            tokio::task::spawn_blocking(move || Self::load_internal(complete_path, partial_path))
+                .await??;
         Ok(db)
     }
 }

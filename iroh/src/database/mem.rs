@@ -421,13 +421,13 @@ impl BaoDb for MutableDatabase {
         futures::future::ok(None).boxed()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = (Hash, u64)> + Send + Sync + 'static> {
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let vfs = self.vfs.0.read().unwrap();
         let hashes = vfs
             .entries
             .iter()
-            .filter_map(|(id, entry)| match entry.purpose {
-                Purpose::PartialData(hash, _) => Some((hash, *id)),
+            .filter_map(|(_, entry)| match entry.purpose {
+                Purpose::PartialData(hash, _) => Some(hash),
                 _ => None,
             })
             .collect::<Vec<_>>();
