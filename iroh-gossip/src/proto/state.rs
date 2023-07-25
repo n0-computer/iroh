@@ -3,9 +3,11 @@
 use std::{
     collections::{hash_map, HashMap, HashSet},
     fmt,
+    str::FromStr,
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +63,17 @@ impl fmt::Debug for TopicId {
         let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
         text.make_ascii_lowercase();
         write!(f, "{}…{}", &text[..5], &text[(text.len() - 2)..])
+    }
+}
+
+impl FromStr for TopicId {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD
+            .decode(s.to_ascii_uppercase().as_bytes())?
+            .try_into()
+            .map_err(|_| anyhow!("Failed to parse topic: must be 32 bytes "))?;
+        Ok(TopicId::from_bytes(bytes))
     }
 }
 

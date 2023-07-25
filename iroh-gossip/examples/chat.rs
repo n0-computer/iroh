@@ -1,21 +1,6 @@
-//! Chat over iroh-gossip
-//!
-//! This broadcasts signed messages over iroh-gossip and verifies
-//! signatures on received messages.
-//!
-//! To connect to a swarm, you need to share a DERP server and know at least
-//! one other peer's peer id.
-//!
-//! By default a new peer id is created when starting the example. To reuse your identity,
-//! set the `--private-key` CLI flag with the private key printed on a previous invocation.
-//!
-//! You can use this with a local DERP server. To do so, run
-//! `cargo run --bin derper -- --dev`
-//! and then set the `-d http://localhost:3340` flag on this example.
-
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -35,18 +20,29 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use url::Url;
 
+/// Chat over iroh-gossip
+///
+/// This broadcasts signed messages over iroh-gossip and verifies signatures
+/// on received messages.
+///
+/// By default a new peer id is created when starting the example. To reuse your identity,
+/// set the `--private-key` flag with the private key printed on a previous invocation.
+///
+/// By default, the DERP server run by n0 is used. To use a local DERP server, run
+///     cargo run --bin derper --features derper -- --dev
+/// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
-    /// Private key to derive our peer id from
+    /// Private key to derive our peer id from.
     #[clap(long)]
     private_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
     derp: Option<Url>,
-    /// Disable DERP completeley
+    /// Disable DERP completely.
     #[clap(long)]
     no_derp: bool,
-    /// Set your nickname
+    /// Set your nickname.
     #[clap(short, long)]
     name: Option<String>,
     /// Set the bind port for our socket. By default, a random port will be used.
@@ -58,8 +54,18 @@ struct Args {
 
 #[derive(Parser, Debug)]
 enum Command {
-    OpenTopic { topic: String },
-    JoinTicket { ticket: String },
+    /// Open a chat room for a topic and print a ticket for others to join.
+    ///
+    /// If no topic is provided, a new topic will be created.
+    Open {
+        /// Optionally set the topic id (32 bytes, as base32 string).
+        topic: Option<TopicId>,
+    },
+    /// Join a chat room from a ticket.
+    Join {
+        /// The ticket, as base32 string.
+        ticket: String,
+    },
 }
 
 #[tokio::main]
@@ -81,11 +87,14 @@ async fn main() -> anyhow::Result<()> {
         (true, None) => None,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
-    println!("> using DERP servers: {:?}", fmt_derp_map(&derp_map));
+    println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
     // init a cell that will hold our gossip handle to be used in endpoint callbacks
     let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+
     // init a channel that will emit once the initial endpoints of our local node are discovered
+    // (not using a oneshot channel here because tokio::oneshot::Sender::send takes self, which
+    // does not work in the on_endpoints Fn closure)
     let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
 
     // build our magic endpoint
@@ -99,7 +108,8 @@ async fn main() -> anyhow::Result<()> {
             if let Some(gossip) = gossip_cell_clone.get() {
                 gossip.update_endpoints(endpoints).ok();
             }
-            // trigger oneshot on the first endpoint update
+            // trigger channel send on the first endpoint update
+            // (the receiver will be dropped after the first reception)
             initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
         }))
         .bind(args.bind_port)
@@ -108,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
 
     // wait for a first endpoint update so that we know about at least one of our addrs
     let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-    println!("> our endpoints: {initial_endpoints:?}");
+    drop(initial_endpoints_rx);
 
     // create the gossip protocol
     let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
@@ -121,31 +131,32 @@ async fn main() -> anyhow::Result<()> {
     // spawn our endpoint loop that forwards incoming connections to the gossiper
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
-    let mut our_ticket = match &args.command {
-        Command::OpenTopic { topic } => {
-            println!("> opening topic {topic} and waiting for peers to join us...");
-            let topic = blake3::hash(topic.as_bytes()).into();
-            gossip.join(topic, vec![]).await?;
-            let peers = vec![];
-            Ticket { topic, peers }
+    let (mut our_ticket, peer_ids) = match &args.command {
+        Command::Open { topic } => {
+            let topic = topic.unwrap_or_else(|| TopicId::from_bytes(rand::random()));
+            println!("> opening chat room for topic {topic}");
+            let ticket = Ticket {
+                topic,
+                peers: vec![],
+            };
+            (ticket, vec![])
         }
-        Command::JoinTicket { ticket } => {
+        Command::Join { ticket } => {
             let Ticket { topic, peers } = Ticket::from_str(ticket)?;
-            println!("> joining topic {topic} and connecting to {peers:?}",);
+            println!("> joining chat room for topic {topic:?}",);
             // add the peer addrs from the ticket to our known addrs so that they can be dialed
+            let mut peer_ids = vec![];
             for peer in &peers {
                 endpoint
                     .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
                     .await?;
+                peer_ids.push(peer.peer_id.clone());
             }
-            let peer_ids = peers.iter().map(|peer| peer.peer_id).collect();
-            gossip.join(topic, peer_ids).await?;
-            println!("> joined! now send some gossip...");
-            Ticket { topic, peers }
+            (Ticket { topic, peers }, peer_ids)
         }
     };
 
-    // add our local endpoints to the ticket and print it for others to join
+    // add our peer id and endpoints to the ticket and print it for others to join
     let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
     our_ticket.peers.push(PeerAddr {
         peer_id: endpoint.peer_id(),
@@ -154,7 +165,15 @@ async fn main() -> anyhow::Result<()> {
     });
     println!("> ticket to join us: {our_ticket}");
 
+    if peer_ids.is_empty() {
+        println!("> waiting for peers to join us...");
+    } else {
+        println!("> trying to connect to {} peers...", peer_ids.len());
+    }
+
     let topic = our_ticket.topic;
+    gossip.join(topic, peer_ids).await?;
+    println!("> connected!");
 
     // broadcast our name, if set
     if let Some(name) = args.name {
@@ -172,10 +191,12 @@ async fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || input_loop(line_tx));
 
     // broadcast each line we type
+    println!("> type a message and hit enter to send messages...");
     while let Some(text) = line_rx.recv().await {
-        let message = Message::Message { text };
+        let message = Message::Message { text: text.clone() };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
         gossip.broadcast(topic, encoded_message).await?;
+        println!("> sent: {text}");
     }
 
     Ok(())
@@ -313,7 +334,6 @@ fn fmt_peer_id(input: &PeerId) -> String {
     let text = format!("{}", input);
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
 }
-
 fn fmt_secret(keypair: &Keypair) -> String {
     let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
     text.make_ascii_lowercase();
@@ -323,20 +343,20 @@ fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
     let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
         .decode(secret.to_ascii_uppercase().as_bytes())?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
+        .map_err(|_| anyhow!("Invalid secret"))?;
     let key = SigningKey::from_bytes(&bytes);
     Ok(key.into())
 }
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {
         None => "None".to_string(),
-        Some(map) => {
-            let regions = map.regions.iter().map(|(id, region)| {
-                let nodes = region.nodes.iter().map(|node| node.url.to_string());
-                (*id, nodes.collect::<Vec<_>>())
-            });
-            format!("{:?}", regions.collect::<Vec<_>>())
-        }
+        Some(map) => map
+            .regions
+            .iter()
+            .map(|(_id, region)| region.nodes.iter().map(|node| node.url.to_string()))
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", "),
     }
 }
 fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
