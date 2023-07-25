@@ -19,6 +19,7 @@ env:
 
 jobs:
   build_and_test_nix:
+    timeout-minutes: 30
     name: Build and test (Nix)
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -72,6 +73,7 @@ jobs:
       run: cargo test --workspace --all-features --doc
       
   build_and_test_windows:
+    timeout-minutes: 30
     name: Build and test (Windows)
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -111,6 +113,7 @@ jobs:
       run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
+    timeout-minutes: 60
     name: Build release binaries
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
@@ -209,6 +212,7 @@ jobs:
         aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   cross:
+    timeout-minutes: 30
     name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
@@ -244,6 +248,7 @@ jobs:
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
+    timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
     steps:
@@ -260,6 +265,7 @@ jobs:
       run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
@@ -279,6 +285,7 @@ jobs:
       run: cargo clippy --workspace --all-targets
 
   msrv:
+    timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
     steps:
@@ -292,6 +299,7 @@ jobs:
         cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
+    timeout-minutes: 30
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
@@ -303,6 +311,7 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
+    timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
     steps:
