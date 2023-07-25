@@ -360,7 +360,7 @@ jobs:
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
         echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
     - name: Setup Environment (Push)  
-      if: ${{ github.event_name == 'push' }}  
+      if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}  
       shell: bash  
       run: |  
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
