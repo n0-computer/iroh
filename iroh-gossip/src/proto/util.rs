@@ -147,7 +147,7 @@ where
     }
 }
 
-/// A BtreeMap with Instant as key. Allows to process expired items.
+/// A [`BTreeMap`] with [`Instant`] as key. Allows to process expired items.
 pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
 
 impl<T> TimerMap<T> {
