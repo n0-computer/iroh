@@ -417,9 +417,10 @@ impl GossipActor {
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
                     if let Some(send) = self.conn_send_tx.get(&peer_id) {
-                        send.send(message)
-                            .await
-                            .with_context(|| format!("conn_send[{peer_id:?}] dropped"))?;
+                        if let Err(_err) = send.send(message).await {
+                            warn!("conn receiver for {peer_id:?} dropped");
+                            self.conn_send_tx.remove(&peer_id);
+                        }
                     } else {
                         debug!(me = ?me, peer = ?peer_id, "dial");
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
