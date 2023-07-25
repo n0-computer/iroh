@@ -281,10 +281,7 @@ impl MagicSock {
     ///
     /// [`Callbacks::on_endpoint`]: crate::magicsock::conn::Callbacks::on_endpoints
     pub async fn new(opts: Options) -> Result<Self> {
-        let name = format!(
-            "magic-{}",
-            hex::encode(&opts.private_key.public_key().as_ref()[..8])
-        );
+        let name = format!("magic-{}", opts.private_key.public_key().short_hex());
         Self::with_name(name.clone(), opts)
             .instrument(info_span!("magicsock", %name))
             .await
@@ -576,12 +573,12 @@ impl MagicSock {
 
         self.inner.closing.store(true, Ordering::Relaxed);
         self.inner.closed.store(true, Ordering::SeqCst);
-        // c.connCtxCancel()
 
         let mut tasks = self.actor_tasks.lock().await;
+        let task_count = tasks.len();
         let mut i = 0;
         while let Some(task) = tasks.pop() {
-            debug!("waiting for task {}", i);
+            debug!("waiting for task {i}/{task_count}");
             task.await?;
             i += 1;
         }
@@ -1080,7 +1077,7 @@ impl Actor {
             .endpoint_for_ip_port(&SendAddr::Udp(meta.addr))
         {
             None => {
-                warn!("no peer_map state found for {:?}, skipping", meta.addr);
+                warn!(peer=?meta.addr, "no peer_map state found for peer, skipping");
                 return false;
             }
             Some(ep) => {
@@ -1133,10 +1130,7 @@ impl Actor {
         let ep_quic_mapped_addr = match self.peer_map.endpoint_for_node_key(&dm.src) {
             Some(ep) => ep.quic_mapped_addr,
             None => {
-                info!(
-                    "no peer_map state found for {:?} in: {:#?}",
-                    dm.src, self.peer_map
-                );
+                info!(peer=%dm.src, "no peer_map state found for peer");
                 let id = self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
                     msock_public_key: self.inner.public_key.clone(),
@@ -2211,12 +2205,16 @@ impl Actor {
         // remove moribund nodes in the next step below.
         for n in &self.net_map.as_ref().unwrap().peers {
             if self.peer_map.endpoint_for_node_key(&n.key).is_none() {
+                // info!(
+                //     "inserting peer's endpoint {:?} - {:?} {:#?} {:#?}",
+                //     self.inner.public_key, // our own node's public key
+                //     n.key.clone(),         // public key of node endpoint being created
+                //     self.peer_map,         // map of all endpoints we know about
+                //     n,                     // node being added
+                // );
                 info!(
-                    "inserting endpoint {:?} - {:?} {:#?} {:#?}",
-                    self.inner.public_key,
-                    n.key.clone(),
-                    self.peer_map,
-                    n,
+                    peer = %n.key,
+                    "inserting peer's endpoint in PeerMap"
                 );
                 self.peer_map.insert_endpoint(EndpointOptions {
                     msock_sender: self.inner.actor_sender.clone(),
