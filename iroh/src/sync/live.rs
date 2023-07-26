@@ -205,7 +205,7 @@ impl Actor {
         // add addresses of initial peers to our endpoint address book
         for peer in &initial_peers {
             self.endpoint
-                .add_known_addrs(peer.peer_id, &peer.addrs)
+                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
                 .await?;
         }
 
@@ -235,6 +235,7 @@ impl Actor {
             self.endpoint
                 .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
                 .await?;
+        }
 
         // trigger initial sync with initial peers
         for peer in peer_ids {
