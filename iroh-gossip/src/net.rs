@@ -332,7 +332,6 @@ impl GossipActor {
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;
                     }
-                    self.timers.reset();
                 }
 
             }
