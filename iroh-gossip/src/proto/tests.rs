@@ -200,7 +200,7 @@ pub fn assert_synchronous_active<PA: PeerAddress, R: Rng + Clone>(
                     .peers
                     .get(*other_idx)
                     .unwrap()
-                    .state(&topic)
+                    .state(topic)
                     .unwrap()
                     .swarm
                     .active_view;
@@ -215,7 +215,7 @@ pub fn assert_synchronous_active<PA: PeerAddress, R: Rng + Clone>(
                     .peers
                     .get(*other_idx)
                     .unwrap()
-                    .state(&topic)
+                    .state(topic)
                     .unwrap()
                     .gossip
                     .eager_push_peers;
