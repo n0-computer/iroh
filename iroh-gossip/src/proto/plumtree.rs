@@ -23,22 +23,22 @@ use super::{PeerAddress, IO};
 /// Events Plumtree is informed of from the peer sampling service and IO layer.
 #[derive(Debug)]
 pub enum InEvent<PA> {
-    /// A [`Message`] was received from the peer [`PA`].
+    /// A [`Message`] was received from the peer.
     RecvMessage(PA, Message),
     /// Broadcast the contained payload.
     Broadcast(Bytes),
     /// A timer has expired.
     TimerExpired(Timer),
-    /// New member [`PA`] has joined the topic.
+    /// New member `PA` has joined the topic.
     NeighborUp(PA),
-    /// Peer [`PA`] has disconnected from the topic.
+    /// Peer `PA` has disconnected from the topic.
     NeighborDown(PA),
 }
 
 /// Events Plumtree emits.
 #[derive(Debug, PartialEq, Eq)]
 pub enum OutEvent<PA> {
-    /// Ask the IO layer to send a [`Message`] to peer [`PA`].
+    /// Ask the IO layer to send a [`Message`] to peer `PA`.
     SendMessage(PA, Message),
     /// Schedule a [`Timer`].
     ScheduleTimer(Duration, Timer),
@@ -197,10 +197,10 @@ pub struct Config {
     /// Timeout after which [`IHave`] messages are pushed to peers.
     pub dispatch_timeout: Duration,
     /// The protocol performs a tree optimization, which promotes lazy peers to eager peers if the
-    /// [`Ihave`] messages received from them have a lower number of hops from the message's origin
-    /// as the [`InEvent::Broadcast`] messages received from our eager peers. This parameter is the
-    /// number of hops that the lazy peers must be closer to the origin than our eager peers to be
-    /// promoted to become an eager peer.
+    /// [`Message::IHave`] messages received from them have a lower number of hops from the
+    /// message's origin as the [`InEvent::Broadcast`] messages received from our eager peers. This
+    /// parameter is the number of hops that the lazy peers must be closer to the origin than our
+    /// eager peers to be promoted to become an eager peer.
     pub optimization_threshold: Round,
 }
 
@@ -279,7 +279,7 @@ pub struct State<PA> {
     /// Payloads of received messages.
     cache: HashMap<MessageId, Gossip>,
 
-    /// Message ids for which a [`Timer::Graft`] has been scheduled.
+    /// Message ids for which a [`Timer::SendGraft`] has been scheduled.
     graft_timer_scheduled: HashSet<MessageId>,
     /// Whether a [`Timer::DispatchLazyPush`] has been scheduled.
     dispatch_timer_scheduled: bool,
