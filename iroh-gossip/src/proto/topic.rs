@@ -240,7 +240,7 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
             },
             InEvent::PeerDisconnected(peer) => {
                 self.swarm.handle(SwarmIn::PeerDisconnected(peer), now, io);
-                self.gossip.handle(GossipIn::PeerDisconnected(peer), io);
+                self.gossip.handle(GossipIn::NeighborDown(peer), io);
             }
             InEvent::UpdatePeerData(data) => {
                 self.swarm.handle(SwarmIn::UpdatePeerData(data), now, io)
