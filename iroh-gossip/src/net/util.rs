@@ -104,7 +104,7 @@ impl Dialer {
             let res = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(anyhow!("Cancelled")),
-                res = endpoint.connect(peer_id, alpn_protocol, &[]) => res
+                res = endpoint.connect(peer_id, alpn_protocol, None, &[]) => res
             };
             (peer_id, res)
         }

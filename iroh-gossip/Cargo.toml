@@ -14,9 +14,9 @@ anyhow = { version = "1", features = ["backtrace"] }
 blake3 = "1.3.3"
 bytes = { version = "1.4.0", features = ["serde"] }
 data-encoding = "2.4.0"
-derive_more = { version = "0.99.17", git = "https://github.com/JelteF/derive_more", features = ["debug", "display", "from", "try_into", "add"] }
+derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "display", "from", "try_into"] }
 ed25519-dalek = { version = "=2.0.0-rc.3", features = ["serde", "rand_core"] }
-indexmap = "1.9.3"
+indexmap = "2.0"
 rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
@@ -30,6 +30,7 @@ tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "
 postcard = { version = "1", optional = true, default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
 once_cell = "1.18.0"
+genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
