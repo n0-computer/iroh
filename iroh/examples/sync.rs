@@ -208,6 +208,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // process commands in a loop
     println!("> ready to accept commands");
     println!("> type `help` for a list of commands");
+
+    let mut current_watch = Arc::new(std::sync::Mutex::new(None));
     loop {
         // wait for a command from the input repl thread
         let Some((cmd, to_repl_tx)) = cmd_rx.recv().await else {
@@ -225,7 +227,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 println!("> aborted");
             }
-            res = handle_command(cmd, &doc, &our_ticket, &log_filter) => if let Err(err) = res {
+            res = handle_command(cmd, &doc, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -249,6 +251,7 @@ async fn handle_command(
     doc: &Doc,
     ticket: &Ticket,
     log_filter: &LogLevelReload,
+    current_watch: &Arc<std::sync::Mutex<Option<String>>>,
 ) -> anyhow::Result<()> {
     match cmd {
         Cmd::Set { key, value } => {
@@ -263,6 +266,28 @@ async fn handle_command(
                 }
             }
         }
+        Cmd::Watch { key } => {
+            println!("watching key: '{key}'");
+            current_watch.lock().unwrap().replace(key);
+            let watch = current_watch.clone();
+            doc.on_insert(Box::new(move |origin, entry| {
+                let matcher = watch.lock().unwrap();
+                if let Some(matcher) = &*matcher {
+                    let key = entry.entry().id().key();
+                    if key.starts_with(matcher.as_bytes()) {
+                        println!("change: {}", fmt_entry(&entry));
+                    }
+                }
+            }));
+        }
+        Cmd::WatchCancel => match current_watch.lock().unwrap().take() {
+            Some(key) => {
+                println!("canceled watching key: '{key}'");
+            }
+            None => {
+                println!("no watch active");
+            }
+        },
         Cmd::Ls { prefix } => {
             let entries = match prefix {
                 None => doc.replica().all(),
@@ -325,6 +350,13 @@ pub enum Cmd {
         #[clap(verbatim_doc_comment)]
         directive: String,
     },
+    /// Watch for changes.
+    Watch {
+        /// The key to watch.
+        key: String,
+    },
+    /// Cancels any running watch command.
+    WatchCancel,
     /// Quit
     Exit,
 }

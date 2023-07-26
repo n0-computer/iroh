@@ -16,7 +16,8 @@ use iroh_gossip::net::util::Dialer;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{
-    Author, InsertOrigin, Namespace, NamespaceId, Replica, ReplicaStore, SignedEntry,
+    Author, InsertOrigin, Namespace, NamespaceId, OnInsertCallback, Replica, ReplicaStore,
+    SignedEntry,
 };
 use tokio::{
     io::AsyncRead,
@@ -125,6 +126,10 @@ impl Doc {
             }));
         }
         doc
+    }
+
+    pub fn on_insert(&self, callback: OnInsertCallback) {
+        self.replica.on_insert(callback);
     }
 
     pub fn replica(&self) -> &Replica {
