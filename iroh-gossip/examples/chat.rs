@@ -73,6 +73,20 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    // parse the cli command
+    let (topic, peers) = match &args.command {
+        Command::Open { topic } => {
+            let topic = topic.unwrap_or_else(|| TopicId::from_bytes(rand::random()));
+            println!("> opening chat room for topic {topic}");
+            (topic, vec![])
+        }
+        Command::Join { ticket } => {
+            let Ticket { topic, peers } = Ticket::from_str(ticket)?;
+            println!("> joining chat room for topic {topic:?}",);
+            (topic, peers)
+        }
+    };
+
     // parse or generate our keypair
     let keypair = match args.private_key {
         None => Keypair::generate(),
@@ -116,62 +130,39 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("> our peer id: {}", endpoint.peer_id());
 
-    // wait for a first endpoint update so that we know about at least one of our addrs
-    let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-    drop(initial_endpoints_rx);
-
     // create the gossip protocol
     let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
     // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
     gossip_cell.set(gossip.clone()).unwrap();
 
-    // pass our initial peer info to the gossip protocol
-    gossip.update_endpoints(&initial_endpoints)?;
+    // wait for a first endpoint update so that we know about at least one of our addrs
+    initial_endpoints_rx.recv().await.unwrap();
+    drop(initial_endpoints_rx);
+
+    // print a ticket that inclues our own peer id and endpoint addresses
+    let ticket = {
+        let me = PeerAddr::from_endpoint(&endpoint).await?;
+        let peers = peers.iter().chain([&me]).cloned().collect();
+        Ticket { topic, peers }
+    };
+    println!("> ticket to join us: {ticket}");
 
     // spawn our endpoint loop that forwards incoming connections to the gossiper
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
-    let (mut our_ticket, peer_ids) = match &args.command {
-        Command::Open { topic } => {
-            let topic = topic.unwrap_or_else(|| TopicId::from_bytes(rand::random()));
-            println!("> opening chat room for topic {topic}");
-            let ticket = Ticket {
-                topic,
-                peers: vec![],
-            };
-            (ticket, vec![])
-        }
-        Command::Join { ticket } => {
-            let Ticket { topic, peers } = Ticket::from_str(ticket)?;
-            println!("> joining chat room for topic {topic:?}",);
-            // add the peer addrs from the ticket to our known addrs so that they can be dialed
-            let mut peer_ids = vec![];
-            for peer in &peers {
-                endpoint
-                    .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
-                    .await?;
-                peer_ids.push(peer.peer_id);
-            }
-            (Ticket { topic, peers }, peer_ids)
-        }
-    };
-
-    // add our peer id and endpoints to the ticket and print it for others to join
-    let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
-    our_ticket.peers.push(PeerAddr {
-        peer_id: endpoint.peer_id(),
-        addrs,
-        derp_region: endpoint.my_derp().await,
-    });
-    println!("> ticket to join us: {our_ticket}");
-
-    if peer_ids.is_empty() {
+    // join the gossip topic by connecting to known peers, if any
+    if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
-        println!("> trying to connect to {} peers...", peer_ids.len());
-    }
-
-    let topic = our_ticket.topic;
+        println!("> trying to connect to {} peers...", peers.len());
+        // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
+        for peer in &peers {
+            endpoint
+                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
+                .await?;
+        }
+    };
+    let peer_ids = peers.iter().map(|p| p.peer_id).collect();
     gossip.join(topic, peer_ids).await?;
     println!("> connected!");
 
@@ -300,11 +291,26 @@ impl Ticket {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct PeerAddr {
     peer_id: PeerId,
     addrs: Vec<SocketAddr>,
     derp_region: Option<u16>,
+}
+
+impl PeerAddr {
+    pub async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
+        Ok(Self {
+            peer_id: endpoint.peer_id(),
+            derp_region: endpoint.my_derp().await,
+            addrs: endpoint
+                .local_endpoints()
+                .await?
+                .iter()
+                .map(|ep| ep.addr)
+                .collect(),
+        })
+    }
 }
 
 /// Serializes to base32.
