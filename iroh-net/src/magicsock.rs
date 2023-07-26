@@ -196,7 +196,7 @@ pub(self) struct Inner {
     pub(self) private_key: key::node::SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    local_addrs: Arc<std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>>,
+    local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
 
     /// Preferred port from `Options::port`; 0 means auto.
     port: AtomicU16,
@@ -333,7 +333,7 @@ impl MagicSock {
             port: AtomicU16::new(port),
             public_key: private_key.public_key(),
             private_key,
-            local_addrs: Arc::new(std::sync::RwLock::new((ipv4_addr, ipv6_addr))),
+            local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             network_recv_ch: network_recv_ch_receiver,
