@@ -1,6 +1,7 @@
 use reqwest::Url;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::{info_span, Instrument};
 
 use crate::{
     derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
@@ -68,14 +69,17 @@ impl MeshClients {
 
             let packet_forwarder_handler = self.packet_fwd.clone();
             let (sender, recv) = tokio::sync::oneshot::channel();
-            self.tasks.spawn(async move {
-                if let Err(e) = client
-                    .run_mesh_client(packet_forwarder_handler, Some(sender))
-                    .await
-                {
-                    tracing::warn!("{e:?}");
+            self.tasks.spawn(
+                async move {
+                    if let Err(e) = client
+                        .run_mesh_client(packet_forwarder_handler, Some(sender))
+                        .await
+                    {
+                        tracing::warn!("{e:?}");
+                    }
                 }
-            });
+                .instrument(info_span!("mesh-client")),
+            );
             meshed_once_recvs.push(recv);
         }
         Ok(meshed_once_recvs)

@@ -46,6 +46,7 @@ mod tests {
     use reqwest::Url;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
+    use tracing::{info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::derp::{DerpNode, DerpRegion, ReceivedMessage, UseIpv4, UseIpv6};
@@ -157,32 +158,35 @@ mod tests {
         let public_key = key.public_key();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
         let client_reader = client.clone();
-        let client_reader_task = tokio::spawn(async move {
-            loop {
-                println!("waiting for message on {:?}", key.public_key());
-                match client_reader.recv_detail().await {
-                    Err(e) => {
-                        println!("client {:?} `recv_detail` error {e}", key.public_key());
-                        return;
-                    }
-                    Ok((msg, _)) => {
-                        println!("got message on {:?}: {msg:?}", key.public_key());
-                        if let ReceivedMessage::ReceivedPacket { source, data } = msg {
-                            received_msg_s
-                                .send((source.clone(), data))
-                                .await
-                                .unwrap_or_else(|err| {
-                                    panic!(
-                                        "client {:?}, error sending message over channel: {:?}",
-                                        key.public_key(),
-                                        err
-                                    )
-                                });
+        let client_reader_task = tokio::spawn(
+            async move {
+                loop {
+                    println!("waiting for message on {:?}", key.public_key());
+                    match client_reader.recv_detail().await {
+                        Err(e) => {
+                            println!("client {:?} `recv_detail` error {e}", key.public_key());
+                            return;
+                        }
+                        Ok((msg, _)) => {
+                            println!("got message on {:?}: {msg:?}", key.public_key());
+                            if let ReceivedMessage::ReceivedPacket { source, data } = msg {
+                                received_msg_s
+                                    .send((source.clone(), data))
+                                    .await
+                                    .unwrap_or_else(|err| {
+                                        panic!(
+                                            "client {:?}, error sending message over channel: {:?}",
+                                            key.public_key(),
+                                            err
+                                        )
+                                    });
+                            }
                         }
                     }
                 }
             }
-        });
+            .instrument(info_span!("test.client.reader")),
+        );
         (public_key, received_msg_r, client_reader_task, client)
     }
 

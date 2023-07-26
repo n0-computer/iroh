@@ -14,7 +14,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
 use crate::util::CancelOnDrop;
@@ -774,7 +774,7 @@ async fn bind_local_stun_socket(
             return None;
         }
     };
-    let span = debug_span!(
+    let span = info_span!(
         "stun_udp_listener",
         local_addr = sock
             .local_addr()
@@ -1201,19 +1201,22 @@ mod tests {
         let task = {
             let sock = sock.clone();
             let client = client.clone();
-            tokio::spawn(async move {
-                let mut buf = BytesMut::zeroed(64 << 10);
-                loop {
-                    let (count, src) = sock.recv_from(&mut buf).await.unwrap();
-                    info!(
-                        addr=?sock.local_addr().unwrap(),
-                        %count,
-                        "Forwarding payload to netcheck client",
-                    );
-                    let payload = buf.split_to(count).freeze();
-                    client.receive_stun_packet(payload, src);
+            tokio::spawn(
+                async move {
+                    let mut buf = BytesMut::zeroed(64 << 10);
+                    loop {
+                        let (count, src) = sock.recv_from(&mut buf).await.unwrap();
+                        info!(
+                            addr=?sock.local_addr().unwrap(),
+                            %count,
+                            "Forwarding payload to netcheck client",
+                        );
+                        let payload = buf.split_to(count).freeze();
+                        client.receive_stun_packet(payload, src);
+                    }
                 }
-            })
+                .instrument(info_span!("pkt-fwd")),
+            )
         };
 
         let r = client.get_report(dm, Some(sock), None).await?;

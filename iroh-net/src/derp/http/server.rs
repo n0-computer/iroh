@@ -23,7 +23,7 @@ use tokio::{
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
 use super::HTTP_UPGRADE_PROTOCOL;
 use crate::{
@@ -385,7 +385,7 @@ impl ServerState {
                                 {
                                     error!("[{http_str}] derp: failed to handle connection: {e}");
                                 }
-                            }.instrument(debug_span!("handle_connection")));
+                            }.instrument(info_span!("conn")));
                         }
                         Err(err) => {
                             error!("[{http_str}] derp: failed to accept connection: {err}");
@@ -464,17 +464,19 @@ where
                                     derp_connection_handler(&closure_conn_handler, upgraded).await
                                 {
                                     tracing::warn!(
-                                        "server \"{HTTP_UPGRADE_PROTOCOL}\" io error: {:?}",
+                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\": io error: {:?}",
                                         e
                                     );
                                 } else {
-                                    tracing::info!("server \"{HTTP_UPGRADE_PROTOCOL}\" success");
+                                    tracing::info!(
+                                        "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\" success"
+                                    );
                                 };
                             }
                             Err(e) => tracing::warn!("upgrade error: {:?}", e),
                         }
                     }
-                    .instrument(tracing::debug_span!("derp_connection_handler")),
+                    .instrument(tracing::debug_span!("handler")),
                 );
 
                 // Now return a 101 Response saying we agree to the upgrade to the
