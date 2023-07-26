@@ -26,9 +26,11 @@ iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.5.1", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
+iroh-sync = { path = "../iroh-sync" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
+range-collections = { version = "0.4.0" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
@@ -65,9 +67,7 @@ bytes = "1"
 duct = "0.13.6"
 genawaiter = { version = "0.99", features = ["futures03"] }
 nix = "0.26.2"
-postcard = "1"
 proptest = "1.2.0"
-rand = "0.8"
 regex = { version = "1.7.1", features = ["std"] }
 tempfile = "3.4"
 testdir = "0.8"
