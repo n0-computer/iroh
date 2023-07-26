@@ -308,18 +308,13 @@ mod test {
         network.ticks(10);
 
         // assert all peers appear in the connections
-        let all_conns: HashSet<i32> = HashSet::from_iter(
-            (0..4)
-                .map(|pa| {
-                    network
-                        .get_active(&pa, &t)
-                        .unwrap()
-                        .into_iter()
-                        .map(|x| x.into_iter())
-                        .flatten()
-                })
-                .flatten(),
-        );
+        let all_conns: HashSet<i32> = HashSet::from_iter((0..4).flat_map(|pa| {
+            network
+                .get_active(&pa, &t)
+                .unwrap()
+                .into_iter()
+                .flat_map(|x| x.into_iter())
+        }));
         assert_eq!(all_conns, HashSet::from_iter([0, 1, 2, 3]));
         assert!(assert_synchronous_active(&network));
 
@@ -329,18 +324,13 @@ mod test {
         assert!(network.peer(&3).unwrap().state(&t).is_none());
 
         // assert all peers without peer 3 appear in the connections
-        let all_conns: HashSet<i32> = HashSet::from_iter(
-            (0..num)
-                .map(|pa| {
-                    network
-                        .get_active(&pa, &t)
-                        .unwrap()
-                        .into_iter()
-                        .map(|x| x.into_iter())
-                        .flatten()
-                })
-                .flatten(),
-        );
+        let all_conns: HashSet<i32> = HashSet::from_iter((0..num).flat_map(|pa| {
+            network
+                .get_active(&pa, &t)
+                .unwrap()
+                .into_iter()
+                .flat_map(|x| x.into_iter())
+        }));
         assert_eq!(all_conns, HashSet::from_iter([0, 1, 2]));
         assert!(assert_synchronous_active(&network));
     }

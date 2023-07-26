@@ -285,7 +285,7 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
     ///
     /// TODO: Remove/replace with metrics?
     pub fn gossip_stats(&self) -> &plumtree::Stats {
-        &self.gossip.stats()
+        self.gossip.stats()
     }
 
     /// Check if this topic has any active (connected) peers.

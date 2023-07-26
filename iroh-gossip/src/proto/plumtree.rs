@@ -554,7 +554,7 @@ mod test {
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
             ));
-            io.push(OutEvent::EmitEvent(Event::Received(content.clone())));
+            io.push(OutEvent::EmitEvent(Event::Received(content)));
             io
         };
         assert_eq!(io, expected);
@@ -597,7 +597,7 @@ mod test {
                 }),
             ));
             io.push(OutEvent::SendMessage(3, Message::Prune));
-            io.push(OutEvent::EmitEvent(Event::Received(content.clone())));
+            io.push(OutEvent::EmitEvent(Event::Received(content)));
             io
         };
         assert_eq!(io, expected);
