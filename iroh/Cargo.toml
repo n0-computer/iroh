@@ -26,10 +26,12 @@ iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
+iroh-sync = { path = "../iroh-sync" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
 range-collections = { version = "0.4.0" }
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["io-util", "rt"] }
@@ -50,7 +52,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 data-encoding = "2.4.0"
 url = { version = "2.4", features = ["serde"] }
 
-
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
@@ -65,7 +66,6 @@ anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
 duct = "0.13.6"
 nix = "0.26.2"
-rand = "0.8"
 regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
