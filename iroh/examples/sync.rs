@@ -209,7 +209,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> ready to accept commands");
     println!("> type `help` for a list of commands");
 
-    let mut current_watch = Arc::new(std::sync::Mutex::new(None));
+    let mut current_watch: Arc<std::sync::Mutex<Option<String>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let watch = current_watch.clone();
+    doc.on_insert(Box::new(move |origin, entry| {
+        let matcher = watch.lock().unwrap();
+        if let Some(matcher) = &*matcher {
+            let key = entry.entry().id().key();
+            if key.starts_with(matcher.as_bytes()) {
+                println!("change: {}", fmt_entry(&entry));
+            }
+        }
+    }));
+
     loop {
         // wait for a command from the input repl thread
         let Some((cmd, to_repl_tx)) = cmd_rx.recv().await else {
@@ -269,16 +281,6 @@ async fn handle_command(
         Cmd::Watch { key } => {
             println!("watching key: '{key}'");
             current_watch.lock().unwrap().replace(key);
-            let watch = current_watch.clone();
-            doc.on_insert(Box::new(move |origin, entry| {
-                let matcher = watch.lock().unwrap();
-                if let Some(matcher) = &*matcher {
-                    let key = entry.entry().id().key();
-                    if key.starts_with(matcher.as_bytes()) {
-                        println!("change: {}", fmt_entry(&entry));
-                    }
-                }
-            }));
         }
         Cmd::WatchCancel => match current_watch.lock().unwrap().take() {
             Some(key) => {
