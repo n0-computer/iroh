@@ -25,7 +25,7 @@ use iroh_gossip::{
 };
 use iroh_net::{
     defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
-    hp::derp::{DerpMap, UseIpv4, UseIpv6},
+    derp::{DerpMap, UseIpv4, UseIpv6},
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -134,7 +134,9 @@ async fn main() -> anyhow::Result<()> {
             println!("> joining topic {topic} and connecting to {peers:?}",);
             // add the peer addrs from the ticket to our known addrs so that they can be dialed
             for peer in &peers {
-                endpoint.add_known_addrs(peer.peer_id, &peer.addrs).await?;
+                endpoint
+                    .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
+                    .await?;
             }
             let peer_ids = peers.iter().map(|peer| peer.peer_id).collect();
             gossip.join(topic, peer_ids).await?;
@@ -148,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
     our_ticket.peers.push(PeerAddr {
         peer_id: endpoint.peer_id(),
         addrs,
+        derp_region: endpoint.my_derp().await,
     });
     println!("> ticket to join us: {our_ticket}");
 
@@ -280,6 +283,7 @@ impl Ticket {
 struct PeerAddr {
     peer_id: PeerId,
     addrs: Vec<SocketAddr>,
+    derp_region: Option<u16>,
 }
 
 /// Serializes to base32.
@@ -339,7 +343,8 @@ fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
     Ok(DerpMap::default_from_node(
         url,
         DEFAULT_DERP_STUN_PORT,
-        UseIpv4::None,
-        UseIpv6::None,
+        UseIpv4::TryDns,
+        UseIpv6::TryDns,
+        0,
     ))
 }
