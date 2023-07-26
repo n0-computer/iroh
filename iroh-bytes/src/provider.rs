@@ -8,9 +8,8 @@ use std::sync::Arc;
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::{self, BoxFuture, Either};
-use futures::{FutureExt, Stream};
-use futures::stream::BoxStream;
+use futures::future::{self, BoxFuture};
+use futures::FutureExt;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
@@ -888,34 +887,45 @@ pub trait BaoDb: BaoReadonlyDb {
     }
 
     /// extract a file to a local path
-    /// 
+    ///
     /// `hash` is the hash of the file
     /// `target` is the path to the target file
-    /// `retain` is true if the file can be assumed to be retained unchanged in the file system
+    /// `stable` is true if the file can be assumed to be retained unchanged in the file system
     /// `progress` is a callback that is called with the total number of bytes that have been written
-    fn export(&self, hash: Hash, target: impl AsRef<Path>, retain: bool, progress: impl Fn(u64)) -> BoxFuture<'_, io::Result<()>> {
-        async move {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "not implemented",
-            ))
-        }.boxed()
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        progress: impl Fn(u64),
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let _ = (hash, target, stable, progress);
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
     /// import a file from a local path
-    /// 
+    ///
     /// `data` is the path to the file
-    /// `retain` is true if the file can be assumed to be retained unchanged in the file system
+    /// `stable` is true if the file can be assumed to be retained unchanged in the file system. If
+    /// `stable` is false, the file will be copied.
     /// `progress` is a callback that is called with the total number of bytes that have been written
-    /// 
-    /// Returns the hash of the imported file
-    fn import<'a>(&'a self, data: impl AsRef<Path> + 'a, retain: bool, progress: impl Fn(u64)) -> BoxFuture<'a, io::Result<Hash>> {
-        async move {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "not implemented",
-            ))
-        }.boxed()
+    ///
+    /// Returns the hash of the imported file. The reason to have this method is that some database
+    /// implementations might be able to import a file without copying it.
+    fn import(
+        &self,
+        data: impl AsRef<Path>,
+        stable: bool,
+        progress: impl Fn(u64),
+    ) -> BoxFuture<'_, io::Result<Hash>> {
+        let _ = (data, stable, progress);
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    /// import a byte slice
+    fn import_bytes<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<Hash>> {
+        let _ = bytes;
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 }
 
@@ -952,9 +962,7 @@ impl Vfs for LocalFs {
         _temp_outboard_id: Option<Self::Id>,
         _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        async move {
-            todo!()
-        }.boxed()
+        async move { todo!() }.boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {

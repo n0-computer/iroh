@@ -9,13 +9,12 @@ use bao_tree::io::outboard::PreOrderMemOutboard;
 use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
-use futures::{Future, FutureExt, Stream};
+use futures::{Future, FutureExt};
 use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
 use iroh_bytes::provider::{ValidateProgress, VfsId};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::{File, AsyncSliceReader};
+use iroh_io::File;
 use rand::Rng;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
@@ -34,12 +33,16 @@ impl Vfs for Database {
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         let mut lock = self.0.state.write().unwrap();
         let uuid = rand::thread_rng().gen::<[u8; 16]>();
-        let data_path = self.0.options
+        let data_path = self
+            .0
+            .options
             .partial_path
             .join(Purpose::PartialData(hash, uuid).to_string());
         let outboard_path = if outboard {
             Some(
-                self.0.options.partial_path
+                self.0
+                    .options
+                    .partial_path
                     .join(Purpose::PartialOutboard(hash, uuid).to_string()),
             )
         } else {
@@ -97,7 +100,8 @@ impl Vfs for Database {
                 tokio::fs::rename(temp_outboard_id, &outboard_id).await?;
             };
             Ok((data_id, outboard_id))
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
@@ -245,7 +249,7 @@ impl BaoMap for Database {
                     Either::Right((path, entry.size))
                 },
                 outboard,
-            }
+            },
         })
     }
 }
@@ -269,8 +273,6 @@ impl BaoReadonlyDb for Database {
         unimplemented!()
     }
 }
-
-
 
 impl BaoDb for Database {
     type Vfs = Self;
@@ -308,7 +310,8 @@ impl BaoDb for Database {
             entry.owned_data = true;
             entry.size = size;
             Ok(())
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn get_partial_entry(
@@ -335,25 +338,60 @@ impl BaoDb for Database {
             .collect::<Vec<_>>();
         Box::new(res.into_iter())
     }
+
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        _progress: impl Fn(u64),
+    ) -> BoxFuture<'_, io::Result<()>> {
+        self.clone().export_blob(hash, target, stable).boxed()
+    }
+
+    fn import_bytes<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, io::Result<Hash>> {
+        let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
+        let hash = hash.into();
+        async move {
+            let data_path = self
+                .0
+                .options
+                .complete_path
+                .join(Purpose::Data(hash).to_string());
+            tokio::fs::write(data_path, data).await?;
+            if outboard.len() > 8 {
+                let outboard_path = self
+                    .0
+                    .options
+                    .complete_path
+                    .join(Purpose::Outboard(hash).to_string());
+                tokio::fs::write(outboard_path, &outboard).await?;
+            }
+            let mut state = self.0.state.write().unwrap();
+            let entry = state.complete.entry(hash).or_default();
+            let size = data.len() as u64;
+            entry.owned_data = true;
+            entry.outboard = Some(outboard.into());
+            entry.data = if size < self.0.options.inline_threshold {
+                Some(data.to_vec().into())
+            } else {
+                None
+            };
+            entry.size = size;
+            Ok(hash)
+        }
+        .boxed()
+    }
 }
 
 impl Database {
-
-    async fn copy(mut data: impl AsyncSliceReader, len: u64, target: PathBuf) -> io::Result<()> {
-        // open the target file
-        let mut file = tokio::fs::File::create(target).await?;
-        let chunk_len = 1024 * 128;
-        for offset in (0..len).step_by(chunk_len) {
-            let n = data.read_at(offset, chunk_len).await?;
-            file.write_all(&n).await?;
+    async fn export_blob(self, hash: Hash, target: PathBuf, stable: bool) -> io::Result<()> {
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
         }
-        file.shutdown().await
-    }
-
-    async fn extract_blob(&self, hash: Hash, target: PathBuf) -> io::Result<()> {
-        let entry = self.get(&hash).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
-        })?;
         let parent = target.parent().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -362,16 +400,52 @@ impl Database {
         })?;
         // create the directory in which the target file is
         tokio::fs::create_dir_all(parent).await?;
-        // open the source file
-        let mut data = entry.data_reader().await?;
+        let (source, size) = {
+            let state = self.0.state.read().unwrap();
+            let entry = state.complete.get(&hash).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
+            })?;
+            let source = if entry.owned_data {
+                let name = Purpose::Data(hash).to_string();
+                self.0.options.complete_path.join(name)
+            } else {
+                entry
+                    .external
+                    .get(0)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
+                    })?
+                    .clone()
+            };
+            let size = entry.size;
+            drop(state);
+            (source, size)
+        };
         // copy all the things
-        // why does this even work without a local tokio runtime?
-        let len = data.len().await?;
-        if len > self.0.options.move_threshold {
-            // todo: rename
-            Self::copy(data, len, target).await?;
+        if size > self.0.options.move_threshold && stable {
+            tokio::fs::rename(source, &target).await?;
+            let mut state = self.0.state.write().unwrap();
+            let Some(entry) = state.complete.get_mut(&hash) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "hash not found in database",
+                ));
+            };
+            entry.owned_data = false;
+            entry.external.retain(|x| x != &target);
+            entry.external.insert(0, target);
         } else {
-            Self::copy(data, len, target).await?;
+            // todo: progress
+            tokio::fs::copy(source, &target).await?;
+            let mut state = self.0.state.write().unwrap();
+            let Some(entry) = state.complete.get_mut(&hash) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "hash not found in database",
+                ));
+            };
+            entry.external.retain(|x| x != &target);
+            entry.external.insert(0, target.to_owned());
         }
         Ok(())
     }
@@ -535,20 +609,15 @@ impl Database {
         for hash in partial.keys() {
             tracing::info!("partial {}", hash);
         }
-        Ok(Self(Arc::new(
-            Inner {
-                state: RwLock::new(State {
-                    complete,
-                    partial,
-                }),
-                options: Options {
-                    complete_path,
-                    partial_path,
-                    move_threshold: 1024 * 128,
-                    inline_threshold: 1024 * 16,
-                },
-            }
-        )))
+        Ok(Self(Arc::new(Inner {
+            state: RwLock::new(State { complete, partial }),
+            options: Options {
+                complete_path,
+                partial_path,
+                move_threshold: 1024 * 128,
+                inline_threshold: 1024 * 16,
+            },
+        })))
     }
 
     /// Load a database from disk.

@@ -892,11 +892,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         pw.sync().await?;
         // sync the outboard file
         of.sync().await?;
-        let (data_id, outboard_id) = db.vfs().move_temp_pair(data_id.clone(), Some(outboard_id.clone()), None).await?;
+        let (data_id, outboard_id) = db
+            .vfs()
+            .move_temp_pair(data_id.clone(), Some(outboard_id.clone()), None)
+            .await?;
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_entry(hash, data_id, outboard_id)
-            .await?;
+        db.insert_entry(hash, data_id, outboard_id).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
