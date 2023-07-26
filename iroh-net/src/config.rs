@@ -6,8 +6,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
-use serde::{Deserialize, Serialize};
-
 use super::{key, portmapper};
 
 /// Fake WireGuard endpoint IP address that means to
@@ -18,7 +16,7 @@ use super::{key, portmapper};
 pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 40));
 
 /// An endpoint IPPort and an associated type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     /// The address of the endpoint.
     pub addr: SocketAddr,
@@ -27,7 +25,7 @@ pub struct Endpoint {
 }
 
 /// Type of endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EndpointType {
     /// Endpoint kind has not been determined yet.
     Unknown,
