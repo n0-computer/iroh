@@ -28,6 +28,8 @@ use crate::util::io::validate_bao;
 use crate::util::io::BaoValidationError;
 use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
 
+pub mod writable;
+
 /// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
 const FNAME_OUTBOARDS: &str = "outboards";
 
