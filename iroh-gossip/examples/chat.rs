@@ -150,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
                 endpoint
                     .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
                     .await?;
-                peer_ids.push(peer.peer_id.clone());
+                peer_ids.push(peer.peer_id);
             }
             (Ticket { topic, peers }, peer_ids)
         }
@@ -352,9 +352,8 @@ fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
         None => "None".to_string(),
         Some(map) => map
             .regions
-            .iter()
-            .map(|(_id, region)| region.nodes.iter().map(|node| node.url.to_string()))
-            .flatten()
+            .values()
+            .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
             .collect::<Vec<_>>()
             .join(", "),
     }
