@@ -68,7 +68,7 @@ type ProtoMessage = proto::Message<PeerId>;
 #[derive(Debug, Clone)]
 pub struct GossipHandle {
     to_actor_tx: mpsc::Sender<ToActor>,
-    endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
+    on_endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -86,7 +86,7 @@ impl GossipHandle {
         );
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
-        let (endpoints_tx, endpoints_rx) = watch::channel(Default::default());
+        let (on_endpoints_tx, on_endpoints_rx) = watch::channel(Default::default());
         let actor = GossipActor {
             endpoint,
             state,
@@ -94,7 +94,7 @@ impl GossipHandle {
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            endpoints_rx,
+            on_endpoints_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -112,12 +112,16 @@ impl GossipHandle {
         });
         Self {
             to_actor_tx,
-            endpoints_tx: Arc::new(endpoints_tx),
+            on_endpoints_tx: Arc::new(on_endpoints_tx),
             _actor_handle: Arc::new(actor_handle),
         }
     }
 
     /// Join a topic
+    ///
+    /// Note that this method does only ask for [`PeerId`]s. You must supply information on how to
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addrs`] on
+    /// the underlying `[MagicEndpoint]`.
     ///
     /// The returned future completes immediately if we have active peer connections for this
     /// topic, and otherwise waits for at least one peer connection to be established successfully.
@@ -191,7 +195,7 @@ impl GossipHandle {
     /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
     /// to us.
     pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
-        self.endpoints_tx
+        self.on_endpoints_tx
             .send(endpoints.to_vec())
             .map_err(|_| anyhow!("gossip actor dropped"))
     }
@@ -260,12 +264,12 @@ struct GossipActor {
     dialer: Dialer,
     /// Input messages to the actor
     to_actor_rx: mpsc::Receiver<ToActor>,
-    /// Input events to the state (emitted from the connection loops)
-    in_event_tx: mpsc::Sender<InEvent>,
     /// Sender for the state input (cloned into the connection loops)
+    in_event_tx: mpsc::Sender<InEvent>,
+    /// Input events to the state (emitted from the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
     /// Watcher for updates of discovered endpoint addresses
-    endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
+    on_endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn conections to peers
@@ -295,8 +299,8 @@ impl GossipActor {
                         }
                     }
                 },
-                _ = self.endpoints_rx.changed() => {
-                    let endpoints = self.endpoints_rx.borrow().clone();
+                _ = self.on_endpoints_rx.changed() => {
+                    let endpoints = self.on_endpoints_rx.borrow().clone();
                     let info = IrohInfo {
                         addrs: endpoints.iter().map(|ep| ep.addr).collect(),
                         derp_region: self.endpoint.my_derp().await
@@ -453,18 +457,15 @@ impl GossipActor {
                     self.pending_sends.remove(&peer);
                     self.dialer.abort_dial(&peer);
                 }
-                OutEvent::PeerData(peer, data) => {
-                    match postcard::from_bytes::<IrohInfo>(&data) {
-                        Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
-                        Ok(info) => {
-                            debug!("add known addrs for {peer}: {info:?}...");
-                            self.endpoint
-                                .add_known_addrs(peer, info.derp_region, &info.addrs)
-                                .await?;
-                        }
+                OutEvent::PeerData(peer, data) => match postcard::from_bytes::<IrohInfo>(&data) {
+                    Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
+                    Ok(info) => {
+                        debug!("add known addrs for {peer}: {info:?}...");
+                        self.endpoint
+                            .add_known_addrs(peer, info.derp_region, &info.addrs)
+                            .await?;
                     }
-                    // self.
-                }
+                },
             }
         }
         Ok(())
@@ -578,7 +579,7 @@ mod test {
     #[tokio::test]
     async fn gossip_net_smoke() {
         util::setup_logging();
-        let (derp_map, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())
+        let (derp_map, derp_region, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())
             .await
             .unwrap();
 
@@ -596,18 +597,24 @@ mod test {
 
         let cancel = CancellationToken::new();
         let tasks = [
-            spawn(endpoint_loop(ep1, go1.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep2, go3.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep3, go2.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep1.clone(), go1.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep2.clone(), go3.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep3.clone(), go2.clone(), cancel.clone())),
         ];
 
         let topic: TopicId = blake3::hash(b"foobar").into();
+        // share info that pi1 is on the same derp_region
+        ep2.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
+        ep3.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
+        // join the topics and wait for the connection to succeed
         go2.join(topic, vec![pi1]).await.unwrap();
         go3.join(topic, vec![pi1]).await.unwrap();
         go1.join(topic, vec![]).await.unwrap();
 
+        let len = 10;
+
         let pub1 = spawn(async move {
-            for i in 0..10 {
+            for i in 0..len {
                 let message = format!("hi{}", i);
                 info!("go1 broadcast: {message:?}");
                 go1.broadcast(topic, message.into_bytes().into())
@@ -626,7 +633,7 @@ mod test {
                 if let Event::Received(msg) = ev {
                     recv.push(msg);
                 }
-                if recv.len() == 10 {
+                if recv.len() == len {
                     return recv;
                 }
             }
@@ -641,7 +648,7 @@ mod test {
                 if let Event::Received(msg) = ev {
                     recv.push(msg);
                 }
-                if recv.len() == 10 {
+                if recv.len() == len {
                     return recv;
                 }
             }
@@ -651,7 +658,7 @@ mod test {
         let recv2 = sub2.await.unwrap();
         let recv3 = sub3.await.unwrap();
 
-        let expected: Vec<Bytes> = (0..10)
+        let expected: Vec<Bytes> = (0..len)
             .map(|i| Bytes::from(format!("hi{i}").into_bytes()))
             .collect();
         assert_eq!(recv2, expected);
@@ -661,7 +668,7 @@ mod test {
         for t in tasks {
             t.await.unwrap().unwrap();
         }
-        cleanup().await;
+        drop(cleanup);
     }
 
     // This is copied from iroh-net/src/hp/magicsock/conn.rs
@@ -670,13 +677,12 @@ mod test {
         use std::net::{IpAddr, SocketAddr};
 
         use anyhow::Result;
-        use futures::future::BoxFuture;
         use iroh_net::{
-            derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
+            derp::{DerpMap, UseIpv4, UseIpv6},
             stun::{is, parse_binding_request, response},
         };
         use tokio::sync::oneshot;
-        use tracing::debug;
+        use tracing::{debug, info, trace};
         use tracing_subscriber::{prelude::*, EnvFilter};
 
         pub fn setup_logging() {
@@ -687,9 +693,22 @@ mod test {
                 .ok();
         }
 
-        pub async fn run_derp_and_stun(
+        /// A drop guard to clean up test infrastructure.
+        ///
+        /// After dropping the test infrastructure will asynchronously shutdown and release its
+        /// resources.
+        #[derive(Debug)]
+        pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
+
+        /// Runs a  DERP server with STUN enabled suitable for tests.
+        ///
+        /// The returned `u16` is the region ID of the DERP server in the returned [`DerpMap`], it
+        /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
+        ///
+        /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
+        pub(crate) async fn run_derp_and_stun(
             stun_ip: IpAddr,
-        ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
+        ) -> Result<(DerpMap, Option<u16>, CleanupDropGuard)> {
             // TODO: pass a mesh_key?
 
             let server_key = iroh_net::key::node::SecretKey::generate();
@@ -699,48 +718,36 @@ mod test {
                 .spawn()
                 .await?;
 
-            let derp_addr = server.addr();
-            let derp_port = derp_addr.port();
+            let http_addr = server.addr();
+            info!("DERP listening on {:?}", http_addr);
 
-            let (stun_addr, stun_cleanup) = serve(stun_ip).await?;
-            let m = DerpMap {
-                regions: [(
-                    1,
-                    DerpRegion {
-                        region_id: 1,
-                        region_code: "test".into(),
-                        nodes: vec![DerpNode {
-                            name: "t1".into(),
-                            region_id: 1,
-                            url: format!("http://127.0.0.1:{derp_port}").parse().unwrap(),
-                            stun_only: false,
-                            stun_port: stun_addr.port(),
-                            ipv4: UseIpv4::TryDns,
-                            ipv6: UseIpv6::TryDns,
-                            stun_test_ip: Some(stun_addr.ip()),
-                        }],
-                        avoid: false,
-                    },
-                )]
-                .into_iter()
-                .collect(),
-            };
+            let (stun_addr, stun_drop_guard) = serve(stun_ip).await?;
+            let region_id = 1;
+            let derp_url = format!("http://localhost:{}", http_addr.port())
+                .parse()
+                .unwrap();
+            let m = DerpMap::default_from_node(
+                derp_url,
+                stun_addr.port(),
+                UseIpv4::TryDns,
+                UseIpv6::Disabled,
+                region_id,
+            );
 
-            let cleanup = move || {
-                Box::pin(async move {
-                    stun_cleanup.send(()).unwrap();
-                    server.shutdown().await;
-                }) as BoxFuture<'static, ()>
-            };
+            let (tx, rx) = oneshot::channel();
+            tokio::spawn(async move {
+                let _stun_cleanup = stun_drop_guard; // move into this closure
 
-            Ok((m, cleanup))
+                // Wait until we're dropped or receive a message.
+                rx.await.ok();
+                server.shutdown().await;
+            });
+
+            Ok((m, Some(region_id), CleanupDropGuard(tx)))
         }
 
         /// Sets up a simple STUN server.
-        ///
-        /// The returned [`oneshot::Sender`] can be used to stop the server, either drop it or
-        /// send a message on it.
-        pub async fn serve(ip: IpAddr) -> anyhow::Result<(SocketAddr, oneshot::Sender<()>)> {
+        async fn serve(ip: IpAddr) -> Result<(SocketAddr, CleanupDropGuard)> {
             let pc = tokio::net::UdpSocket::bind((ip, 0)).await?;
             let mut addr = pc.local_addr()?;
             match addr.ip() {
@@ -752,18 +759,19 @@ mod test {
                 _ => unreachable!("using ipv4"),
             }
 
+            info!("STUN listening on {}", addr);
             let (s, r) = oneshot::channel();
             tokio::task::spawn(async move {
                 run_stun(pc, r).await;
             });
 
-            Ok((addr, s))
+            Ok((addr, CleanupDropGuard(s)))
         }
 
         async fn run_stun(pc: tokio::net::UdpSocket, mut done: oneshot::Receiver<()>) {
             let mut buf = vec![0u8; 64 << 10];
             loop {
-                debug!("stun read loop");
+                trace!("read loop");
                 tokio::select! {
                     _ = &mut done => {
                         debug!("shutting down");
@@ -771,14 +779,15 @@ mod test {
                     }
                     res = pc.recv_from(&mut buf) => match res {
                         Ok((n, addr)) => {
-                            debug!("stun read packet {}bytes from {}", n, addr);
+                            trace!("read packet {}bytes from {}", n, addr);
                             let pkt = &buf[..n];
                             if !is(pkt) {
-                                debug!("stun received non STUN pkt");
+                                debug!("received non STUN pkt");
                                 continue;
                             }
                             if let Ok(txid) = parse_binding_request(pkt) {
-                                debug!("stun received binding request");
+                                debug!("received binding request");
+
                                 let res = response(txid, addr);
                                 if let Err(err) = pc.send_to(&res, addr).await {
                                     eprintln!("STUN server write failed: {:?}", err);
