@@ -11,6 +11,7 @@ pub mod dial;
 pub mod get;
 pub mod node;
 pub mod rpc_protocol;
+pub mod sync;
 pub mod util;
 
 /// Expose metrics module
