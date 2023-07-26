@@ -542,7 +542,7 @@ async fn connection_loop(
 mod test {
     use std::time::Duration;
 
-    use iroh_net::{hp::derp::DerpMap, MagicEndpoint};
+    use iroh_net::{derp::DerpMap, MagicEndpoint};
     use tokio::spawn;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
@@ -671,7 +671,7 @@ mod test {
 
         use anyhow::Result;
         use futures::future::BoxFuture;
-        use iroh_net::hp::{
+        use iroh_net::{
             derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
             stun::{is, parse_binding_request, response},
         };
@@ -692,13 +692,12 @@ mod test {
         ) -> Result<(DerpMap, impl FnOnce() -> BoxFuture<'static, ()>)> {
             // TODO: pass a mesh_key?
 
-            let server_key = iroh_net::hp::key::node::SecretKey::generate();
-            let server =
-                iroh_net::hp::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-                    .secret_key(Some(server_key))
-                    .tls_config(None)
-                    .spawn()
-                    .await?;
+            let server_key = iroh_net::key::node::SecretKey::generate();
+            let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+                .secret_key(Some(server_key))
+                .tls_config(None)
+                .spawn()
+                .await?;
 
             let derp_addr = server.addr();
             let derp_port = derp_addr.port();
@@ -716,8 +715,8 @@ mod test {
                             url: format!("http://127.0.0.1:{derp_port}").parse().unwrap(),
                             stun_only: false,
                             stun_port: stun_addr.port(),
-                            ipv4: UseIpv4::Some("127.0.0.1".parse().unwrap()),
-                            ipv6: UseIpv6::None,
+                            ipv4: UseIpv4::TryDns,
+                            ipv6: UseIpv6::TryDns,
                             stun_test_ip: Some(stun_addr.ip()),
                         }],
                         avoid: false,
