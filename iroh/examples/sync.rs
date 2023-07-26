@@ -173,7 +173,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> storage directory: {storage_path:?}");
 
     // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
-    let rt = iroh::bytes::runtime::Handle::from_currrent(num_cpus::get())?;
+    let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
 
     // create a blob store (with a iroh-bytes database inside)
     let blobs = BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
@@ -244,7 +244,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_command(cmd: Cmd, doc: &Doc, ticket: &Ticket, log_filter: &LogLevelReload) -> anyhow::Result<()> {
+async fn handle_command(
+    cmd: Cmd,
+    doc: &Doc,
+    ticket: &Ticket,
+    log_filter: &LogLevelReload,
+) -> anyhow::Result<()> {
     match cmd {
         Cmd::Set { key, value } => {
             doc.insert_bytes(&key, value.into_bytes().into()).await?;
@@ -516,7 +521,7 @@ fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
         DEFAULT_DERP_STUN_PORT,
         UseIpv4::TryDns,
         UseIpv6::TryDns,
-        0
+        0,
     ))
 }
 
@@ -528,21 +533,21 @@ mod iroh_bytes_handlers {
     use futures::{future::BoxFuture, FutureExt};
     use iroh_bytes::{
         protocol::{GetRequest, RequestToken},
-        provider::{
-            CustomGetHandler, Database, EventSender, IrohCollectionParser,
-            RequestAuthorizationHandler,
-        },
+        provider::{CustomGetHandler, EventSender, RequestAuthorizationHandler},
     };
+
+    use iroh::{collection::IrohCollectionParser, database::flat::Database};
+
     #[derive(Debug, Clone)]
     pub struct IrohBytesHandlers {
         db: Database,
-        rt: iroh_bytes::runtime::Handle,
+        rt: iroh_bytes::util::runtime::Handle,
         event_sender: NoopEventSender,
         get_handler: Arc<NoopCustomGetHandler>,
         auth_handler: Arc<NoopRequestAuthorizationHandler>,
     }
     impl IrohBytesHandlers {
-        pub fn new(rt: iroh_bytes::runtime::Handle, db: Database) -> Self {
+        pub fn new(rt: iroh_bytes::util::runtime::Handle, db: Database) -> Self {
             Self {
                 db,
                 rt,
@@ -569,8 +574,8 @@ mod iroh_bytes_handlers {
     #[derive(Debug, Clone)]
     struct NoopEventSender;
     impl EventSender for NoopEventSender {
-        fn send(&self, _event: iroh_bytes::provider::Event) -> Option<iroh_bytes::provider::Event> {
-            None
+        fn send(&self, _event: iroh_bytes::provider::Event) -> BoxFuture<()> {
+            async {}.boxed()
         }
     }
     #[derive(Debug)]
