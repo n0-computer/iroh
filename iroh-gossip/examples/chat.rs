@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr};
+use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -17,7 +17,7 @@ use iroh_net::{
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use url::Url;
 
 /// Chat over iroh-gossip
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Join { ticket } => {
             let Ticket { topic, peers } = Ticket::from_str(ticket)?;
-            println!("> joining chat room for topic {topic:?}",);
+            println!("> joining chat room for topic {topic}");
             (topic, peers)
         }
     };
@@ -106,26 +106,26 @@ async fn main() -> anyhow::Result<()> {
     // init a cell that will hold our gossip handle to be used in endpoint callbacks
     let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
 
-    // init a channel that will emit once the initial endpoints of our local node are discovered
-    // (not using a oneshot channel here because tokio::oneshot::Sender::send takes self, which
-    // does not work in the on_endpoints Fn closure)
-    let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
+    // setup a notification to emit once the initial endpoints of our local node are discovered
+    let notify = Arc::new(Notify::new());
 
     // build our magic endpoint
-    let gossip_cell_clone = gossip_cell.clone();
     let endpoint = MagicEndpoint::builder()
         .keypair(keypair)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .derp_map(derp_map)
-        .on_endpoints(Box::new(move |endpoints| {
-            // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
-            if let Some(gossip) = gossip_cell_clone.get() {
-                gossip.update_endpoints(endpoints).ok();
-            }
-            // trigger channel send on the first endpoint update
-            // (the receiver will be dropped after the first reception)
-            initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
-        }))
+        .on_endpoints({
+            let gossip_cell = gossip_cell.clone();
+            let notify = notify.clone();
+            Box::new(move |endpoints| {
+                // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                if let Some(gossip) = gossip_cell.get() {
+                    gossip.update_endpoints(endpoints).ok();
+                }
+                // notify the outer task of the initial endpoint update (later updates are not interesting)
+                notify.notify_one();
+            })
+        })
         .bind(args.bind_port)
         .await?;
     println!("> our peer id: {}", endpoint.peer_id());
@@ -135,11 +135,9 @@ async fn main() -> anyhow::Result<()> {
     // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
     gossip_cell.set(gossip.clone()).unwrap();
 
-    // wait for a first endpoint update so that we know about at least one of our addrs
-    initial_endpoints_rx.recv().await.unwrap();
-    drop(initial_endpoints_rx);
-
-    // print a ticket that inclues our own peer id and endpoint addresses
+    // wait for a first endpoint update so that we know about our endpoint addresses
+    notify.notified().await;
+    // print a ticket that includes our own peer id and endpoint addresses
     let ticket = {
         let me = PeerAddr::from_endpoint(&endpoint).await?;
         let peers = peers.iter().chain([&me]).cloned().collect();
@@ -182,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || input_loop(line_tx));
 
     // broadcast each line we type
-    println!("> type a message and hit enter to send messages...");
+    println!("> type a message and hit enter to broadcast...");
     while let Some(text) = line_rx.recv().await {
         let message = Message::Message { text: text.clone() };
         let encoded_message = SignedMessage::sign_and_encode(endpoint.keypair(), &message)?;
@@ -218,13 +216,24 @@ async fn subscribe_loop(gossip: GossipHandle, topic: TopicId) -> anyhow::Result<
     }
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: GossipHandle) -> anyhow::Result<()> {
+async fn endpoint_loop(endpoint: MagicEndpoint, gossip: GossipHandle) {
     while let Some(conn) = endpoint.accept().await {
-        let (peer_id, alpn, conn) = accept_conn(conn).await?;
-        match alpn.as_bytes() {
-            GOSSIP_ALPN => gossip.handle_connection(conn).await?,
-            _ => println!("> ignoring connection from {peer_id}: unsupported ALPN protocol"),
-        }
+        let gossip = gossip.clone();
+        tokio::spawn(async move {
+            if let Err(err) = handle_connection(conn, gossip).await {
+                println!("> connection closed: {err}");
+            }
+        });
+    }
+}
+async fn handle_connection(conn: quinn::Connecting, gossip: GossipHandle) -> anyhow::Result<()> {
+    let (peer_id, alpn, conn) = accept_conn(conn).await?;
+    match alpn.as_bytes() {
+        GOSSIP_ALPN => gossip
+            .handle_connection(conn)
+            .await
+            .context(format!("connection to {peer_id} with ALPN {alpn} failed"))?,
+        _ => println!("> ignoring connection from {peer_id}: unsupported ALPN protocol"),
     }
     Ok(())
 }
