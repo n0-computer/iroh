@@ -1,14 +1,16 @@
 //! The server side API
 use std::fmt::{self, Debug};
 use std::io;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bytes::{Bytes, BytesMut};
-use futures::future::{self, BoxFuture};
-use futures::FutureExt;
+use futures::future::{self, BoxFuture, Either};
+use futures::{FutureExt, Stream};
+use futures::stream::BoxStream;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
@@ -653,20 +655,50 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
+/// A virtual file system for storing blobs
 ///
+/// A file is just a persistent blob that can be read and written with random access.
 pub trait Vfs: Clone + Debug + Send + Sync + 'static {
+    /// The unique identifier for a file
     ///
+    /// In case of a file on disk, this is the path to the file.
+    /// In case of a file in memory this could be an id.
+    /// In case of web storage this could be an url.
     type Id: Debug + Clone + Send + Sync + 'static;
-    ///
+    /// The reader type
     type ReadRaw: AsyncSliceReader;
-    ///
+    /// The writer type
     type WriteRaw: AsyncSliceWriter;
+    /// Create a new temporary file pair
     ///
+    /// `hash` is the hash of the data file.
+    /// `outboard` is true if we need an outboard file.
+    /// `location_hint` is a hint for the location of the temporary file. E.g. you
+    /// might want to store
+    ///
+    /// Returns a tuple of data file and optional outboard file id, where
+    /// the two ids are marked in some way to indicate that they belong together.
+    ///
+    /// These are new, empty files.
     fn create_temp_pair(
         &self,
         hash: Hash,
         outboard: bool,
+        location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
+
+    /// Move a temporary file to its final location
+    ///
+    /// `temp` is the id of the temporary file. This should be the data part of
+    /// the pair returned by `create_temp_pair`.
+    /// `location_hint` is a hint for the location of the final file.
+    fn move_temp_pair(
+        &self,
+        temp_data: Self::Id,
+        temp_outboard: Option<Self::Id>,
+        location_hint: Option<&[u8]>,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
+
     /// open an internal handle for reading
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
     /// open an internal handle for writing
@@ -674,6 +706,14 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
     /// delete an internal handle
     fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>>;
 }
+
+///
+#[derive(Debug, Clone)]
+pub struct PartialData(Hash, [u8; 16]);
+
+///
+#[derive(Debug, Clone)]
+pub struct PartialOutboard(Hash, [u8; 16]);
 
 ///
 #[derive(Clone)]
@@ -691,6 +731,17 @@ pub enum Purpose {
     Outboard(Hash),
     /// File is going to be used to store metadata
     Meta(Vec<u8>),
+}
+
+impl Purpose {
+    /// Get the file purpose from a path, handling weird cases
+    pub fn from_path(path: impl AsRef<Path>) -> std::result::Result<Self, &'static str> {
+        let path = path.as_ref();
+        let name = path.file_name().ok_or("no file name")?;
+        let name = name.to_str().ok_or("invalid file name")?;
+        let purpose = Self::from_str(name).map_err(|_| "invalid file name")?;
+        Ok(purpose)
+    }
 }
 
 impl fmt::Display for Purpose {
@@ -814,13 +865,13 @@ pub trait BaoDb: BaoReadonlyDb {
     /// Insert a new complete entry into the database
     ///
     /// `hash` is the hash of the entry
-    /// `data` is the complete data of the entry
-    /// `outboard` is an optional outboard for the entry
+    /// `data_id` is the complete data of the entry
+    /// `outboard_id` is an optional outboard for the entry
     fn insert_entry(
         &self,
         hash: Hash,
-        data: VfsId<Self>,
-        outboard: Option<VfsId<Self>>,
+        data_id: VfsId<Self>,
+        outboard_id: Option<VfsId<Self>>,
     ) -> BoxFuture<'_, io::Result<()>>;
 
     /// Check if we have a partial entry for `hash`, and if so, return it
@@ -831,17 +882,40 @@ pub trait BaoDb: BaoReadonlyDb {
         futures::future::ok(None).boxed()
     }
 
-    /// Check if we have a full entry for `hash`, and if so, return it
-    fn get_full_entry(
-        &self,
-        _hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, Option<VfsId<Self>>)>>> {
-        futures::future::ok(None).boxed()
-    }
-
     /// list partial blobs in the database
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
+    }
+
+    /// extract a file to a local path
+    /// 
+    /// `hash` is the hash of the file
+    /// `target` is the path to the target file
+    /// `retain` is true if the file can be assumed to be retained unchanged in the file system
+    /// `progress` is a callback that is called with the total number of bytes that have been written
+    fn export(&self, hash: Hash, target: impl AsRef<Path>, retain: bool, progress: impl Fn(u64)) -> BoxFuture<'_, io::Result<()>> {
+        async move {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "not implemented",
+            ))
+        }.boxed()
+    }
+
+    /// import a file from a local path
+    /// 
+    /// `data` is the path to the file
+    /// `retain` is true if the file can be assumed to be retained unchanged in the file system
+    /// `progress` is a callback that is called with the total number of bytes that have been written
+    /// 
+    /// Returns the hash of the imported file
+    fn import<'a>(&'a self, data: impl AsRef<Path> + 'a, retain: bool, progress: impl Fn(u64)) -> BoxFuture<'a, io::Result<Hash>> {
+        async move {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "not implemented",
+            ))
+        }.boxed()
     }
 }
 
@@ -858,6 +932,7 @@ impl Vfs for LocalFs {
         &self,
         hash: Hash,
         outboard: bool,
+        _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         use rand::Rng;
         let dir = std::env::temp_dir();
@@ -869,6 +944,17 @@ impl Vfs for LocalFs {
             None
         };
         future::ok((data, outboard)).boxed()
+    }
+
+    fn move_temp_pair(
+        &self,
+        _temp_data_id: Self::Id,
+        _temp_outboard_id: Option<Self::Id>,
+        _location_hint: Option<&[u8]>,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
+        async move {
+            todo!()
+        }.boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {

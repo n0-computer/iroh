@@ -754,10 +754,15 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         db: &D,
         hash: &Hash,
         size: u64,
+        location_hint: Option<&[u8]>,
     ) -> io::Result<(VfsId<D>, Option<VfsId<D>>)> {
         // create temp file for the data, using the hash as name hint
         db.vfs()
-            .create_temp_pair(*hash, size > (IROH_BLOCK_SIZE.bytes() as u64))
+            .create_temp_pair(
+                *hash,
+                size > (IROH_BLOCK_SIZE.bytes() as u64),
+                location_hint,
+            )
             .await
     }
 
@@ -766,12 +771,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         hash: Hash,
         recursive: bool,
+        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         if recursive {
-            self.get_collection(conn, &hash, sender).await
+            self.get_collection(conn, &hash, location_hint, sender)
+                .await
         } else {
-            self.get_blob(conn, &hash, sender).await
+            self.get_blob(conn, &hash, location_hint, sender).await
         }
     }
 
@@ -782,6 +789,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner(
         db: &D,
         header: AtBlobHeader,
+        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<AtEndBlob> {
         use iroh_io::AsyncSliceWriter;
@@ -790,7 +798,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // read the size
         let (content, size) = header.next().await?;
         // create the temp file pair
-        let (data_id, outboard_id) = Self::create_temp_pair(&db, &hash, size).await?;
+        let (data_id, outboard_id) =
+            Self::create_temp_pair(&db, &hash, size, location_hint).await?;
         // open the data file in any case
         let df = db.vfs().open_write(&data_id).await?;
         // open the outboard file (only if we need to)
@@ -828,6 +837,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(mut of) = ofo {
             of.sync().await?;
         }
+        let (data_id, outboard_id) = db.vfs().move_temp_pair(data_id, outboard_id, None).await?;
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
         db.insert_entry(hash, data_id, outboard_id).await?;
@@ -882,9 +892,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         pw.sync().await?;
         // sync the outboard file
         of.sync().await?;
+        let (data_id, outboard_id) = db.vfs().move_temp_pair(data_id.clone(), Some(outboard_id.clone()), None).await?;
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_entry(hash, data_id.clone(), Some(outboard_id.clone()))
+        db.insert_entry(hash, data_id, outboard_id)
             .await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
@@ -932,6 +943,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         hash: &Hash,
+        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
@@ -976,7 +988,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            Self::get_blob_inner(&db, header, sender).await?
+            Self::get_blob_inner(&db, header, location_hint, sender).await?
         };
 
         // we have requested a single hash, so we must be at closing
@@ -1005,7 +1017,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     outboard_id
                 );
                 let missing_chunks =
-                    Self::get_missing_ranges_blob(&db, hash, &data_id, &outboard_id)
+                    Self::get_missing_ranges_blob(&db, &hash, &data_id, &outboard_id)
                         .await
                         .ok()
                         .unwrap_or_else(|| RangeSet2::all());
@@ -1030,6 +1042,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         root_hash: &Hash,
+        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         use tracing::info as log;
@@ -1077,7 +1090,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     };
                 let header = start.next(child_hash);
                 let end_blob = match info {
-                    BlobInfo::Missing => Self::get_blob_inner(&db, header, sender.clone()).await?,
+                    BlobInfo::Missing => {
+                        Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?
+                    }
                     BlobInfo::Partial {
                         data_id,
                         outboard_id,
@@ -1112,7 +1127,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
-            let end_root = Self::get_blob_inner(&db, header, sender.clone()).await?;
+            let end_root = Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?;
             // read the collection fully for now
             let entry = db.get(&root_hash).context("just downloaded")?;
             let reader = entry.data_reader().await?;
@@ -1135,7 +1150,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     None => break start.finish(),
                 };
                 let header = start.next(child_hash);
-                let end_blob = Self::get_blob_inner(&db, header, sender.clone()).await?;
+                let end_blob =
+                    Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?;
                 next = end_blob.next();
             }
         };
@@ -1178,7 +1194,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 let this = self.clone();
                 let conn = conn.clone();
                 let sender = sender.clone();
-                let task = local.spawn_pinned(move || this.get(conn, hash, is_root, sender));
+                let task = local.spawn_pinned(move || this.get(conn, hash, is_root, None, sender));
                 // wrap in an aborting join handle so all of this stops if we get dropped
                 task
             })

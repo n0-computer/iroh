@@ -9,12 +9,13 @@ use bao_tree::io::outboard::PreOrderMemOutboard;
 use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
-use futures::{Future, FutureExt};
+use futures::{Future, FutureExt, Stream};
 use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
 use iroh_bytes::provider::{ValidateProgress, VfsId};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::File;
+use iroh_io::{File, AsyncSliceReader};
 use rand::Rng;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
@@ -29,15 +30,16 @@ impl Vfs for Database {
         &self,
         hash: Hash,
         outboard: bool,
+        _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        let mut lock = self.0.write().unwrap();
+        let mut lock = self.0.state.write().unwrap();
         let uuid = rand::thread_rng().gen::<[u8; 16]>();
-        let data_path = lock
+        let data_path = self.0.options
             .partial_path
             .join(Purpose::PartialData(hash, uuid).to_string());
         let outboard_path = if outboard {
             Some(
-                lock.partial_path
+                self.0.options.partial_path
                     .join(Purpose::PartialOutboard(hash, uuid).to_string()),
             )
         } else {
@@ -50,6 +52,52 @@ impl Vfs for Database {
         }
         tracing::info!("creating temp pair: {:?} {:?}", data_path, outboard_path);
         future::ready(Ok((data_path, outboard_path))).boxed()
+    }
+
+    fn move_temp_pair(
+        &self,
+        temp_data_id: Self::Id,
+        temp_outboard_id: Option<Self::Id>,
+        _location_hint: Option<&[u8]>,
+    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
+        async move {
+            let dir = &self.0.options.complete_path;
+            let data_purpose = Purpose::from_path(&temp_data_id).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
+            })?;
+            let Purpose::PartialData(data_hash, data_uuid) = data_purpose else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid temp file name",
+                ));
+            };
+            let outboard_id = if let Some(temp_outboard_id) = &temp_outboard_id {
+                let outboard_purpose = Purpose::from_path(temp_outboard_id).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
+                })?;
+                let Purpose::PartialData(outboard_hash, outboard_uuid) = outboard_purpose else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid temp file name",
+                    ));
+                };
+                if data_hash != outboard_hash || data_uuid != outboard_uuid {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid temp file pair",
+                    ));
+                }
+                Some(dir.join(Purpose::Outboard(data_hash).to_string()))
+            } else {
+                None
+            };
+            let data_id = dir.join(Purpose::Data(data_hash).to_string());
+            tokio::fs::rename(temp_data_id, &data_id).await?;
+            if let (Some(temp_outboard_id), Some(outboard_id)) = (temp_outboard_id, &outboard_id) {
+                tokio::fs::rename(temp_outboard_id, &outboard_id).await?;
+            };
+            Ok((data_id, outboard_id))
+        }.boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
@@ -75,16 +123,42 @@ impl Vfs for Database {
 }
 
 #[derive(Debug, Default)]
-struct DatabaseInner {
-    complete_path: PathBuf,
-    partial_path: PathBuf,
-    complete: BTreeMap<Hash, DbEntry>,
+struct State {
+    complete: BTreeMap<Hash, CompleteEntry>,
     partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
 }
 
+#[derive(Debug, Default)]
+struct CompleteEntry {
+    // true means we own the data, false means it is stored externally
+    owned_data: bool,
+    // external storage locations
+    external: Vec<PathBuf>,
+    // outboard data, in memory
+    outboard: Option<Bytes>,
+    // data, in memory
+    data: Option<Bytes>,
+    // size of the data
+    size: u64,
+}
+
+#[derive(Debug)]
+struct Options {
+    complete_path: PathBuf,
+    partial_path: PathBuf,
+    move_threshold: u64,
+    inline_threshold: u64,
+}
+
+#[derive(Debug)]
+struct Inner {
+    options: Options,
+    state: RwLock<State>,
+}
+
 /// Database containing content-addressed data (blobs or collections).
-#[derive(Debug, Clone, Default)]
-pub struct Database(Arc<RwLock<DatabaseInner>>);
+#[derive(Debug, Clone)]
+pub struct Database(Arc<Inner>);
 /// The [BaoMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
 pub struct DbPair {
@@ -153,17 +227,32 @@ impl BaoMap for Database {
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Either<Bytes, File>;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let entry = self.0.read().unwrap().complete.get(hash)?.clone();
+        let state = self.0.state.read().unwrap();
+        let entry = state.complete.get(hash)?;
+        let outboard = entry.outboard.as_ref()?.clone();
         Some(DbPair {
             hash: blake3::Hash::from(*hash),
-            entry,
+            entry: DbEntry {
+                data: if let Some(data) = entry.data.as_ref() {
+                    Either::Left(data.clone())
+                } else {
+                    let path = if entry.owned_data {
+                        let name = Purpose::Data(*hash).to_string();
+                        self.0.options.complete_path.join(name)
+                    } else {
+                        entry.external.get(0)?.clone()
+                    };
+                    Either::Right((path, entry.size))
+                },
+                outboard,
+            }
         })
     }
 }
 
 impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let inner = self.0.read().unwrap();
+        let inner = self.0.state.read().unwrap();
         let items = inner
             .complete
             .iter()
@@ -181,6 +270,8 @@ impl BaoReadonlyDb for Database {
     }
 }
 
+
+
 impl BaoDb for Database {
     type Vfs = Self;
 
@@ -191,56 +282,40 @@ impl BaoDb for Database {
     fn insert_entry(
         &self,
         hash: Hash,
-        temp_data_path: PathBuf,
-        temp_outboard_path: Option<PathBuf>,
+        data_id: PathBuf,
+        outboard_id: Option<PathBuf>,
     ) -> BoxFuture<'_, io::Result<()>> {
         let db = self.clone();
-        tokio::task::spawn_blocking(move || {
+        async move {
             // remove incomplete
             // from here on, if something fails we lost the incomplete entry
-            db.0.write().unwrap().partial.remove(&hash);
-            // first rename the file - this is atomic
-            let data_path =
-                db.0.read()
-                    .unwrap()
-                    .complete_path
-                    .join(Purpose::Data(hash).to_string());
-            std::fs::rename(temp_data_path, &data_path)?;
-            // then rename the outboard file
-            let outboard_path = if let Some(temp_outboard_path) = temp_outboard_path {
-                let outboard_path =
-                    db.0.read()
-                        .unwrap()
-                        .complete_path
-                        .join(Purpose::Outboard(hash).to_string());
-                std::fs::rename(&temp_outboard_path, &outboard_path)?;
-                Some(outboard_path)
+            db.0.state.write().unwrap().partial.remove(&hash);
+            let size = std::fs::metadata(&data_id)?.len();
+            let outboard = Some(Bytes::from(if let Some(outboard_id) = outboard_id {
+                tokio::fs::read(outboard_id).await?
+            } else {
+                size.to_be_bytes().to_vec()
+            }));
+            let data = if size < self.0.options.inline_threshold {
+                Some(Bytes::from(tokio::fs::read(data_id).await?))
             } else {
                 None
             };
-            let data_size = std::fs::metadata(&data_path)?.len();
-            let outboard = Bytes::from(if let Some(outboard_path) = outboard_path {
-                std::fs::read(outboard_path)?
-            } else {
-                data_size.to_be_bytes().to_vec()
-            });
-            let mut inner = db.0.write().unwrap();
-            let entry = DbEntry {
-                outboard,
-                data: Either::Right((data_path, data_size)),
-            };
-            inner.complete.insert(hash, entry);
+            let mut inner: std::sync::RwLockWriteGuard<'_, State> = db.0.state.write().unwrap();
+            let entry = inner.complete.entry(hash).or_default();
+            entry.data = data;
+            entry.outboard = outboard;
+            entry.owned_data = true;
+            entry.size = size;
             Ok(())
-        })
-        .map(make_io_error)
-        .boxed()
+        }.boxed()
     }
 
     fn get_partial_entry(
         &self,
         hash: &Hash,
     ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
-        let lock = self.0.read().unwrap();
+        let lock = self.0.state.read().unwrap();
         futures::future::ok(
             if let Some((data_path, outboard_path)) = lock.partial.get(hash) {
                 Some((data_path.clone(), outboard_path.clone()))
@@ -252,7 +327,7 @@ impl BaoDb for Database {
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let lock = self.0.read().unwrap();
+        let lock = self.0.state.read().unwrap();
         let res = lock
             .partial
             .iter()
@@ -262,17 +337,45 @@ impl BaoDb for Database {
     }
 }
 
-fn make_io_error<T>(
-    r: std::result::Result<io::Result<T>, tokio::task::JoinError>,
-) -> io::Result<T> {
-    match r {
-        Ok(Ok(t)) => Ok(t),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
-    }
-}
-
 impl Database {
+
+    async fn copy(mut data: impl AsyncSliceReader, len: u64, target: PathBuf) -> io::Result<()> {
+        // open the target file
+        let mut file = tokio::fs::File::create(target).await?;
+        let chunk_len = 1024 * 128;
+        for offset in (0..len).step_by(chunk_len) {
+            let n = data.read_at(offset, chunk_len).await?;
+            file.write_all(&n).await?;
+        }
+        file.shutdown().await
+    }
+
+    async fn extract_blob(&self, hash: Hash, target: PathBuf) -> io::Result<()> {
+        let entry = self.get(&hash).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
+        })?;
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        tokio::fs::create_dir_all(parent).await?;
+        // open the source file
+        let mut data = entry.data_reader().await?;
+        // copy all the things
+        // why does this even work without a local tokio runtime?
+        let len = data.len().await?;
+        if len > self.0.options.move_threshold {
+            // todo: rename
+            Self::copy(data, len, target).await?;
+        } else {
+            Self::copy(data, len, target).await?;
+        }
+        Ok(())
+    }
+
     /// scan a directory for data
     pub(crate) fn load_internal(
         complete_path: PathBuf,
@@ -394,13 +497,12 @@ impl Database {
             });
             complete.insert(
                 hash,
-                DbEntry {
-                    outboard,
-                    data: if let Some(data_bytes) = data_bytes {
-                        Either::Left(data_bytes)
-                    } else {
-                        Either::Right((data_path, size))
-                    },
+                CompleteEntry {
+                    outboard: Some(outboard),
+                    data: data_bytes,
+                    owned_data: true,
+                    external: vec![],
+                    size,
                 },
             );
         }
@@ -433,12 +535,20 @@ impl Database {
         for hash in partial.keys() {
             tracing::info!("partial {}", hash);
         }
-        Ok(Self(Arc::new(RwLock::new(DatabaseInner {
-            complete_path,
-            partial_path,
-            complete,
-            partial,
-        }))))
+        Ok(Self(Arc::new(
+            Inner {
+                state: RwLock::new(State {
+                    complete,
+                    partial,
+                }),
+                options: Options {
+                    complete_path,
+                    partial_path,
+                    move_threshold: 1024 * 128,
+                    inline_threshold: 1024 * 16,
+                },
+            }
+        )))
     }
 
     /// Load a database from disk.

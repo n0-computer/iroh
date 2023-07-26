@@ -201,7 +201,6 @@ impl BaoDb for Database {
                 path: data,
                 size,
             };
-            println!("{} {:?}", hash, entry);
             let mut inner = db.0.write().unwrap();
             inner.insert(hash, entry);
             Ok(())
