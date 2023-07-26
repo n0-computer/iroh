@@ -11,7 +11,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt,
 };
-use iroh_bytes::{provider::Database, util::Hash, writable::WritableFileDatabase};
+use iroh_bytes::util::Hash;
 use iroh_gossip::net::util::Dialer;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_net::{tls::PeerId, MagicEndpoint};
@@ -24,6 +24,8 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
+
+use crate::database::flat::{writable::WritableFileDatabase, Database};
 
 #[derive(Debug, Copy, Clone)]
 pub enum DownloadMode {
@@ -187,7 +189,7 @@ pub struct BlobStore {
 }
 impl BlobStore {
     pub async fn new(
-        rt: iroh_bytes::runtime::Handle,
+        rt: iroh_bytes::util::runtime::Handle,
         data_path: PathBuf,
         endpoint: MagicEndpoint,
     ) -> anyhow::Result<Self> {
@@ -263,7 +265,7 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new(
-        rt: iroh_bytes::runtime::Handle,
+        rt: iroh_bytes::util::runtime::Handle,
         endpoint: MagicEndpoint,
         blobs: WritableFileDatabase,
     ) -> Self {

@@ -12,12 +12,13 @@ use iroh_io::{AsyncSliceWriter, File};
 use range_collections::RangeSet2;
 use tokio::io::AsyncRead;
 
-use crate::{
+use iroh_bytes::{
     get::fsm,
     protocol::{GetRequest, RangeSpecSeq, Request},
-    provider::{create_collection, DataSource, Database, DbEntry, FNAME_PATHS},
     Hash,
 };
+
+use crate::database::flat::{create_collection, DataSource, Database, DbEntry, FNAME_PATHS};
 
 /// A blob database into which new blobs can be inserted.
 ///
