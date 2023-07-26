@@ -209,10 +209,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> ready to accept commands");
     println!("> type `help` for a list of commands");
 
-    let mut current_watch: Arc<std::sync::Mutex<Option<String>>> =
+    let current_watch: Arc<std::sync::Mutex<Option<String>>> =
         Arc::new(std::sync::Mutex::new(None));
     let watch = current_watch.clone();
-    doc.on_insert(Box::new(move |origin, entry| {
+    doc.on_insert(Box::new(move |_origin, entry| {
         let matcher = watch.lock().unwrap();
         if let Some(matcher) = &*matcher {
             let key = entry.entry().id().key();
