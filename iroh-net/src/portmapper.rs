@@ -499,7 +499,7 @@ impl Service {
                 // still assumes the current mapping is valid/active and will return it even after
                 // this
                 let output = self.full_probe.output();
-                debug!("probe output {output}");
+                trace!(?output, "probe output");
                 Ok(output)
             }
         };
@@ -592,11 +592,11 @@ impl Service {
             // 2. if no service was available, fallback to upnp if enabled
             self.mapping_task = if pcp || (!recently_probed && self.config.enable_pcp) {
                 let task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
-                Some(tokio::spawn(task).into())
+                Some(tokio::spawn(task.instrument(info_span!("pcp"))).into())
             } else if nat_pmp || (!recently_probed && self.config.enable_nat_pmp) {
                 let task =
                     mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
-                Some(tokio::spawn(task).into())
+                Some(tokio::spawn(task.instrument(info_span!("pmp"))).into())
             } else if upnp || self.config.enable_upnp {
                 let external_port = external_addr.map(|(_addr, port)| port);
                 let gateway = self
@@ -605,7 +605,7 @@ impl Service {
                     .as_ref()
                     .map(|(gateway, _last_seen)| gateway.clone());
                 let task = mapping::Mapping::new_upnp(local_ip, local_port, gateway, external_port);
-                Some(tokio::spawn(task).into())
+                Some(tokio::spawn(task.instrument(info_span!("upnp"))).into())
             } else {
                 // give up
                 return;

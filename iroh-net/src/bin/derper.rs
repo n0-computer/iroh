@@ -31,7 +31,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -82,14 +82,17 @@ impl CertMode {
                 let config = config.with_cert_resolver(state.resolver());
                 let acceptor = state.acceptor();
 
-                tokio::spawn(async move {
-                    loop {
-                        match state.next().await.unwrap() {
-                            Ok(ok) => debug!("acme event: {:?}", ok),
-                            Err(err) => error!("error: {:?}", err),
+                tokio::spawn(
+                    async move {
+                        loop {
+                            match state.next().await.unwrap() {
+                                Ok(ok) => debug!("acme event: {:?}", ok),
+                                Err(err) => error!("error: {:?}", err),
+                            }
                         }
                     }
-                });
+                    .instrument(info_span!("acme")),
+                );
 
                 Ok((Arc::new(config), TlsAcceptor::LetsEncrypt(acceptor)))
             }
@@ -517,38 +520,44 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
     let http_addr = http_listener.local_addr()?;
     info!("[CaptivePortalService]: serving on {}", http_addr);
 
-    let task = tokio::spawn(async move {
-        loop {
-            match http_listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    debug!(
-                        "[CaptivePortalService] Connection opened from {}",
-                        peer_addr
-                    );
-                    let handler = CaptivePortalService;
+    let task = tokio::spawn(
+        async move {
+            loop {
+                match http_listener.accept().await {
+                    Ok((stream, peer_addr)) => {
+                        debug!(
+                            "[CaptivePortalService] Connection opened from {}",
+                            peer_addr
+                        );
+                        let handler = CaptivePortalService;
 
-                    tokio::task::spawn(async move {
-                        if let Err(err) = Http::new()
-                            .serve_connection(derp::MaybeTlsStreamServer::Plain(stream), handler)
-                            .with_upgrades()
-                            .await
-                        {
-                            error!(
-                                "[CaptivePortalService] Failed to serve connection: {:?}",
-                                err
-                            );
-                        }
-                    });
-                }
-                Err(err) => {
-                    error!(
-                        "[CaptivePortalService] failed to accept connection: {:#?}",
-                        err
-                    );
+                        tokio::task::spawn(async move {
+                            if let Err(err) = Http::new()
+                                .serve_connection(
+                                    derp::MaybeTlsStreamServer::Plain(stream),
+                                    handler,
+                                )
+                                .with_upgrades()
+                                .await
+                            {
+                                error!(
+                                    "[CaptivePortalService] Failed to serve connection: {:?}",
+                                    err
+                                );
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(
+                            "[CaptivePortalService] failed to accept connection: {:#?}",
+                            err
+                        );
+                    }
                 }
             }
         }
-    });
+        .instrument(info_span!("captive-portal.service")),
+    );
     Ok(task)
 }
 

@@ -783,7 +783,8 @@ impl AsyncUdpSocket for MagicSock {
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            info!("received {} msgs", num_msgs);
+            inc_by!(MagicsockMetrics, recv_datagrams, num_msgs as _);
+            trace!("received {} datagrams", num_msgs);
             return Poll::Ready(Ok(num_msgs));
         }
 
@@ -908,7 +909,7 @@ impl Actor {
                     self.send_network(transmits).await;
                 }
                 Some(msg) = self.msg_receiver.recv() => {
-                    trace!("tick: msg");
+                    trace!(?msg, "tick: msg");
                     if self.handle_actor_message(msg).await {
                         return Ok(());
                     }
@@ -1267,7 +1268,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     fn send_derp(&mut self, region_id: u16, peer: key::node::PublicKey, contents: Vec<Bytes>) {
         self.send_derp_actor(DerpActorMessage::Send {
             region_id,
@@ -1277,20 +1278,20 @@ impl Actor {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all, fields(reason=why))]
     async fn re_stun(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, re_stun_calls);
 
         if self.endpoints_update_state.is_running() {
             if Some(why) != self.endpoints_update_state.want_update {
                 debug!(
-                    "re_stun({:?}): endpoint update active, need another later: {:?}",
-                    self.endpoints_update_state.want_update, why
+                    active_reason=?self.endpoints_update_state.want_update,
+                    "endpoint update active, need another later",
                 );
                 self.endpoints_update_state.want_update.replace(why);
             }
         } else {
-            debug!("re_stun({}): started", why);
+            debug!("started");
             self.endpoints_update_state
                 .running
                 .send(Some(why))
@@ -1298,7 +1299,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
 
@@ -1351,7 +1352,7 @@ impl Actor {
 
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn determine_endpoints(&mut self) -> Result<Vec<config::Endpoint>> {
         self.port_mapper.procure_mapping();
         let portmap_watcher = self.port_mapper.watch_external_address();
@@ -1502,7 +1503,7 @@ impl Actor {
     }
 
     /// Updates `NetInfo.HavePortMap` to true.
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn set_net_info_have_port_map(&mut self) {
         if let Some(ref mut net_info_last) = self.net_info_last {
             if net_info_last.have_port_map {
@@ -1520,7 +1521,7 @@ impl Actor {
     /// since the last state.
     ///
     /// callNetInfoCallback takes ownership of ni.
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn call_net_info_callback(&mut self, ni: config::NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
@@ -1531,7 +1532,7 @@ impl Actor {
         self.call_net_info_callback_locked(ni);
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     fn call_net_info_callback_locked(&mut self, ni: config::NetInfo) {
         self.net_info_last = Some(ni.clone());
         if let Some(ref on_net_info) = self.inner.on_net_info {
@@ -1540,7 +1541,7 @@ impl Actor {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
         let derp_map = self.inner.derp_map.read().await.clone();
         if derp_map.is_none() {

@@ -6,7 +6,7 @@ use anyhow::Result;
 use tokio::runtime::RuntimeFlavor;
 use tokio::sync::oneshot;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing::{info_span, Instrument};
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -82,14 +82,12 @@ pub(crate) fn testing_subscriber() -> impl tracing::Subscriber {
         Some(_) => None,
         None => Some(
             tracing_subscriber::fmt::layer()
-                .with_span_events(FmtSpan::CLOSE)
                 .with_writer(|| TestWriter)
                 .with_filter(LevelFilter::TRACE),
         ),
     };
     let env_log_layer = var.map(|_| {
         tracing_subscriber::fmt::layer()
-            .with_span_events(FmtSpan::CLOSE)
             .with_writer(|| TestWriter)
             .with_filter(EnvFilter::from_default_env())
     });
@@ -177,13 +175,16 @@ pub(crate) async fn run_derp_and_stun(
     };
 
     let (tx, rx) = oneshot::channel();
-    tokio::spawn(async move {
-        let _stun_cleanup = stun_drop_guard; // move into this closure
+    tokio::spawn(
+        async move {
+            let _stun_cleanup = stun_drop_guard; // move into this closure
 
-        // Wait until we're dropped or receive a message.
-        rx.await.ok();
-        server.shutdown().await;
-    });
+            // Wait until we're dropped or receive a message.
+            rx.await.ok();
+            server.shutdown().await;
+        }
+        .instrument(info_span!("derp-stun-cleanup")),
+    );
 
     Ok((m, Some(region_id), CleanupDropGuard(tx)))
 }

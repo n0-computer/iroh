@@ -238,34 +238,37 @@ mod tests {
 
         // This bit is our dummy netcheck actor: it handles the inflight request and sends
         // back the STUN request once it arrives.
-        let dummy_netcheck = tokio::spawn(async move {
-            let netcheck::Message::InFlightStun(inflight, resp_tx) =
+        let dummy_netcheck = tokio::spawn(
+            async move {
+                let netcheck::Message::InFlightStun(inflight, resp_tx) =
             netcheck_rx.recv().await.unwrap() else {
                 panic!("Wrong message received");
             };
-            resp_tx.send(()).unwrap();
+                resp_tx.send(()).unwrap();
 
-            let mut buf = BytesMut::zeroed(64 << 10);
-            let (count, addr) = public_sock.recv_from(&mut buf).await.unwrap();
-            info!(
-                addr=?public_sock.local_addr().unwrap(),
-                %count,
-                "Forwarding payload to hairpin actor",
-            );
-            let payload = buf.split_to(count).freeze();
-            let txn = stun::parse_binding_request(&payload).unwrap();
-            assert_eq!(txn, inflight.txn);
+                let mut buf = BytesMut::zeroed(64 << 10);
+                let (count, addr) = public_sock.recv_from(&mut buf).await.unwrap();
+                info!(
+                    addr=?public_sock.local_addr().unwrap(),
+                    %count,
+                    "Forwarding payload to hairpin actor",
+                );
+                let payload = buf.split_to(count).freeze();
+                let txn = stun::parse_binding_request(&payload).unwrap();
+                assert_eq!(txn, inflight.txn);
 
-            if hairpinning_works {
-                // We want hairpinning to work, send back the STUN request.
-                inflight.s.send((Duration::new(0, 1), addr)).unwrap();
-            } else {
-                // We want hairpinning to fail, just wait but do not drop the STUN response
-                // channel because that would make the hairpin actor detect an error.
-                info!("Received hairpin request, not sending response");
-                tokio::time::sleep(HAIRPIN_CHECK_TIMEOUT * 8).await;
+                if hairpinning_works {
+                    // We want hairpinning to work, send back the STUN request.
+                    inflight.s.send((Duration::new(0, 1), addr)).unwrap();
+                } else {
+                    // We want hairpinning to fail, just wait but do not drop the STUN response
+                    // channel because that would make the hairpin actor detect an error.
+                    info!("Received hairpin request, not sending response");
+                    tokio::time::sleep(HAIRPIN_CHECK_TIMEOUT * 8).await;
+                }
             }
-        });
+            .instrument(info_span!("dummy-netcheck")),
+        );
 
         // Next we expect our dummy reportstate to receive the result.
         match reportstate_rx.recv().await {
