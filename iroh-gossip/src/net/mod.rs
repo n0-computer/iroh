@@ -1,7 +1,9 @@
-use std::{collections::HashMap, fmt, sync::Arc, time::Instant};
+use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
+use futures::stream::Stream;
+use genawaiter::sync::{Co, Gen};
 use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -13,7 +15,7 @@ use tokio::{
 use tracing::{debug, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, PeerData, TopicId};
+use crate::proto::{self, TopicId};
 
 mod util;
 
@@ -60,7 +62,7 @@ pub type ProtoMessage = proto::Message<PeerId>;
 #[derive(Debug, Clone)]
 pub struct GossipHandle {
     to_actor_tx: mpsc::Sender<ToActor>,
-    aboutme_tx: Arc<watch::Sender<PeerData>>,
+    endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -78,7 +80,7 @@ impl GossipHandle {
         );
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
-        let (aboutme_tx, aboutme_rx) = watch::channel(Default::default());
+        let (endpoints_tx, endpoints_rx) = watch::channel(Default::default());
         let actor = GossipActor {
             endpoint,
             state,
@@ -86,7 +88,7 @@ impl GossipHandle {
             to_actor_rx,
             in_event_rx,
             in_event_tx,
-            aboutme_rx,
+            endpoints_rx,
             conns: Default::default(),
             conn_send_tx: Default::default(),
             pending_sends: Default::default(),
@@ -104,7 +106,7 @@ impl GossipHandle {
         });
         Self {
             to_actor_tx,
-            aboutme_tx: Arc::new(aboutme_tx),
+            endpoints_tx: Arc::new(endpoints_tx),
             _actor_handle: Arc::new(actor_handle),
         }
     }
@@ -144,11 +146,28 @@ impl GossipHandle {
     }
 
     /// Subscribe to all events published on topics that you joined.
-    pub async fn subscribe_all(&self) -> anyhow::Result<broadcast::Receiver<(TopicId, Event)>> {
+    ///
+    /// Note that this method takes self by value. Usually you would clone the [GossipHandle]
+    /// before.
+    pub fn subscribe_all(self) -> impl Stream<Item = anyhow::Result<(TopicId, Event)>> {
+        Gen::new(|co| async move {
+            if let Err(cause) = self.subscribe_all0(&co).await {
+                co.yield_(Err(cause)).await
+            }
+        })
+    }
+
+    async fn subscribe_all0(
+        &self,
+        co: &Co<anyhow::Result<(TopicId, Event)>>,
+    ) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::SubscribeAll(tx)).await?;
-        let res = rx.await.map_err(|_| anyhow!("subscribe_tx dropped"))??;
-        Ok(res)
+        let mut res = rx.await.map_err(|_| anyhow!("subscribe_tx dropped"))??;
+        loop {
+            let event = res.recv().await?;
+            co.yield_(Ok(event)).await;
+        }
     }
 
     /// Pass an incoming [quinn::Connection] to the gossip actor.
@@ -161,16 +180,13 @@ impl GossipHandle {
         Ok(())
     }
 
-    pub fn update_endpoints(
-        &self,
-        endpoints: &[iroh_net::hp::cfg::Endpoint],
-    ) -> anyhow::Result<()> {
-        let info = IrohInfo {
-            endpoints: endpoints.to_vec(),
-        };
-        let peer_data = postcard::to_stdvec(&info)?;
-        self.aboutme_tx
-            .send(peer_data.into())
+    /// Set info on our local endpoints.
+    ///
+    /// This will be sent to peers on Neighbor and Join requests so that they can connect directly
+    /// to us.
+    pub fn update_endpoints(&self, endpoints: &[iroh_net::config::Endpoint]) -> anyhow::Result<()> {
+        self.endpoints_tx
+            .send(endpoints.to_vec())
             .map_err(|_| anyhow!("gossip actor dropped"))
     }
 
@@ -184,7 +200,8 @@ impl GossipHandle {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IrohInfo {
-    endpoints: Vec<iroh_net::hp::cfg::Endpoint>,
+    addrs: Vec<SocketAddr>,
+    derp_region: Option<u16>,
 }
 
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
@@ -235,8 +252,8 @@ struct GossipActor {
     in_event_tx: mpsc::Sender<InEvent>,
     /// Sender for the state input (cloned into the connection loops)
     in_event_rx: mpsc::Receiver<InEvent>,
-    /// Watcher for updated [PeerData] about ourselves
-    aboutme_rx: watch::Receiver<PeerData>,
+    /// Watcher for updates of discovered endpoint addresses
+    endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn conections to peers
@@ -266,9 +283,14 @@ impl GossipActor {
                         }
                     }
                 },
-                _ = self.aboutme_rx.changed() => {
-                    let peer_data = self.aboutme_rx.borrow().clone();
-                    self.handle_in_event(InEvent::UpdatePeerData(peer_data), Instant::now()).await?;
+                _ = self.endpoints_rx.changed() => {
+                    let endpoints = self.endpoints_rx.borrow().clone();
+                    let info = IrohInfo {
+                        addrs: endpoints.iter().map(|ep| ep.addr).collect(),
+                        derp_region: self.endpoint.my_derp().await
+                    };
+                    let peer_data = postcard::to_stdvec(&info)?;
+                    self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
                 (peer_id, res) = self.dialer.next() => {
                     match res {
@@ -422,10 +444,10 @@ impl GossipActor {
                     match postcard::from_bytes::<IrohInfo>(&data) {
                         Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                         Ok(info) => {
-                            let addrs = info.endpoints.iter().map(|ep| ep.addr).collect::<Vec<_>>();
-                            debug!("add known addrs for {peer}: {addrs:?}...");
-                            self.endpoint.add_known_addrs(peer, &addrs).await?;
-                            debug!("add known addrs for {peer}: {addrs:?}... DONE");
+                            debug!("add known addrs for {peer}: {info:?}...");
+                            self.endpoint
+                                .add_known_addrs(peer, info.derp_region, &info.addrs)
+                                .await?;
                         }
                     }
                     // self.
