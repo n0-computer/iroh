@@ -27,7 +27,6 @@ pub enum InEvent<PA> {
     TimerExpired(Timer),
     NeighborUp(PA),
     NeighborDown(PA),
-    PeerDisconnected(PA),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -265,7 +264,6 @@ impl<PA: PeerAddress> State<PA> {
             InEvent::Broadcast(data) => self.do_broadcast(data, io),
             InEvent::NeighborUp(peer) => self.on_neighbor_up(peer),
             InEvent::NeighborDown(peer) => self.on_neighbor_down(peer),
-            InEvent::PeerDisconnected(peer) => self.on_neighbor_down(peer),
             InEvent::TimerExpired(timer) => match timer {
                 Timer::DispatchLazyPush => self.on_dispatch_timer(io),
                 Timer::SendGraft(id) => {
