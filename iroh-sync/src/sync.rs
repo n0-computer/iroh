@@ -528,6 +528,22 @@ impl Replica {
         }
     }
 
+    /// Returns the latest version of the matching documents by prefix.
+    pub fn get_latest_by_prefix(&self, prefix: impl AsRef<[u8]>) -> GetLatestIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let prefix = prefix.as_ref().to_vec();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::Prefix { namespace, prefix };
+
+        GetLatestIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
+            index: 0,
+        }
+    }
+
     /// Returns the latest versions of all documents.
     pub fn get_latest(&self) -> GetLatestIter<'_> {
         let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
@@ -568,6 +584,22 @@ impl Replica {
         let key = key.as_ref().to_vec();
         let namespace = *guard.namespace.id();
         let filter = GetFilter::Key { namespace, key };
+
+        GetAllIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
+            index: 0,
+        }
+    }
+
+    /// Returns all versions of the matching documents by prefix.
+    pub fn get_all_by_prefix(&self, prefix: impl AsRef<[u8]>) -> GetAllIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let prefix = prefix.as_ref().to_vec();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::Prefix { namespace, prefix };
 
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
@@ -631,6 +663,11 @@ pub enum GetFilter {
         namespace: NamespaceId,
         key: Vec<u8>,
     },
+    /// Filter by prefix only.
+    Prefix {
+        namespace: NamespaceId,
+        prefix: Vec<u8>,
+    },
 }
 
 #[derive(Debug)]
@@ -658,12 +695,12 @@ impl<'a> Iterator for GetLatestIter<'a> {
                     .filter(|(k, _)| k.namespace() == &namespace)
                     .filter_map(|(_key, value)| value.last_key_value())
                     .nth(self.index)?;
-                res
+                res.clone()
             }
             GetFilter::KeyAuthor(ref record_id) => {
                 let values = self.records.get(record_id)?;
                 let (_, res) = values.iter().nth(self.index)?;
-                res
+                res.clone()
             }
             GetFilter::Key { namespace, ref key } => {
                 let (_, res) = self
@@ -672,11 +709,23 @@ impl<'a> Iterator for GetLatestIter<'a> {
                     .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
                     .filter_map(|(_key, value)| value.last_key_value())
                     .nth(self.index)?;
-                res
+                res.clone()
+            }
+            GetFilter::Prefix {
+                namespace,
+                ref prefix,
+            } => {
+                let (_, res) = self
+                    .records
+                    .iter()
+                    .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
+                    .filter_map(|(_key, value)| value.last_key_value())
+                    .nth(self.index)?;
+                res.clone()
             }
         };
         self.index += 1;
-        Some(res.clone()) // :( I give up
+        Some(res)
     }
 }
 
@@ -717,6 +766,19 @@ impl<'a> Iterator for GetAllIter<'a> {
                 .records
                 .iter()
                 .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
+                .flat_map(|(key, value)| {
+                    value
+                        .iter()
+                        .map(|(t, value)| (key.clone(), *t, value.clone()))
+                })
+                .nth(self.index)?,
+            GetFilter::Prefix {
+                namespace,
+                ref prefix,
+            } => self
+                .records
+                .iter()
+                .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
                 .flat_map(|(key, value)| {
                     value
                         .iter()
@@ -1032,6 +1094,10 @@ mod tests {
         let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
         assert_eq!(entries.len(), 1);
 
+        // Get latest by prefix
+        let entries: Vec<_> = my_replica.get_latest_by_prefix(b"/cool").collect();
+        assert_eq!(entries.len(), 1);
+
         // Get All
         let entries: Vec<_> = my_replica.get_all().collect();
         assert_eq!(entries.len(), 12);
@@ -1061,6 +1127,14 @@ mod tests {
         // Get latest by key
         let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
         assert_eq!(entries.len(), 2);
+
+        // Get latest by prefix
+        let entries: Vec<_> = my_replica.get_latest_by_prefix(b"/cool").collect();
+        assert_eq!(entries.len(), 2);
+
+        // Get all by prefix
+        let entries: Vec<_> = my_replica.get_all_by_prefix(b"/cool").collect();
+        assert_eq!(entries.len(), 3);
 
         // Get All
         let entries: Vec<_> = my_replica.get_all().collect();
