@@ -575,7 +575,7 @@ where
     }
 }
 
-/// Sadly https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil is still unstable..
+/// Sadly <https://doc.rust-lang.org/std/primitive.usize.html#method.div_ceil> is still unstable..
 fn div_ceil(a: usize, b: usize) -> usize {
     debug_assert!(a != 0);
     debug_assert!(b != 0);
