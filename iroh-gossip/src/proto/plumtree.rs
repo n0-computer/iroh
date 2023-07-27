@@ -134,6 +134,9 @@ impl Gossip {
             round: self.round.next(),
         }
     }
+    pub fn content_len(&self) -> usize {
+        self.content.len()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

@@ -1863,6 +1863,7 @@ dependencies = [
  "futures",
  "genawaiter",
  "indexmap 2.0.0",
+ "iroh-metrics",
  "iroh-net",
  "once_cell",
  "postcard",

@@ -12,8 +12,11 @@ use rand::Rng;
 use rand_core::SeedableRng;
 use serde::{Deserialize, Serialize};
 
-use super::hyparview::{self, InEvent as SwarmIn};
 use super::plumtree::{self, InEvent as GossipIn};
+use super::{
+    hyparview::{self, InEvent as SwarmIn},
+    state::MessageKind,
+};
 use super::{PeerAddress, PeerData};
 
 /// Input event to the topic state handler.
@@ -94,6 +97,19 @@ pub enum Message<PA> {
     Swarm(hyparview::Message<PA>),
     /// A message of the gossip broadcast layer
     Gossip(plumtree::Message),
+}
+
+impl<PA> Message<PA> {
+    /// Get the kind of this message
+    pub fn kind(&self) -> MessageKind {
+        match self {
+            Message::Swarm(_) => MessageKind::Control,
+            Message::Gossip(message) => match message {
+                plumtree::Message::Gossip(_) => MessageKind::Data,
+                _ => MessageKind::Control,
+            },
+        }
+    }
 }
 
 /// An event to be emitted to the application for a particular topic.

@@ -12,8 +12,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::proto::{topic, Config, PeerAddress};
+use iroh_metrics::{inc, inc_by};
 
 use super::PeerData;
+use crate::metrics::Metrics;
 
 /// The identifier for a topic
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
@@ -84,6 +86,28 @@ impl FromStr for TopicId {
 pub struct Message<PA> {
     topic: TopicId,
     message: topic::Message<PA>,
+}
+
+impl<PA> Message<PA> {
+    /// Get the kind of this message
+    pub fn kind(&self) -> MessageKind {
+        self.message.kind()
+    }
+}
+
+/// Whether this is a control or data message
+pub enum MessageKind {
+    /// A data message and its payload size.
+    Data,
+    /// A control message.
+    Control,
+}
+
+impl<PA: Serialize> Message<PA> {
+    /// Get the encoded size of this message
+    pub fn size(&self) -> postcard::Result<usize> {
+        postcard::experimental::serialized_size(&self)
+    }
 }
 
 /// A timer to be registered into the runtime
@@ -234,6 +258,8 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
         event: InEvent<PA>,
         now: Instant,
     ) -> impl Iterator<Item = OutEvent<PA>> + '_ {
+        track_in_event(&event);
+
         let event: InEventMapped<PA> = event.into();
 
         // todo: add command to leave a topic
@@ -296,6 +322,9 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
             }
         }
 
+        // track metrics
+        track_out_events(&self.outbox);
+
         self.outbox.drain(..)
     }
 }
@@ -325,5 +354,60 @@ fn handle_out_event<PA: PeerAddress>(
             }
         }
         topic::OutEvent::PeerData(peer, data) => outbox.push(OutEvent::PeerData(peer, data)),
+    }
+}
+
+fn track_out_events<PA: Serialize>(events: &[OutEvent<PA>]) {
+    for event in events {
+        match event {
+            OutEvent::SendMessage(_to, message) => match message.kind() {
+                MessageKind::Data => {
+                    inc!(Metrics, msgs_data_sent);
+                    inc_by!(
+                        Metrics,
+                        msgs_data_sent_size,
+                        message.size().unwrap_or(0) as u64
+                    );
+                }
+                MessageKind::Control => {
+                    inc!(Metrics, msgs_ctrl_sent);
+                    inc_by!(
+                        Metrics,
+                        msgs_ctrl_sent_size,
+                        message.size().unwrap_or(0) as u64
+                    );
+                }
+            },
+            OutEvent::EmitEvent(_topic, event) => match event {
+                super::Event::NeighborUp(_peer) => inc!(Metrics, neighbor_up),
+                super::Event::NeighborDown(_peer) => inc!(Metrics, neighbor_down),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+fn track_in_event<PA: Serialize>(event: &InEvent<PA>) {
+    match event {
+        InEvent::RecvMessage(_from, message) => match message.kind() {
+            MessageKind::Data => {
+                inc!(Metrics, msgs_data_recv);
+                inc_by!(
+                    Metrics,
+                    msgs_data_recv_size,
+                    message.size().unwrap_or(0) as u64
+                );
+            }
+            MessageKind::Control => {
+                inc!(Metrics, msgs_ctrl_recv);
+                inc_by!(
+                    Metrics,
+                    msgs_ctrl_recv_size,
+                    message.size().unwrap_or(0) as u64
+                );
+            }
+        },
+        _ => {}
     }
 }
