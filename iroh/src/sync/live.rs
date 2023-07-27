@@ -11,11 +11,14 @@ use iroh_gossip::{
     net::{Event, GossipHandle},
     proto::TopicId,
 };
+use iroh_metrics::inc;
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{InsertOrigin, Replica, SignedEntry};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, task::JoinError};
 use tracing::{debug, error};
+
+use super::metrics::Metrics;
 
 const CHANNEL_CAP: usize = 8;
 
@@ -140,7 +143,10 @@ impl Actor {
                     match msg {
                         // received shutdown signal, or livesync handle was dropped:
                         // break loop and exit
-                        Some(ToActor::Shutdown) | None => break,
+                        Some(ToActor::Shutdown) | None => {
+                            self.on_shutdown().await?;
+                            break;
+                        }
                         Some(ToActor::SyncDoc { doc, initial_peers }) => self.insert_doc(doc, initial_peers).await?,
                     }
                 }
@@ -192,11 +198,24 @@ impl Actor {
                 // TODO: Make sure that the peer is dialable.
                 let res = connect_and_sync(&endpoint, &doc, peer, None, &[]).await;
                 debug!("> synced with {peer}: {res:?}");
+                // collect metrics
+                match &res {
+                    Ok(_) => inc!(Metrics, initial_sync_success),
+                    Err(_) => inc!(Metrics, initial_sync_failed),
+                }
                 (topic, peer, res)
             }
             .boxed()
         };
         self.pending_syncs.push(task);
+    }
+
+    async fn on_shutdown(&mut self) -> anyhow::Result<()> {
+        for (topic, _doc) in self.docs.drain() {
+            // TODO: Remove the on_insert callbacks
+            self.gossip.quit(topic).await?;
+        }
+        Ok(())
     }
 
     async fn insert_doc(&mut self, doc: Replica, initial_peers: Vec<PeerSource>) -> Result<()> {
