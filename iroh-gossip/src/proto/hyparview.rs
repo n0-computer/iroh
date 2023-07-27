@@ -31,6 +31,7 @@ pub enum InEvent<PA> {
 }
 
 /// Output event for HyParView
+#[derive(Debug)]
 pub enum OutEvent<PA> {
     SendMessage(PA, Message<PA>),
     ScheduleTimer(Duration, Timer<PA>),

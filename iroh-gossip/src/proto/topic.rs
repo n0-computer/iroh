@@ -162,7 +162,7 @@ impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
     }
 }
 /// Protocol configuration
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Config {
     /// Configuration for the swarm membership layer
     pub membership: hyparview::Config,

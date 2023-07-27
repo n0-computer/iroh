@@ -150,10 +150,12 @@ impl Dialer {
 }
 
 /// A [`TimerMap`] with an async method to wait for the next timer expiration.
+#[derive(Debug)]
 pub struct Timers<T> {
     next: Option<(Instant, Pin<Box<Sleep>>)>,
     map: TimerMap<T>,
 }
+
 impl<T> Timers<T> {
     /// Create a new timer map
     pub fn new() -> Self {

@@ -163,6 +163,7 @@ impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
 /// This struct contains a map of [`topic::State`] for each topic that was joined. It mostly acts as
 /// a forwarder of [`InEvent`]s to matching topic state. Each topic's state is completely
 /// independent; thus the actual protocol logic lives with [`topic::State`].
+#[derive(Debug)]
 pub struct State<PA, R> {
     me: PA,
     me_data: PeerData,
