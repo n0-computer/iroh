@@ -1,5 +1,6 @@
 //! The private and public keys of a node.
 
+use std::fmt::Display;
 use std::{fmt::Debug, hash::Hash};
 
 use anyhow::{anyhow, ensure, Context, Result};
@@ -25,6 +26,26 @@ impl From<crate::tls::PeerId> for PublicKey {
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PublicKey({})", hex::encode(self.0.as_bytes()))
+    }
+}
+
+impl PublicKey {
+    /// The number of hex characters to show in [`PublicKey::short_hex`].
+    const SHORT_HEX_LENGTH: usize = 8;
+
+    /// Return a short hex-formatted string of this key.
+    ///
+    /// This is useful for displaying in logs etc.
+    pub fn short_hex(&self) -> String {
+        let bytes = &self.0.as_bytes()[..Self::SHORT_HEX_LENGTH];
+        hex::encode(bytes)
+    }
+}
+
+/// Uses the [`PublicKey::short_hex`] to represent the key.
+impl Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PublicKey({}..)", self.short_hex())
     }
 }
 

@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
-use tracing::{debug, info_span, instrument, warn, Instrument};
+use tracing::{debug, info_span, instrument, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::{
@@ -335,14 +335,14 @@ impl Client {
             // as well
             let mut derp_client_lock = self.inner.derp_client.lock().await;
             if let Some(derp_client) = &*derp_client_lock {
-                debug!("already had connection");
+                trace!("already had connection");
                 return Ok((
                     derp_client.clone(),
                     self.inner.conn_gen.load(Ordering::SeqCst),
                 ));
             }
 
-            debug!("no connection, trying to connect");
+            trace!("no connection, trying to connect");
             let derp_client = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
                 .await
                 .map_err(|_| ClientError::ConnectTimeout)??;
@@ -350,10 +350,10 @@ impl Client {
             let derp_client_clone = derp_client.clone();
             *derp_client_lock = Some(derp_client_clone);
             let conn_gen = self.inner.conn_gen.fetch_add(1, Ordering::SeqCst);
-            debug!("got connection, conn num {conn_gen}");
+            trace!("got connection, conn num {conn_gen}");
             Ok((derp_client, conn_gen))
         }
-        .instrument(info_span!("client-connect", ?key))
+        .instrument(info_span!("client-connect", %key))
         .await
     }
 
@@ -415,20 +415,20 @@ impl Client {
         true
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn connect_0(&self) -> Result<DerpClient, ClientError> {
-        debug!("connect_0");
         let url = self.url();
         let is_test_url = url
             .as_ref()
             .map(|url| url.as_str().ends_with(".invalid"))
             .unwrap_or_default();
 
-        debug!("connect_0 url: {:?}, is_test_url: {}", url, is_test_url);
+        debug!("url: {:?}, is_test_url: {}", url, is_test_url);
         let (tcp_stream, derp_node) = if url.is_some() && !is_test_url {
             (self.dial_url().await?, None)
         } else {
             let region = self.current_region().await?;
-            debug!("connect_0 region: {:?}", region);
+            debug!("region: {:?}", region);
             let (tcp_stream, derp_node) = self.dial_region(region).await?;
             (tcp_stream, Some(derp_node))
         };
@@ -474,16 +474,19 @@ impl Client {
                 .handshake(tls_stream)
                 .await
                 .map_err(ClientError::Hyper)?;
-            tokio::spawn(async move {
-                // polling `connection` drives the HTTP exchange
-                // this will poll until we upgrade the connection, but not shutdown the underlying
-                // stream
-                debug!("waiting for connection");
-                if let Err(err) = connection.await {
-                    warn!("client connection error: {:?}", err);
+            tokio::spawn(
+                async move {
+                    // polling `connection` drives the HTTP exchange
+                    // this will poll until we upgrade the connection, but not shutdown the underlying
+                    // stream
+                    debug!("waiting for connection");
+                    if let Err(err) = connection.await {
+                        warn!("client connection error: {:?}", err);
+                    }
+                    debug!("connection done");
                 }
-                debug!("connection done");
-            });
+                .instrument(info_span!("http.conn")),
+            );
             debug!("sending upgrade request");
             request_sender
                 .send_request(req)
@@ -495,16 +498,19 @@ impl Client {
                 .handshake(tcp_stream)
                 .await
                 .map_err(ClientError::Hyper)?;
-            tokio::spawn(async move {
-                // polling `connection` drives the HTTP exchange
-                // this will poll until we upgrade the connection, but not shutdown the underlying
-                // stream
-                debug!("waiting for connection");
-                if let Err(err) = connection.await {
-                    warn!("client connection error: {:?}", err);
+            tokio::spawn(
+                async move {
+                    // polling `connection` drives the HTTP exchange
+                    // this will poll until we upgrade the connection, but not shutdown the underlying
+                    // stream
+                    debug!("waiting for connection");
+                    if let Err(err) = connection.await {
+                        warn!("client connection error: {:?}", err);
+                    }
+                    debug!("connection done");
                 }
-                debug!("connection done");
-            });
+                .instrument(info_span!("http.conn")),
+            );
             debug!("sending upgrade request");
             request_sender
                 .send_request(req)
@@ -1249,11 +1255,14 @@ mod tests {
 
         let (send, recv) = tokio::sync::oneshot::channel();
         // spawn a task to run the mesh client
-        let mesh_task = tokio::spawn(async move {
-            mesh_client
-                .run_mesh_client(packet_forwarder_handler, Some(send))
-                .await
-        });
+        let mesh_task = tokio::spawn(
+            async move {
+                mesh_client
+                    .run_mesh_client(packet_forwarder_handler, Some(send))
+                    .await
+            }
+            .instrument(info_span!("mesh-client")),
+        );
 
         tokio::time::timeout(Duration::from_secs(5), recv).await??;
 

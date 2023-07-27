@@ -10,10 +10,11 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  MSRV: "1.63"
+  MSRV: "1.66"
 
 jobs:
   netsim:
+    timeout-minutes: 60
     name: Run network simulations/benchmarks
     if: >-
       (github.event_name == 'issue_comment' &&

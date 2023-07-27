@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
@@ -18,6 +19,7 @@ env:
 
 jobs:
   build_and_test_nix:
+    timeout-minutes: 30
     name: Build and test (Nix)
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -71,6 +73,7 @@ jobs:
       run: cargo test --workspace --all-features --doc
       
   build_and_test_windows:
+    timeout-minutes: 30
     name: Build and test (Windows)
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -110,6 +113,7 @@ jobs:
       run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
 
   build_release:
+    timeout-minutes: 60
     name: Build release binaries
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
@@ -208,6 +212,7 @@ jobs:
         aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   cross:
+    timeout-minutes: 30
     name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
@@ -243,6 +248,7 @@ jobs:
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
 
   check_fmt_and_docs:
+    timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
     steps:
@@ -259,6 +265,7 @@ jobs:
       run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
@@ -278,6 +285,7 @@ jobs:
       run: cargo clippy --workspace --all-targets
 
   msrv:
+    timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
     steps:
@@ -291,6 +299,7 @@ jobs:
         cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
+    timeout-minutes: 30
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
@@ -302,6 +311,7 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
+    timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
     steps:
@@ -359,7 +369,7 @@ jobs:
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}
         echo "HEAD_REF=${{ github.event.pull_request.head.ref }}" >> ${GITHUB_ENV}
     - name: Setup Environment (Push)  
-      if: ${{ github.event_name == 'push' }}  
+      if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}  
       shell: bash  
       run: |  
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
@@ -373,6 +383,7 @@ jobs:
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
     - name: Dump report
+      if: ${{ github.repository == 'n0-computer/iroh' }}
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}

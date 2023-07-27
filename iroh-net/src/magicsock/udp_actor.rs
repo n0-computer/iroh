@@ -93,7 +93,8 @@ impl UdpActor {
                     match msg {
                         UdpActorMessage::Shutdown => {
                             debug!("shutting down");
-                            break;
+                            // Returning in order to not emit a warning on graceful shutdown
+                            return;
                         }
                     }
                 }
