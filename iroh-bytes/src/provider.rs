@@ -735,6 +735,8 @@ pub enum Purpose {
     /// We can have multiple files with the same outboard, in case the outboard
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
+    /// External paths for the hash
+    Paths(Hash),
     /// File is going to be used to store metadata
     Meta(Vec<u8>),
 }
@@ -758,6 +760,9 @@ impl fmt::Display for Purpose {
             }
             Self::PartialOutboard(hash, uuid) => {
                 write!(f, "{}-{}.outboard", hex::encode(hash), hex::encode(uuid))
+            }
+            Self::Paths(hash) => {
+                write!(f, "{}.paths", hex::encode(hash))
             }
             Self::Data(hash) => write!(f, "{}.data", hex::encode(hash)),
             Self::Outboard(hash) => write!(f, "{}.outboard", hex::encode(hash)),
@@ -828,6 +833,7 @@ impl fmt::Debug for Purpose {
                 .finish(),
             Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
             Self::Meta(arg0) => f.debug_tuple("Meta").field(&DD(hex::encode(arg0))).finish(),
+            Self::Paths(arg0) => f.debug_tuple("Paths").field(&DD(hex::encode(arg0))).finish(),
         }
     }
 }
@@ -841,6 +847,7 @@ impl Purpose {
             Purpose::PartialOutboard(_, _) => true,
             Purpose::Outboard(_) => false,
             Purpose::Meta(_) => false,
+            Purpose::Paths(_) => false,
         }
     }
 
@@ -852,6 +859,7 @@ impl Purpose {
             Purpose::PartialOutboard(hash, _) => hash.as_bytes(),
             Purpose::Meta(data) => data.as_slice(),
             Purpose::Outboard(_) => &[],
+            Purpose::Paths(_) => &[],
         }
     }
 }

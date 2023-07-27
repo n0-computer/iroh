@@ -97,6 +97,20 @@ struct CompleteEntry {
 }
 
 impl CompleteEntry {
+
+    fn external_path(&self) -> Option<&PathBuf> {
+        self.external.iter().next()
+    }
+
+    async fn persist_external(&self, path: &Path) -> io::Result<()> {
+        if self.external.is_empty() {
+            tokio::fs::remove_file(path).await?;
+        } else {
+            let data = postcard::to_std_vec(&self.external)?;
+        }
+        Ok(())
+    }
+
     // create a new complete entry with the given size
     //
     // the generated entry will have no data or outboard data yet
@@ -267,7 +281,7 @@ impl BaoMap for Database {
                     } else {
                         // use the first external path. if we don't have any
                         // we don't have a valid entry
-                        entry.external.iter().next()?.clone()
+                        entry.external_path()?.clone()
                     };
                     Either::Right((path, entry.size))
                 },
@@ -577,6 +591,7 @@ impl Database {
             };
             entry.owned_data = false;
             entry.external.insert(target);
+
         } else {
             tracing::info!("{} {} {}", size, stable, owned);
             tracing::info!("copying {} to {}", source.display(), target.display());
@@ -597,13 +612,13 @@ impl Database {
     }
 
     /// scan a directory for data
-    pub(crate) fn load_internal(
+    pub(crate) fn load0(
         complete_path: PathBuf,
         partial_path: PathBuf,
     ) -> anyhow::Result<Self> {
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
-        let mut full_index = BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>)>::new();
+        let mut full_index = BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
         for entry in std::fs::read_dir(&partial_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -651,12 +666,16 @@ impl Database {
                 if let Ok(purpose) = Purpose::from_str(name) {
                     match purpose {
                         Purpose::Data(hash) => {
-                            let (data, _outboard) = full_index.entry(hash).or_default();
+                            let (data, _, _) = full_index.entry(hash).or_default();
                             *data = Some(path);
                         }
                         Purpose::Outboard(hash) => {
-                            let (_data, outboard) = full_index.entry(hash).or_default();
+                            let (_, outboard, _) = full_index.entry(hash).or_default();
                             *outboard = Some(path);
+                        }
+                        Purpose::Paths(hash) => {
+                            let (_, _, paths) = full_index.entry(hash).or_default();
+                            *paths = Some(path);
                         }
                         _ => {
                             // silently ignore other files, there could be a valid reason for them
@@ -689,37 +708,37 @@ impl Database {
             !entries.is_empty()
         });
         let mut complete = BTreeMap::new();
-        for (hash, (data_path, outboard_path)) in full_index {
-            let Some(data_path) = data_path else {
-                tracing::error!("missing data file for {}", hex::encode(hash));
+        for (hash, (data_path, outboard_path, paths_path)) in full_index {
+            let external: BTreeSet<PathBuf> = if let Some(paths_path) = paths_path {
+                let paths = std::fs::read(paths_path)?;
+                bincode::deserialize(&paths)?
+            } else {
+                Default::default()
+            };
+            let owned_data = data_path.is_some();
+            let any_data_path = if let Some(data_path) = &data_path {
+                data_path
+            } else if let Some(external) = external.iter().next() {
+                external
+            } else {
+                tracing::error!("neither internal nor external file exists for {}", hex::encode(hash));
                 continue;
             };
-            let Ok(metadata) = std::fs::metadata(&data_path) else {
-                tracing::error!("unable to open path {}", data_path.display());
+
+            let Ok(metadata) = std::fs::metadata(&any_data_path) else {
+                tracing::error!("unable to open path {}", any_data_path.display());
                 continue;
             };
             let size = metadata.len();
-            if outboard_path.is_none() && size > IROH_BLOCK_SIZE.bytes() as u64 {
+            if needs_outboard(size) && outboard_path.is_none() {
                 tracing::error!("missing outboard file for {}", hex::encode(hash));
                 continue;
             }
-            // only store data in mem if it is small
-            let data_bytes = if size <= IROH_BLOCK_SIZE.bytes() as u64 {
-                Some(Bytes::from(std::fs::read(&data_path)?))
-            } else {
-                None
-            };
-            // always store the outboard bytes in memory
-            let outboard = Bytes::from(if let Some(outboard) = outboard_path {
-                std::fs::read(outboard)?
-            } else {
-                size.to_be_bytes().to_vec().into()
-            });
             complete.insert(
                 hash,
                 CompleteEntry {
-                    owned_data: true,
-                    external: Default::default(),
+                    owned_data,
+                    external,
                     size,
                 },
             );
@@ -777,7 +796,7 @@ impl Database {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
         let db =
-            tokio::task::spawn_blocking(move || Self::load_internal(complete_path, partial_path))
+            tokio::task::spawn_blocking(move || Self::load0(complete_path, partial_path))
                 .await??;
         Ok(db)
     }

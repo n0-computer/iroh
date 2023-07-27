@@ -52,6 +52,7 @@ data-encoding = "2.4.0"
 url = { version = "2.4", features = ["serde"] }
 genawaiter = "0.99"
 rand = "0.8"
+bincode = "1.3.3"
 
 
 [features]
