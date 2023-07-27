@@ -6,7 +6,7 @@
 
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{Debug, Display},
     str::FromStr,
     sync::Arc,
@@ -21,7 +21,7 @@ use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::ranger::{AsFingerprint, Fingerprint, Peer, Range, RangeKey};
+use crate::ranger::{self, AsFingerprint, Fingerprint, Peer, RangeKey};
 
 pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>;
 
@@ -185,47 +185,6 @@ impl NamespaceId {
     }
 }
 
-/// Manages the replicas and authors for an instance.
-#[derive(Debug, Clone, Default)]
-pub struct ReplicaStore {
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica>>>,
-    authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
-}
-
-impl ReplicaStore {
-    pub fn get_replica(&self, namespace: &NamespaceId) -> Option<Replica> {
-        let replicas = &*self.replicas.read();
-        replicas.get(namespace).cloned()
-    }
-
-    pub fn get_author(&self, author: &AuthorId) -> Option<Author> {
-        let authors = &*self.authors.read();
-        authors.get(author).cloned()
-    }
-
-    pub fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Author {
-        let author = Author::new(rng);
-        self.authors.write().insert(*author.id(), author.clone());
-        author
-    }
-
-    pub fn new_replica(&self, namespace: Namespace) -> Replica {
-        let replica = Replica::new(namespace);
-        self.replicas
-            .write()
-            .insert(replica.namespace(), replica.clone());
-        replica
-    }
-
-    pub fn open_replica(&self, bytes: &[u8]) -> anyhow::Result<Replica> {
-        let replica = Replica::from_bytes(bytes)?;
-        self.replicas
-            .write()
-            .insert(replica.namespace(), replica.clone());
-        Ok(replica)
-    }
-}
-
 /// TODO: Would potentially nice to pass a `&SignedEntry` reference, however that would make
 /// everything `!Send`.
 /// TODO: Not sure if the `Sync` requirement will be a problem for implementers. It comes from
@@ -239,109 +198,16 @@ pub enum InsertOrigin {
 }
 
 #[derive(derive_more::Debug, Clone)]
-pub struct Replica {
-    inner: Arc<RwLock<InnerReplica>>,
+pub struct Replica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
+    inner: Arc<RwLock<InnerReplica<S>>>,
     #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
     on_insert: Arc<RwLock<Vec<OnInsertCallback>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct InnerReplica {
+struct InnerReplica<S: ranger::Store<RecordIdentifier, SignedEntry>> {
     namespace: Namespace,
-    peer: Peer<RecordIdentifier, SignedEntry, Store>,
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct Store {
-    /// Stores records by identifier + timestamp
-    records: BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>,
-}
-
-impl Store {
-    pub fn latest(&self) -> impl Iterator<Item = (&RecordIdentifier, &SignedEntry)> {
-        self.records.iter().filter_map(|(k, values)| {
-            let (_, v) = values.last_key_value()?;
-            Some((k, v))
-        })
-    }
-}
-
-impl crate::ranger::Store<RecordIdentifier, SignedEntry> for Store {
-    /// Get a the first key (or the default if none is available).
-    fn get_first(&self) -> RecordIdentifier {
-        self.records
-            .first_key_value()
-            .map(|(k, _)| k.clone())
-            .unwrap_or_default()
-    }
-
-    fn get(&self, key: &RecordIdentifier) -> Option<&SignedEntry> {
-        self.records
-            .get(key)
-            .and_then(|values| values.last_key_value())
-            .map(|(_, v)| v)
-    }
-
-    fn len(&self) -> usize {
-        self.records.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.records.is_empty()
-    }
-
-    fn get_fingerprint(
-        &self,
-        range: &Range<RecordIdentifier>,
-        limit: Option<&Range<RecordIdentifier>>,
-    ) -> Fingerprint {
-        let elements = self.get_range(range.clone(), limit.cloned());
-        let mut fp = Fingerprint::empty();
-        for el in elements {
-            fp ^= el.0.as_fingerprint();
-        }
-
-        fp
-    }
-
-    fn put(&mut self, k: RecordIdentifier, v: SignedEntry) {
-        // TODO: propagate error/not insertion?
-        if v.verify().is_ok() {
-            let timestamp = v.entry().record().timestamp();
-            // TODO: verify timestamp is "reasonable"
-
-            self.records.entry(k).or_default().insert(timestamp, v);
-        }
-    }
-
-    type RangeIterator<'a> = RangeIterator<'a>;
-    fn get_range(
-        &self,
-        range: Range<RecordIdentifier>,
-        limit: Option<Range<RecordIdentifier>>,
-    ) -> Self::RangeIterator<'_> {
-        RangeIterator {
-            iter: self.records.iter(),
-            range: Some(range),
-            limit,
-        }
-    }
-
-    fn remove(&mut self, key: &RecordIdentifier) -> Option<SignedEntry> {
-        self.records
-            .remove(key)
-            .and_then(|mut v| v.last_entry().map(|e| e.remove_entry().1))
-    }
-
-    type AllIterator<'a> = RangeIterator<'a>;
-
-    fn all(&self) -> Self::AllIterator<'_> {
-        RangeIterator {
-            iter: self.records.iter(),
-            range: None,
-            limit: None,
-        }
-    }
+    peer: Peer<RecordIdentifier, SignedEntry, S>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -350,44 +216,12 @@ struct ReplicaData {
     namespace: Namespace,
 }
 
-#[derive(Debug)]
-pub struct RangeIterator<'a> {
-    iter: std::collections::btree_map::Iter<'a, RecordIdentifier, BTreeMap<u64, SignedEntry>>,
-    range: Option<Range<RecordIdentifier>>,
-    limit: Option<Range<RecordIdentifier>>,
-}
-
-impl<'a> RangeIterator<'a> {
-    fn matches(&self, x: &RecordIdentifier) -> bool {
-        let range = self.range.as_ref().map(|r| x.contains(r)).unwrap_or(true);
-        let limit = self.limit.as_ref().map(|r| x.contains(r)).unwrap_or(true);
-        range && limit
-    }
-}
-
-impl<'a> Iterator for RangeIterator<'a> {
-    type Item = (&'a RecordIdentifier, &'a SignedEntry);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut next = self.iter.next()?;
-        loop {
-            if self.matches(next.0) {
-                let (k, values) = next;
-                let (_, v) = values.last_key_value()?;
-                return Some((k, v));
-            }
-
-            next = self.iter.next()?;
-        }
-    }
-}
-
-impl Replica {
-    pub fn new(namespace: Namespace) -> Self {
+impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
+    pub fn new(namespace: Namespace, store: S) -> Self {
         Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
-                peer: Peer::default(),
+                peer: Peer::from_store(store),
             })),
             on_insert: Default::default(),
         }
@@ -437,9 +271,9 @@ impl Replica {
         Ok(bytes.into())
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_bytes(bytes: &[u8], store: S) -> anyhow::Result<Self> {
         let data: ReplicaData = postcard::from_bytes(bytes)?;
-        let replica = Self::new(data.namespace);
+        let replica = Self::new(data.namespace, store);
         for entry in data.entries {
             replica.insert_remote_entry(entry)?;
         }
@@ -509,7 +343,6 @@ impl Replica {
         inner
             .peer
             .get(&RecordIdentifier::new(key, inner.namespace.id(), author))
-            .cloned()
     }
 
     /// Returns the latest version of the matching documents by key.
@@ -521,7 +354,7 @@ impl Replica {
 
         GetLatestIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -537,7 +370,7 @@ impl Replica {
 
         GetLatestIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -552,7 +385,7 @@ impl Replica {
 
         GetLatestIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -571,7 +404,7 @@ impl Replica {
 
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -587,7 +420,7 @@ impl Replica {
 
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -603,7 +436,7 @@ impl Replica {
 
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() //&inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -618,7 +451,7 @@ impl Replica {
 
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                &inner.peer.store().records
+                todo!() // &inner.peer.store().records
             }),
             filter,
             index: 0,
@@ -1040,6 +873,8 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
+    use crate::{ranger::Range, store::memory};
+
     use super::*;
 
     #[test]
@@ -1055,7 +890,9 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
 
-        let my_replica = Replica::new(myspace);
+        let replica_store = memory::ReplicaStore::default();
+
+        let my_replica = replica_store.new_replica(myspace);
         for i in 0..10 {
             my_replica.hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"));
         }
@@ -1214,12 +1051,14 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let mut alice = Replica::new(myspace.clone());
+        let alice_replica_store = memory::ReplicaStore::default();
+        let mut alice = alice_replica_store.new_replica(myspace.clone());
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes());
         }
 
-        let mut bob = Replica::new(myspace);
+        let bob_replica_store = memory::ReplicaStore::default();
+        let mut bob = bob_replica_store.new_replica(myspace);
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes());
         }
@@ -1229,8 +1068,8 @@ mod tests {
 
     fn sync(
         author: &Author,
-        alice: &mut Replica,
-        bob: &mut Replica,
+        alice: &mut memory::Replica,
+        bob: &mut memory::Replica,
         alice_set: &[&str],
         bob_set: &[&str],
     ) {

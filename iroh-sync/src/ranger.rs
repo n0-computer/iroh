@@ -192,13 +192,13 @@ where
     }
 }
 
-pub trait Store<K, V>: Sized + Default
+pub trait Store<K, V>: Sized
 where
     K: RangeKey + Clone + Default + AsFingerprint,
 {
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> K;
-    fn get(&self, key: &K) -> Option<&V>;
+    fn get(&self, key: &K) -> Option<V>;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
     /// Calculate the fingerprint of the given range.
@@ -207,7 +207,7 @@ where
     /// Insert the given key value pair.
     fn put(&mut self, k: K, v: V);
 
-    type RangeIterator<'a>: Iterator<Item = (&'a K, &'a V)>
+    type RangeIterator<'a>: Iterator<Item = (K, V)>
     where
         Self: 'a,
         K: 'a,
@@ -217,7 +217,7 @@ where
     fn get_range(&self, range: Range<K>, limit: Option<Range<K>>) -> Self::RangeIterator<'_>;
     fn remove(&mut self, key: &K) -> Option<V>;
 
-    type AllIterator<'a>: Iterator<Item = (&'a K, &'a V)>
+    type AllIterator<'a>: Iterator<Item = (K, V)>
     where
         Self: 'a,
         K: 'a,
@@ -241,6 +241,7 @@ impl<K, V> Default for SimpleStore<K, V> {
 impl<K, V> Store<K, V> for SimpleStore<K, V>
 where
     K: RangeKey + Clone + Default + AsFingerprint,
+    V: Clone,
 {
     fn get_first(&self) -> K {
         if let Some((k, _)) = self.data.first_key_value() {
@@ -250,8 +251,8 @@ where
         }
     }
 
-    fn get(&self, key: &K) -> Option<&V> {
-        self.data.get(key)
+    fn get(&self, key: &K) -> Option<V> {
+        self.data.get(key).cloned()
     }
 
     fn len(&self) -> usize {
@@ -292,12 +293,12 @@ where
         self.data.remove(key)
     }
 
-    type AllIterator<'a> = std::collections::btree_map::Iter<'a, K, V>
+    type AllIterator<'a> = std::collections::btree_map::IntoIter<K, V>
     where K: 'a,
           V: 'a;
 
     fn all(&self) -> Self::AllIterator<'_> {
-        self.data.iter()
+        self.data.clone().into_iter()
     }
 }
 
@@ -310,9 +311,10 @@ pub struct SimpleRangeIterator<'a, K: 'a, V: 'a> {
 
 impl<'a, K, V> Iterator for SimpleRangeIterator<'a, K, V>
 where
-    K: RangeKey,
+    K: RangeKey + Clone,
+    V: Clone,
 {
-    type Item = (&'a K, &'a V);
+    type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.iter.next()?;
@@ -328,7 +330,7 @@ where
 
         loop {
             if filter(next.0) {
-                return Some(next);
+                return Some((next.0.clone(), next.1.clone()));
             }
 
             next = self.iter.next()?;
@@ -389,6 +391,16 @@ where
     V: Clone + Debug,
     S: Store<K, V>,
 {
+    pub fn from_store(store: S) -> Self {
+        Peer {
+            store,
+            max_set_size: 1,
+            split_factor: 2,
+            limit: None,
+            _phantom: Default::default(),
+        }
+    }
+
     /// Generates the initial message.
     pub fn initial_message(&self) -> Message<K, V> {
         Message::init(&self.store, self.limit.as_ref())
@@ -429,7 +441,7 @@ where
                 Some(
                     self.store
                         .get_range(range.clone(), self.limit.clone())
-                        .filter(|(k, _)| !values.iter().any(|(vk, _)| &vk == k))
+                        .filter(|(k, _)| !values.iter().any(|(vk, _)| vk == k))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
                 )
@@ -498,13 +510,13 @@ where
 
                     let (x, y) = if i == 0 {
                         // first
-                        (range.x(), local_values[end].0)
+                        (range.x(), &local_values[end].0)
                     } else if i == self.split_factor - 1 {
                         // last
-                        (local_values[start].0, range.y())
+                        (&local_values[start].0, range.y())
                     } else {
                         // regular
-                        (local_values[start].0, local_values[end].0)
+                        (&local_values[start].0, &local_values[end].0)
                     };
                     let range = Range::new(x.clone(), y.clone());
                     ranges.push(range);
@@ -555,7 +567,7 @@ where
         self.store.put(k, v);
     }
 
-    pub fn get(&self, k: &K) -> Option<&V> {
+    pub fn get(&self, k: &K) -> Option<V> {
         self.store.get(k)
     }
 
@@ -565,7 +577,7 @@ where
     }
 
     /// List all existing key value pairs.
-    pub fn all(&self) -> impl Iterator<Item = (&K, &V)> {
+    pub fn all(&self) -> impl Iterator<Item = (K, V)> + '_ {
         self.store.all()
     }
 
@@ -941,6 +953,7 @@ mod tests {
     struct SyncResult<K, V>
     where
         K: RangeKey + Clone + Default + AsFingerprint,
+        V: Clone,
     {
         alice: Peer<K, V>,
         bob: Peer<K, V>,
@@ -951,7 +964,7 @@ mod tests {
     impl<K, V> SyncResult<K, V>
     where
         K: RangeKey + Clone + Default + AsFingerprint + Debug,
-        V: Debug,
+        V: Clone + Debug,
     {
         fn print_messages(&self) {
             let len = std::cmp::max(self.alice_to_bob.len(), self.bob_to_alice.len());
@@ -977,7 +990,7 @@ mod tests {
             dbg!(self.alice.all().collect::<Vec<_>>());
             for (k, v) in expected {
                 assert_eq!(
-                    self.alice.store.get(k),
+                    self.alice.store.get(k).as_ref(),
                     Some(v),
                     "{}: (alice) missing key {:?}",
                     ctx,
@@ -992,7 +1005,7 @@ mod tests {
 
             for (k, v) in expected {
                 assert_eq!(
-                    self.bob.store.get(k),
+                    self.bob.store.get(k).as_ref(),
                     Some(v),
                     "{}: (bob) missing key {:?}",
                     ctx,
@@ -1113,13 +1126,17 @@ mod tests {
 
         let alice_now: Vec<_> = res.alice.all().collect();
         assert_eq!(
-            expected_set_alice.iter().collect::<Vec<_>>(),
+            expected_set_alice.into_iter().collect::<Vec<_>>(),
             alice_now,
             "alice"
         );
 
         let bob_now: Vec<_> = res.bob.all().collect();
-        assert_eq!(expected_set_bob.iter().collect::<Vec<_>>(), bob_now, "bob");
+        assert_eq!(
+            expected_set_bob.into_iter().collect::<Vec<_>>(),
+            bob_now,
+            "bob"
+        );
 
         // Check that values were never sent twice
         let mut alice_sent = BTreeMap::new();
@@ -1172,44 +1189,26 @@ mod tests {
             store.put(*k, *v);
         }
 
-        let all: Vec<_> = store
-            .get_range(Range::new("", ""), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let all: Vec<_> = store.get_range(Range::new("", ""), None).collect();
         assert_eq!(&all, &set[..]);
 
-        let regular: Vec<_> = store
-            .get_range(("bee", "eel").into(), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let regular: Vec<_> = store.get_range(("bee", "eel").into(), None).collect();
         assert_eq!(&regular, &set[..3]);
 
         // empty start
-        let regular: Vec<_> = store
-            .get_range(("", "eel").into(), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let regular: Vec<_> = store.get_range(("", "eel").into(), None).collect();
         assert_eq!(&regular, &set[..3]);
 
-        let regular: Vec<_> = store
-            .get_range(("cat", "hog").into(), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let regular: Vec<_> = store.get_range(("cat", "hog").into(), None).collect();
         assert_eq!(&regular, &set[1..5]);
 
-        let excluded: Vec<_> = store
-            .get_range(("fox", "bee").into(), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let excluded: Vec<_> = store.get_range(("fox", "bee").into(), None).collect();
 
         assert_eq!(excluded[0].0, "fox");
         assert_eq!(excluded[1].0, "hog");
         assert_eq!(excluded.len(), 2);
 
-        let excluded: Vec<_> = store
-            .get_range(("fox", "doe").into(), None)
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let excluded: Vec<_> = store.get_range(("fox", "doe").into(), None).collect();
 
         assert_eq!(excluded.len(), 4);
         assert_eq!(excluded[0].0, "bee");
@@ -1220,7 +1219,6 @@ mod tests {
         // Limit
         let all: Vec<_> = store
             .get_range(("", "").into(), Some(("bee", "doe").into()))
-            .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&all, &set[..2]);
     }
