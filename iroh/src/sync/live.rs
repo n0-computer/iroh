@@ -102,8 +102,8 @@ struct Actor {
     sync_state: HashMap<(TopicId, PeerId), SyncState>,
 
     to_actor_rx: mpsc::Receiver<ToActor>,
-    insert_entry_tx: mpsc::UnboundedSender<(TopicId, SignedEntry)>,
-    insert_entry_rx: mpsc::UnboundedReceiver<(TopicId, SignedEntry)>,
+    insert_entry_tx: flume::Sender<(TopicId, SignedEntry)>,
+    insert_entry_rx: flume::Receiver<(TopicId, SignedEntry)>,
 
     pending_syncs: FuturesUnordered<BoxFuture<'static, (TopicId, PeerId, Result<()>)>>,
     pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
@@ -115,10 +115,7 @@ impl Actor {
         gossip: GossipHandle,
         to_actor_rx: mpsc::Receiver<ToActor>,
     ) -> Self {
-        // TODO: instead of an unbounded channel, we'd want a FIFO ring buffer likely
-        // (we have to send from the blocking Replica::on_insert callback, so we need a channel
-        // with nonblocking sending, so either unbounded or ringbuffer like)
-        let (insert_tx, insert_rx) = mpsc::unbounded_channel();
+        let (insert_tx, insert_rx) = flume::bounded(64);
         let sub = gossip.clone().subscribe_all().boxed();
 
         Self {
@@ -157,8 +154,8 @@ impl Actor {
                         error!("Failed to process gossip event: {err:?}");
                     }
                 },
-                entry = self.insert_entry_rx.recv() => {
-                    let (topic, entry) = entry.ok_or_else(|| anyhow!("insert_rx returned None"))?;
+                entry = self.insert_entry_rx.recv_async() => {
+                    let (topic, entry) = entry?;
                     self.on_insert_entry(topic, entry).await?;
                 }
                 Some((topic, peer, res)) = self.pending_syncs.next() => {
