@@ -169,13 +169,12 @@ impl Doc {
 
     pub async fn get_content_bytes(&self, entry: &SignedEntry) -> Option<Bytes> {
         let hash = entry.entry().record().content_hash();
-        let bytes = self.blobs.get_bytes(hash).await.ok().flatten();
-        bytes
+        self.blobs.get_bytes(hash).await.ok().flatten()
     }
+
     pub async fn get_content_reader(&self, entry: &SignedEntry) -> Option<impl AsyncSliceReader> {
         let hash = entry.entry().record().content_hash();
-        let bytes = self.blobs.get_reader(hash).await.ok().flatten();
-        bytes
+        self.blobs.get_reader(hash).await.ok().flatten()
     }
 }
 
@@ -208,7 +207,7 @@ impl BlobStore {
     }
 
     pub fn db(&self) -> &Database {
-        &self.db.db()
+        self.db.db()
     }
 
     pub fn start_download(&self, hash: Hash, peer: PeerId) {
@@ -378,21 +377,21 @@ impl DownloadActor {
 
     fn reply(&mut self, hash: Hash, res: Option<(Hash, u64)>) {
         for reply in self.replies.remove(&hash).into_iter().flatten() {
-            reply.send(res.clone()).ok();
+            reply.send(res).ok();
         }
     }
 
     fn on_peer_fail(&mut self, peer: &PeerId, err: anyhow::Error) {
         warn!("download from {peer} failed: {err}");
-        for hash in self.peer_hashes.remove(&peer).into_iter().flatten() {
+        for hash in self.peer_hashes.remove(peer).into_iter().flatten() {
             self.on_not_found(peer, hash);
         }
-        self.conns.remove(&peer);
+        self.conns.remove(peer);
     }
 
     fn on_not_found(&mut self, peer: &PeerId, hash: Hash) {
         if let Some(peers) = self.hash_peers.get_mut(&hash) {
-            peers.remove(&peer);
+            peers.remove(peer);
             if peers.is_empty() {
                 self.reply(hash, None);
                 self.hash_peers.remove(&hash);
@@ -404,8 +403,7 @@ impl DownloadActor {
         if let Some(hash) = self
             .peer_hashes
             .get_mut(&peer)
-            .map(|hashes| hashes.pop_front())
-            .flatten()
+            .and_then(|hashes| hashes.pop_front())
         {
             let conn = self.conns.get(&peer).unwrap().clone();
             let blobs = self.db.clone();
