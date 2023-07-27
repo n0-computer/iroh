@@ -214,8 +214,7 @@ where
         V: 'a;
 
     /// Returns all items in the given range
-    fn get_range<'a>(&'a self, range: Range<K>, limit: Option<Range<K>>)
-        -> Self::RangeIterator<'a>;
+    fn get_range(&self, range: Range<K>, limit: Option<Range<K>>) -> Self::RangeIterator<'_>;
     fn remove(&mut self, key: &K) -> Option<V>;
 
     type AllIterator<'a>: Iterator<Item = (&'a K, &'a V)>
@@ -282,11 +281,7 @@ where
     type RangeIterator<'a> = SimpleRangeIterator<'a, K, V>
         where K: 'a, V: 'a;
     /// Returns all items in the given range
-    fn get_range<'a>(
-        &'a self,
-        range: Range<K>,
-        limit: Option<Range<K>>,
-    ) -> Self::RangeIterator<'a> {
+    fn get_range(&self, range: Range<K>, limit: Option<Range<K>>) -> Self::RangeIterator<'_> {
         // TODO: this is not very efficient, optimize depending on data structure
         let iter = self.data.iter();
 
@@ -1179,14 +1174,12 @@ mod tests {
 
         let all: Vec<_> = store
             .get_range(Range::new("", ""), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&all, &set[..]);
 
         let regular: Vec<_> = store
             .get_range(("bee", "eel").into(), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&regular, &set[..3]);
@@ -1194,21 +1187,18 @@ mod tests {
         // empty start
         let regular: Vec<_> = store
             .get_range(("", "eel").into(), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&regular, &set[..3]);
 
         let regular: Vec<_> = store
             .get_range(("cat", "hog").into(), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&regular, &set[1..5]);
 
         let excluded: Vec<_> = store
             .get_range(("fox", "bee").into(), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
 
@@ -1218,7 +1208,6 @@ mod tests {
 
         let excluded: Vec<_> = store
             .get_range(("fox", "doe").into(), None)
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
 
@@ -1231,7 +1220,6 @@ mod tests {
         // Limit
         let all: Vec<_> = store
             .get_range(("", "").into(), Some(("bee", "doe").into()))
-            .into_iter()
             .map(|(k, v)| (*k, *v))
             .collect();
         assert_eq!(&all, &set[..2]);
