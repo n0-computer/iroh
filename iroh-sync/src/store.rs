@@ -86,10 +86,20 @@ pub mod memory {
             f(value)
         }
 
+        fn with_records_mut_with_default<F, T>(&self, f: F) -> T
+        where
+            F: FnOnce(&mut BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>) -> T,
+        {
+            let mut guard = self.store.replica_records.write();
+            let value = guard.entry(self.namespace).or_default();
+            f(value)
+        }
+
         fn records_iter(&self) -> RecordsIter<'_> {
             RecordsIter {
                 namespace: self.namespace,
                 replica_records: self.store.replica_records.read(),
+                i: 0,
             }
         }
     }
@@ -101,13 +111,17 @@ pub mod memory {
             'a,
             HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
         >,
+        i: usize,
     }
 
     impl Iterator for RecordsIter<'_> {
         type Item = (RecordIdentifier, BTreeMap<u64, SignedEntry>);
 
         fn next(&mut self) -> Option<Self::Item> {
-            todo!()
+            let records = self.replica_records.get(&self.namespace)?;
+            let (key, value) = records.iter().nth(self.i)?;
+            self.i += 1;
+            Some((key.clone(), value.clone()))
         }
     }
 
@@ -158,15 +172,8 @@ pub mod memory {
                 let timestamp = v.entry().record().timestamp();
                 // TODO: verify timestamp is "reasonable"
 
-                self.with_records_mut(|records| {
-                    match records {
-                        Some(records) => {
-                            records.entry(k).or_default().insert(timestamp, v);
-                        }
-                        None => {
-                            // ?
-                        }
-                    }
+                self.with_records_mut_with_default(|records| {
+                    records.entry(k).or_default().insert(timestamp, v);
                 });
             }
         }
