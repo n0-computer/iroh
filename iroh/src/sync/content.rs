@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -177,6 +177,15 @@ impl Doc {
         let (hash, len) = self.blobs.put_reader(content).await?;
         self.replica.insert(key, &self.local_author, hash, len);
         Ok((hash, len))
+    }
+
+    pub async fn insert_from_file(
+        &self,
+        key: impl AsRef<[u8]>,
+        file_path: impl AsRef<Path>,
+    ) -> anyhow::Result<(Hash, u64)> {
+        let reader = tokio::fs::File::open(&file_path).await?;
+        self.insert_reader(&key, reader).await
     }
 
     pub fn download_content_from_author(&self, entry: &SignedEntry) {
