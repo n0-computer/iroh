@@ -274,7 +274,7 @@ async fn handle_command(
             for (_id, entry) in entries {
                 println!("{}", fmt_entry(&entry));
                 if print_content {
-                    println!("{}", fmt_content(&doc, &entry).await);
+                    println!("{}", fmt_content(doc, &entry).await);
                 }
             }
         }
