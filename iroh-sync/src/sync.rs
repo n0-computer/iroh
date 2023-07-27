@@ -315,11 +315,11 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for Store {
     }
 
     type RangeIterator<'a> = RangeIterator<'a>;
-    fn get_range<'a>(
-        &'a self,
+    fn get_range(
+        &self,
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
-    ) -> Self::RangeIterator<'a> {
+    ) -> Self::RangeIterator<'_> {
         RangeIterator {
             iter: self.records.iter(),
             range: Some(range),
@@ -454,8 +454,8 @@ impl Replica {
 
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
-        let signed_entry = entry.sign(&inner.namespace, author).clone();
-        inner.peer.put(id.clone(), signed_entry.clone());
+        let signed_entry = entry.sign(&inner.namespace, author);
+        inner.peer.put(id, signed_entry.clone());
         drop(inner);
         let on_insert = self.on_insert.read();
         for cb in &*on_insert {
@@ -489,7 +489,7 @@ impl Replica {
         entry.verify()?;
         let mut inner = self.inner.write();
         let id = entry.entry.id.clone();
-        inner.peer.put(id.clone(), entry.clone());
+        inner.peer.put(id, entry.clone());
         drop(inner);
         let on_insert = self.on_insert.read();
         for cb in &*on_insert {
