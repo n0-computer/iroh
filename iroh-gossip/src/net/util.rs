@@ -16,7 +16,7 @@ use crate::proto::util::TimerMap;
 
 use super::{ProtoMessage, MAX_MESSAGE_SIZE};
 
-/// Write a [ProtoMessage] as a length-prefixed, postcard-encoded message.
+/// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(
     writer: &mut W,
     buffer: &mut BytesMut,
@@ -32,7 +32,7 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// Read a length-prefixed message and decode as [[ProtoMessage]];
+/// Read a length-prefixed message and decode as `ProtoMessage`;
 pub async fn read_message(
     reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
