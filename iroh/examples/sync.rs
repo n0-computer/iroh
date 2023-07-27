@@ -348,7 +348,7 @@ async fn handle_command(
     Ok(())
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub enum Cmd {
     /// Set an entry
     Set {
