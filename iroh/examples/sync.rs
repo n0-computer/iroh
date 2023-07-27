@@ -413,7 +413,7 @@ async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
             dir_path,
             mut key_prefix,
         } => {
-            if key_prefix.ends_with("/") {
+            if key_prefix.ends_with('/') {
                 key_prefix.pop();
             }
             let root = canonicalize_path(&dir_path)?.canonicalize()?;
@@ -441,7 +441,7 @@ async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
             mut key_prefix,
             dir_path,
         } => {
-            if !key_prefix.ends_with("/") {
+            if !key_prefix.ends_with('/') {
                 key_prefix.push('/');
             }
             let root = canonicalize_path(&dir_path)?;
