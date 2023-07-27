@@ -242,6 +242,7 @@ impl Actor {
         doc.on_insert(Box::new(move |origin, entry| {
             // only care for local inserts, otherwise we'd do endless gossip loops
             if let InsertOrigin::Local = origin {
+                // TODO: this is potentially blocking inside an async call. figure out a better solution
                 insert_entry_tx.send((topic, entry)).ok();
             }
         }));

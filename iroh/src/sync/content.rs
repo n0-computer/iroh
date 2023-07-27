@@ -328,6 +328,7 @@ impl Downloader {
             .lock()
             .unwrap()
             .insert(hash, fut.boxed().shared());
+        // TODO: this is potentially blocking inside an async call. figure out a better solution
         if let Err(err) = self.to_actor_tx.send(req) {
             warn!("download actor dropped: {err}");
         }
