@@ -335,6 +335,9 @@ impl Downloader {
     }
 }
 
+type PendingDownloadsFutures =
+    FuturesUnordered<LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<(Hash, u64)>>)>>;
+
 #[derive(Debug)]
 pub struct DownloadActor {
     dialer: Dialer,
@@ -343,9 +346,7 @@ pub struct DownloadActor {
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
     peer_hashes: HashMap<PeerId, VecDeque<Hash>>,
     hash_peers: HashMap<Hash, HashSet<PeerId>>,
-    pending_downloads: FuturesUnordered<
-        LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<(Hash, u64)>>)>,
-    >,
+    pending_downloads: PendingDownloadsFutures,
     rx: flume::Receiver<DownloadRequest>,
 }
 impl DownloadActor {
