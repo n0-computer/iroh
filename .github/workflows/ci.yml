@@ -246,7 +246,7 @@ jobs:
 
     - name: test
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
-  
+
   check_fmt_and_docs:
     timeout-minutes: 30
     name: Checking fmt and docs
