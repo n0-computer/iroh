@@ -14,7 +14,6 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
-use iroh_bytes_handlers::IrohBytesHandlers;
 use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
@@ -40,6 +39,8 @@ use tokio::{
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
+
+use iroh_bytes_handlers::IrohBytesHandlers;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
@@ -350,22 +351,47 @@ async fn handle_command(
         Cmd::Fs(cmd) => handle_fs_command(cmd, doc).await?,
         Cmd::Hammer {
             prefix,
+            threads,
             count,
             size,
         } => {
             println!(
-                "> hammering with prefix {prefix} for {count} messages of size {size} bytes",
+                "> Hammering with prefix {prefix} for {threads} x {count} messages of size {size} bytes",
                 prefix = prefix,
+                threads = threads,
                 count = count,
                 size = size,
             );
             let mut bytes = vec![0; size];
             bytes.fill(97);
-            for i in 0..count {
-                let value = String::from_utf8(bytes.clone())?;
-                let key = format!("{}/{}", prefix, i);
-                doc.insert_bytes(key, value.into_bytes().into()).await?;
+            let mut handles = Vec::new();
+            let start = std::time::Instant::now();
+            for t in 0..threads {
+                let p = prefix.clone();
+                let t_doc = doc.clone();
+                let b = bytes.clone();
+                let h = tokio::spawn(async move {
+                    for i in 0..count {
+                        let value = String::from_utf8(b.clone()).unwrap();
+                        let key = format!("{}/{}/{}", p, t, i);
+                        t_doc
+                            .insert_bytes(key, value.into_bytes().into())
+                            .await
+                            .unwrap();
+                    }
+                });
+                handles.push(h);
             }
+
+            let _result = futures::future::join_all(handles).await;
+
+            let diff = start.elapsed().as_secs_f64();
+            println!(
+                "> Hammering done in {:.2}s for {} messages with total of {} bytes",
+                diff,
+                threads * count,
+                threads * count * size
+            );
         }
         Cmd::Exit => {}
     }
@@ -524,6 +550,8 @@ pub enum Cmd {
     Hammer {
         /// The key prefix
         prefix: String,
+        /// The number of threads to use (each thread will create it's own replica)
+        threads: usize,
         /// The number of entries to create
         count: usize,
         /// The size of each entry in Bytes
