@@ -14,6 +14,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
+use iroh_bytes_handlers::IrohBytesHandlers;
 use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
@@ -39,7 +40,6 @@ use tokio::{
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
-use iroh_bytes_handlers::IrohBytesHandlers;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
 
@@ -348,7 +348,11 @@ async fn handle_command(
         }
         Cmd::Stats => get_stats(),
         Cmd::Fs(cmd) => handle_fs_command(cmd, doc).await?,
-        Cmd::Hammer { prefix, count, size}=> {
+        Cmd::Hammer {
+            prefix,
+            count,
+            size,
+        } => {
             println!(
                 "> hammering with prefix {prefix} for {count} messages of size {size} bytes",
                 prefix = prefix,
