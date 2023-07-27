@@ -185,10 +185,10 @@ mod tests {
         let author = replica_store.new_author(&mut rng);
         let namespace = Namespace::new(&mut rng);
         let bob_replica = replica_store.new_replica(namespace.clone());
-        bob_replica.insert("hello alice", &author, "from bob");
+        bob_replica.hash_and_insert("hello alice", &author, "from bob");
 
         let alice_replica = Replica::new(namespace.clone());
-        alice_replica.insert("hello bob", &author, "from alice");
+        alice_replica.hash_and_insert("hello bob", &author, "from alice");
 
         assert_eq!(bob_replica.all().len(), 1);
         assert_eq!(alice_replica.all().len(), 1);
