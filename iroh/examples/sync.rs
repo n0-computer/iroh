@@ -18,6 +18,10 @@ use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
 };
+use iroh_metrics::{
+    core::{Counter, Metric},
+    struct_iterable::Iterable,
+};
 use iroh_net::{
     defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
     derp::{DerpMap, UseIpv4, UseIpv6},
@@ -73,7 +77,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
+    // setup logging
     let log_filter = init_logging();
+
+    // init metrics
+    iroh_metrics::core::Core::init(|reg, metrics| {
+        metrics.insert(iroh::sync::metrics::Metrics::new(reg));
+        metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
+    });
+
     // parse or generate our keypair
     let keypair = match args.private_key {
         None => Keypair::generate(),
@@ -307,6 +319,7 @@ async fn handle_command(
             let next_filter = EnvFilter::from_str(&directive)?;
             log_filter.modify(|layer| *layer = next_filter)?;
         }
+        Cmd::Stats => get_stats(),
         Cmd::Exit => {}
     }
     Ok(())
@@ -359,6 +372,8 @@ pub enum Cmd {
     },
     /// Cancels any running watch command.
     WatchCancel,
+    /// Show stats about the current session
+    Stats,
     /// Quit
     Exit,
 }
@@ -443,6 +458,31 @@ fn repl_loop(cmd_tx: mpsc::Sender<(Cmd, oneshot::Sender<ToRepl>)>) -> anyhow::Re
         }
     }
     Ok(())
+}
+
+fn get_stats() {
+    let core = iroh_metrics::core::Core::get().expect("Metrics core not initialized");
+    println!("# sync");
+    let metrics = core
+        .get_collector::<iroh::sync::metrics::Metrics>()
+        .unwrap();
+    fmt_metrics(metrics);
+    println!("# gossip");
+    let metrics = core
+        .get_collector::<iroh_gossip::metrics::Metrics>()
+        .unwrap();
+    fmt_metrics(metrics);
+}
+
+fn fmt_metrics(metrics: &impl Iterable) {
+    for (name, counter) in metrics.iter() {
+        if let Some(counter) = counter.downcast_ref::<Counter>() {
+            let value = counter.get();
+            println!("{name:23} : {value:>6}    ({})", counter.description);
+        } else {
+            println!("{name:23} : unsupported metric kind");
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

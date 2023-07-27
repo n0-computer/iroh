@@ -3,6 +3,7 @@ use std::{
     io,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use bytes::Bytes;
@@ -14,6 +15,7 @@ use futures::{
 use iroh_bytes::util::Hash;
 use iroh_gossip::net::util::Dialer;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
+use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::sync::{
     Author, InsertOrigin, Namespace, NamespaceId, OnInsertCallback, Replica, ReplicaStore,
@@ -26,6 +28,7 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
+use super::metrics::Metrics;
 use crate::database::flat::{writable::WritableFileDatabase, Database};
 
 #[derive(Debug, Copy, Clone)]
@@ -117,14 +120,33 @@ impl Doc {
             blobs,
             local_author,
         };
+
+        // If download mode is set to always download:
+        // setup on_insert callback to trigger download on remote insert
         if let DownloadMode::Always = download_mode {
-            let doc2 = doc.clone();
+            let doc_clone = doc.clone();
             doc.replica.on_insert(Box::new(move |origin, entry| {
                 if matches!(origin, InsertOrigin::Sync) {
-                    doc2.download_content_fron_author(&entry);
+                    doc_clone.download_content_fron_author(&entry);
                 }
             }));
         }
+
+        // Collect metrics
+        doc.replica.on_insert(Box::new(move |origin, entry| {
+            let size = entry.entry().record().content_len();
+            match origin {
+                InsertOrigin::Local => {
+                    inc!(Metrics, new_entries_local);
+                    inc_by!(Metrics, new_entries_local_size, size);
+                }
+                InsertOrigin::Sync => {
+                    inc!(Metrics, new_entries_remote);
+                    inc_by!(Metrics, new_entries_remote_size, size);
+                }
+            }
+        }));
+
         doc
     }
 
@@ -407,7 +429,22 @@ impl DownloadActor {
         {
             let conn = self.conns.get(&peer).unwrap().clone();
             let blobs = self.db.clone();
-            let fut = async move { (peer, hash, blobs.download_single(conn, hash).await) };
+            let fut = async move {
+                let start = Instant::now();
+                let res = blobs.download_single(conn, hash).await;
+                // record metrics
+                let elapsed = start.elapsed().as_millis();
+                match &res {
+                    Ok(Some((_hash, len))) => {
+                        inc!(Metrics, downloads_success);
+                        inc_by!(Metrics, download_bytes_total, *len);
+                        inc_by!(Metrics, download_time_total, elapsed as u64);
+                    }
+                    Ok(None) => inc!(Metrics, downloads_notfound),
+                    Err(_) => inc!(Metrics, downloads_error),
+                }
+                (peer, hash, res)
+            };
             self.pending_downloads.push(fut.boxed_local());
         } else {
             self.conns.remove(&peer);
