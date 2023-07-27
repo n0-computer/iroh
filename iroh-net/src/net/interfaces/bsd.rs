@@ -8,6 +8,7 @@ use std::{
 };
 
 use once_cell::sync::Lazy;
+use tracing::warn;
 
 use super::DefaultRouteDetails;
 
@@ -118,23 +119,47 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
 fn fetch_routing_table() -> Option<Vec<u8>> {
-    fetch_rib(libc::AF_UNSPEC, libc::NET_RT_DUMP, 0).ok()
+    match fetch_rib(libc::AF_UNSPEC, libc::NET_RT_DUMP, 0) {
+        Ok(res) => Some(res),
+        Err(err) => {
+            warn!("fetch_rib failed: {:?}", err);
+            None
+        }
+    }
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
-    parse_rib(libc::NET_RT_IFLIST, rib).ok()
+    match parse_rib(libc::NET_RT_IFLIST, rib) {
+        Ok(res) => Some(res),
+        Err(err) => {
+            warn!("parse_rib failed: {:?}", err);
+            None
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios",))]
 fn fetch_routing_table() -> Option<Vec<u8>> {
     const NET_RT_DUMP2: i32 = 7;
-    fetch_rib(libc::AF_UNSPEC, NET_RT_DUMP2, 0).ok()
+    match fetch_rib(libc::AF_UNSPEC, NET_RT_DUMP2, 0) {
+        Ok(res) => Some(res),
+        Err(err) => {
+            warn!("fetch_rib failed: {:?}", err);
+            None
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios",))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
-    parse_rib(libc::NET_RT_IFLIST2, rib).ok()
+    match parse_rib(libc::NET_RT_IFLIST2, rib) {
+        Ok(res) => Some(res),
+        Err(err) => {
+            warn!("parse_rib failed: {:?}", err);
+            None
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -247,8 +272,7 @@ struct RoutingStack {
 /// Parses b as a routing information base and returns a list of routing messages.
 fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<RouteMessage>, RouteError> {
     if !is_valid_rib_type(typ) {
-        panic!("unsupported");
-        // return nil, errUnsupportedMessage
+        return Err(RouteError::InvalidRibType(typ));
     }
 
     let mut msgs = Vec::new();
@@ -442,6 +466,10 @@ enum RouteError {
     InvalidMessage,
     #[error("invalid address")]
     InvalidAddress,
+    #[error("invalid rib type: {0}")]
+    InvalidRibType(RIBType),
+    #[error("io error calling: '{0}': {1:?}")]
+    Io(&'static str, std::io::Error),
 }
 
 /// FetchRIB fetches a routing information base from the operating system.
@@ -453,7 +481,6 @@ enum RouteError {
 /// flags. When RIBType is related to network interfaces, arg might be
 /// an interface index or a set of interface flags. In most cases, zero
 /// means a wildcard.
-
 fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
     let mut round = 0;
     loop {
@@ -472,8 +499,7 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             )
         };
         if err != 0 {
-            panic!("failed {err}");
-            // return nil, os.NewSyscallError("sysctl", err);
+            return Err(RouteError::Io("sysctl", std::io::Error::last_os_error()));
         }
         if n == 0 {
             // nothing available
@@ -494,12 +520,12 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             // If the sysctl failed because the data got larger
             // between the two sysctl calls, try a few times
             // before failing. (golang.org/issue/45736).
+            let io_err = std::io::Error::last_os_error();
             const MAX_TRIES: usize = 3;
-            if err == libc::ENOMEM && round < MAX_TRIES {
+            if io_err.raw_os_error().unwrap_or_default() == libc::ENOMEM && round < MAX_TRIES {
                 continue;
             }
-            panic!("error {err}");
-            // return nil, os.NewSyscallError("sysctl", err);
+            return Err(RouteError::Io("sysctl", io_err));
         }
         return Ok(b);
     }
