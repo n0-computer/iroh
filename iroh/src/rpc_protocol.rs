@@ -43,12 +43,12 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
 }
 
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareRequest {
     ///
-    pub blobs: Vec<Hash>,
+    pub hash: Hash,
     ///
-    pub collections: Vec<Hash>,
+    pub recursive: bool,
     ///
     pub peer: PeerId,
     ///
@@ -59,6 +59,8 @@ pub struct ShareRequest {
     pub token: Option<RequestToken>,
     ///
     pub derp_region: Option<u16>,
+    /// The path where the data should go
+    pub out: Option<String>,
 }
 
 impl Msg<ProviderService> for ShareRequest {

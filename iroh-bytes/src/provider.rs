@@ -33,6 +33,8 @@ use crate::Hash;
 pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
     /// The hash of the entry
     fn hash(&self) -> blake3::Hash;
+    /// the size of the entry
+    fn size(&self) -> u64;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
@@ -248,6 +250,24 @@ pub enum ShareProgress {
     },
     /// We are done with the whole operation
     AllDone,
+    ///
+    Export {
+        ///
+        id: u64,
+        ///
+        hash: Hash,
+        ///
+        size: u64,
+        ///
+        target: String,
+    },
+    ///
+    ExportProgress {
+        ///
+        id: u64,
+        ///
+        offset: u64,
+    },
     /// We got an error and need to abort
     Abort(RpcError),
 }
@@ -683,19 +703,6 @@ pub trait Vfs: Clone + Debug + Send + Sync + 'static {
         &self,
         hash: Hash,
         outboard: bool,
-        location_hint: Option<&[u8]>,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
-
-    /// Move a temporary file to its final location
-    ///
-    /// `temp` is the id of the temporary file. This should be the data part of
-    /// the pair returned by `create_temp_pair`.
-    /// `location_hint` is a hint for the location of the final file.
-    fn move_temp_pair(
-        &self,
-        temp_data: Self::Id,
-        temp_outboard: Option<Self::Id>,
-        location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
 
     /// open an internal handle for reading
@@ -897,7 +904,7 @@ pub trait BaoDb: BaoReadonlyDb {
         hash: Hash,
         target: PathBuf,
         stable: bool,
-        progress: impl Fn(u64),
+        progress: impl Fn(u64) -> io::Result<()>,
     ) -> BoxFuture<'_, io::Result<()>> {
         let _ = (hash, target, stable, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
@@ -923,7 +930,7 @@ pub trait BaoDb: BaoReadonlyDb {
     }
 
     /// import a byte slice
-    fn import_bytes<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<Hash>> {
+    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let _ = bytes;
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
@@ -942,7 +949,6 @@ impl Vfs for LocalFs {
         &self,
         hash: Hash,
         outboard: bool,
-        _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         use rand::Rng;
         let dir = std::env::temp_dir();
@@ -954,15 +960,6 @@ impl Vfs for LocalFs {
             None
         };
         future::ok((data, outboard)).boxed()
-    }
-
-    fn move_temp_pair(
-        &self,
-        _temp_data_id: Self::Id,
-        _temp_outboard_id: Option<Self::Id>,
-        _location_hint: Option<&[u8]>,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        async move { todo!() }.boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {

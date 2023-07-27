@@ -54,6 +54,13 @@ impl BaoMapEntry<Database> for DbPair {
         self.hash
     }
 
+    fn size(&self) -> u64 {
+        match &self.entry {
+            DbEntry::External { size, .. } => *size,
+            DbEntry::Internal { data, .. } => data.len() as u64,
+        }
+    }
+
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
         async move {
             let bytes = self.entry.outboard_reader().await?;

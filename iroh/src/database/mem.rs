@@ -89,6 +89,10 @@ impl BaoMapEntry<Database> for DbEntry {
         self.outboard.root()
     }
 
+    fn size(&self) -> u64 {
+        self.data.len() as u64
+    }
+
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }
@@ -207,7 +211,6 @@ impl Vfs for MemVfs {
         &self,
         hash: Hash,
         outboard: bool,
-        _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         let mut inner = self.0.write().unwrap();
         let uuid = rand::thread_rng().gen::<[u8; 16]>();
@@ -239,16 +242,6 @@ impl Vfs for MemVfs {
             None
         };
         futures::future::ok((data_id, outboard_id)).boxed()
-    }
-
-    fn move_temp_pair(
-        &self,
-        temp_data: Self::Id,
-        temp_outboard: Option<Self::Id>,
-        _location_hint: Option<&[u8]>,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        // for a mem vfs, there is no distinction between temp and non-temp
-        futures::future::ok((temp_data, temp_outboard)).boxed()
     }
 
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
@@ -300,6 +293,10 @@ pub struct MutableDbEntry {
 impl BaoMapEntry<MutableDatabase> for MutableDbEntry {
     fn hash(&self) -> blake3::Hash {
         self.hash.into()
+    }
+
+    fn size(&self) -> u64 {
+        self.data.data.lock().unwrap().len() as u64
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {

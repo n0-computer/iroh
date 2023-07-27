@@ -8,6 +8,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use std::task::Poll;
 use std::time::Duration;
 use std::{io, result};
 
+use crate::collection::{Blob, Collection};
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -23,6 +25,7 @@ use crate::rpc_protocol::{
     ProviderService, ShareRequest, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
+use crate::util::io::pathbuf_from_name;
 use crate::util::progress::ProgressSliceWriter2;
 use anyhow::{Context, Result};
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -45,6 +48,7 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_io::AsyncSliceReader;
+use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -55,6 +59,7 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use quinn::VarInt;
 use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc::error::TrySendError;
@@ -754,15 +759,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         db: &D,
         hash: &Hash,
         size: u64,
-        location_hint: Option<&[u8]>,
     ) -> io::Result<(VfsId<D>, Option<VfsId<D>>)> {
         // create temp file for the data, using the hash as name hint
         db.vfs()
-            .create_temp_pair(
-                *hash,
-                size > (IROH_BLOCK_SIZE.bytes() as u64),
-                location_hint,
-            )
+            .create_temp_pair(*hash, size > (IROH_BLOCK_SIZE.bytes() as u64))
             .await
     }
 
@@ -771,15 +771,67 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         hash: Hash,
         recursive: bool,
-        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
-        if recursive {
-            self.get_collection(conn, &hash, location_hint, sender)
-                .await
+        let res = if recursive {
+            self.get_collection(conn, &hash, sender).await
         } else {
-            self.get_blob(conn, &hash, location_hint, sender).await
+            self.get_blob(conn, &hash, sender).await
+        };
+        if let Err(e) = res.as_ref() {
+            tracing::error!("get failed: {}", e);
         }
+        res
+    }
+
+    async fn export(
+        self,
+        out: String,
+        hash: Hash,
+        recursive: bool,
+        progress: ShareProgressSender,
+    ) -> anyhow::Result<()> {
+        let db = &self.inner.db;
+        let path = PathBuf::from(&out);
+        if recursive {
+            tracing::info!("exporting collection {} to {}", hash, path.display());
+            tokio::fs::create_dir_all(&path).await?;
+            let collection = db.get(&hash).context("collection not there")?;
+            let mut reader = collection.data_reader().await?;
+            let bytes: Bytes = reader.read_to_end().await?;
+            let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+            for Blob { hash, name } in collection.blobs() {
+                let path = (&path).join(pathbuf_from_name(name));
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tracing::info!("exporting blob {} to {}", hash, path.display());
+                let id = progress.new_id();
+                db.export(*hash, path, true, |offset| {
+                    Ok(progress.try_send(ShareProgress::ExportProgress { id, offset })?)
+                })
+                .await?;
+            }
+        } else {
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+                let id = progress.new_id();
+                let entry = db.get(&hash).context("entry not there")?;
+                progress
+                    .send(ShareProgress::Export {
+                        id,
+                        hash,
+                        target: out,
+                        size: entry.size(),
+                    })
+                    .await?;
+                db.export(hash, path, true, |offset| {
+                    Ok(progress.try_send(ShareProgress::ExportProgress { id, offset })?)
+                })
+                .await?;
+            }
+        }
+        anyhow::Ok(())
     }
 
     /// Get a blob that was requested completely.
@@ -789,7 +841,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner(
         db: &D,
         header: AtBlobHeader,
-        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<AtEndBlob> {
         use iroh_io::AsyncSliceWriter;
@@ -798,8 +849,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // read the size
         let (content, size) = header.next().await?;
         // create the temp file pair
-        let (data_id, outboard_id) =
-            Self::create_temp_pair(&db, &hash, size, location_hint).await?;
+        let (data_id, outboard_id) = Self::create_temp_pair(&db, &hash, size).await?;
         // open the data file in any case
         let df = db.vfs().open_write(&data_id).await?;
         // open the outboard file (only if we need to)
@@ -837,7 +887,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(mut of) = ofo {
             of.sync().await?;
         }
-        let (data_id, outboard_id) = db.vfs().move_temp_pair(data_id, outboard_id, None).await?;
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
         db.insert_entry(hash, data_id, outboard_id).await?;
@@ -853,8 +902,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner_partial(
         db: &D,
         header: AtBlobHeader,
-        data_id: &VfsId<D>,
-        outboard_id: &VfsId<D>,
+        data_id: VfsId<D>,
+        outboard_id: VfsId<D>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<AtEndBlob> {
         // TODO: the data we get is validated at this point, but we need to check
@@ -892,13 +941,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         pw.sync().await?;
         // sync the outboard file
         of.sync().await?;
-        let (data_id, outboard_id) = db
-            .vfs()
-            .move_temp_pair(data_id.clone(), Some(outboard_id.clone()), None)
-            .await?;
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_entry(hash, data_id, outboard_id).await?;
+        db.insert_entry(hash, data_id, Some(outboard_id)).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
@@ -945,7 +990,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         hash: &Hash,
-        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
@@ -973,7 +1017,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
             let end =
-                Self::get_blob_inner_partial(&db, header, &data_id, &outboard_id, sender).await?;
+                Self::get_blob_inner_partial(&db, header, data_id, outboard_id, sender).await?;
             end
         } else {
             // full request
@@ -990,7 +1034,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            Self::get_blob_inner(&db, header, location_hint, sender).await?
+            Self::get_blob_inner(&db, header, sender).await?
         };
 
         // we have requested a single hash, so we must be at closing
@@ -1044,7 +1088,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         root_hash: &Hash,
-        location_hint: Option<&[u8]>,
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         use tracing::info as log;
@@ -1090,11 +1133,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                         (Some(blob), Some(info)) => (*blob, info),
                         _ => break start.finish(),
                     };
+                tracing::info!(
+                    "requesting child {} {:?}",
+                    child_hash,
+                    info.missing_chunks()
+                );
                 let header = start.next(child_hash);
                 let end_blob = match info {
-                    BlobInfo::Missing => {
-                        Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?
-                    }
+                    BlobInfo::Missing => Self::get_blob_inner(&db, header, sender.clone()).await?,
                     BlobInfo::Partial {
                         data_id,
                         outboard_id,
@@ -1103,8 +1149,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                         Self::get_blob_inner_partial(
                             &db,
                             header,
-                            data_id,
-                            outboard_id,
+                            data_id.clone(),
+                            outboard_id.clone(),
                             sender.clone(),
                         )
                         .await?
@@ -1129,7 +1175,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
-            let end_root = Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?;
+            let end_root = Self::get_blob_inner(&db, header, sender.clone()).await?;
             // read the collection fully for now
             let entry = db.get(&root_hash).context("just downloaded")?;
             let reader = entry.data_reader().await?;
@@ -1152,8 +1198,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     None => break start.finish(),
                 };
                 let header = start.next(child_hash);
-                let end_blob =
-                    Self::get_blob_inner(&db, header, location_hint, sender.clone()).await?;
+                let end_blob = Self::get_blob_inner(&db, header, sender.clone()).await?;
                 next = end_blob.next();
             }
         };
@@ -1162,15 +1207,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         anyhow::Ok(())
     }
 
-    async fn share0(self, msg: ShareRequest, sender: ShareProgressSender) -> anyhow::Result<()> {
+    async fn share0(self, msg: ShareRequest, progress: ShareProgressSender) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
+        let hash = msg.hash;
         let db = self.inner.db.clone();
         // true to force download even if we have the blobs
         let force = true;
-        // check if we have all the blobs
-        if !force && msg.blobs.iter().all(|hash| db.get(hash).is_some()) {
-            return Ok(());
-        }
+        tracing::info!("share: {:?}", msg);
         let conn = self
             .inner
             .endpoint
@@ -1181,32 +1224,24 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 &msg.addrs,
             )
             .await?;
-        let blobs_iter = msg
-            .blobs
-            .into_iter()
-            .filter(|blob| force || db.get(blob).is_none())
-            .map(|blob| (blob, false));
-        let collections_iter = msg
-            .collections
-            .into_iter()
-            .map(|collection| (collection, true));
-        let all_iter = blobs_iter.chain(collections_iter);
-        let _tasks = all_iter
-            .map(|(hash, is_root)| {
-                let this = self.clone();
-                let conn = conn.clone();
-                let sender = sender.clone();
-                let task = local.spawn_pinned(move || this.get(conn, hash, is_root, None, sender));
-                // wrap in an aborting join handle so all of this stops if we get dropped
-                task
-            })
-            .collect::<Vec<_>>();
+        let progress2 = progress.clone();
+        let progress3 = progress.clone();
+        let this = self.clone();
+        let download =
+            local.spawn_pinned(move || self.get(conn, msg.hash, msg.recursive, progress2));
+        if let Some(out) = msg.out {
+            let _export = local.spawn_pinned(move || async move {
+                download.await.unwrap()?;
+                this.export(out, hash, msg.recursive, progress3).await?;
+                anyhow::Ok(())
+            });
+        }
         Ok(())
     }
 
     fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
         async move {
-            let (sender, receiver) = mpsc::channel(1);
+            let (sender, receiver) = mpsc::channel(1024);
             let sender = ShareProgressSender::new(sender);
             if let Err(cause) = self.share0(msg, sender.clone()).await {
                 sender
@@ -1413,7 +1448,12 @@ impl ShareProgressSender {
     /// this will only fail if the receiver is dropped.
     /// It can be used to send important progress messages where delivery must be guaranteed.
     /// E.g. start(id)/end(id)
-    async fn send(&self, msg: ShareProgress) -> result::Result<(), ShareProgressSendError> {
+    async fn send(
+        &self,
+        msg: impl Into<ShareProgress>,
+    ) -> result::Result<(), ShareProgressSendError> {
+        let msg = msg.into();
+        tracing::trace!("sending share progress: {:?}", msg);
         self.sender
             .send(msg)
             .await
@@ -1424,7 +1464,12 @@ impl ShareProgressSender {
     /// this will only fail if the receiver is dropped.
     /// It can be used to send progress messages where delivery is not important, e.g.
     /// a self contained progress message.
-    fn try_send(&self, msg: ShareProgress) -> result::Result<(), ShareProgressSendError> {
+    fn try_send(
+        &self,
+        msg: impl Into<ShareProgress>,
+    ) -> result::Result<(), ShareProgressSendError> {
+        let msg = msg.into();
+        tracing::trace!("trying to send share progress: {:?}", msg);
         match self.sender.try_send(msg) {
             Ok(_) => Ok(()),
             Err(TrySendError::Full(_)) => Ok(()),

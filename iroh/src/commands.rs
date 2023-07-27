@@ -62,32 +62,28 @@ impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
             Commands::Share {
-                blob,
-                collection,
+                hash,
+                recursive,
                 rpc_port,
                 peer,
                 addr,
                 token,
                 ticket,
                 derp_region,
+                out,
                 ..
             } => {
                 println!("{:#?}", ticket); // todo: remove
                 let client = make_rpc_client(rpc_port).await?;
-                let (peer, addr, token, derp_region, blob, collection) =
+                let (peer, addr, token, derp_region, hash, recursive) =
                     if let Some(ticket) = ticket.as_ref() {
-                        let (blob, collection) = if ticket.recursive() {
-                            (vec![], vec![ticket.hash()])
-                        } else {
-                            (vec![ticket.hash()], vec![])
-                        };
                         (
                             ticket.peer(),
                             ticket.addrs().to_vec(),
                             ticket.token(),
                             ticket.derp_region(),
-                            blob,
-                            collection,
+                            ticket.hash(),
+                            ticket.recursive(),
                         )
                     } else {
                         (
@@ -95,18 +91,19 @@ impl Cli {
                             addr,
                             token.as_ref(),
                             derp_region,
-                            blob,
-                            collection,
+                            hash.unwrap(),
+                            recursive.unwrap_or_default(),
                         )
                     };
                 let mut stream = client
                     .server_streaming(ShareRequest {
-                        blobs: blob,
-                        collections: collection,
+                        hash,
+                        recursive,
                         peer,
                         addrs: addr,
                         derp_region,
                         token: token.cloned(),
+                        out: out.map(|x| x.display().to_string()),
                         force: true, // todo: use force from Commands::Share
                     })
                     .await?;
@@ -315,12 +312,13 @@ pub enum Commands {
     },
     /// Fetch the data identified by HASH from a provider
     Share {
-        /// Individual blobs retrieve, as a Blake3 CID
+        /// Hash to get, required unless ticket is specified
+        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
         #[clap(long)]
-        blob: Vec<Hash>,
-        /// Collections to retrieve, as a Blake3 CID
-        #[clap(long)]
-        collection: Vec<Hash>,
+        hash: Option<Hash>,
+        /// treat as collection, required unless ticket is specified
+        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
+        recursive: Option<bool>,
         /// PeerId of the provider
         #[clap(
             long,
@@ -343,9 +341,7 @@ pub enum Commands {
         /// base32-encoded Request token to use for authentication, if any
         #[clap(long, conflicts_with = "ticket")]
         derp_region: Option<u16>,
-        #[clap(conflicts_with_all = &["peer"])]
-        /// Ticket containing everything to retrieve the data from a provider.
-        #[clap(long)]
+        #[clap(long, conflicts_with_all = &["peer", "hash", "recursive"])]
         ticket: Option<Ticket>,
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]

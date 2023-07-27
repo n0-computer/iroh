@@ -1,5 +1,5 @@
 //! The concrete database used by the iroh binary.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -29,7 +29,6 @@ impl Vfs for Database {
         &self,
         hash: Hash,
         outboard: bool,
-        _location_hint: Option<&[u8]>,
     ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
         let mut lock = self.0.state.write().unwrap();
         let uuid = rand::thread_rng().gen::<[u8; 16]>();
@@ -57,53 +56,6 @@ impl Vfs for Database {
         future::ready(Ok((data_path, outboard_path))).boxed()
     }
 
-    fn move_temp_pair(
-        &self,
-        temp_data_id: Self::Id,
-        temp_outboard_id: Option<Self::Id>,
-        _location_hint: Option<&[u8]>,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        async move {
-            let dir = &self.0.options.complete_path;
-            let data_purpose = Purpose::from_path(&temp_data_id).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
-            })?;
-            let Purpose::PartialData(data_hash, data_uuid) = data_purpose else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "invalid temp file name",
-                ));
-            };
-            let outboard_id = if let Some(temp_outboard_id) = &temp_outboard_id {
-                let outboard_purpose = Purpose::from_path(temp_outboard_id).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
-                })?;
-                let Purpose::PartialData(outboard_hash, outboard_uuid) = outboard_purpose else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "invalid temp file name",
-                    ));
-                };
-                if data_hash != outboard_hash || data_uuid != outboard_uuid {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "invalid temp file pair",
-                    ));
-                }
-                Some(dir.join(Purpose::Outboard(data_hash).to_string()))
-            } else {
-                None
-            };
-            let data_id = dir.join(Purpose::Data(data_hash).to_string());
-            tokio::fs::rename(temp_data_id, &data_id).await?;
-            if let (Some(temp_outboard_id), Some(outboard_id)) = (temp_outboard_id, &outboard_id) {
-                tokio::fs::rename(temp_outboard_id, &outboard_id).await?;
-            };
-            Ok((data_id, outboard_id))
-        }
-        .boxed()
-    }
-
     fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
         let handle = handle.clone();
         iroh_io::File::create(move || std::fs::File::open(handle.as_path())).boxed()
@@ -129,21 +81,76 @@ impl Vfs for Database {
 #[derive(Debug, Default)]
 struct State {
     complete: BTreeMap<Hash, CompleteEntry>,
+    outboard: BTreeMap<Hash, Bytes>,
+    data: BTreeMap<Hash, Bytes>,
     partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
 }
 
 #[derive(Debug, Default)]
 struct CompleteEntry {
+    // size of the data
+    size: u64,
     // true means we own the data, false means it is stored externally
     owned_data: bool,
     // external storage locations
-    external: Vec<PathBuf>,
-    // outboard data, in memory
-    outboard: Option<Bytes>,
-    // data, in memory
-    data: Option<Bytes>,
-    // size of the data
-    size: u64,
+    external: BTreeSet<PathBuf>,
+}
+
+impl CompleteEntry {
+    // create a new complete entry with the given size
+    //
+    // the generated entry will have no data or outboard data yet
+    fn new_default(size: u64) -> Self {
+        Self {
+            owned_data: true,
+            external: Default::default(),
+            size,
+        }
+    }
+
+    /// create a new complete entry with the given size and path
+    ///
+    /// the generated entry will have no data or outboard data yet
+    fn new_external(size: u64, path: PathBuf) -> Self {
+        Self {
+            owned_data: false,
+            external: [path].into_iter().collect(),
+            size,
+        }
+    }
+
+    // /// load the cache parts
+    // async fn load(size: u64, data_id: Option<PathBuf>, outboard_id: Option<PathBuf>) -> io::Result<Self> {
+    //     let outboard = Some(if let Some(outboard_id) = outboard_id {
+    //         Bytes::from(tokio::fs::read(outboard_id).await?)
+    //     } else {
+    //         size.to_le_bytes().to_vec().into()
+    //     });
+    //     let data = if let Some(data_id) = data_id {
+    //         Some(Bytes::from(tokio::fs::read(data_id).await?))
+    //     } else {
+    //         None
+    //     };
+    //     Ok(Self {
+    //         owned_data: false,
+    //         external: Default::default(),
+    //         size,
+    //     })
+    // }
+
+    fn is_valid(&self) -> bool {
+        !self.external.is_empty() || self.owned_data
+    }
+
+    fn union_with(&mut self, new: CompleteEntry) -> io::Result<()> {
+        if self.size != 0 && self.size != new.size {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "size mismatch"));
+        }
+        self.size = new.size;
+        self.owned_data |= new.owned_data;
+        self.external.extend(new.external.into_iter());
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -173,6 +180,13 @@ pub struct DbPair {
 impl BaoMapEntry<Database> for DbPair {
     fn hash(&self) -> blake3::Hash {
         self.hash
+    }
+
+    fn size(&self) -> u64 {
+        match &self.entry.data {
+            Either::Left(bytes) => bytes.len() as u64,
+            Either::Right((_, size)) => *size,
+        }
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
@@ -226,6 +240,10 @@ impl DbEntry {
     }
 }
 
+fn needs_outboard(size: u64) -> bool {
+    size > (IROH_BLOCK_SIZE.bytes() as u64)
+}
+
 impl BaoMap for Database {
     type Entry = DbPair;
     type Outboard = PreOrderMemOutboard<Bytes>;
@@ -233,18 +251,23 @@ impl BaoMap for Database {
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let state = self.0.state.read().unwrap();
         let entry = state.complete.get(hash)?;
-        let outboard = entry.outboard.as_ref()?.clone();
+        let outboard = state.load_outboard(entry.size, hash)?;
+        // check if we have the data cached
+        let data = state.data.get(hash).cloned();
         Some(DbPair {
             hash: blake3::Hash::from(*hash),
             entry: DbEntry {
-                data: if let Some(data) = entry.data.as_ref() {
-                    Either::Left(data.clone())
+                data: if let Some(data) = data {
+                    Either::Left(data)
                 } else {
+                    // get the data path
                     let path = if entry.owned_data {
-                        let name = Purpose::Data(*hash).to_string();
-                        self.0.options.complete_path.join(name)
+                        // use the path for the data in the default location
+                        self.owned_data_path(hash)
                     } else {
-                        entry.external.get(0)?.clone()
+                        // use the first external path. if we don't have any
+                        // we don't have a valid entry
+                        entry.external.iter().next()?.clone()
                     };
                     Either::Right((path, entry.size))
                 },
@@ -284,32 +307,17 @@ impl BaoDb for Database {
     fn insert_entry(
         &self,
         hash: Hash,
-        data_id: PathBuf,
-        outboard_id: Option<PathBuf>,
+        temp_data_id: PathBuf,
+        temp_outboard_id: Option<PathBuf>,
     ) -> BoxFuture<'_, io::Result<()>> {
-        let db = self.clone();
         async move {
-            // remove incomplete
-            // from here on, if something fails we lost the incomplete entry
-            db.0.state.write().unwrap().partial.remove(&hash);
-            let size = std::fs::metadata(&data_id)?.len();
-            let outboard = Some(Bytes::from(if let Some(outboard_id) = outboard_id {
-                tokio::fs::read(outboard_id).await?
-            } else {
-                size.to_be_bytes().to_vec()
-            }));
-            let data = if size < self.0.options.inline_threshold {
-                Some(Bytes::from(tokio::fs::read(data_id).await?))
-            } else {
-                None
-            };
-            let mut inner: std::sync::RwLockWriteGuard<'_, State> = db.0.state.write().unwrap();
-            let entry = inner.complete.entry(hash).or_default();
-            entry.data = data;
-            entry.outboard = outboard;
-            entry.owned_data = true;
-            entry.size = size;
-            Ok(())
+            let res = self
+                .insert_entry_inner(hash, temp_data_id, temp_outboard_id)
+                .await;
+            if let Err(err) = res.as_ref() {
+                tracing::error!("insert entry failed: {}", err);
+            }
+            res
         }
         .boxed()
     }
@@ -344,48 +352,183 @@ impl BaoDb for Database {
         hash: Hash,
         target: PathBuf,
         stable: bool,
-        _progress: impl Fn(u64),
+        _progress: impl Fn(u64) -> io::Result<()>,
     ) -> BoxFuture<'_, io::Result<()>> {
-        self.clone().export_blob(hash, target, stable).boxed()
+        self.export0(hash, target, stable).boxed()
     }
 
-    fn import_bytes<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, io::Result<Hash>> {
-        let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-        let hash = hash.into();
+    fn import(
+        &self,
+        path: impl AsRef<Path>,
+        stable: bool,
+        progress: impl Fn(u64),
+    ) -> BoxFuture<'_, io::Result<Hash>> {
+        let path = path.as_ref();
+        let db = self.clone();
+        async move { todo!() }.boxed()
+    }
+
+    fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         async move {
-            let data_path = self
-                .0
-                .options
-                .complete_path
-                .join(Purpose::Data(hash).to_string());
-            tokio::fs::write(data_path, data).await?;
+            let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
+            let hash = hash.into();
+            let data_path = self.owned_data_path(&hash);
+            tokio::fs::write(data_path, &data).await?;
             if outboard.len() > 8 {
-                let outboard_path = self
-                    .0
-                    .options
-                    .complete_path
-                    .join(Purpose::Outboard(hash).to_string());
+                let outboard_path = self.owned_outboard_path(&hash);
                 tokio::fs::write(outboard_path, &outboard).await?;
             }
+            let size = data.len() as u64;
             let mut state = self.0.state.write().unwrap();
             let entry = state.complete.entry(hash).or_default();
-            let size = data.len() as u64;
-            entry.owned_data = true;
-            entry.outboard = Some(outboard.into());
-            entry.data = if size < self.0.options.inline_threshold {
-                Some(data.to_vec().into())
-            } else {
-                None
-            };
-            entry.size = size;
+            entry.union_with(CompleteEntry::new_default(size))?;
+            state.outboard.insert(hash, outboard.into());
+            if size < self.0.options.inline_threshold {
+                state.data.insert(hash, data.to_vec().into());
+            }
             Ok(hash)
         }
         .boxed()
     }
 }
 
+impl State {
+    fn load_outboard(&self, size: u64, hash: &Hash) -> Option<Bytes> {
+        if needs_outboard(size) {
+            self.outboard.get(hash).cloned()
+        } else {
+            Some(Bytes::from(size.to_le_bytes().to_vec()))
+        }
+    }
+}
+
 impl Database {
-    async fn export_blob(self, hash: Hash, target: PathBuf, stable: bool) -> io::Result<()> {
+    async fn insert_entry_inner(
+        &self,
+        hash: Hash,
+        temp_data_id: PathBuf,
+        temp_outboard_id: Option<PathBuf>,
+    ) -> io::Result<()> {
+        let db = self;
+        tracing::info!(
+            "inserting entry: {} {} {:?}",
+            hash,
+            temp_data_id.display(),
+            temp_outboard_id.as_ref().map(|x| x.display())
+        );
+        let (data_id, outboard_id) = self
+            .move_temp_pair(temp_data_id, temp_outboard_id, hash)
+            .await?;
+        tracing::info!(
+            "moved to permanent location: {} {:?} {:?}",
+            hash,
+            data_id.display(),
+            outboard_id.as_ref().map(|x| x.display())
+        );
+        // remove incomplete
+        // from here on, if something fails we lost the incomplete entry
+        {
+            db.0.state.write().unwrap().partial.remove(&hash);
+        }
+        // create the entry
+        let (needs_data, needs_outboard) = {
+            let size = tokio::fs::metadata(&data_id).await?.len();
+            tracing::info!("size: {}", size);
+            let mut state = db.0.state.write().unwrap();
+            let entry = state.complete.entry(hash).or_default();
+            entry.union_with(CompleteEntry::new_default(size))?;
+            tracing::debug!("{:?}", entry);
+            let needs_data =
+                size < db.0.options.inline_threshold && !state.data.contains_key(&hash);
+            let needs_outboard =
+                size > (IROH_BLOCK_SIZE.bytes() as u64) && !state.outboard.contains_key(&hash);
+            (needs_data, needs_outboard)
+        };
+        // trigger outboard load
+        if needs_outboard {
+            tracing::info!("loading outboard");
+            let path = self.owned_outboard_path(&hash);
+            let db = db.clone();
+            tokio::task::spawn_blocking(move || {
+                let outboard = Bytes::from(std::fs::read(path)?);
+                let mut state = db.0.state.write().unwrap();
+                state.outboard.insert(hash, outboard);
+                io::Result::Ok(())
+            })
+            .await
+            .unwrap()?;
+        }
+        // trigger data load
+        if needs_data {
+            tracing::info!("loading data");
+            let path = self.owned_data_path(&hash);
+            let db = db.clone();
+            tokio::task::spawn_blocking(move || {
+                let data = Bytes::from(std::fs::read(path)?);
+                let mut state = db.0.state.write().unwrap();
+                state.data.insert(hash, data);
+                io::Result::Ok(())
+            });
+        }
+        tracing::info!("done: {}", hash);
+        Ok(())
+    }
+
+    fn move_temp_pair(
+        &self,
+        temp_data_id: PathBuf,
+        temp_outboard_id: Option<PathBuf>,
+        hash: Hash,
+    ) -> BoxFuture<'_, io::Result<(PathBuf, Option<PathBuf>)>> {
+        async move {
+            let data_purpose = Purpose::from_path(&temp_data_id).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
+            })?;
+            let Purpose::PartialData(data_hash, data_uuid) = data_purpose else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid temp file name",
+                ));
+            };
+            if data_hash != hash {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid temp file name",
+                ));
+            }
+            let outboard_id = if let Some(temp_outboard_id) = &temp_outboard_id {
+                let outboard_purpose = Purpose::from_path(temp_outboard_id).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid temp file name")
+                })?;
+                let Purpose::PartialOutboard(outboard_hash, outboard_uuid) = outboard_purpose else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid temp outboard file name",
+                    ));
+                };
+                if data_hash != outboard_hash || data_uuid != outboard_uuid {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid temp file pair",
+                    ));
+                }
+                Some(self.owned_outboard_path(&data_hash))
+            } else {
+                None
+            };
+            let data_id = self.owned_data_path(&data_hash);
+            tokio::fs::rename(temp_data_id, &data_id).await?;
+            if let (Some(temp_outboard_id), Some(outboard_id)) = (temp_outboard_id, &outboard_id) {
+                tokio::fs::rename(temp_outboard_id, &outboard_id).await?;
+            };
+            Ok((data_id, outboard_id))
+        }
+        .boxed()
+    }
+
+    async fn export0(&self, hash: Hash, target: PathBuf, stable: bool) -> io::Result<()> {
+        tracing::info!("exporting {} to {} ({})", hash, target.display(), stable);
+
         if !target.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -400,30 +543,31 @@ impl Database {
         })?;
         // create the directory in which the target file is
         tokio::fs::create_dir_all(parent).await?;
-        let (source, size) = {
+        let (source, size, owned) = {
             let state = self.0.state.read().unwrap();
             let entry = state.complete.get(&hash).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
             })?;
             let source = if entry.owned_data {
-                let name = Purpose::Data(hash).to_string();
-                self.0.options.complete_path.join(name)
+                self.owned_data_path(&hash)
             } else {
                 entry
                     .external
-                    .get(0)
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
-                    })?
+                    .iter()
+                    .next()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no valid path found"))?
                     .clone()
             };
             let size = entry.size;
-            drop(state);
-            (source, size)
+            (source, size, entry.owned_data)
         };
         // copy all the things
-        if size > self.0.options.move_threshold && stable {
-            tokio::fs::rename(source, &target).await?;
+        if size >= self.0.options.move_threshold && stable && owned {
+            tracing::info!("moving {} to {}", source.display(), target.display());
+            if let Err(e) = tokio::fs::rename(source, &target).await {
+                tracing::error!("rename failed: {}", e);
+                return Err(e)?;
+            }
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
                 return Err(io::Error::new(
@@ -432,11 +576,12 @@ impl Database {
                 ));
             };
             entry.owned_data = false;
-            entry.external.retain(|x| x != &target);
-            entry.external.insert(0, target);
+            entry.external.insert(target);
         } else {
+            tracing::info!("{} {} {}", size, stable, owned);
+            tracing::info!("copying {} to {}", source.display(), target.display());
             // todo: progress
-            tokio::fs::copy(source, &target).await?;
+            hardlink_or_copy(&source, &target).await?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
                 return Err(io::Error::new(
@@ -444,8 +589,9 @@ impl Database {
                     "hash not found in database",
                 ));
             };
-            entry.external.retain(|x| x != &target);
-            entry.external.insert(0, target.to_owned());
+            if stable {
+                entry.external.insert(target.to_owned());
+            }
         }
         Ok(())
     }
@@ -572,10 +718,8 @@ impl Database {
             complete.insert(
                 hash,
                 CompleteEntry {
-                    outboard: Some(outboard),
-                    data: data_bytes,
                     owned_data: true,
-                    external: vec![],
+                    external: Default::default(),
                     size,
                 },
             );
@@ -610,7 +754,12 @@ impl Database {
             tracing::info!("partial {}", hash);
         }
         Ok(Self(Arc::new(Inner {
-            state: RwLock::new(State { complete, partial }),
+            state: RwLock::new(State {
+                complete,
+                partial,
+                outboard: Default::default(),
+                data: Default::default(),
+            }),
             options: Options {
                 complete_path,
                 partial_path,
@@ -632,4 +781,37 @@ impl Database {
                 .await??;
         Ok(db)
     }
+
+    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.0
+            .options
+            .complete_path
+            .join(Purpose::Data(*hash).to_string())
+    }
+
+    fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
+        self.0
+            .options
+            .complete_path
+            .join(Purpose::Outboard(*hash).to_string())
+    }
+}
+
+async fn hardlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
+    if src == dst {
+        tracing::info!(
+            "skipping hardlinking {} to {}",
+            src.display(),
+            dst.display()
+        );
+        return Ok(());
+    }
+    tracing::info!("hardlinking {} to {}", src.display(), dst.display());
+    Ok(match tokio::fs::hard_link(src, dst).await {
+        Ok(_) => {}
+        Err(_) => {
+            tracing::info!("copying {} to {}", src.display(), dst.display());
+            tokio::fs::copy(src, dst).await?;
+        }
+    })
 }
