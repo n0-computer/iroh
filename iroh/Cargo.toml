@@ -26,7 +26,7 @@ iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-sync = { path = "../iroh-sync" }
+iroh-sync = { path = "../iroh-sync"  }
 iroh-gossip = { path = "../iroh-gossip" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
@@ -61,14 +61,15 @@ shellexpand = { version = "3.1.0", optional = true }
 rustyline = { version = "12.0.0", optional = true }
 
 [features]
-default = ["cli", "metrics"]
+default = ["cli", "metrics", "sync"]
+sync = ["metrics", "flat-db"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics", "flat-db", "mem-db", "iroh-collection"]
 flat-db = []
 mem-db = []
 iroh-collection = []
 test = []
-example-sync = ["cli", "ed25519-dalek", "once_cell", "shell-words", "shellexpand", "rustyline"]
+example-sync = ["cli", "ed25519-dalek", "once_cell", "shell-words", "shellexpand", "sync", "rustyline"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -91,6 +92,10 @@ required-features = ["cli"]
 
 [[example]]
 name = "collection"
+required-features = ["mem-db", "iroh-collection"]
+
+[[example]]
+name = "dump-blob-stream"
 required-features = ["mem-db", "iroh-collection"]
 
 [[example]]
