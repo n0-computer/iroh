@@ -6,7 +6,6 @@
 
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
     fmt::{Debug, Display},
     str::FromStr,
     sync::Arc,
@@ -333,131 +332,6 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         Ok(())
     }
 
-    /// Gets all entries matching this key and author.
-    pub fn get_latest_by_key_and_author(
-        &self,
-        key: impl AsRef<[u8]>,
-        author: &AuthorId,
-    ) -> Option<SignedEntry> {
-        let inner = self.inner.read();
-        inner
-            .peer
-            .get(&RecordIdentifier::new(key, inner.namespace.id(), author))
-    }
-
-    /// Returns the latest version of the matching documents by key.
-    pub fn get_latest_by_key(&self, key: impl AsRef<[u8]>) -> GetLatestIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let key = key.as_ref().to_vec();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::Key { namespace, key };
-
-        GetLatestIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns the latest version of the matching documents by prefix.
-    pub fn get_latest_by_prefix(&self, prefix: impl AsRef<[u8]>) -> GetLatestIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let prefix = prefix.as_ref().to_vec();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::Prefix { namespace, prefix };
-
-        GetLatestIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns the latest versions of all documents.
-    pub fn get_latest(&self) -> GetLatestIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::All { namespace };
-
-        GetLatestIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns all versions of the matching documents by author.
-    pub fn get_all_by_key_and_author<'a, 'b: 'a>(
-        &'a self,
-        key: impl AsRef<[u8]> + 'b,
-        author: &AuthorId,
-    ) -> GetAllIter<'a> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let record_id = RecordIdentifier::new(key, guard.namespace.id(), author);
-        let filter = GetFilter::KeyAuthor(record_id);
-
-        GetAllIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns all versions of the matching documents by key.
-    pub fn get_all_by_key(&self, key: impl AsRef<[u8]>) -> GetAllIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let key = key.as_ref().to_vec();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::Key { namespace, key };
-
-        GetAllIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns all versions of the matching documents by prefix.
-    pub fn get_all_by_prefix(&self, prefix: impl AsRef<[u8]>) -> GetAllIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let prefix = prefix.as_ref().to_vec();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::Prefix { namespace, prefix };
-
-        GetAllIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() //&inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
-    /// Returns all versions of all documents.
-    pub fn get_all(&self) -> GetAllIter<'_> {
-        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
-        let namespace = *guard.namespace.id();
-        let filter = GetFilter::All { namespace };
-
-        GetAllIter {
-            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
-                todo!() // &inner.peer.store().records
-            }),
-            filter,
-            index: 0,
-        }
-    }
-
     pub fn sync_initial_message(&self) -> crate::ranger::Message<RecordIdentifier, SignedEntry> {
         self.inner.read().peer.initial_message()
     }
@@ -482,145 +356,6 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 
     pub fn namespace(&self) -> NamespaceId {
         *self.inner.read().namespace.id()
-    }
-}
-
-#[derive(Debug)]
-pub enum GetFilter {
-    /// All entries.
-    All { namespace: NamespaceId },
-    /// Filter by key and author.
-    KeyAuthor(RecordIdentifier),
-    /// Filter by key only.
-    Key {
-        namespace: NamespaceId,
-        key: Vec<u8>,
-    },
-    /// Filter by prefix only.
-    Prefix {
-        namespace: NamespaceId,
-        prefix: Vec<u8>,
-    },
-}
-
-#[derive(Debug)]
-pub struct GetLatestIter<'a> {
-    // Oh my god, rust why u do this to me?
-    records: parking_lot::lock_api::MappedRwLockReadGuard<
-        'a,
-        parking_lot::RawRwLock,
-        BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>,
-    >,
-    filter: GetFilter,
-    /// Current iteration index.
-    index: usize,
-}
-
-impl<'a> Iterator for GetLatestIter<'a> {
-    type Item = SignedEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let res = match self.filter {
-            GetFilter::All { namespace } => {
-                let (_, res) = self
-                    .records
-                    .iter()
-                    .filter(|(k, _)| k.namespace() == &namespace)
-                    .filter_map(|(_key, value)| value.last_key_value())
-                    .nth(self.index)?;
-                res.clone()
-            }
-            GetFilter::KeyAuthor(ref record_id) => {
-                let values = self.records.get(record_id)?;
-                let (_, res) = values.iter().nth(self.index)?;
-                res.clone()
-            }
-            GetFilter::Key { namespace, ref key } => {
-                let (_, res) = self
-                    .records
-                    .iter()
-                    .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
-                    .filter_map(|(_key, value)| value.last_key_value())
-                    .nth(self.index)?;
-                res.clone()
-            }
-            GetFilter::Prefix {
-                namespace,
-                ref prefix,
-            } => {
-                let (_, res) = self
-                    .records
-                    .iter()
-                    .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
-                    .filter_map(|(_key, value)| value.last_key_value())
-                    .nth(self.index)?;
-                res.clone()
-            }
-        };
-        self.index += 1;
-        Some(res)
-    }
-}
-
-#[derive(Debug)]
-pub struct GetAllIter<'a> {
-    // Oh my god, rust why u do this to me?
-    records: parking_lot::lock_api::MappedRwLockReadGuard<
-        'a,
-        parking_lot::RawRwLock,
-        BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>,
-    >,
-    filter: GetFilter,
-    /// Current iteration index.
-    index: usize,
-}
-
-impl<'a> Iterator for GetAllIter<'a> {
-    type Item = (RecordIdentifier, u64, SignedEntry);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let res = match self.filter {
-            GetFilter::All { namespace } => self
-                .records
-                .iter()
-                .filter(|(k, _)| k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
-                .nth(self.index)?,
-            GetFilter::KeyAuthor(ref record_id) => {
-                let values = self.records.get(record_id)?;
-                let (t, value) = values.iter().nth(self.index)?;
-                (record_id.clone(), *t, value.clone())
-            }
-            GetFilter::Key { namespace, ref key } => self
-                .records
-                .iter()
-                .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
-                .nth(self.index)?,
-            GetFilter::Prefix {
-                namespace,
-                ref prefix,
-            } => self
-                .records
-                .iter()
-                .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
-                .nth(self.index)?,
-        };
-        self.index += 1;
-        Some(res)
     }
 }
 
@@ -898,8 +633,8 @@ mod tests {
         }
 
         for i in 0..10 {
-            let res = my_replica
-                .get_latest_by_key_and_author(format!("/{i}"), alice.id())
+            let res = replica_store
+                .get_latest_by_key_and_author(my_replica.namespace(), format!("/{i}"), alice.id())
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -908,77 +643,91 @@ mod tests {
 
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1");
-        let _entry = my_replica
-            .get_latest_by_key_and_author("/cool/path", alice.id())
+        let _entry = replica_store
+            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2");
-        let _entry = my_replica
-            .get_latest_by_key_and_author("/cool/path", alice.id())
+        let _entry = replica_store
+            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .unwrap();
 
         // Get All by author
-        let entries: Vec<_> = my_replica
-            .get_all_by_key_and_author("/cool/path", alice.id())
+        let entries: Vec<_> = replica_store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .collect();
         assert_eq!(entries.len(), 2);
 
         // Get All by key
-        let entries: Vec<_> = my_replica.get_all_by_key(b"/cool/path").collect();
+        let entries: Vec<_> = replica_store
+            .get_all_by_key(my_replica.namespace(), b"/cool/path")
+            .collect();
         assert_eq!(entries.len(), 2);
 
         // Get latest by key
-        let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
+        let entries: Vec<_> = replica_store
+            .get_latest_by_key(my_replica.namespace(), b"/cool/path")
+            .collect();
         assert_eq!(entries.len(), 1);
 
         // Get latest by prefix
-        let entries: Vec<_> = my_replica.get_latest_by_prefix(b"/cool").collect();
+        let entries: Vec<_> = replica_store
+            .get_latest_by_prefix(my_replica.namespace(), b"/cool")
+            .collect();
         assert_eq!(entries.len(), 1);
 
         // Get All
-        let entries: Vec<_> = my_replica.get_all().collect();
+        let entries: Vec<_> = replica_store.get_all(my_replica.namespace()).collect();
         assert_eq!(entries.len(), 12);
 
         // Get All latest
-        let entries: Vec<_> = my_replica.get_latest().collect();
+        let entries: Vec<_> = replica_store.get_latest(my_replica.namespace()).collect();
         assert_eq!(entries.len(), 11);
 
         // insert record from different author
         let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1");
 
         // Get All by author
-        let entries: Vec<_> = my_replica
-            .get_all_by_key_and_author("/cool/path", alice.id())
+        let entries: Vec<_> = replica_store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .collect();
         assert_eq!(entries.len(), 2);
 
-        let entries: Vec<_> = my_replica
-            .get_all_by_key_and_author("/cool/path", bob.id())
+        let entries: Vec<_> = replica_store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", bob.id())
             .collect();
         assert_eq!(entries.len(), 1);
 
         // Get All by key
-        let entries: Vec<_> = my_replica.get_all_by_key(b"/cool/path").collect();
+        let entries: Vec<_> = replica_store
+            .get_all_by_key(my_replica.namespace(), b"/cool/path")
+            .collect();
         assert_eq!(entries.len(), 3);
 
         // Get latest by key
-        let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
+        let entries: Vec<_> = replica_store
+            .get_latest_by_key(my_replica.namespace(), b"/cool/path")
+            .collect();
         assert_eq!(entries.len(), 2);
 
         // Get latest by prefix
-        let entries: Vec<_> = my_replica.get_latest_by_prefix(b"/cool").collect();
+        let entries: Vec<_> = replica_store
+            .get_latest_by_prefix(my_replica.namespace(), b"/cool")
+            .collect();
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
-        let entries: Vec<_> = my_replica.get_all_by_prefix(b"/cool").collect();
+        let entries: Vec<_> = replica_store
+            .get_all_by_prefix(my_replica.namespace(), b"/cool")
+            .collect();
         assert_eq!(entries.len(), 3);
 
         // Get All
-        let entries: Vec<_> = my_replica.get_all().collect();
+        let entries: Vec<_> = replica_store.get_all(my_replica.namespace()).collect();
         assert_eq!(entries.len(), 13);
 
         // Get All latest
-        let entries: Vec<_> = my_replica.get_latest().collect();
+        let entries: Vec<_> = replica_store.get_latest(my_replica.namespace()).collect();
         assert_eq!(entries.len(), 12);
     }
 
@@ -1052,24 +801,34 @@ mod tests {
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
         let alice_replica_store = memory::ReplicaStore::default();
-        let mut alice = alice_replica_store.new_replica(myspace.clone());
+        let alice = alice_replica_store.new_replica(myspace.clone());
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes());
         }
 
         let bob_replica_store = memory::ReplicaStore::default();
-        let mut bob = bob_replica_store.new_replica(myspace);
+        let bob = bob_replica_store.new_replica(myspace);
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes());
         }
 
-        sync(&author, &mut alice, &mut bob, &alice_set, &bob_set);
+        sync(
+            &author,
+            &alice,
+            &alice_replica_store,
+            &bob,
+            &bob_replica_store,
+            &alice_set,
+            &bob_set,
+        );
     }
 
     fn sync(
         author: &Author,
-        alice: &mut memory::Replica,
-        bob: &mut memory::Replica,
+        alice: &memory::Replica,
+        alice_store: &memory::ReplicaStore,
+        bob: &memory::Replica,
+        bob_store: &memory::ReplicaStore,
         alice_set: &[&str],
         bob_set: &[&str],
     ) {
@@ -1087,13 +846,21 @@ mod tests {
 
         // Check result
         for el in alice_set {
-            alice.get_latest_by_key_and_author(el, author.id()).unwrap();
-            bob.get_latest_by_key_and_author(el, author.id()).unwrap();
+            alice_store
+                .get_latest_by_key_and_author(alice.namespace(), el, author.id())
+                .unwrap();
+            bob_store
+                .get_latest_by_key_and_author(bob.namespace(), el, author.id())
+                .unwrap();
         }
 
         for el in bob_set {
-            alice.get_latest_by_key_and_author(el, author.id()).unwrap();
-            bob.get_latest_by_key_and_author(el, author.id()).unwrap();
+            alice_store
+                .get_latest_by_key_and_author(alice.namespace(), el, author.id())
+                .unwrap();
+            bob_store
+                .get_latest_by_key_and_author(bob.namespace(), el, author.id())
+                .unwrap();
         }
     }
 }

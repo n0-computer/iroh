@@ -55,6 +55,271 @@ pub mod memory {
                 .insert(replica.namespace(), replica.clone());
             replica
         }
+
+        /// Gets all entries matching this key and author.
+        pub fn get_latest_by_key_and_author(
+            &self,
+            namespace: NamespaceId,
+            key: impl AsRef<[u8]>,
+            author: &AuthorId,
+        ) -> Option<SignedEntry> {
+            let inner = self.replica_records.read();
+            let records = inner.get(&namespace)?;
+            let values = records.get(&RecordIdentifier::new(key, &namespace, author))?;
+            values.last_key_value().map(|(_, v)| v.clone())
+        }
+
+        /// Returns the latest version of the matching documents by key.
+        pub fn get_latest_by_key(
+            &self,
+            namespace: NamespaceId,
+            key: impl AsRef<[u8]>,
+        ) -> GetLatestIter<'_> {
+            let records = self.replica_records.read();
+            let key = key.as_ref().to_vec();
+            let filter = GetFilter::Key { namespace, key };
+
+            GetLatestIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns the latest version of the matching documents by prefix.
+        pub fn get_latest_by_prefix(
+            &self,
+            namespace: NamespaceId,
+            prefix: impl AsRef<[u8]>,
+        ) -> GetLatestIter<'_> {
+            let records = self.replica_records.read();
+            let prefix = prefix.as_ref().to_vec();
+            let filter = GetFilter::Prefix { namespace, prefix };
+
+            GetLatestIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns the latest versions of all documents.
+        pub fn get_latest(&self, namespace: NamespaceId) -> GetLatestIter<'_> {
+            let records = self.replica_records.read();
+            let filter = GetFilter::All { namespace };
+
+            GetLatestIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns all versions of the matching documents by author.
+        pub fn get_all_by_key_and_author<'a, 'b: 'a>(
+            &'a self,
+            namespace: NamespaceId,
+            key: impl AsRef<[u8]> + 'b,
+            author: &AuthorId,
+        ) -> GetAllIter<'a> {
+            let records = self.replica_records.read();
+            let record_id = RecordIdentifier::new(key, &namespace, author);
+            let filter = GetFilter::KeyAuthor(record_id);
+
+            GetAllIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns all versions of the matching documents by key.
+        pub fn get_all_by_key(
+            &self,
+            namespace: NamespaceId,
+            key: impl AsRef<[u8]>,
+        ) -> GetAllIter<'_> {
+            let records = self.replica_records.read();
+            let key = key.as_ref().to_vec();
+            let filter = GetFilter::Key { namespace, key };
+
+            GetAllIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns all versions of the matching documents by prefix.
+        pub fn get_all_by_prefix(
+            &self,
+            namespace: NamespaceId,
+            prefix: impl AsRef<[u8]>,
+        ) -> GetAllIter<'_> {
+            let records = self.replica_records.read();
+            let prefix = prefix.as_ref().to_vec();
+            let filter = GetFilter::Prefix { namespace, prefix };
+
+            GetAllIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+
+        /// Returns all versions of all documents.
+        pub fn get_all(&self, namespace: NamespaceId) -> GetAllIter<'_> {
+            let records = self.replica_records.read();
+            let filter = GetFilter::All { namespace };
+
+            GetAllIter {
+                records,
+                filter,
+                index: 0,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    enum GetFilter {
+        /// All entries.
+        All { namespace: NamespaceId },
+        /// Filter by key and author.
+        KeyAuthor(RecordIdentifier),
+        /// Filter by key only.
+        Key {
+            namespace: NamespaceId,
+            key: Vec<u8>,
+        },
+        /// Filter by prefix only.
+        Prefix {
+            namespace: NamespaceId,
+            prefix: Vec<u8>,
+        },
+    }
+
+    impl GetFilter {
+        fn namespace(&self) -> &NamespaceId {
+            match self {
+                GetFilter::All { ref namespace } => namespace,
+                GetFilter::KeyAuthor(ref r) => r.namespace(),
+                GetFilter::Key { ref namespace, .. } => namespace,
+                GetFilter::Prefix { ref namespace, .. } => namespace,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct GetLatestIter<'a> {
+        records: RwLockReadGuard<
+            'a,
+            HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
+        >,
+        filter: GetFilter,
+        /// Current iteration index.
+        index: usize,
+    }
+
+    impl<'a> Iterator for GetLatestIter<'a> {
+        type Item = SignedEntry;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let records = self.records.get(self.filter.namespace())?;
+            let res = match self.filter {
+                GetFilter::All { namespace } => {
+                    let (_, res) = records
+                        .iter()
+                        .filter(|(k, _)| k.namespace() == &namespace)
+                        .filter_map(|(_key, value)| value.last_key_value())
+                        .nth(self.index)?;
+                    res.clone()
+                }
+                GetFilter::KeyAuthor(ref record_id) => {
+                    let values = records.get(record_id)?;
+                    let (_, res) = values.iter().nth(self.index)?;
+                    res.clone()
+                }
+                GetFilter::Key { namespace, ref key } => {
+                    let (_, res) = records
+                        .iter()
+                        .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
+                        .filter_map(|(_key, value)| value.last_key_value())
+                        .nth(self.index)?;
+                    res.clone()
+                }
+                GetFilter::Prefix {
+                    namespace,
+                    ref prefix,
+                } => {
+                    let (_, res) = records
+                        .iter()
+                        .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
+                        .filter_map(|(_key, value)| value.last_key_value())
+                        .nth(self.index)?;
+                    res.clone()
+                }
+            };
+            self.index += 1;
+            Some(res)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct GetAllIter<'a> {
+        records: RwLockReadGuard<
+            'a,
+            HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
+        >,
+        filter: GetFilter,
+        /// Current iteration index.
+        index: usize,
+    }
+
+    impl<'a> Iterator for GetAllIter<'a> {
+        type Item = (RecordIdentifier, u64, SignedEntry);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let records = self.records.get(self.filter.namespace())?;
+            let res = match self.filter {
+                GetFilter::All { namespace } => records
+                    .iter()
+                    .filter(|(k, _)| k.namespace() == &namespace)
+                    .flat_map(|(key, value)| {
+                        value
+                            .iter()
+                            .map(|(t, value)| (key.clone(), *t, value.clone()))
+                    })
+                    .nth(self.index)?,
+                GetFilter::KeyAuthor(ref record_id) => {
+                    let values = records.get(record_id)?;
+                    let (t, value) = values.iter().nth(self.index)?;
+                    (record_id.clone(), *t, value.clone())
+                }
+                GetFilter::Key { namespace, ref key } => records
+                    .iter()
+                    .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
+                    .flat_map(|(key, value)| {
+                        value
+                            .iter()
+                            .map(|(t, value)| (key.clone(), *t, value.clone()))
+                    })
+                    .nth(self.index)?,
+                GetFilter::Prefix {
+                    namespace,
+                    ref prefix,
+                } => records
+                    .iter()
+                    .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
+                    .flat_map(|(key, value)| {
+                        value
+                            .iter()
+                            .map(|(t, value)| (key.clone(), *t, value.clone()))
+                    })
+                    .nth(self.index)?,
+            };
+            self.index += 1;
+            Some(res)
+        }
     }
 
     #[derive(Debug, Clone)]
