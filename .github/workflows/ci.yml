@@ -383,6 +383,7 @@ jobs:
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
     - name: Dump report
+      if: ${{ github.repository == 'n0-computer/iroh' }}
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
