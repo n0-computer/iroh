@@ -500,7 +500,11 @@ impl Replica {
     }
 
     /// Gets all entries matching this key and author.
-    pub fn get_latest(&self, key: impl AsRef<[u8]>, author: &AuthorId) -> Option<SignedEntry> {
+    pub fn get_latest_by_key_and_author(
+        &self,
+        key: impl AsRef<[u8]>,
+        author: &AuthorId,
+    ) -> Option<SignedEntry> {
         let inner = self.inner.read();
         inner
             .peer
@@ -508,19 +512,83 @@ impl Replica {
             .cloned()
     }
 
-    /// Returns all versions of the matching documents.
-    pub fn get_all<'a, 'b: 'a>(
+    /// Returns the latest version of the matching documents by key.
+    pub fn get_latest_by_key(&self, key: impl AsRef<[u8]>) -> GetLatestIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let key = key.as_ref().to_vec();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::Key { namespace, key };
+
+        GetLatestIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
+            index: 0,
+        }
+    }
+
+    /// Returns the latest versions of all documents.
+    pub fn get_latest(&self) -> GetLatestIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::All { namespace };
+
+        GetLatestIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
+            index: 0,
+        }
+    }
+
+    /// Returns all versions of the matching documents by author.
+    pub fn get_all_by_key_and_author<'a, 'b: 'a>(
         &'a self,
         key: impl AsRef<[u8]> + 'b,
         author: &AuthorId,
     ) -> GetAllIter<'a> {
         let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
         let record_id = RecordIdentifier::new(key, guard.namespace.id(), author);
+        let filter = GetFilter::KeyAuthor(record_id);
+
         GetAllIter {
             records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
                 &inner.peer.store().records
             }),
-            record_id,
+            filter,
+            index: 0,
+        }
+    }
+
+    /// Returns all versions of the matching documents by key.
+    pub fn get_all_by_key(&self, key: impl AsRef<[u8]>) -> GetAllIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let key = key.as_ref().to_vec();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::Key { namespace, key };
+
+        GetAllIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
+            index: 0,
+        }
+    }
+
+    /// Returns all versions of all documents.
+    pub fn get_all(&self) -> GetAllIter<'_> {
+        let guard: parking_lot::lock_api::RwLockReadGuard<_, _> = self.inner.read();
+        let namespace = *guard.namespace.id();
+        let filter = GetFilter::All { namespace };
+
+        GetAllIter {
+            records: parking_lot::lock_api::RwLockReadGuard::map(guard, move |inner| {
+                &inner.peer.store().records
+            }),
+            filter,
             index: 0,
         }
     }
@@ -553,6 +621,66 @@ impl Replica {
 }
 
 #[derive(Debug)]
+pub enum GetFilter {
+    /// All entries.
+    All { namespace: NamespaceId },
+    /// Filter by key and author.
+    KeyAuthor(RecordIdentifier),
+    /// Filter by key only.
+    Key {
+        namespace: NamespaceId,
+        key: Vec<u8>,
+    },
+}
+
+#[derive(Debug)]
+pub struct GetLatestIter<'a> {
+    // Oh my god, rust why u do this to me?
+    records: parking_lot::lock_api::MappedRwLockReadGuard<
+        'a,
+        parking_lot::RawRwLock,
+        BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>,
+    >,
+    filter: GetFilter,
+    /// Current iteration index.
+    index: usize,
+}
+
+impl<'a> Iterator for GetLatestIter<'a> {
+    type Item = SignedEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let res = match self.filter {
+            GetFilter::All { namespace } => {
+                let (_, res) = self
+                    .records
+                    .iter()
+                    .filter(|(k, _)| k.namespace() == &namespace)
+                    .filter_map(|(_key, value)| value.last_key_value())
+                    .nth(self.index)?;
+                res
+            }
+            GetFilter::KeyAuthor(ref record_id) => {
+                let values = self.records.get(record_id)?;
+                let (_, res) = values.iter().nth(self.index)?;
+                res
+            }
+            GetFilter::Key { namespace, ref key } => {
+                let (_, res) = self
+                    .records
+                    .iter()
+                    .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
+                    .filter_map(|(_key, value)| value.last_key_value())
+                    .nth(self.index)?;
+                res
+            }
+        };
+        self.index += 1;
+        Some(res.clone()) // :( I give up
+    }
+}
+
+#[derive(Debug)]
 pub struct GetAllIter<'a> {
     // Oh my god, rust why u do this to me?
     records: parking_lot::lock_api::MappedRwLockReadGuard<
@@ -560,20 +688,44 @@ pub struct GetAllIter<'a> {
         parking_lot::RawRwLock,
         BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>,
     >,
-    record_id: RecordIdentifier,
+    filter: GetFilter,
     /// Current iteration index.
     index: usize,
 }
 
 impl<'a> Iterator for GetAllIter<'a> {
-    type Item = SignedEntry;
+    type Item = (RecordIdentifier, u64, SignedEntry);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let values = self.records.get(&self.record_id)?;
-
-        let (_, res) = values.iter().nth(self.index)?;
+        let res = match self.filter {
+            GetFilter::All { namespace } => self
+                .records
+                .iter()
+                .filter(|(k, _)| k.namespace() == &namespace)
+                .flat_map(|(key, value)| {
+                    value
+                        .iter()
+                        .map(|(t, value)| (key.clone(), *t, value.clone()))
+                })
+                .nth(self.index)?,
+            GetFilter::KeyAuthor(ref record_id) => {
+                let values = self.records.get(record_id)?;
+                let (t, value) = values.iter().nth(self.index)?;
+                (record_id.clone(), *t, value.clone())
+            }
+            GetFilter::Key { namespace, ref key } => self
+                .records
+                .iter()
+                .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
+                .flat_map(|(key, value)| {
+                    value
+                        .iter()
+                        .map(|(t, value)| (key.clone(), *t, value.clone()))
+                })
+                .nth(self.index)?,
+        };
         self.index += 1;
-        Some(res.clone()) // :( I give up
+        Some(res)
     }
 }
 
@@ -832,6 +984,7 @@ mod tests {
     fn test_basics() {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
+        let bob = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
 
         let record_id = RecordIdentifier::new("/my/key", myspace.id(), alice.id());
@@ -846,7 +999,9 @@ mod tests {
         }
 
         for i in 0..10 {
-            let res = my_replica.get_latest(format!("/{i}"), alice.id()).unwrap();
+            let res = my_replica
+                .get_latest_by_key_and_author(format!("/{i}"), alice.id())
+                .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
             res.verify().expect("invalid signature");
@@ -854,15 +1009,66 @@ mod tests {
 
         // Test multiple records for the same key
         my_replica.hash_and_insert("/cool/path", &alice, "round 1");
-        let _entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
-
+        let _entry = my_replica
+            .get_latest_by_key_and_author("/cool/path", alice.id())
+            .unwrap();
         // Second
         my_replica.hash_and_insert("/cool/path", &alice, "round 2");
-        let _entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
+        let _entry = my_replica
+            .get_latest_by_key_and_author("/cool/path", alice.id())
+            .unwrap();
+
+        // Get All by author
+        let entries: Vec<_> = my_replica
+            .get_all_by_key_and_author("/cool/path", alice.id())
+            .collect();
+        assert_eq!(entries.len(), 2);
+
+        // Get All by key
+        let entries: Vec<_> = my_replica.get_all_by_key(b"/cool/path").collect();
+        assert_eq!(entries.len(), 2);
+
+        // Get latest by key
+        let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
+        assert_eq!(entries.len(), 1);
 
         // Get All
-        let entries: Vec<_> = my_replica.get_all("/cool/path", alice.id()).collect();
+        let entries: Vec<_> = my_replica.get_all().collect();
+        assert_eq!(entries.len(), 12);
+
+        // Get All latest
+        let entries: Vec<_> = my_replica.get_latest().collect();
+        assert_eq!(entries.len(), 11);
+
+        // insert record from different author
+        let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1");
+
+        // Get All by author
+        let entries: Vec<_> = my_replica
+            .get_all_by_key_and_author("/cool/path", alice.id())
+            .collect();
         assert_eq!(entries.len(), 2);
+
+        let entries: Vec<_> = my_replica
+            .get_all_by_key_and_author("/cool/path", bob.id())
+            .collect();
+        assert_eq!(entries.len(), 1);
+
+        // Get All by key
+        let entries: Vec<_> = my_replica.get_all_by_key(b"/cool/path").collect();
+        assert_eq!(entries.len(), 3);
+
+        // Get latest by key
+        let entries: Vec<_> = my_replica.get_latest_by_key(b"/cool/path").collect();
+        assert_eq!(entries.len(), 2);
+
+        // Get All
+        let entries: Vec<_> = my_replica.get_all().collect();
+        assert_eq!(entries.len(), 13);
+
+        // Get All latest
+        let entries: Vec<_> = my_replica.get_latest().collect();
+        assert_eq!(entries.len(), 12);
     }
 
     #[test]
@@ -968,13 +1174,13 @@ mod tests {
 
         // Check result
         for el in alice_set {
-            alice.get_latest(el, author.id()).unwrap();
-            bob.get_latest(el, author.id()).unwrap();
+            alice.get_latest_by_key_and_author(el, author.id()).unwrap();
+            bob.get_latest_by_key_and_author(el, author.id()).unwrap();
         }
 
         for el in bob_set {
-            alice.get_latest(el, author.id()).unwrap();
-            bob.get_latest(el, author.id()).unwrap();
+            alice.get_latest_by_key_and_author(el, author.id()).unwrap();
+            bob.get_latest_by_key_and_author(el, author.id()).unwrap();
         }
     }
 }
