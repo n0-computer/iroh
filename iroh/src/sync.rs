@@ -15,6 +15,8 @@ pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 
 mod content;
 mod live;
+pub mod metrics;
+
 pub use content::*;
 pub use live::*;
 
