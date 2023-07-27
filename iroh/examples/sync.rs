@@ -39,7 +39,6 @@ use tokio::{
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
-
 use iroh_bytes_handlers::IrohBytesHandlers;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
@@ -349,6 +348,21 @@ async fn handle_command(
         }
         Cmd::Stats => get_stats(),
         Cmd::Fs(cmd) => handle_fs_command(cmd, doc).await?,
+        Cmd::Hammer { prefix, count, size}=> {
+            println!(
+                "> hammering with prefix {prefix} for {count} messages of size {size} bytes",
+                prefix = prefix,
+                count = count,
+                size = size,
+            );
+            let mut bytes = vec![0; size];
+            bytes.fill(97);
+            for i in 0..count {
+                let value = String::from_utf8(bytes.clone())?;
+                let key = format!("{}/{}", prefix, i);
+                doc.insert_bytes(key, value.into_bytes().into()).await?;
+            }
+        }
         Cmd::Exit => {}
     }
     Ok(())
@@ -502,6 +516,15 @@ pub enum Cmd {
     WatchCancel,
     /// Show stats about the current session
     Stats,
+    /// Stress test with the hammer
+    Hammer {
+        /// The key prefix
+        prefix: String,
+        /// The number of entries to create
+        count: usize,
+        /// The size of each entry in Bytes
+        size: usize,
+    },
     /// Quit
     Exit,
 }
