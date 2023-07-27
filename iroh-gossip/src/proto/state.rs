@@ -96,6 +96,7 @@ impl<PA> Message<PA> {
 }
 
 /// Whether this is a control or data message
+#[derive(Debug)]
 pub enum MessageKind {
     /// A data message and its payload size.
     Data,
@@ -389,8 +390,8 @@ fn track_out_events<PA: Serialize>(events: &[OutEvent<PA>]) {
 }
 
 fn track_in_event<PA: Serialize>(event: &InEvent<PA>) {
-    match event {
-        InEvent::RecvMessage(_from, message) => match message.kind() {
+    if let InEvent::RecvMessage(_from, message) = event {
+        match message.kind() {
             MessageKind::Data => {
                 inc!(Metrics, msgs_data_recv);
                 inc_by!(
@@ -407,7 +408,6 @@ fn track_in_event<PA: Serialize>(event: &InEvent<PA>) {
                     message.size().unwrap_or(0) as u64
                 );
             }
-        },
-        _ => {}
+        }
     }
 }
