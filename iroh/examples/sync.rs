@@ -6,9 +6,10 @@
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
-use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::bail;
+use std::{collections::HashSet, fmt, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
+
+use anyhow::{anyhow, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
@@ -31,7 +32,11 @@ use iroh_net::{
 use iroh_sync::sync::{Author, Namespace, SignedEntry};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{mpsc, oneshot},
+};
+use tracing::warn;
 use tracing_subscriber::{EnvFilter, Registry};
 use url::Url;
 
@@ -343,8 +348,103 @@ async fn handle_command(
             log_filter.modify(|layer| *layer = next_filter)?;
         }
         Cmd::Stats => get_stats(),
+        Cmd::Fs(cmd) => handle_fs_command(cmd, doc).await?,
         Cmd::Exit => {}
     }
+    Ok(())
+}
+
+async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
+    match cmd {
+        FsCmd::ImportFile { file_path, key } => {
+            let file_path = canonicalize_path(&file_path)?.canonicalize()?;
+            let (hash, len) = doc.insert_from_file(&key, &file_path).await?;
+            println!(
+                "> imported {file_path:?}: {} ({})",
+                fmt_hash(hash),
+                HumanBytes(len)
+            );
+        }
+        FsCmd::ImportDir {
+            dir_path,
+            mut key_prefix,
+        } => {
+            if key_prefix.ends_with("/") {
+                key_prefix.pop();
+            }
+            let root = canonicalize_path(&dir_path)?.canonicalize()?;
+            let files = walkdir::WalkDir::new(&root).into_iter();
+            // TODO: parallelize
+            for file in files {
+                let file = file?;
+                if file.file_type().is_file() {
+                    let relative = file.path().strip_prefix(&root)?.to_string_lossy();
+                    if relative.is_empty() {
+                        warn!("invalid file path: {:?}", file.path());
+                        continue;
+                    }
+                    let key = format!("{key_prefix}/{relative}");
+                    let (hash, len) = doc.insert_from_file(key, file.path()).await?;
+                    println!(
+                        "> imported {relative}: {} ({})",
+                        fmt_hash(hash),
+                        HumanBytes(len)
+                    );
+                }
+            }
+        }
+        FsCmd::ExportDir {
+            mut key_prefix,
+            dir_path,
+        } => {
+            if !key_prefix.ends_with("/") {
+                key_prefix.push('/');
+            }
+            let root = canonicalize_path(&dir_path)?;
+            println!("> exporting {key_prefix} to {root:?}");
+            let entries = doc.replica().get_latest_by_prefix(key_prefix.as_bytes());
+            let mut checked_dirs = HashSet::new();
+            for entry in entries {
+                let key = entry.entry().id().key();
+                let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
+                let len = entry.entry().record().content_len();
+                if let Some(mut reader) = doc.get_content_reader(&entry).await {
+                    let path = root.join(&relative);
+                    let parent = path.parent().unwrap();
+                    if !checked_dirs.contains(parent) {
+                        tokio::fs::create_dir_all(&parent).await?;
+                        checked_dirs.insert(parent.to_owned());
+                    }
+                    let mut file = tokio::fs::File::create(&path).await?;
+                    copy(&mut reader, &mut file).await?;
+                    println!(
+                        "> exported {} to {path:?} ({})",
+                        fmt_hash(entry.content_hash()),
+                        HumanBytes(len)
+                    );
+                }
+            }
+        }
+        FsCmd::ExportFile { key, file_path } => {
+            let path = canonicalize_path(&file_path)?;
+            // TODO: Fix
+            let entry = doc.replica().get_latest_by_key(&key).next();
+            if let Some(entry) = entry {
+                println!("> exporting {key} to {path:?}");
+                let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
+                tokio::fs::create_dir_all(&parent).await?;
+                let mut file = tokio::fs::File::create(&path).await?;
+                let mut reader = doc
+                    .get_content_reader(&entry)
+                    .await
+                    .ok_or_else(|| anyhow!(format!("content for {key} is not available")))?;
+                copy(&mut reader, &mut file).await?;
+            } else {
+                println!("> key not found, abort");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -367,11 +467,16 @@ pub enum Cmd {
         #[clap(short = 'c', long)]
         print_content: bool,
     },
-    /// List entries
+    /// List entries.
     Ls {
         /// Optionally list only entries whose key starts with PREFIX.
         prefix: Option<String>,
     },
+
+    /// Import from and export to the local file system.
+    #[clap(subcommand)]
+    Fs(FsCmd),
+
     /// Print the ticket with which other peers can join our document.
     Ticket,
     /// Change the log level
@@ -400,6 +505,39 @@ pub enum Cmd {
     /// Quit
     Exit,
 }
+
+#[derive(Parser, Debug)]
+pub enum FsCmd {
+    /// Import a file system directory into the document.
+    ImportDir {
+        /// The file system path to import recursively
+        dir_path: String,
+        /// The key prefix to apply to the document keys
+        key_prefix: String,
+    },
+    /// Import a file into the document.
+    ImportFile {
+        /// The path to the file
+        file_path: String,
+        /// The key in the document
+        key: String,
+    },
+    /// Export a part of the document into a file system directory
+    ExportDir {
+        /// The key prefix to filter on
+        key_prefix: String,
+        /// The file system path to export to
+        dir_path: String,
+    },
+    /// Import a file into the document.
+    ExportFile {
+        /// The key in the document
+        key: String,
+        /// The path to the file
+        file_path: String,
+    },
+}
+
 impl FromStr for Cmd {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -620,6 +758,33 @@ fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
         UseIpv6::TryDns,
         0,
     ))
+}
+
+fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(shellexpand::tilde(&path).to_string());
+    Ok(path)
+}
+
+/// Copy from a [`iroh_io::AsyncSliceReader`] into a [`tokio::io::AsyncWrite`]
+///
+/// TODO: move to iroh-io or iroh-bytes
+async fn copy(
+    mut reader: impl iroh_io::AsyncSliceReader,
+    mut writer: impl tokio::io::AsyncWrite + Unpin,
+) -> anyhow::Result<()> {
+    // this is the max chunk size.
+    // will only allocate this much if the resource behind the reader is at least this big.
+    let chunk_size = 1024 * 16;
+    let mut pos = 0u64;
+    loop {
+        let chunk = reader.read_at(pos, chunk_size).await?;
+        if chunk.is_empty() {
+            break;
+        }
+        writer.write_all(&chunk).await?;
+        pos += chunk.len() as u64;
+    }
+    Ok(())
 }
 
 /// handlers for iroh_bytes connections
