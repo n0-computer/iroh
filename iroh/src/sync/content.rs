@@ -21,10 +21,7 @@ use iroh_sync::sync::{
     Author, InsertOrigin, Namespace, NamespaceId, OnInsertCallback, Replica, ReplicaStore,
     SignedEntry,
 };
-use tokio::{
-    io::AsyncRead,
-    sync::{mpsc, oneshot},
-};
+use tokio::{io::AsyncRead, sync::oneshot};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
@@ -127,7 +124,7 @@ impl Doc {
             let doc_clone = doc.clone();
             doc.replica.on_insert(Box::new(move |origin, entry| {
                 if matches!(origin, InsertOrigin::Sync) {
-                    doc_clone.download_content_fron_author(&entry);
+                    doc_clone.download_content_from_author(&entry);
                 }
             }));
         }
@@ -182,7 +179,7 @@ impl Doc {
         Ok((hash, len))
     }
 
-    pub fn download_content_fron_author(&self, entry: &SignedEntry) {
+    pub fn download_content_from_author(&self, entry: &SignedEntry) {
         let hash = *entry.entry().record().content_hash();
         let peer_id = PeerId::from_bytes(entry.entry().id().author().as_bytes())
             .expect("failed to convert author to peer id");
@@ -286,7 +283,7 @@ pub struct DownloadRequest {
 #[derive(Debug, Clone)]
 pub struct Downloader {
     pending_downloads: Arc<Mutex<HashMap<Hash, DownloadFuture>>>,
-    to_actor_tx: mpsc::UnboundedSender<DownloadRequest>,
+    to_actor_tx: flume::Sender<DownloadRequest>,
 }
 
 impl Downloader {
@@ -295,7 +292,7 @@ impl Downloader {
         endpoint: MagicEndpoint,
         blobs: WritableFileDatabase,
     ) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = flume::bounded(64);
         // spawn the actor on a local pool
         // the local pool is required because WritableFileDatabase::download_single
         // returns a future that is !Send
@@ -348,13 +345,13 @@ pub struct DownloadActor {
     pending_downloads: FuturesUnordered<
         LocalBoxFuture<'static, (PeerId, Hash, anyhow::Result<Option<(Hash, u64)>>)>,
     >,
-    rx: mpsc::UnboundedReceiver<DownloadRequest>,
+    rx: flume::Receiver<DownloadRequest>,
 }
 impl DownloadActor {
     fn new(
         endpoint: MagicEndpoint,
         db: WritableFileDatabase,
-        rx: mpsc::UnboundedReceiver<DownloadRequest>,
+        rx: flume::Receiver<DownloadRequest>,
     ) -> Self {
         Self {
             rx,
@@ -370,9 +367,9 @@ impl DownloadActor {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         loop {
             tokio::select! {
-                req = self.rx.recv() => match req {
-                    None => return Ok(()),
-                    Some(req) => self.on_download_request(req).await
+                req = self.rx.recv_async() => match req {
+                    Err(_) => return Ok(()),
+                    Ok(req) => self.on_download_request(req).await
                 },
                 (peer, conn) = self.dialer.next() => match conn {
                     Ok(conn) => {

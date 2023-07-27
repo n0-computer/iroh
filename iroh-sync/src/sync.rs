@@ -436,6 +436,7 @@ impl Replica {
         let bytes = postcard::to_stdvec(&data)?;
         Ok(bytes.into())
     }
+
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let data: ReplicaData = postcard::from_bytes(bytes)?;
         let replica = Self::new(data.namespace);
