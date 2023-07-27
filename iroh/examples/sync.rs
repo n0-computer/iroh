@@ -6,8 +6,7 @@
 //! You can use this with a local DERP server. To do so, run
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
-
-use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
+use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::bail;
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -60,6 +59,9 @@ struct Args {
     /// Set the bind port for our socket. By default, a random port will be used.
     #[clap(short, long, default_value = "0")]
     bind_port: u16,
+    /// Bind address on which to serve Prometheus metrics
+    #[clap(long)]
+    metrics_addr: Option<SocketAddr>,
     #[clap(subcommand)]
     command: Command,
 }
@@ -76,15 +78,31 @@ async fn main() -> anyhow::Result<()> {
     run(args).await
 }
 
-async fn run(args: Args) -> anyhow::Result<()> {
-    // setup logging
-    let log_filter = init_logging();
-
-    // init metrics
+pub fn init_metrics_collection(
+    metrics_addr: Option<SocketAddr>,
+) -> Option<tokio::task::JoinHandle<()>> {
     iroh_metrics::core::Core::init(|reg, metrics| {
         metrics.insert(iroh::sync::metrics::Metrics::new(reg));
         metrics.insert(iroh_gossip::metrics::Metrics::new(reg));
     });
+
+    // doesn't start the server if the address is None
+    if let Some(metrics_addr) = metrics_addr {
+        return Some(tokio::spawn(async move {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
+        }));
+    }
+    tracing::info!("Metrics server not started, no address provided");
+    None
+}
+
+async fn run(args: Args) -> anyhow::Result<()> {
+    // setup logging
+    let log_filter = init_logging();
+
+    let metrics_fut = init_metrics_collection(args.metrics_addr);
 
     // parse or generate our keypair
     let keypair = match args.private_key {
@@ -266,6 +284,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     println!("> persisting document and blob database at {storage_path:?}");
     blobs.save().await?;
     docs.save(&doc).await?;
+
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+        drop(metrics_fut);
+    }
 
     Ok(())
 }
