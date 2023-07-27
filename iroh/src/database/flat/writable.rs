@@ -4,7 +4,12 @@
 //! I wrote this while diving into iroh-bytes, wildly copying code around. This will be solved much
 //! nicer with the upcoming generic writable database branch by @rklaehn.
 
-use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -69,13 +74,13 @@ impl WritableFileDatabase {
     }
 
     pub async fn put_from_temp_file(&self, temp_path: &PathBuf) -> anyhow::Result<(Hash, u64)> {
-        let (hash, size, entry) = self.storage.move_to_blobs(&temp_path).await?;
+        let (hash, size, entry) = self.storage.move_to_blobs(temp_path).await?;
         self.db.union_with(HashMap::from_iter([(hash, entry)]));
         Ok((hash, size))
     }
 
     pub async fn get_size(&self, hash: &Hash) -> Option<u64> {
-        Some(self.db.get(&hash)?.size().await)
+        Some(self.db.get(hash)?.size().await)
     }
 
     pub fn has(&self, hash: &Hash) -> bool {
@@ -193,7 +198,7 @@ impl StoragePaths {
     }
 }
 
-async fn prepare_hash_dir(path: &PathBuf, hash: &Hash) -> anyhow::Result<PathBuf> {
+async fn prepare_hash_dir(path: &Path, hash: &Hash) -> anyhow::Result<PathBuf> {
     let hash = hex::encode(hash.as_ref());
     let path = path.join(&hash[0..2]).join(&hash[2..4]).join(&hash[4..]);
     tokio::fs::create_dir_all(path.parent().unwrap()).await?;

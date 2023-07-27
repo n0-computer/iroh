@@ -241,14 +241,14 @@ pub enum InsertOrigin {
 #[derive(derive_more::Debug, Clone)]
 pub struct Replica {
     inner: Arc<RwLock<InnerReplica>>,
+    #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
+    on_insert: Arc<RwLock<Vec<OnInsertCallback>>>,
 }
 
 #[derive(derive_more::Debug)]
 struct InnerReplica {
     namespace: Namespace,
     peer: Peer<RecordIdentifier, SignedEntry, Store>,
-    #[debug("on_insert: [Box<dyn Fn>; {}]", "self.on_insert.len()")]
-    on_insert: Vec<OnInsertCallback>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -315,11 +315,11 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for Store {
     }
 
     type RangeIterator<'a> = RangeIterator<'a>;
-    fn get_range<'a>(
-        &'a self,
+    fn get_range(
+        &self,
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
-    ) -> Self::RangeIterator<'a> {
+    ) -> Self::RangeIterator<'_> {
         RangeIterator {
             iter: self.records.iter(),
             range: Some(range),
@@ -388,14 +388,14 @@ impl Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
                 namespace,
                 peer: Peer::default(),
-                on_insert: Default::default(),
             })),
+            on_insert: Default::default(),
         }
     }
 
     pub fn on_insert(&self, callback: OnInsertCallback) {
-        let mut inner = self.inner.write();
-        inner.on_insert.push(callback);
+        let mut on_insert = self.on_insert.write();
+        on_insert.push(callback);
     }
 
     // TODO: not horrible
@@ -456,9 +456,27 @@ impl Replica {
         let entry = Entry::new(id.clone(), record);
         let signed_entry = entry.sign(&inner.namespace, author);
         inner.peer.put(id, signed_entry.clone());
-        for cb in &inner.on_insert {
+        drop(inner);
+        let on_insert = self.on_insert.read();
+        for cb in &*on_insert {
             cb(InsertOrigin::Local, signed_entry.clone());
         }
+    }
+
+    /// Hashes the given data and inserts it.
+    /// This does not store the content, just the record of it.
+    ///
+    /// Returns the calculated hash.
+    pub fn hash_and_insert(
+        &self,
+        key: impl AsRef<[u8]>,
+        author: &Author,
+        data: impl AsRef<[u8]>,
+    ) -> Hash {
+        let len = data.as_ref().len() as u64;
+        let hash = Hash::new(data);
+        self.insert(key, author, hash, len);
+        hash
     }
 
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
@@ -470,9 +488,12 @@ impl Replica {
     pub fn insert_remote_entry(&self, entry: SignedEntry) -> anyhow::Result<()> {
         entry.verify()?;
         let mut inner = self.inner.write();
-        inner.peer.put(entry.entry.id.clone(), entry.clone());
-        for cb in &inner.on_insert {
-            cb(InsertOrigin::Sync, entry.clone())
+        let id = entry.entry.id.clone();
+        inner.peer.put(id, entry.clone());
+        drop(inner);
+        let on_insert = self.on_insert.read();
+        for cb in &*on_insert {
+            cb(InsertOrigin::Sync, entry.clone());
         }
         Ok(())
     }
@@ -511,14 +532,17 @@ impl Replica {
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
     ) -> Option<crate::ranger::Message<RecordIdentifier, SignedEntry>> {
-        let (inserted_keys, reply) = self.inner.write().peer.process_message(message);
-        let inner = self.inner.read();
-        for key in inserted_keys {
-            let entry = inner.peer.get(&key).unwrap();
-            for cb in &inner.on_insert {
-                cb(InsertOrigin::Sync, entry.clone())
-            }
-        }
+        let reply = self
+            .inner
+            .write()
+            .peer
+            .process_message(message, |_key, entry| {
+                let on_insert = self.on_insert.read();
+                for cb in &*on_insert {
+                    cb(InsertOrigin::Sync, entry.clone());
+                }
+            });
+
         reply
     }
 
@@ -817,7 +841,7 @@ mod tests {
 
         let my_replica = Replica::new(myspace);
         for i in 0..10 {
-            my_replica.insert(format!("/{i}"), &alice, format!("{i}: hello from alice"));
+            my_replica.hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"));
         }
 
         for i in 0..10 {
@@ -828,33 +852,16 @@ mod tests {
         }
 
         // Test multiple records for the same key
-        my_replica.insert("/cool/path", &alice, "round 1");
-        let entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
-        let content = my_replica
-            .get_content(entry.entry().record().content_hash())
-            .unwrap();
-        assert_eq!(&content[..], b"round 1");
+        my_replica.hash_and_insert("/cool/path", &alice, "round 1");
+        let _entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
 
         // Second
-
-        my_replica.insert("/cool/path", &alice, "round 2");
-        let entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
-        let content = my_replica
-            .get_content(entry.entry().record().content_hash())
-            .unwrap();
-        assert_eq!(&content[..], b"round 2");
+        my_replica.hash_and_insert("/cool/path", &alice, "round 2");
+        let _entry = my_replica.get_latest("/cool/path", alice.id()).unwrap();
 
         // Get All
         let entries: Vec<_> = my_replica.get_all("/cool/path", alice.id()).collect();
         assert_eq!(entries.len(), 2);
-        let content = my_replica
-            .get_content(entries[0].entry().record().content_hash())
-            .unwrap();
-        assert_eq!(&content[..], b"round 1");
-        let content = my_replica
-            .get_content(entries[1].entry().record().content_hash())
-            .unwrap();
-        assert_eq!(&content[..], b"round 2");
     }
 
     #[test]
@@ -928,12 +935,12 @@ mod tests {
         let myspace = Namespace::new(&mut rng);
         let mut alice = Replica::new(myspace.clone());
         for el in &alice_set {
-            alice.insert(el, &author, el.as_bytes());
+            alice.hash_and_insert(el, &author, el.as_bytes());
         }
 
         let mut bob = Replica::new(myspace);
         for el in &bob_set {
-            bob.insert(el, &author, el.as_bytes());
+            bob.hash_and_insert(el, &author, el.as_bytes());
         }
 
         sync(&author, &mut alice, &mut bob, &alice_set, &bob_set);
@@ -952,6 +959,7 @@ mod tests {
         while let Some(msg) = next_to_bob.take() {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
+            println!("round {}", rounds);
             if let Some(msg) = bob.sync_process_message(msg) {
                 next_to_bob = alice.sync_process_message(msg);
             }
