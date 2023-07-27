@@ -11,6 +11,7 @@ use std::{collections::HashSet, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use anyhow::{anyhow, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
+use core::fmt::{Display, Formatter};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
@@ -354,43 +355,66 @@ async fn handle_command(
             threads,
             count,
             size,
+            mode,
         } => {
             println!(
-                "> Hammering with prefix {prefix} for {threads} x {count} messages of size {size} bytes",
+                "> Hammering with prefix \"{prefix}\" for {threads} x {count} messages of size {size} bytes in {mode} mode",
                 prefix = prefix,
                 threads = threads,
                 count = count,
                 size = size,
+                mode = mode,
             );
-            let mut bytes = vec![0; size];
-            bytes.fill(97);
-            let mut handles = Vec::new();
             let start = std::time::Instant::now();
-            for t in 0..threads {
-                let p = prefix.clone();
-                let t_doc = doc.clone();
-                let b = bytes.clone();
-                let h = tokio::spawn(async move {
-                    for i in 0..count {
-                        let value = String::from_utf8(b.clone()).unwrap();
-                        let key = format!("{}/{}/{}", p, t, i);
-                        t_doc
-                            .insert_bytes(key, value.into_bytes().into())
-                            .await
-                            .unwrap();
+            let mut handles = Vec::new();
+            match mode {
+                HammerMode::Set => {
+                    let mut bytes = vec![0; size];
+                    bytes.fill(97);
+                    for t in 0..threads {
+                        let p = prefix.clone();
+                        let t_doc = doc.clone();
+                        let b = bytes.clone();
+                        let h = tokio::spawn(async move {
+                            for i in 0..count {
+                                let value = String::from_utf8(b.clone()).unwrap();
+                                let key = format!("{}/{}/{}", p, t, i);
+                                t_doc
+                                    .insert_bytes(key, value.into_bytes().into())
+                                    .await
+                                    .unwrap();
+                            }
+                        });
+                        handles.push(h);
                     }
-                });
-                handles.push(h);
+                }
+                HammerMode::Get => {
+                    for t in 0..threads {
+                        let p = prefix.clone();
+                        let t_doc = doc.clone();
+                        let h = tokio::spawn(async move {
+                            for i in 0..count {
+                                let key = format!("{}/{}/{}", p, t, i);
+                                let entries = t_doc.replica().all_for_key(key.as_bytes());
+                                for (_id, entry) in entries {
+                                    let _content = fmt_content(&t_doc, &entry).await;
+                                }
+                            }
+                        });
+                        handles.push(h);
+                    }
+                }
             }
 
             let _result = futures::future::join_all(handles).await;
 
             let diff = start.elapsed().as_secs_f64();
+            let total_count = threads as u64 * count as u64;
             println!(
-                "> Hammering done in {:.2}s for {} messages with total of {} bytes",
+                "> Hammering done in {:.2}s for {} messages with total of {}",
                 diff,
-                threads * count,
-                threads * count * size
+                total_count,
+                HumanBytes(total_count * size as u64),
             );
         }
         Cmd::Exit => {}
@@ -546,19 +570,58 @@ pub enum Cmd {
     WatchCancel,
     /// Show stats about the current session
     Stats,
-    /// Stress test with the hammer
+    /// Hammer time - stress test with the hammer
     Hammer {
         /// The key prefix
         prefix: String,
         /// The number of threads to use (each thread will create it's own replica)
+        #[clap(long, short, default_value = "2")]
         threads: usize,
         /// The number of entries to create
+        #[clap(long, short, default_value = "1000")]
         count: usize,
         /// The size of each entry in Bytes
+        #[clap(long, short, default_value = "1024")]
         size: usize,
+        /// Select the hammer mode (set or get)
+        #[clap(long, short, default_value = "set")]
+        mode: HammerMode,
     },
     /// Quit
     Exit,
+}
+
+#[derive(Clone, Debug, Parser)]
+pub enum HammerMode {
+    Set,
+    Get,
+}
+
+impl FromStr for HammerMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "set" => Ok(HammerMode::Set),
+            "get" => Ok(HammerMode::Get),
+            _ => Err(anyhow!("Invalid hammer mode")),
+        }
+    }
+}
+
+impl HammerMode {
+    pub fn to_string(&self) -> &'static str {
+        match self {
+            HammerMode::Set => "set",
+            HammerMode::Get => "get",
+        }
+    }
+}
+
+impl Display for HammerMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
 }
 
 #[derive(Parser, Debug)]
