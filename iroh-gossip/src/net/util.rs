@@ -1,3 +1,5 @@
+//! Utilities for iroh-gossip networking
+
 use std::{collections::HashMap, io, pin::Pin, time::Instant};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -14,7 +16,7 @@ use crate::proto::util::TimerMap;
 
 use super::{ProtoMessage, MAX_MESSAGE_SIZE};
 
-/// Write a [ProtoMessage] as a length-prefixed, postcard-encoded message.
+/// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(
     writer: &mut W,
     buffer: &mut BytesMut,
@@ -30,7 +32,7 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// Read a length-prefixed message and decode as [[ProtoMessage]];
+/// Read a length-prefixed message and decode as `ProtoMessage`;
 pub async fn read_message(
     reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
@@ -74,18 +76,23 @@ pub async fn read_lp(
     Ok(Some(buffer.split_to(size).freeze()))
 }
 
+/// Future for a pending dial operation
 pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connection>)>;
 
 /// Dial peers and maintain a queue of pending dials
 ///
 /// This wraps a [MagicEndpoint], connects to peers through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
+///
+/// TODO: Move to iroh-net
+#[derive(Debug)]
 pub struct Dialer {
     endpoint: MagicEndpoint,
     pending: FuturesUnordered<DialFuture>,
     pending_peers: HashMap<PeerId, CancellationToken>,
 }
 impl Dialer {
+    /// Create a new dialer for a [`MagicEndpoint`]
     pub fn new(endpoint: MagicEndpoint) -> Self {
         Self {
             endpoint,
@@ -93,6 +100,11 @@ impl Dialer {
             pending_peers: Default::default(),
         }
     }
+
+    /// Start to dial a peer
+    ///
+    /// Note that the peer's addresses and/or derp region must be added to the endpoint's
+    /// addressbook for a dial to succeed, see [`MagicEndpoint::add_known_addrs`].
     pub fn queue_dial(&mut self, peer_id: PeerId, alpn_protocol: &'static [u8]) {
         if self.is_pending(&peer_id) {
             return;
@@ -112,16 +124,19 @@ impl Dialer {
         self.pending.push(fut.boxed());
     }
 
+    /// Abort a pending dial
     pub fn abort_dial(&mut self, peer_id: &PeerId) {
         if let Some(cancel) = self.pending_peers.remove(peer_id) {
             cancel.cancel();
         }
     }
 
+    /// Check if a peer is currently being dialed
     pub fn is_pending(&self, peer: &PeerId) -> bool {
         self.pending_peers.contains_key(peer)
     }
 
+    /// Wait for the next dial operation to complete
     pub async fn next(&mut self) -> (PeerId, anyhow::Result<quinn::Connection>) {
         match self.pending_peers.is_empty() {
             false => {
@@ -134,31 +149,48 @@ impl Dialer {
     }
 }
 
+/// A [`TimerMap`] with an async method to wait for the next timer expiration.
+#[derive(Debug)]
 pub struct Timers<T> {
     next: Option<(Instant, Pin<Box<Sleep>>)>,
     map: TimerMap<T>,
 }
-impl<T> Timers<T> {
-    pub fn new() -> Self {
+
+impl<T> Default for Timers<T> {
+    fn default() -> Self {
         Self {
             next: None,
             map: TimerMap::default(),
         }
     }
+}
+
+impl<T> Timers<T> {
+    /// Create a new timer map
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Insert a new entry at the specified instant
     pub fn insert(&mut self, instant: Instant, item: T) {
         self.map.insert(instant, item);
-        self.reset();
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.next = self
             .map
             .first()
             .map(|(instant, _)| (*instant, Box::pin(sleep_until((*instant).into()))))
     }
 
+    /// Wait for the next timer to expire and return an iterator of all expired timers
+    ///
+    /// If the [TimerMap] is empty, this will return a future that is pending forever.
+    /// After inserting a new entry, prior futures returned from this method will not become ready.
+    /// They should be dropped after calling [Self::insert], and a new future as returned from
+    /// this method should be awaited instead.
     pub async fn wait_and_drain(&mut self) -> impl Iterator<Item = (Instant, T)> {
+        self.reset();
         match self.next.as_mut() {
             Some((instant, sleep)) => {
                 sleep.await;

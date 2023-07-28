@@ -37,6 +37,7 @@ pub enum InEvent<PA> {
 }
 
 /// Output event for HyParView
+#[derive(Debug)]
 pub enum OutEvent<PA> {
     /// Ask the IO layer to send a [`Message`] to peer `PA`.
     SendMessage(PA, Message<PA>),
