@@ -64,12 +64,13 @@ impl Store {
         let db = Database::create(path)?;
 
         // Setup all tables
+        let write_tx = db.begin_write()?;
         {
-            let write_tx = db.begin_write()?;
             let _table = write_tx.open_multimap_table(RECORDS_TABLE)?;
             let _table = write_tx.open_table(NAMESPACES_TABLE)?;
             let _table = write_tx.open_table(AUTHORS_TABLE)?;
         }
+        write_tx.commit()?;
 
         Ok(Store { db: Arc::new(db) })
     }
@@ -99,8 +100,11 @@ impl Store {
     /// Inserts a new author.
     pub fn insert_author(&self, author: Author) -> Result<()> {
         let write_tx = self.db.begin_write()?;
-        let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
-        author_table.insert(&author.id_bytes(), &author.to_bytes())?;
+        {
+            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
+            author_table.insert(&author.id_bytes(), &author.to_bytes())?;
+        }
+        write_tx.commit()?;
 
         Ok(())
     }
@@ -115,8 +119,11 @@ impl Store {
     /// Stores a new namespace
     fn insert_namespace(&self, namespace: Namespace) -> Result<()> {
         let write_tx = self.db.begin_write()?;
-        let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-        namespace_table.insert(&namespace.id_bytes(), &namespace.to_bytes())?;
+        {
+            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            namespace_table.insert(&namespace.id_bytes(), &namespace.to_bytes())?;
+        }
+        write_tx.commit()?;
 
         Ok(())
     }
@@ -379,8 +386,9 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
-        let key = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
-        let mut records = record_table.range(key..=key)?;
+        let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
+        let mut records = record_table.range(start..=end)?;
 
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
@@ -396,7 +404,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         let read_tx = self.store.db.begin_read()?;
         let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
 
-        // TODO: verify this fetches all keys with this namespace
         let key = (id.namespace().as_bytes(), id.author().as_bytes(), id.key());
         let records = record_table.get(key)?;
         let Some(record) = records.last() else {
@@ -417,8 +424,9 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
 
         // TODO: verify this fetches all keys with this namespace
-        let key = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
-        let records = record_table.range(key..=key)?;
+        let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
+        let records = record_table.range(start..=end)?;
         Ok(records.count())
     }
 
@@ -449,17 +457,20 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             // TODO: verify timestamp is "reasonable"
 
             let write_tx = self.store.db.begin_write()?;
-            let mut record_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
-            let key = (k.namespace().as_bytes(), k.author().as_bytes(), k.key());
-            let record = v.entry().record();
-            let value = (
-                record.timestamp(),
-                &v.signature().namespace_signature().to_bytes(),
-                &v.signature().author_signature().to_bytes(),
-                record.content_len(),
-                record.content_hash().as_bytes(),
-            );
-            record_table.insert(key, value)?;
+            {
+                let mut record_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+                let key = (k.namespace().as_bytes(), k.author().as_bytes(), k.key());
+                let record = v.entry().record();
+                let value = (
+                    record.timestamp(),
+                    &v.signature().namespace_signature().to_bytes(),
+                    &v.signature().author_signature().to_bytes(),
+                    record.content_len(),
+                    record.content_hash().as_bytes(),
+                );
+                record_table.insert(key, value)?;
+            }
+            write_tx.commit()?;
         }
         Ok(())
     }
@@ -491,7 +502,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                     .open_multimap_table(RECORDS_TABLE)
                     .map_err(anyhow::Error::from)
             },
-            |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
             limit,
         )?;
 
@@ -507,7 +518,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     fn all(&self) -> Result<Self::AllIterator<'_>> {
         // TODO: verify this gives all
         let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
-        let end = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let end = (self.namespace.as_bytes(), &[255u8; 32], &[][..]);
         let iter = RangeIterator::try_new(
             self.store.db.begin_read()?,
             |read_tx| {
@@ -515,7 +526,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                     .open_multimap_table(RECORDS_TABLE)
                     .map_err(anyhow::Error::from)
             },
-            |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            |record_table| record_table.range(start..=end).map_err(anyhow::Error::from),
             None,
         )?;
 
@@ -572,5 +583,48 @@ impl Iterator for RangeIterator<'_> {
                 next = records.next()?.ok()?;
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ranger::Store as _;
+
+    use super::*;
+
+    #[test]
+    fn test_basics() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = Store::new(dbfile.path())?;
+
+        let author = store.new_author(&mut rand::thread_rng())?;
+        let namespace = Namespace::new(&mut rand::thread_rng());
+        let replica = store.new_replica(namespace.clone())?;
+
+        let replica_back = store.get_replica(&namespace.id())?.unwrap();
+        assert_eq!(
+            replica.namespace().as_bytes(),
+            replica_back.namespace().as_bytes()
+        );
+
+        let author_back = store.get_author(&author.id())?.unwrap();
+        assert_eq!(author.to_bytes(), author_back.to_bytes(),);
+
+        let mut wrapper = StoreInstance::new(namespace.id(), store.clone());
+        for i in 0..5 {
+            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(
+                id.clone(),
+                Record::from_data(format!("world-{i}"), namespace.id()),
+            );
+            let entry = SignedEntry::from_entry(entry, &namespace, &author);
+            wrapper.put(id, entry)?;
+        }
+
+        // all
+        let all: Vec<_> = wrapper.all()?.collect();
+        assert_eq!(all.len(), 5);
+
+        Ok(())
     }
 }

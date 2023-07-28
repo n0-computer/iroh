@@ -2004,6 +2004,7 @@ dependencies = [
  "rand_core",
  "redb",
  "serde",
+ "tempfile",
  "tokio",
  "url",
 ]
