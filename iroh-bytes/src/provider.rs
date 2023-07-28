@@ -21,6 +21,7 @@ use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
+use crate::util::progress::ProgressSender;
 use crate::util::RpcError;
 use crate::Hash;
 
@@ -937,8 +938,8 @@ pub trait BaoDb: BaoReadonlyDb {
         &self,
         data: PathBuf,
         stable: bool,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<Hash>> {
+        progress: impl ProgressSender<Msg = ImportProgress>,
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let _ = (data, stable, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
@@ -948,6 +949,19 @@ pub trait BaoDb: BaoReadonlyDb {
         let _ = bytes;
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
+}
+
+#[allow(missing_docs)]
+#[derive(Debug)]
+pub enum ImportProgress {
+    /// Found a path
+    Found { id: u64, path: PathBuf },
+    /// Determined the size
+    Size { id: u64, size: u64 },
+    /// Progress when computing the outboard
+    OutboardProgress { id: u64, offset: u64 },
+    /// Done computing the outboard
+    OutboardDone { id: u64, hash: Hash },
 }
 
 /// A local filesystem based Vfs

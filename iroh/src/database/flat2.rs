@@ -10,15 +10,16 @@ use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
 use futures::{Future, FutureExt};
-use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, Purpose, Vfs};
+use iroh_bytes::provider::{
+    BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, ImportProgress, Purpose, Vfs,
+};
 use iroh_bytes::provider::{ValidateProgress, VfsId};
+use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
 use rand::Rng;
 use tokio::sync::mpsc;
 use tracing::trace_span;
-
-use crate::util::progress::{self, ProgressReader, ProgressReaderUpdate};
 
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
 pub const FNAME_PATHS: &str = "paths.bin";
@@ -382,7 +383,7 @@ impl BaoDb for Database {
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export0(hash, target, stable, progress))
-            .map(|x| x.unwrap())
+            .map(flatten_to_io)
             .boxed()
     }
 
@@ -390,11 +391,11 @@ impl BaoDb for Database {
         &self,
         path: PathBuf,
         stable: bool,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<Hash>> {
+        progress: impl ProgressSender<Msg = ImportProgress>,
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import0(path, stable, progress))
-            .map(|x| x.unwrap())
+            .map(flatten_to_io)
             .boxed()
     }
 
@@ -584,8 +585,8 @@ impl Database {
         self,
         path: PathBuf,
         stable: bool,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> io::Result<Hash> {
+        progress: impl ProgressSender<Msg = ImportProgress>,
+    ) -> io::Result<(Hash, u64)> {
         if !path.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -598,12 +599,22 @@ impl Database {
                 "path is not a file or symlink",
             ));
         }
-        let size = path.metadata()?.len();
+        let id = progress.new_id();
+        progress.blocking_send(ImportProgress::Found {
+            id,
+            path: path.clone(),
+        })?;
         let (hash, entry) = if stable {
             // compute outboard and hash from the data in place, since we assume that it is stable
-            let (hash, data) = compute_outboard(&path, size, move |offset| progress(offset))?;
+            let size = path.metadata()?.len();
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            let progress2 = progress.clone();
+            let (hash, data) = compute_outboard(&path, size, move |offset| {
+                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+            })?;
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::write(outboard_path, data)?;
+            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
             (hash, CompleteEntry::new_external(size, path))
         } else {
             let uuid = rand::thread_rng().gen::<[u8; 16]>();
@@ -615,16 +626,22 @@ impl Database {
             // copy the data, since it is not stable
             std::fs::copy(&path, &temp_data_path)?;
             // hash only now that we own it and can assume that it won't change
-            let (hash, data) =
-                compute_outboard(&temp_data_path, size, move |offset| progress(offset))?;
+            let size = temp_data_path.metadata()?.len();
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            let progress2 = progress.clone();
+            let (hash, data) = compute_outboard(&temp_data_path, size, move |offset| {
+                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+            })?;
+            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::write(outboard_path, data)?;
             let data_path = self.owned_data_path(&hash);
             std::fs::rename(temp_data_path, data_path)?;
             (hash, CompleteEntry::new_default(size))
         };
+        let size = entry.size;
         self.update_entry(hash, entry)?;
-        Ok(hash)
+        Ok((hash, size))
     }
 
     fn export0(
@@ -689,7 +706,7 @@ impl Database {
             tracing::info!("{} {} {}", size, stable, owned);
             tracing::info!("copying {} to {}", source.display(), target.display());
             // todo: progress
-            hardlink_or_copy_sync(&source, &target)?;
+            std::fs::copy(&source, &target)?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
                 return Err(io::Error::new(
@@ -816,23 +833,25 @@ impl Database {
                 Default::default()
             };
             let owned_data = data_path.is_some();
-            let any_data_path = if let Some(data_path) = &data_path {
-                data_path
+            let size = if let Some(data_path) = &data_path {
+                let Ok(meta) = std::fs::metadata(data_path) else {
+                    tracing::warn!("unable to open owned data file {}. removing {}", data_path.display(), hex::encode(hash));
+                    continue
+                };
+                meta.len()
             } else if let Some(external) = external.iter().next() {
-                external
+                let Ok(meta) = std::fs::metadata(external) else {
+                    tracing::warn!("unable to open external data file {}. removing {}", external.display(), hex::encode(hash));
+                    continue
+                };
+                meta.len()
             } else {
                 tracing::error!(
-                    "neither internal nor external file exists for {}",
+                    "neither internal nor external file exists. removing {}",
                     hex::encode(hash)
                 );
                 continue;
             };
-
-            let Ok(metadata) = std::fs::metadata(&any_data_path) else {
-                tracing::error!("unable to open path {}", any_data_path.display());
-                continue;
-            };
-            let size = metadata.len();
             if needs_outboard(size) {
                 if let Some(outboard_path) = outboard_path {
                     let outboard_data = std::fs::read(outboard_path)?;
@@ -922,33 +941,6 @@ impl Database {
 }
 
 // hardlink or copy a file
-async fn hardlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
-    if src == dst {
-        tracing::info!(
-            "skipping hardlinking {} to {}",
-            src.display(),
-            dst.display()
-        );
-        return Ok(());
-    }
-    if let Err(e) = std::fs::remove_file(dst) {
-        if e.kind() != io::ErrorKind::NotFound {
-            tracing::info!("remove failed {}", e);
-            return Err(e);
-        }
-    }
-    tracing::info!("hardlinking {} to {}", src.display(), dst.display());
-    Ok(match tokio::fs::hard_link(src, dst).await {
-        Ok(_) => {}
-        Err(e) => {
-            tracing::info!("hard link failed {}", e);
-            tracing::info!("copying {} to {}", src.display(), dst.display());
-            tokio::fs::copy(src, dst).await?;
-        }
-    })
-}
-
-// hardlink or copy a file
 fn hardlink_or_copy_sync(src: &Path, dst: &Path) -> io::Result<()> {
     if src == dst {
         tracing::info!(
@@ -998,11 +990,7 @@ fn compute_outboard(
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader::new(file, |p| {
-        if let ProgressReaderUpdate::Progress(offset) = p {
-            progress(offset);
-        }
-    });
+    let reader = ProgressReader2::new(file, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
@@ -1013,4 +1001,39 @@ fn compute_outboard(
     tracing::trace!(%hash, "done");
 
     Ok((hash.into(), ob.into_inner()))
+}
+
+pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {
+    inner: R,
+    offset: u64,
+    cb: F,
+}
+
+impl<R: io::Read, F: Fn(u64) -> io::Result<()>> ProgressReader2<R, F> {
+    #[allow(dead_code)]
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
+}
+
+impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(self.offset)?;
+        Ok(read)
+    }
+}
+
+fn flatten_to_io<T>(
+    e: std::result::Result<io::Result<T>, tokio::task::JoinError>,
+) -> io::Result<T> {
+    match e {
+        Ok(x) => x,
+        Err(cause) => Err(io::Error::new(io::ErrorKind::Other, cause)),
+    }
 }

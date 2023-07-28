@@ -1234,7 +1234,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(out) = msg.out {
             let _export = local.spawn_pinned(move || async move {
                 download.await.unwrap()?;
-                this.export(out, hash, msg.recursive, progress3).await?;
+                if let Err(cause) = this.export(out, hash, msg.recursive, progress3).await {
+                    progress.send(ShareProgress::Abort(cause.into())).await?;
+                }
                 anyhow::Ok(())
             });
         }
@@ -1262,27 +1264,62 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        use crate::database::flat::{create_collection_inner, create_data_sources, Database};
-        use crate::util::progress::Progress;
-        use std::any::Any;
+        use iroh_bytes::{
+            provider::ImportProgress,
+            util::progress::{ProgressSender, TokioProgressSender},
+        };
+
+        use crate::database::flat::create_data_sources;
+        let progress = TokioProgressSender::new(progress);
+        let ip = progress.clone().with_map::<ImportProgress, _>(|x| match x {
+            ImportProgress::Found { id, path } => ProvideProgress::Found {
+                id,
+                name: path.display().to_string(),
+                size: 0,
+            },
+            ImportProgress::Size { id, size } => ProvideProgress::Found {
+                id,
+                name: "".to_string(),
+                size,
+            },
+            ImportProgress::OutboardProgress { id, offset } => {
+                ProvideProgress::Progress { id, offset }
+            }
+            ImportProgress::OutboardDone { hash, id } => ProvideProgress::Done { hash, id },
+        });
         let root = msg.path;
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
         let data_sources = create_data_sources(root)?;
-        // create the collection
-        // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
-
-        // todo: generify this
-        // for now provide will only work if D is a Database
-        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-            current.union_with(db);
-        } else {
-            anyhow::bail!("provide not supported yet for this database type");
+        let mut next_id = 0;
+        let mut blobs = Vec::new();
+        let mut total_blobs_size = 0;
+        for source in data_sources {
+            let name = source.name().to_string();
+            let id = next_id;
+            next_id += 1;
+            progress
+                .send(ProvideProgress::Found {
+                    id,
+                    name: name.clone(),
+                    size: 0,
+                })
+                .await?;
+            let ip2 = ip.clone();
+            let (hash, size) = self
+                .inner
+                .db
+                .import(source.path().to_owned(), false, ip2)
+                .await?;
+            total_blobs_size += size;
+            blobs.push(Blob { hash, name });
         }
+
+        let collection = Collection::new(blobs, total_blobs_size)?;
+        let data = collection.to_bytes()?;
+        let hash = self.inner.db.import_bytes(data.into()).await?;
 
         self.inner
             .callbacks
