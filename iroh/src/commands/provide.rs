@@ -20,6 +20,7 @@ use iroh_bytes::{protocol::RequestToken, provider::BaoDb, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
+use tracing::{info_span, Instrument};
 
 use crate::config::iroh_data_root;
 
@@ -75,39 +76,42 @@ pub async fn run(
     // task that will add data to the provider, either from a file or from stdin
     let fut = {
         let provider = provider.clone();
-        tokio::spawn(async move {
-            let (path, tmp_path) = if let Some(path) = path {
-                let absolute = path.canonicalize()?;
-                println!("Adding {} as {}...", path.display(), absolute.display());
-                (absolute, None)
-            } else {
-                // Store STDIN content into a temporary file
-                let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                let mut file = tokio::fs::File::from_std(file);
-                let path_buf = path.to_path_buf();
-                // Copy from stdin to the file, until EOF
-                tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                println!("Adding from stdin...");
-                // return the TempPath to keep it alive
-                (path_buf, Some(path))
-            };
-            // tell the provider to add the data
-            let stream = controller
-                .server_streaming(ProvideRequest { path, in_place })
-                .await?;
-            match aggregate_add_response(stream).await {
-                Ok((hash, entries)) => {
-                    print_add_response(hash, entries);
-                    let ticket = provider.ticket(hash).await?.with_token(token);
-                    println!("All-in-one ticket: {ticket}");
-                    anyhow::Ok(tmp_path)
-                }
-                Err(e) => {
-                    eprintln!("Failed to add data: {}", e);
-                    std::process::exit(-1);
+        tokio::spawn(
+            async move {
+                let (path, tmp_path) = if let Some(path) = path {
+                    let absolute = path.canonicalize()?;
+                    println!("Adding {} as {}...", path.display(), absolute.display());
+                    (absolute, None)
+                } else {
+                    // Store STDIN content into a temporary file
+                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                    let mut file = tokio::fs::File::from_std(file);
+                    let path_buf = path.to_path_buf();
+                    // Copy from stdin to the file, until EOF
+                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                    println!("Adding from stdin...");
+                    // return the TempPath to keep it alive
+                    (path_buf, Some(path))
+                };
+                // tell the provider to add the data
+                let stream = controller
+                    .server_streaming(ProvideRequest { path, in_place })
+                    .await?;
+                match aggregate_add_response(stream).await {
+                    Ok((hash, entries)) => {
+                        print_add_response(hash, entries);
+                        let ticket = provider.ticket(hash).await?.with_token(token);
+                        println!("All-in-one ticket: {ticket}");
+                        anyhow::Ok(tmp_path)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to add data: {}", e);
+                        std::process::exit(-1);
+                    }
                 }
             }
-        })
+            .instrument(info_span!("provider-add")),
+        )
     };
 
     let provider2 = provider.clone();

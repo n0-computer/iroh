@@ -15,7 +15,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{instrument, trace};
+use tracing::{info_span, instrument, trace, Instrument};
 
 use crate::key::node::{PublicKey, SecretKey};
 
@@ -121,7 +121,9 @@ where
         let server_actor = ServerActor::new(key.public_key(), server_channel_r);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
-        let server_task = tokio::spawn(async move { server_actor.run(done).await });
+        let server_task = tokio::spawn(
+            async move { server_actor.run(done).await }.instrument(info_span!("derp.srv.actor")),
+        );
         let meta_cert = init_meta_cert(&key.public_key());
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
@@ -740,7 +742,10 @@ mod tests {
         let server_done = done.clone();
 
         // run server actor
-        let server_task = tokio::spawn(async move { server_actor.run(server_done).await });
+        let server_task = tokio::spawn(
+            async move { server_actor.run(server_done).await }
+                .instrument(info_span!("derp.srv.actor")),
+        );
 
         let key_a = PublicKey::from([3u8; PUBLIC_KEY_LENGTH]);
         let (client_a, mut a_io) = test_client_builder(key_a.clone(), 1, server_channel.clone());

@@ -158,7 +158,7 @@ fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     keypair: Arc<Keypair>,
-    conn: MagicSock,
+    msock: MagicSock,
     endpoint: quinn::Endpoint,
     netmap: Arc<Mutex<NetworkMap>>,
     keylog: bool,
@@ -182,7 +182,7 @@ impl MagicEndpoint {
         callbacks: Option<Callbacks>,
         keylog: bool,
     ) -> anyhow::Result<Self> {
-        let conn = magicsock::MagicSock::new(magicsock::Options {
+        let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
@@ -191,21 +191,22 @@ impl MagicEndpoint {
         trace!("created magicsock");
 
         let derp_map = derp_map.unwrap_or_default();
-        conn.set_derp_map(Some(derp_map))
+        msock
+            .set_derp_map(Some(derp_map))
             .await
             .context("setting derp map")?;
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             server_config,
-            conn.clone(),
+            msock.clone(),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
             keypair: Arc::new(keypair),
-            conn,
+            msock,
             endpoint,
             netmap: Arc::new(Mutex::new(NetworkMap { peers: vec![] })),
             keylog,
@@ -231,7 +232,7 @@ impl MagicEndpoint {
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> anyhow::Result<(SocketAddr, Option<SocketAddr>)> {
-        self.conn.local_addr()
+        self.msock.local_addr()
     }
 
     /// Get the local and discovered endpoint addresses on which the underlying
@@ -241,14 +242,14 @@ impl MagicEndpoint {
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
     pub async fn local_endpoints(&self) -> anyhow::Result<Vec<config::Endpoint>> {
-        self.conn.local_endpoints().await
+        self.msock.local_endpoints().await
     }
 
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
     pub async fn my_derp(&self) -> Option<u16> {
-        self.conn.my_derp().await
+        self.msock.my_derp().await
     }
 
     /// Connect to a remote endpoint.
@@ -272,9 +273,13 @@ impl MagicEndpoint {
             .await?;
 
         let node_key: key::node::PublicKey = peer_id.into();
-        let addr = self.conn.get_mapping_addr(&node_key).await.ok_or_else(|| {
-            anyhow!("failed to retrieve the mapped address from the magic socket")
-        })?;
+        let addr = self
+            .msock
+            .get_mapping_addr(&node_key)
+            .await
+            .ok_or_else(|| {
+                anyhow!("failed to retrieve the mapped address from the magic socket")
+            })?;
 
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -319,13 +324,13 @@ impl MagicEndpoint {
                     "No UDP addresses or DERP region provided. Unable to dial peer {peer_id:?}"
                 );
             }
-            (true, Some(region)) if !self.conn.has_derp_region(region).await => {
+            (true, Some(region)) if !self.msock.has_derp_region(region).await => {
                 anyhow::bail!("No UDP addresses provided and we do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
             }
             (false, None) => {
                 tracing::warn!("No DERP region provided, any hole punching required to establish a connection will not be possible.");
             }
-            (false, Some(region)) if !self.conn.has_derp_region(region).await => {
+            (false, Some(region)) if !self.msock.has_derp_region(region).await => {
                 tracing::warn!("We do not have any DERP configuration for DERP region {region}, any hole punching required to establish a connection will not be possible.");
             }
             _ => {}
@@ -356,7 +361,7 @@ impl MagicEndpoint {
             }
             netmap.clone()
         };
-        self.conn.set_network_map(netmap).await?;
+        self.msock.set_network_map(netmap).await?;
         Ok(())
     }
 
@@ -373,13 +378,14 @@ impl MagicEndpoint {
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> anyhow::Result<()> {
         self.endpoint.close(error_code, reason);
         self.endpoint.wait_idle().await;
-        self.conn.close().await?;
+        // TODO: Now wait-idle on msock!
+        self.msock.close().await?;
         Ok(())
     }
 
     #[cfg(test)]
-    pub(crate) fn conn(&self) -> &MagicSock {
-        &self.conn
+    pub(crate) fn magic_sock(&self) -> &MagicSock {
+        &self.msock
     }
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
@@ -430,155 +436,176 @@ pub async fn get_peer_id(connection: &quinn::Connection) -> anyhow::Result<PeerI
     }
 }
 
-// TODO: Reenable when not flaky
+// TODO: These tests could still be flaky, lets fix that:
 // https://github.com/n0-computer/iroh/issues/1183
-// #[cfg(tests)]
-// mod test {
-//     use futures::future::BoxFuture;
+#[cfg(test)]
+mod tests {
+    use tracing::{info, info_span, Instrument};
 
-//     use super::{accept_conn, MagicEndpoint};
-//     use crate::magicsock::conn_tests::{run_derp_and_stun, setup_logging};
+    use crate::test_utils::{run_derp_and_stun, setup_logging};
 
-//     const TEST_ALPN: &[u8] = b"n0/iroh/test";
+    use super::*;
 
-//     async fn setup_pair() -> anyhow::Result<(
-//         MagicEndpoint,
-//         MagicEndpoint,
-//         impl FnOnce() -> BoxFuture<'static, ()>,
-//     )> {
-//         let (derp_map, cleanup) = run_derp_and_stun([127, 0, 0, 1].into()).await?;
+    const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-//         let ep1 = MagicEndpoint::builder()
-//             .alpns(vec![TEST_ALPN.to_vec()])
-//             .derp_map(Some(derp_map.clone()))
-//             .bind(0)
-//             .await?;
+    #[ignore]
+    #[tokio::test]
+    async fn magic_endpoint_connect_close() {
+        let _guard = setup_logging();
+        let (derp_map, region_id, _guard) = run_derp_and_stun([127, 0, 0, 1].into()).await.unwrap();
+        let server_keypair = Keypair::generate();
+        let server_peer_id = PeerId::from(server_keypair.public());
 
-//         let ep2 = MagicEndpoint::builder()
-//             .alpns(vec![TEST_ALPN.to_vec()])
-//             .derp_map(Some(derp_map.clone()))
-//             .bind(0)
-//             .await?;
+        let server = {
+            let derp_map = derp_map.clone();
+            tokio::spawn(
+                async move {
+                    let ep = MagicEndpoint::builder()
+                        .keypair(server_keypair)
+                        .alpns(vec![TEST_ALPN.to_vec()])
+                        .derp_map(Some(derp_map))
+                        .bind(0)
+                        .await
+                        .unwrap();
+                    info!("accepting connection");
+                    let conn = ep.accept().await.unwrap();
+                    let (_peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
+                    let mut stream = conn.accept_uni().await.unwrap();
+                    let mut buf = [0u8, 5];
+                    stream.read_exact(&mut buf).await.unwrap();
+                    info!("Accepted 1 stream, received {buf:?}.  Closing now.");
+                    ep.close(7u8.into(), b"bye").await.unwrap();
 
-//         Ok((ep1, ep2, cleanup))
-//     }
+                    let res = conn.accept_uni().await;
+                    assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
 
-//     #[tokio::test]
-//     async fn magic_endpoint_connect_close() {
-//         setup_logging();
-//         let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
-//         let peer_id_1 = ep1.peer_id();
+                    let res = stream.read_to_end(10).await;
+                    assert_eq!(
+                        res.unwrap_err(),
+                        quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+                            quinn::ConnectionError::LocallyClosed
+                        ))
+                    );
+                    info!("server test completed");
+                }
+                .instrument(info_span!("test-server")),
+            )
+        };
 
-//         let accept = tokio::spawn(async move {
-//             let conn = ep1.accept().await.unwrap();
-//             let (_peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
-//             let mut stream = conn.accept_uni().await.unwrap();
-//             ep1.close(23u8.into(), b"badbadnotgood").await.unwrap();
-//             let res = conn.accept_uni().await;
-//             assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
+        let client = tokio::spawn(
+            async move {
+                let ep = MagicEndpoint::builder()
+                    .alpns(vec![TEST_ALPN.to_vec()])
+                    .derp_map(Some(derp_map))
+                    .bind(0)
+                    .await
+                    .unwrap();
+                info!("client connecting");
+                let conn = ep
+                    .connect(server_peer_id, TEST_ALPN, region_id, &[])
+                    .await
+                    .unwrap();
+                let mut stream = conn.open_uni().await.unwrap();
 
-//             let res = stream.read_to_end(10).await;
-//             assert_eq!(
-//                 res.unwrap_err(),
-//                 quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
-//                     quinn::ConnectionError::LocallyClosed
-//                 ))
-//             );
-//         });
+                // First write is accepted by server.  We need this bit of synchronisation
+                // because if the server closes after simply accepting the connection we can
+                // not be sure our .open_uni() call would succeed as it may already receive
+                // the error.
+                stream.write_all(b"hello").await.unwrap();
 
-//         let conn = ep2.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
-//         // open a first stream - this does not error before we accept one stream before closing
-//         // on the other peer
-//         let mut stream = conn.open_uni().await.unwrap();
-//         // now the other peer closed the connection.
-//         stream.write_all(b"hi").await.unwrap();
-//         // now the other peer closed the connection.
-//         let expected_err = quinn::ConnectionError::ApplicationClosed(quinn::ApplicationClose {
-//             error_code: 23u8.into(),
-//             reason: b"badbadnotgood".to_vec().into(),
-//         });
-//         let err = conn.closed().await;
-//         assert_eq!(err, expected_err);
+                // Remote now closes the connection, we should see an error sometime soon.
+                let err = conn.closed().await;
+                let expected_err =
+                    quinn::ConnectionError::ApplicationClosed(quinn::ApplicationClose {
+                        error_code: 7u8.into(),
+                        reason: b"bye".to_vec().into(),
+                    });
+                assert_eq!(err, expected_err);
 
-//         let res = stream.finish().await;
-//         assert_eq!(
-//             res.unwrap_err(),
-//             quinn::WriteError::ConnectionLost(expected_err.clone())
-//         );
+                let res = stream.finish().await;
+                assert_eq!(
+                    res.unwrap_err(),
+                    quinn::WriteError::ConnectionLost(expected_err.clone())
+                );
 
-//         let res = conn.open_uni().await;
-//         assert_eq!(res.unwrap_err(), expected_err);
+                let res = conn.open_uni().await;
+                assert_eq!(res.unwrap_err(), expected_err);
+                info!("client test completed");
+            }
+            .instrument(info_span!("test-client")),
+        );
 
-//         accept.await.unwrap();
-//         cleanup().await;
-//     }
+        let (server, client) = tokio::join!(server, client);
+        server.unwrap();
+        client.unwrap();
+    }
 
-//     #[tokio::test]
-//     async fn magic_endpoint_bidi_send_recv() {
-//         setup_logging();
-//         let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
+    // #[tokio::test]
+    // async fn magic_endpoint_bidi_send_recv() {
+    //     setup_logging();
+    //     let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
 
-//         let peer_id_1 = ep1.peer_id();
-//         eprintln!("peer id 1 {peer_id_1}");
-//         let peer_id_2 = ep2.peer_id();
-//         eprintln!("peer id 2 {peer_id_2}");
+    //     let peer_id_1 = ep1.peer_id();
+    //     eprintln!("peer id 1 {peer_id_1}");
+    //     let peer_id_2 = ep2.peer_id();
+    //     eprintln!("peer id 2 {peer_id_2}");
 
-//         let endpoint = ep2.clone();
-//         let p2_connect = tokio::spawn(async move {
-//             let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
-//             let (mut send, mut recv) = conn.open_bi().await.unwrap();
-//             send.write_all(b"hello").await.unwrap();
-//             send.finish().await.unwrap();
-//             let m = recv.read_to_end(100).await.unwrap();
-//             assert_eq!(&m, b"world");
-//         });
+    //     let endpoint = ep2.clone();
+    //     let p2_connect = tokio::spawn(async move {
+    //         let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
+    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    //         send.write_all(b"hello").await.unwrap();
+    //         send.finish().await.unwrap();
+    //         let m = recv.read_to_end(100).await.unwrap();
+    //         assert_eq!(&m, b"world");
+    //     });
 
-//         let endpoint = ep1.clone();
-//         let p1_accept = tokio::spawn(async move {
-//             let conn = endpoint.accept().await.unwrap();
-//             let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-//             assert_eq!(peer_id, peer_id_2);
-//             assert_eq!(alpn.as_bytes(), TEST_ALPN);
+    //     let endpoint = ep1.clone();
+    //     let p1_accept = tokio::spawn(async move {
+    //         let conn = endpoint.accept().await.unwrap();
+    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
+    //         assert_eq!(peer_id, peer_id_2);
+    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
 
-//             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-//             let m = recv.read_to_end(100).await.unwrap();
-//             assert_eq!(m, b"hello");
+    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+    //         let m = recv.read_to_end(100).await.unwrap();
+    //         assert_eq!(m, b"hello");
 
-//             send.write_all(b"world").await.unwrap();
-//             send.finish().await.unwrap();
-//         });
+    //         send.write_all(b"world").await.unwrap();
+    //         send.finish().await.unwrap();
+    //     });
 
-//         let endpoint = ep1.clone();
-//         let p1_connect = tokio::spawn(async move {
-//             let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
-//             let (mut send, mut recv) = conn.open_bi().await.unwrap();
-//             send.write_all(b"ola").await.unwrap();
-//             send.finish().await.unwrap();
-//             let m = recv.read_to_end(100).await.unwrap();
-//             assert_eq!(&m, b"mundo");
-//         });
+    //     let endpoint = ep1.clone();
+    //     let p1_connect = tokio::spawn(async move {
+    //         let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
+    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    //         send.write_all(b"ola").await.unwrap();
+    //         send.finish().await.unwrap();
+    //         let m = recv.read_to_end(100).await.unwrap();
+    //         assert_eq!(&m, b"mundo");
+    //     });
 
-//         let endpoint = ep2.clone();
-//         let p2_accept = tokio::spawn(async move {
-//             let conn = endpoint.accept().await.unwrap();
-//             let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-//             assert_eq!(peer_id, peer_id_1);
-//             assert_eq!(alpn.as_bytes(), TEST_ALPN);
+    //     let endpoint = ep2.clone();
+    //     let p2_accept = tokio::spawn(async move {
+    //         let conn = endpoint.accept().await.unwrap();
+    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
+    //         assert_eq!(peer_id, peer_id_1);
+    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
 
-//             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-//             let m = recv.read_to_end(100).await.unwrap();
-//             assert_eq!(m, b"ola");
+    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+    //         let m = recv.read_to_end(100).await.unwrap();
+    //         assert_eq!(m, b"ola");
 
-//             send.write_all(b"mundo").await.unwrap();
-//             send.finish().await.unwrap();
-//         });
+    //         send.write_all(b"mundo").await.unwrap();
+    //         send.finish().await.unwrap();
+    //     });
 
-//         p1_accept.await.unwrap();
-//         p2_connect.await.unwrap();
+    //     p1_accept.await.unwrap();
+    //     p2_connect.await.unwrap();
 
-//         p2_accept.await.unwrap();
-//         p1_connect.await.unwrap();
+    //     p2_accept.await.unwrap();
+    //     p1_connect.await.unwrap();
 
-//         cleanup().await;
-//     }
-// }
+    //     cleanup().await;
+    // }
+}

@@ -85,8 +85,8 @@ pub struct PendingCliPing {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) conn_sender: mpsc::Sender<ActorMessage>,
-    pub(super) conn_public_key: key::node::PublicKey,
+    pub(super) msock_sender: mpsc::Sender<ActorMessage>,
+    pub(super) msock_public_key: key::node::PublicKey,
     pub(super) public_key: key::node::PublicKey,
     pub(super) derp_addr: Option<u16>,
 }
@@ -97,9 +97,9 @@ impl Endpoint {
 
         Endpoint {
             id,
-            conn_sender: options.conn_sender,
+            conn_sender: options.msock_sender,
             quic_mapped_addr,
-            conn_public_key: options.conn_public_key,
+            conn_public_key: options.msock_public_key,
             public_key: options.public_key,
             last_full_ping: None,
             derp_addr: options.derp_addr,

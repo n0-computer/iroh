@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, info_span, Instrument};
 
 use super::client_conn::Io;
 use super::PER_CLIENT_SEND_QUEUE_DEPTH;
@@ -61,7 +61,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!("[DERP] -> {:?} ({}b)", dstkey, packet.len());
+        debug!(%dstkey, len=packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel
@@ -500,15 +500,18 @@ where
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
-        let writer_task = tokio::spawn(async move {
-            let client_writer = ClientWriter {
-                rate_limiter,
-                writer: self.writer,
-                recv_msgs: writer_recv,
-            };
-            client_writer.run().await?;
-            Ok(())
-        });
+        let writer_task = tokio::spawn(
+            async move {
+                let client_writer = ClientWriter {
+                    rate_limiter,
+                    writer: self.writer,
+                    recv_msgs: writer_recv,
+                };
+                client_writer.run().await?;
+                Ok(())
+            }
+            .instrument(info_span!("client.writer")),
+        );
 
         let client = Client {
             inner: Arc::new(InnerClient {
