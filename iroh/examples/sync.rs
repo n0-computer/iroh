@@ -365,7 +365,7 @@ async fn handle_command(
                 mode = format!("{mode:?}").to_lowercase()
             );
             let start = Instant::now();
-            let mut handles: Vec<JoinHandle<anyhow::Result<()>>> = Vec::new();
+            let mut handles: Vec<JoinHandle<anyhow::Result<usize>>> = Vec::new();
             match mode {
                 HammerMode::Set => {
                     let mut bytes = vec![0; size];
@@ -382,7 +382,7 @@ async fn handle_command(
                                 let key = format!("{}/{}/{}", prefix, t, i);
                                 doc.insert_bytes(key, value.into_bytes().into()).await?;
                             }
-                            Ok(())
+                            Ok(count)
                         });
                         handles.push(handle);
                     }
@@ -392,30 +392,32 @@ async fn handle_command(
                         let prefix = prefix.clone();
                         let doc = doc.clone();
                         let handle = tokio::spawn(async move {
+                            let mut read = 0;
                             for i in 0..count {
                                 let key = format!("{}/{}/{}", prefix, t, i);
                                 let entries = doc.replica().all_for_key(key.as_bytes());
                                 for (_id, entry) in entries {
                                     let _content = fmt_content(&doc, &entry).await;
+                                    read += 1;
                                 }
                             }
-                            Ok(())
+                            Ok(read)
                         });
                         handles.push(handle);
                     }
                 }
             }
 
+            let mut total_count = 0;
             for result in futures::future::join_all(handles).await {
-                // Check that no errors ocurred
-                result??;
+                // Check that no errors ocurred and count rows inserted/read
+                total_count += result??;
             }
 
             let diff = start.elapsed().as_secs_f64();
-            let total_count = threads as u64 * count as u64;
             println!(
                 "> Hammering done in {diff:.2}s for {total_count} messages with total of {size}",
-                size = HumanBytes(total_count * size as u64),
+                size = HumanBytes(total_count as u64 * size as u64),
             );
         }
         Cmd::Exit => {}
@@ -573,6 +575,9 @@ pub enum Cmd {
     Stats,
     /// Hammer time - stress test with the hammer
     Hammer {
+        /// The hammer mode
+        #[clap(value_enum)]
+        mode: HammerMode,
         /// The key prefix
         prefix: String,
         /// The number of threads to use (each thread will create it's own replica)
@@ -584,9 +589,6 @@ pub enum Cmd {
         /// The size of each entry in Bytes
         #[clap(long, short, default_value = "1024")]
         size: usize,
-        /// Select the hammer mode
-        #[clap(long, short, value_enum, default_value = "set")]
-        mode: HammerMode,
     },
     /// Quit
     Exit,
@@ -594,9 +596,9 @@ pub enum Cmd {
 
 #[derive(Clone, Debug, clap::ValueEnum)]
 pub enum HammerMode {
-    /// Set mode (create entries)
+    /// Create entries
     Set,
-    /// Get mode (read entries)
+    /// Read entries
     Get,
 }
 
