@@ -22,35 +22,51 @@ use super::{util::IndexSet, PeerAddress, PeerData, PeerInfo, IO};
 /// Input event for HyParView
 #[derive(Debug)]
 pub enum InEvent<PA> {
+    /// A [`Message`] was received from a peer.
     RecvMessage(PA, Message<PA>),
+    /// A timer has expired.
     TimerExpired(Timer<PA>),
+    /// A peer was disconnected on the IO layer.
     PeerDisconnected(PA),
+    /// Send a join request to a peer.
     RequestJoin(PA),
+    /// Update the peer data that is transmitted on join requests.
     UpdatePeerData(PeerData),
+    /// Quit the swarm, informing peers about us leaving.
     Quit,
 }
 
 /// Output event for HyParView
 pub enum OutEvent<PA> {
+    /// Ask the IO layer to send a [`Message`] to peer `PA`.
     SendMessage(PA, Message<PA>),
+    /// Schedule a [`Timer`].
     ScheduleTimer(Duration, Timer<PA>),
+    /// Ask the IO layer to close the connection to peer `PA`.
     DisconnectPeer(PA),
+    /// Emit an [`Event`] to the application.
     EmitEvent(Event<PA>),
+    /// New [`PeerData`] was received for peer `PA`.
     PeerData(PA, PeerData),
 }
 
+/// Event emitted by the [`State`] to the application.
 #[derive(Clone, Debug)]
 pub enum Event<PA> {
+    /// A peer was added to our set of active connections.
     NeighborUp(PA),
+    /// A peer was removed from our set of active connections.
     NeighborDown(PA),
 }
 
+/// Kinds of timers HyParView needs to schedule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Timer<PA> {
     DoShuffle,
     PendingNeighborRequest(PA),
 }
 
+/// Messages that we can send and receive from peers within the topic.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Message<PA> {
     /// Sent to a peer if you want to join the swarm
@@ -74,6 +90,10 @@ pub enum Message<PA> {
     Disconnect(Disconnect),
 }
 
+/// The time-to-live for this message.
+///
+/// Each time a message is forwarded, the `Ttl` is decreased by 1. If the `Ttl` reaches 0, it
+/// should not be forwarded further.
 #[derive(From, Sub, Eq, PartialEq, Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct Ttl(pub u16);
 impl Ttl {
@@ -85,39 +105,69 @@ impl Ttl {
     }
 }
 
+/// A message informing other peers that a new peer joined the swarm for this topic.
+///
+/// Will be forwarded in a random walk until `ttl` reaches 0.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ForwardJoin<PA> {
+    /// The peer that newly joined the swarm
     peer: PeerInfo<PA>,
+    /// The time-to-live for this message
     ttl: Ttl,
 }
 
+/// Shuffle messages are send occasionally to shuffle our passive view with peers from other peer's
+/// active and passive views.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Shuffle<PA> {
+    /// The peer that initiated the shuffle request.
     origin: PA,
+    /// A random subset of the active and passive peers of the `origin` peer.
     nodes: Vec<PeerInfo<PA>>,
+    /// The time-to-live for this message.
     ttl: Ttl,
 }
 
+/// Once a shuffle messages reaches a [`Ttl`] of 0, a peer replies with a `ShuffleReply`.
+///
+/// The reply is sent to the peer that initiated the shuffle and contains a subset of the active
+/// and passive views of the peer at the end of the random walk.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ShuffleReply<PA> {
+    /// A random subset of the active and passive peers of the peer sending the `ShuffleReply`.
     nodes: Vec<PeerInfo<PA>>,
 }
 
+/// The priority of a `Join` message
+///
+/// This is `High` if the sender does not have any active peers, and `Low` otherwise.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Priority {
+    /// High priority join that may not be denied.
+    ///
+    /// A peer may only send high priority joins if it doesn't have any active peers at the moment.
     High,
+    /// Low priority join that can be denied.
     Low,
 }
 
+/// A neighbor message is sent after adding a peer to our active view to inform them that we are
+/// now neighbors.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Neighbor {
+    /// The priority of the `Join` or `ForwardJoin` message that triggered this neighbor request.
     priority: Priority,
+    /// The user data of the peer sending this message.
     data: PeerData,
 }
 
+/// Message sent when leaving the swarm or closing down to inform peers about us being gone.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Disconnect {
+    /// Whether we are actually shutting down or closing the connection only because our limits are
+    /// reached.
     alive: Alive,
+    /// Whether we should reply to the peer with a Disconnect message.
     respond: Respond,
 }
 
@@ -180,17 +230,28 @@ pub struct Stats {
     total_connections: usize,
 }
 
+/// The state of the HyParView protocol
 #[derive(Debug)]
 pub struct State<PA, RG = ThreadRng> {
+    /// Our peer identity
     me: PA,
+    /// Our opaque user data to transmit to peers on join messages
     me_data: PeerData,
+    /// The active view, i.e. peers we are connected to
     pub(crate) active_view: IndexSet<PA>,
+    /// The passive view, i.e. peers we know about but are not connected to at the moment
     pub(crate) passive_view: IndexSet<PA>,
+    /// Protocol configuration (cannot change at runtime)
     config: Config,
+    /// Whether a shuffle timer is currently scheduled
     shuffle_scheduled: bool,
+    /// Random number generator
     rng: RG,
+    /// Statistics
     stats: Stats,
+    /// The set of neighbor requests we sent out but did not yet receive a reply for
     pending_neighbor_requests: HashSet<PA>,
+    /// The opaque user peer data we received for other peers
     peer_data: HashMap<PA, PeerData>,
 }
 
