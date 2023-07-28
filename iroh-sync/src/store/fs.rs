@@ -9,13 +9,15 @@ use std::{
 use anyhow::Result;
 use parking_lot::RwLockReadGuard;
 use rand_core::CryptoRngCore;
-use redb::{Database, MultimapTableDefinition, ReadableTable, TableDefinition};
+use redb::{
+    Database, MultimapTableDefinition, ReadableMultimapTable, ReadableTable, TableDefinition,
+};
 
 use crate::{
     ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
     sync::{
-        Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica as SyncReplica,
-        SignedEntry,
+        Author, AuthorId, Entry, EntrySignature, Namespace, NamespaceId, Record, RecordIdentifier,
+        Replica as SyncReplica, SignedEntry,
     },
 };
 
@@ -45,9 +47,12 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], &[u8; 32]> =
 // Records
 // Multimap
 // Key: ([u8; 32], [u8; 32], Vec<u8>) # (NamespaceId, AuthorId, Key)
-// Values: (u64, u64, [u8; 32], [u8; 32], [u8; 32]) # (timestamp, signature_namespace, signature_author, len, hash) #
+// Values:
+//    (u64,  [u8; 32], [u8; 32], u64, [u8; 32])
+//  # (timestamp, signature_namespace, signature_author, len, hash)
+
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
-type RecordsValue<'a> = (u64, u64, &'a [u8; 32], &'a [u8; 32], &'a [u8; 32]);
+type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
 
 const RECORDS_TABLE: MultimapTableDefinition<RecordsId, RecordsValue> =
     MultimapTableDefinition::new("records-1");
@@ -370,20 +375,48 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     fn get_first(&self) -> Result<RecordIdentifier> {
         let read_tx = self.store.db.begin_read()?;
         let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
-        todo!()
-        // self.with_records(|records| {
-        //     records
-        //         .and_then(|r| r.first_key_value().map(|(k, _)| k.clone()))
-        //         .unwrap_or_default()
-        // })
+
+        // TODO: verify this fetches all keys with this namespace
+        let key = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let mut records = record_table.range(key..=key)?;
+
+        let Some(record) = records.next() else {
+            return Ok(RecordIdentifier::default());
+        };
+        let (compound_key, _) = record?;
+        let (namespace_id, author_id, key) = compound_key.value();
+
+        let id = RecordIdentifier::from_parts(key, namespace_id, author_id)?;
+        Ok(id)
     }
 
-    fn get(&self, key: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        todo!()
+    fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
+        let read_tx = self.store.db.begin_read()?;
+        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
+
+        // TODO: verify this fetches all keys with this namespace
+        let key = (id.namespace().as_bytes(), id.author().as_bytes(), id.key());
+        let records = record_table.get(key)?;
+        let Some(record) = records.last() else {
+            return Ok(None);
+        };
+        let record = record?;
+        let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
+        let record = Record::new(timestamp, len, hash.into());
+        let entry = Entry::new(id.clone(), record);
+        let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+
+        Ok(Some(SignedEntry::new(entry_signature, entry)))
     }
 
     fn len(&self) -> Result<usize> {
-        todo!()
+        let read_tx = self.store.db.begin_read()?;
+        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
+
+        // TODO: verify this fetches all keys with this namespace
+        let key = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let records = record_table.range(key..=key)?;
+        Ok(records.count())
     }
 
     fn is_empty(&self) -> Result<bool> {
@@ -395,6 +428,8 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: &Range<RecordIdentifier>,
         limit: Option<&Range<RecordIdentifier>>,
     ) -> Result<Fingerprint> {
+        // TODO: optimize?
+
         let elements = self.get_range(range.clone(), limit.cloned())?;
         let mut fp = Fingerprint::empty();
         for el in elements {
@@ -410,7 +445,18 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             let timestamp = v.entry().record().timestamp();
             // TODO: verify timestamp is "reasonable"
 
-            todo!()
+            let write_tx = self.store.db.begin_write()?;
+            let mut record_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+            let key = (k.namespace().as_bytes(), k.author().as_bytes(), k.key());
+            let record = v.entry().record();
+            let value = (
+                record.timestamp(),
+                &v.signature().namespace_signature().to_bytes(),
+                &v.signature().author_signature().to_bytes(),
+                record.content_len(),
+                record.content_hash().as_bytes(),
+            );
+            record_table.insert(key, value)?;
         }
         Ok(())
     }

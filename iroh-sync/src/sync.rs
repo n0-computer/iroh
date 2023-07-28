@@ -92,6 +92,10 @@ impl AuthorId {
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
+
+    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
+        Ok(AuthorId(VerifyingKey::from_bytes(bytes)?))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +199,10 @@ impl NamespaceId {
 
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    pub fn from_bytes(bytes: &[u8; 32]) -> anyhow::Result<Self> {
+        Ok(NamespaceId(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -405,6 +413,10 @@ pub struct SignedEntry {
 }
 
 impl SignedEntry {
+    pub fn new(signature: EntrySignature, entry: Entry) -> Self {
+        SignedEntry { signature, entry }
+    }
+
     pub fn from_entry(entry: Entry, namespace: &Namespace, author: &Author) -> Self {
         let signature = EntrySignature::from_entry(&entry, namespace, author);
         SignedEntry { signature, entry }
@@ -460,6 +472,24 @@ impl EntrySignature {
         author.verify(&bytes, &self.author_signature)?;
 
         Ok(())
+    }
+
+    pub fn from_parts(namespace_sig: &[u8; 64], author_sig: &[u8; 64]) -> Self {
+        let namespace_signature = Signature::from_bytes(namespace_sig);
+        let author_signature = Signature::from_bytes(author_sig);
+
+        EntrySignature {
+            author_signature,
+            namespace_signature,
+        }
+    }
+
+    pub fn author_signature(&self) -> &Signature {
+        &self.author_signature
+    }
+
+    pub fn namespace_signature(&self) -> &Signature {
+        &self.namespace_signature
     }
 }
 
@@ -566,6 +596,14 @@ impl RecordIdentifier {
             namespace,
             author,
         }
+    }
+
+    pub fn from_parts(key: &[u8], namespace: &[u8; 32], author: &[u8; 32]) -> anyhow::Result<Self> {
+        Ok(RecordIdentifier {
+            key: key.to_vec(),
+            namespace: NamespaceId::from_bytes(namespace)?,
+            author: AuthorId::from_bytes(author)?,
+        })
     }
 
     pub fn as_bytes(&self, out: &mut Vec<u8>) {

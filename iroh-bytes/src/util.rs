@@ -81,6 +81,12 @@ impl From<[u8; 32]> for Hash {
     }
 }
 
+impl From<&[u8; 32]> for Hash {
+    fn from(value: &[u8; 32]) -> Self {
+        Hash(blake3::Hash::from(*value))
+    }
+}
+
 impl PartialOrd for Hash {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.0.as_bytes().cmp(other.0.as_bytes()))
