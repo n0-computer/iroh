@@ -644,7 +644,7 @@ mod test {
             loop {
                 let ev = stream.recv().await.unwrap();
                 info!("go2 event: {ev:?}");
-                if let Event::Received(msg) = ev {
+                if let Event::Received(msg, _prev_peer) = ev {
                     recv.push(msg);
                 }
                 if recv.len() == len {
@@ -659,7 +659,7 @@ mod test {
             loop {
                 let ev = stream.recv().await.unwrap();
                 info!("go3 event: {ev:?}");
-                if let Event::Received(msg) = ev {
+                if let Event::Received(msg, _prev_peer) = ev {
                     recv.push(msg);
                 }
                 if recv.len() == len {

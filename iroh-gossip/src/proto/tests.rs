@@ -330,7 +330,7 @@ impl Simulator {
             let events = self.network.events();
             let received: HashSet<_> = events
                 .filter(
-                    |(_peer, _topic, event)| matches!(event,  Event::Received(recv) if recv == &message),
+                    |(_peer, _topic, event)| matches!(event,  Event::Received(recv, _) if recv == &message),
                 )
                 .map(|(peer, _topic, _msg)| peer)
                 .collect();

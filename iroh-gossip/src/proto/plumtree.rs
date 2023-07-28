@@ -43,7 +43,7 @@ pub enum OutEvent<PA> {
     /// Schedule a [`Timer`].
     ScheduleTimer(Duration, Timer),
     /// Emit an [`Event`] to the application.
-    EmitEvent(Event),
+    EmitEvent(Event<PA>),
 }
 
 /// Kinds of timers Plumtree needs to schedule.
@@ -61,9 +61,15 @@ pub enum Timer {
 
 /// Event emitted by the [`State`] to the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
+pub enum Event<PA> {
     /// A new gossip message was received.
-    Received(Bytes),
+    Received(
+        /// The content of the gossip message.
+        Bytes,
+        /// The peer that we received the gossip message from. Note that this is not the peer that
+        /// originally broadcasted the message, but the peer before us in the gossiping path.
+        PA,
+    ),
 }
 
 /// A message identifier, which is the message content's blake3 hash.
@@ -430,7 +436,10 @@ impl<PA: PeerAddress> State<PA> {
             }
 
             // emit event to application
-            io.push(OutEvent::EmitEvent(Event::Received(message.content)));
+            io.push(OutEvent::EmitEvent(Event::Received(
+                message.content,
+                sender,
+            )));
 
             self.stats.max_last_delivery_hop =
                 self.stats.max_last_delivery_hop.max(message.round.0);
@@ -649,7 +658,7 @@ mod test {
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
             ));
-            io.push(OutEvent::EmitEvent(Event::Received(content)));
+            io.push(OutEvent::EmitEvent(Event::Received(content, 3)));
             io
         };
         assert_eq!(io, expected);
@@ -692,7 +701,7 @@ mod test {
                 }),
             ));
             io.push(OutEvent::SendMessage(3, Message::Prune));
-            io.push(OutEvent::EmitEvent(Event::Received(content)));
+            io.push(OutEvent::EmitEvent(Event::Received(content, 3)));
             io
         };
         assert_eq!(io, expected);
@@ -718,7 +727,7 @@ mod test {
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
             ));
-            io.push(OutEvent::EmitEvent(Event::Received(content)));
+            io.push(OutEvent::EmitEvent(Event::Received(content, 2)));
             io
         };
         assert_eq!(io, expected);

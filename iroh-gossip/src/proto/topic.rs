@@ -2,7 +2,6 @@
 
 use std::{
     collections::VecDeque,
-    fmt,
     time::{Duration, Instant},
 };
 
@@ -113,23 +112,14 @@ impl<PA> Message<PA> {
 }
 
 /// An event to be emitted to the application for a particular topic.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Debug)]
 pub enum Event<PA> {
     /// We have a new, direct neighbor in the swarm membership layer for this topic
     NeighborUp(PA),
     /// We dropped direct neighbor in the swarm membership layer for this topic
     NeighborDown(PA),
     /// A gossip message was received for this topic
-    Received(Bytes),
-}
-impl<PA: fmt::Debug> fmt::Debug for Event<PA> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Received(msg) => write!(f, "Received(<{}>)", msg.len()),
-            Self::NeighborUp(peer) => write!(f, "NeighborUp({peer:?})"),
-            Self::NeighborDown(peer) => write!(f, "NeighborDown({peer:?})"),
-        }
-    }
+    Received(#[debug("<{}b>", _0.len())] Bytes, PA),
 }
 
 impl<PA> From<hyparview::Event<PA>> for Event<PA> {
@@ -141,10 +131,10 @@ impl<PA> From<hyparview::Event<PA>> for Event<PA> {
     }
 }
 
-impl<PA> From<plumtree::Event> for Event<PA> {
-    fn from(value: plumtree::Event) -> Self {
+impl<PA> From<plumtree::Event<PA>> for Event<PA> {
+    fn from(value: plumtree::Event<PA>) -> Self {
         match value {
-            plumtree::Event::Received(peer) => Self::Received(peer),
+            plumtree::Event::Received(message, prev_peer) => Self::Received(message, prev_peer),
         }
     }
 }
