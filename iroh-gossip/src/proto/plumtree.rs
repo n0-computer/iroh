@@ -17,6 +17,7 @@ use bytes::Bytes;
 use derive_more::{Add, From, Sub};
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::{PeerAddress, IO};
 
@@ -153,12 +154,19 @@ pub struct Gossip {
 }
 
 impl Gossip {
+    /// Get a clone of this `Gossip` message and increase the delivery round by 1.
     pub fn next_round(self) -> Gossip {
         Gossip {
             id: self.id,
             content: self.content,
             round: self.round.next(),
         }
+    }
+
+    /// Validate that the message id is the blake3 hash of the message content.
+    pub fn validate(&self) -> bool {
+        let expected = MessageId::from_content(&self.content);
+        expected == self.id
     }
 }
 
@@ -382,6 +390,17 @@ impl<PA: PeerAddress> State<PA> {
 
     /// Handle receiving a [`Message::Gossip`].
     fn on_gossip(&mut self, sender: PA, message: Gossip, io: &mut impl IO<PA>) {
+        // Validate that the message id is the blake3 hash of the message content.
+        if !message.validate() {
+            // TODO: Do we want to take any measures against the sender if we received a message
+            // with a spoofed message id?
+            warn!(
+                peer = ?sender,
+                "Received a message with spoofed message id ({})", message.id
+            );
+            return;
+        }
+
         // if we already received this message: move peer to lazy set
         // and notify peer about this.
         if self.received_messages.contains(&message.id) {
@@ -677,6 +696,44 @@ mod test {
             io.push(OutEvent::EmitEvent(Event::Received(content)));
             io
         };
+        assert_eq!(io, expected);
+    }
+
+    #[test]
+    fn spoofed_messages_are_ignored() {
+        let config: Config = Default::default();
+        let mut state = State::new(1, config.clone());
+
+        // we recv a correct gossip message and expect the Received event to be emitted
+        let content: Bytes = b"hello1".to_vec().into();
+        let message = Message::Gossip(Gossip {
+            content: content.clone(),
+            round: Round(1),
+            id: MessageId::from_content(&content),
+        });
+        let mut io = VecDeque::new();
+        state.handle(InEvent::RecvMessage(2, message), &mut io);
+        let expected = {
+            let mut io = VecDeque::new();
+            io.push(OutEvent::ScheduleTimer(
+                config.dispatch_timeout,
+                Timer::DispatchLazyPush,
+            ));
+            io.push(OutEvent::EmitEvent(Event::Received(content)));
+            io
+        };
+        assert_eq!(io, expected);
+
+        // now we recv with a spoofed id and expect no event to be emitted
+        let content: Bytes = b"hello2".to_vec().into();
+        let message = Message::Gossip(Gossip {
+            content: content.clone(),
+            round: Round(1),
+            id: MessageId::from_content(b"foo"),
+        });
+        let mut io = VecDeque::new();
+        state.handle(InEvent::RecvMessage(2, message), &mut io);
+        let expected = VecDeque::new();
         assert_eq!(io, expected);
     }
 }
