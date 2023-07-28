@@ -789,6 +789,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         out: String,
         hash: Hash,
         recursive: bool,
+        in_place: bool,
         progress: ShareProgressSender,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
@@ -827,7 +828,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     })
                     .await?;
                 let progress1 = progress.clone();
-                db.export(hash, path, true, move |offset| {
+                db.export(hash, path, in_place, move |offset| {
                     Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
@@ -1234,7 +1235,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(out) = msg.out {
             let _export = local.spawn_pinned(move || async move {
                 download.await.unwrap()?;
-                if let Err(cause) = this.export(out, hash, msg.recursive, progress3).await {
+                if let Err(cause) = this
+                    .export(out, hash, msg.recursive, msg.in_place, progress3)
+                    .await
+                {
                     progress.send(ShareProgress::Abort(cause.into())).await?;
                 }
                 anyhow::Ok(())
@@ -1264,6 +1268,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
+        use futures::TryStreamExt;
         use std::{collections::BTreeMap, sync::Mutex};
 
         use iroh_bytes::{
@@ -1274,6 +1279,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         use crate::database::flat::create_data_sources;
         let progress = TokioProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
+        // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
             ImportProgress::Found { id, path, .. } => {
                 names.lock().unwrap().insert(id, path);
@@ -1300,30 +1306,25 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             "path must be either a Directory or a File"
         );
         let data_sources = create_data_sources(root)?;
-        let mut next_id = 0;
-        let mut blobs = Vec::new();
-        let mut total_blobs_size = 0;
-        for source in data_sources {
-            let name = source.name().to_string();
-            let id = next_id;
-            next_id += 1;
-            progress
-                .send(ProvideProgress::Found {
-                    id,
-                    name: name.clone(),
-                    size: 0,
-                })
-                .await?;
-            let import_progress2 = import_progress.clone();
-            let (hash, size) = self
-                .inner
-                .db
-                .import(source.path().to_owned(), msg.in_place, import_progress2)
-                .await?;
-            total_blobs_size += size;
-            blobs.push(Blob { hash, name });
-        }
-
+        const IO_PARALLELISM: usize = 4;
+        let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
+            .map(|source| {
+                let progress = progress.clone();
+                let import_progress = import_progress.clone();
+                let db = self.inner.db.clone();
+                async move {
+                    let name = source.name().to_string();
+                    let (hash, size) = db
+                        .import(source.path().to_owned(), msg.in_place, import_progress)
+                        .await?;
+                    io::Result::Ok((Blob { hash, name }, size))
+                }
+            })
+            .buffered(IO_PARALLELISM)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let total_blobs_size = result.iter().map(|(_, size)| *size).sum();
+        let blobs = result.into_iter().map(|(blob, _)| blob).collect::<Vec<_>>();
         let collection = Collection::new(blobs, total_blobs_size)?;
         let data = collection.to_bytes()?;
         let hash = self.inner.db.import_bytes(data.into()).await?;

@@ -9,7 +9,10 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     collection::IrohCollectionParser,
-    database::flat::{Database, FNAME_PATHS},
+    database::{
+        flat::{self, Database, FNAME_PATHS},
+        flat2,
+    },
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -48,22 +51,19 @@ pub async fn run(
         );
     }
 
-    let iroh_data_root = iroh_data_root()?;
-    let marker = iroh_data_root.join(FNAME_PATHS);
-    let db = {
-        if iroh_data_root.is_dir() && marker.exists() {
-            // try to load db
-            Database::load(&iroh_data_root).await.with_context(|| {
-                format!(
-                    "Failed to load iroh database from {}",
-                    iroh_data_root.display()
-                )
-            })?
-        } else {
-            // directory does not exist, create an empty db
-            Database::default()
-        }
-    };
+    let mut iroh_data_root = iroh_data_root()?;
+    if !iroh_data_root.is_absolute() {
+        iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
+    }
+    tokio::fs::create_dir_all(&iroh_data_root).await?;
+    let db = flat2::Database::load(&iroh_data_root, &iroh_data_root)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to load iroh database from {}",
+                iroh_data_root.display()
+            )
+        })?;
     let key = Some(iroh_data_root.join("keypair"));
     let token = opts.request_token.clone();
     let provider = provide(db.clone(), rt, key, opts).await?;
@@ -95,11 +95,18 @@ pub async fn run(
             let stream = controller
                 .server_streaming(ProvideRequest { path, in_place })
                 .await?;
-            let (hash, entries) = aggregate_add_response(stream).await?;
-            print_add_response(hash, entries);
-            let ticket = provider.ticket(hash).await?.with_token(token);
-            println!("All-in-one ticket: {ticket}");
-            anyhow::Ok(tmp_path)
+            match aggregate_add_response(stream).await {
+                Ok((hash, entries)) => {
+                    print_add_response(hash, entries);
+                    let ticket = provider.ticket(hash).await?.with_token(token);
+                    println!("All-in-one ticket: {ticket}");
+                    anyhow::Ok(tmp_path)
+                }
+                Err(e) => {
+                    eprintln!("Failed to add data: {}", e);
+                    std::process::exit(-1);
+                }
+            }
         })
     };
 
@@ -114,8 +121,6 @@ pub async fn run(
             res?;
         }
     }
-    // persist the db to disk.
-    db.save(&iroh_data_root).await?;
 
     // the future holds a reference to the temp file, so we need to
     // keep it for as long as the provider is running. The drop(fut)

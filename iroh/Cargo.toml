@@ -82,6 +82,9 @@ proptest = "1.2.0"
 tempfile = "3.4"
 genawaiter = { version = "0.99", features = ["futures03"] }
 
+[profile.release]
+debug = true
+
 [[bin]]
 name = "iroh"
 required-features = ["cli"]

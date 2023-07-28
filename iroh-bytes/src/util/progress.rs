@@ -4,7 +4,8 @@
 use futures::FutureExt;
 use std::marker::PhantomData;
 
-/// A general purpose progress sender.
+/// A general purpose progress sender. This should be usable for reporting progress
+/// from both blocking and non-blocking contexts.
 ///
 /// # Id generation
 ///
@@ -13,7 +14,7 @@ use std::marker::PhantomData;
 /// such as the full path of the file would be very wasteful. It is better to
 /// introduce a unique id for the file and then report progress using that id.
 ///
-/// This trait provides a method to generate such ids, [ProgressSender::new_id].
+/// The [IdGenerator] trait provides a method to generate such ids, [IdGenerator::new_id].
 ///
 /// # Sending important messages
 ///
@@ -91,9 +92,6 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     where
         Self: 'a;
 
-    /// Get a new unique id
-    fn new_id(&self) -> u64;
-
     /// Send a message and wait if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
@@ -129,6 +127,12 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     }
 }
 
+/// An id generator, to be combined with a progress sender.
+pub trait IdGenerator {
+    /// Get a new unique id
+    fn new_id(&self) -> u64;
+}
+
 /// A no-op progress sender.
 #[derive(Default)]
 pub struct IgnoreProgressSender<T>(PhantomData<T>);
@@ -150,10 +154,6 @@ impl<T: Send + Sync + 'static> ProgressSender for IgnoreProgressSender<T> {
 
     type SendFuture<'a> = futures::future::Ready<std::result::Result<(), ProgressSendError>>;
 
-    fn new_id(&self) -> u64 {
-        0
-    }
-
     fn send(&self, _msg: T) -> Self::SendFuture<'_> {
         futures::future::ready(Ok(()))
     }
@@ -164,6 +164,12 @@ impl<T: Send + Sync + 'static> ProgressSender for IgnoreProgressSender<T> {
 
     fn blocking_send(&self, _msg: T) -> std::result::Result<(), ProgressSendError> {
         Ok(())
+    }
+}
+
+impl IdGenerator for IgnoreProgressSender<()> {
+    fn new_id(&self) -> u64 {
+        0
     }
 }
 
@@ -206,10 +212,6 @@ impl<
 
     type SendFuture<'a> = I::SendFuture<'a>;
 
-    fn new_id(&self) -> u64 {
-        self.0.new_id()
-    }
-
     fn send(&self, msg: U) -> Self::SendFuture<'_> {
         let msg = (self.1)(msg);
         self.0.send(msg)
@@ -227,11 +229,7 @@ impl<
 }
 
 ///
-pub struct FilterWith<
-    I: ProgressSender,
-    U: Send + Sync + 'static,
-    F: Fn(U) -> Option<I::Msg> + Clone + Send + Sync + 'static,
->(I, F, PhantomData<U>);
+pub struct FilterWith<I, U, F>(I, F, PhantomData<U>);
 
 impl<
         I: ProgressSender,
@@ -255,6 +253,12 @@ impl<
     }
 }
 
+impl<I: IdGenerator, U, F> IdGenerator for FilterWith<I, U, F> {
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
+    }
+}
+
 impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
@@ -267,10 +271,6 @@ impl<
         I::SendFuture<'a>,
         futures::future::Ready<std::result::Result<(), ProgressSendError>>,
     >;
-
-    fn new_id(&self) -> u64 {
-        self.0.new_id()
-    }
 
     fn send(&self, msg: U) -> Self::SendFuture<'_> {
         if let Some(msg) = (self.1)(msg) {
@@ -297,11 +297,13 @@ impl<
     }
 }
 
-impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
+impl<T> IdGenerator for TokioProgressSender<T> {
     fn new_id(&self) -> u64 {
         TokioProgressSender::new_id(self)
     }
+}
 
+impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
     type Msg = T;
 
     type SendFuture<'a> =

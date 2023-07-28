@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
-use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
-use bao_tree::ChunkNum;
+use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
+use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
@@ -15,9 +15,9 @@ use iroh_bytes::provider::{
     BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, ImportProgress, Purpose, Vfs,
 };
 use iroh_bytes::provider::{ValidateProgress, VfsId};
-use iroh_bytes::util::progress::ProgressSender;
+use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::File;
+use iroh_io::{AsyncSliceReader, File};
 use rand::Rng;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
@@ -223,13 +223,20 @@ impl BaoMapEntry<Database> for DbPair {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
-        let bytes = self.entry.outboard.clone();
-        let hash = self.hash;
-        future::ready(PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, bytes)).boxed()
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
+        async move {
+            let size = self.entry.size();
+            let data = self.entry.outboard_reader().await?;
+            Ok(PreOrderOutboard {
+                root: self.hash,
+                tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+                data,
+            })
+        }
+        .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, File>>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
         self.entry.data_reader().boxed()
     }
 }
@@ -243,30 +250,71 @@ impl BaoMapEntry<Database> for DbPair {
 #[derive(Debug, Clone)]
 pub struct DbEntry {
     /// The bao outboard data.
-    outboard: Bytes,
+    outboard: Either<Bytes, (PathBuf, u64)>,
     /// The
     data: Either<Bytes, (PathBuf, u64)>,
 }
 
+/// A reader for either a file or a byte slice.
+#[derive(Debug)]
+pub enum MemOrFile {
+    /// We got it all in memory
+    Mem(Bytes),
+    /// An iroh_io::File
+    File(File),
+}
+
+impl AsyncSliceReader for MemOrFile {
+    type ReadAtFuture<'a> = futures::future::Either<
+        <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
+        <File as AsyncSliceReader>::ReadAtFuture<'a>,
+    >;
+
+    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+        match self {
+            MemOrFile::Mem(mem) => Either::Left(mem.read_at(offset, len)),
+            MemOrFile::File(file) => Either::Right(file.read_at(offset, len)),
+        }
+    }
+
+    type LenFuture<'a> = futures::future::Either<
+        <Bytes as AsyncSliceReader>::LenFuture<'a>,
+        <File as AsyncSliceReader>::LenFuture<'a>,
+    >;
+
+    fn len(&mut self) -> Self::LenFuture<'_> {
+        match self {
+            MemOrFile::Mem(mem) => Either::Left(mem.len()),
+            MemOrFile::File(file) => Either::Right(file.len()),
+        }
+    }
+}
+
 impl DbEntry {
     /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
-        futures::future::ok(self.outboard.clone())
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+        let outboard = self.outboard.clone();
+        async move {
+            Ok(match &outboard {
+                Either::Left(mem) => MemOrFile::Mem(mem.clone()),
+                Either::Right((path, _)) => MemOrFile::File(File::open(path.clone()).await?),
+            })
+        }
     }
 
     /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
-        let this = self.clone();
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+        let data = self.data.clone();
         async move {
-            Ok(match &this.data {
-                Either::Left(mem) => Either::Left(mem.clone()),
-                Either::Right((path, _)) => Either::Right(File::open(path.clone()).await?),
+            Ok(match &data {
+                Either::Left(mem) => MemOrFile::Mem(mem.clone()),
+                Either::Right((path, _)) => MemOrFile::File(File::open(path.clone()).await?),
             })
         }
     }
 
     /// Returns the size of the blob
-    pub async fn size(&self) -> u64 {
+    pub fn size(&self) -> u64 {
         match &self.data {
             Either::Left(mem) => mem.len() as u64,
             Either::Right((_, size)) => *size,
@@ -280,8 +328,8 @@ fn needs_outboard(size: u64) -> bool {
 
 impl BaoMap for Database {
     type Entry = DbPair;
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Either<Bytes, File>;
+    type Outboard = PreOrderOutboard<MemOrFile>;
+    type DataReader = MemOrFile;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let state = self.0.state.read().unwrap();
         let entry = state.complete.get(hash)?;
@@ -305,7 +353,7 @@ impl BaoMap for Database {
                     };
                     Either::Right((path, entry.size))
                 },
-                outboard,
+                outboard: Either::Left(outboard),
             },
         })
     }
@@ -398,7 +446,7 @@ impl BaoDb for Database {
         &self,
         path: PathBuf,
         stable: bool,
-        progress: impl ProgressSender<Msg = ImportProgress>,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import0(path, stable, progress))
@@ -592,7 +640,7 @@ impl Database {
         self,
         path: PathBuf,
         stable: bool,
-        progress: impl ProgressSender<Msg = ImportProgress>,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<(Hash, u64)> {
         if !path.is_absolute() {
             return Err(io::Error::new(

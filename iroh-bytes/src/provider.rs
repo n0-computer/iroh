@@ -23,7 +23,7 @@ use crate::collection::CollectionParser;
 use crate::protocol::{
     read_lp, write_lp, CustomGetRequest, GetRequest, RangeSpec, Request, RequestToken,
 };
-use crate::util::progress::ProgressSender;
+use crate::util::progress::{IdGenerator, ProgressSender};
 use crate::util::RpcError;
 use crate::Hash;
 
@@ -763,6 +763,10 @@ impl Purpose {
     }
 }
 
+// todo: use "obao4" instead to indicate that it is pre order bao like in the spec,
+// but with a chunk group size of 2^4?
+const OUTBOARD_EXT: &str = "outboard";
+
 impl fmt::Display for Purpose {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -770,13 +774,19 @@ impl fmt::Display for Purpose {
                 write!(f, "{}-{}.data", hex::encode(hash), hex::encode(uuid))
             }
             Self::PartialOutboard(hash, uuid) => {
-                write!(f, "{}-{}.outboard", hex::encode(hash), hex::encode(uuid))
+                write!(
+                    f,
+                    "{}-{}.{}",
+                    hex::encode(hash),
+                    hex::encode(uuid),
+                    OUTBOARD_EXT
+                )
             }
             Self::Paths(hash) => {
                 write!(f, "{}.paths", hex::encode(hash))
             }
             Self::Data(hash) => write!(f, "{}.data", hex::encode(hash)),
-            Self::Outboard(hash) => write!(f, "{}.outboard", hex::encode(hash)),
+            Self::Outboard(hash) => write!(f, "{}.{}", hex::encode(hash), OUTBOARD_EXT),
             Self::Meta(name) => write!(f, "{}.meta", hex::encode(name)),
         }
     }
@@ -799,7 +809,7 @@ impl FromStr for Purpose {
             if ext == "data" {
                 hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
                 Ok(Self::PartialData(hash.into(), uuid))
-            } else if ext == "outboard" {
+            } else if ext == OUTBOARD_EXT {
                 hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
                 Ok(Self::PartialOutboard(hash.into(), uuid))
             } else {
@@ -809,7 +819,7 @@ impl FromStr for Purpose {
             hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
             if ext == "data" {
                 Ok(Self::Data(hash.into()))
-            } else if ext == "outboard" {
+            } else if ext == OUTBOARD_EXT {
                 Ok(Self::Outboard(hash.into()))
             } else if ext == "paths" {
                 Ok(Self::Paths(hash.into()))
@@ -948,7 +958,7 @@ pub trait BaoDb: BaoReadonlyDb {
         &self,
         data: PathBuf,
         stable: bool,
-        progress: impl ProgressSender<Msg = ImportProgress>,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let _ = (data, stable, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()

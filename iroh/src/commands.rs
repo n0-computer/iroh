@@ -70,10 +70,17 @@ impl Cli {
                 token,
                 ticket,
                 derp_region,
-                out,
+                mut out,
+                in_place,
                 ..
             } => {
                 println!("{:#?}", ticket); // todo: remove
+                if let Some(out) = out.as_mut() {
+                    tracing::info!("canonicalizing output path");
+                    let absolute = std::env::current_dir()?.join(&out);
+                    tracing::info!("output path is {} -> {}", out.display(), absolute.display());
+                    *out = absolute;
+                }
                 let client = make_rpc_client(rpc_port).await?;
                 let (peer, addr, token, derp_region, hash, recursive) =
                     if let Some(ticket) = ticket.as_ref() {
@@ -104,6 +111,7 @@ impl Cli {
                         derp_region,
                         token: token.cloned(),
                         out: out.map(|x| x.display().to_string()),
+                        in_place,
                         force: true, // todo: use force from Commands::Share
                     })
                     .await?;
@@ -183,7 +191,7 @@ impl Cli {
                 .await
             }
             Commands::List(cmd) => cmd.run().await,
-            Commands::Validate { rpc_port } => self::validate::run(rpc_port).await,
+            Commands::Validate { rpc_port, repair } => self::validate::run(rpc_port, repair).await,
             Commands::Shutdown { force, rpc_port } => {
                 let client = make_rpc_client(rpc_port).await?;
                 client.rpc(ShutdownRequest { force }).await?;
@@ -256,6 +264,9 @@ pub enum Commands {
         /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
+        /// Repair the store by removing invalid data
+        #[clap(long, default_value_t = false)]
+        repair: bool,
     },
     /// Shutdown provider.
     Shutdown {
@@ -364,6 +375,8 @@ pub enum Commands {
         /// Directory in which to save the file(s), defaults to writing to STDOUT
         #[clap(long, short)]
         out: Option<PathBuf>,
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,

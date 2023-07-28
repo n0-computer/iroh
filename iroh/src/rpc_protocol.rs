@@ -64,6 +64,8 @@ pub struct ShareRequest {
     pub derp_region: Option<u16>,
     /// The path where the data should go
     pub out: Option<String>,
+    ///
+    pub in_place: bool,
 }
 
 impl Msg<ProviderService> for ShareRequest {
@@ -76,7 +78,10 @@ impl ServerStreamingMsg<ProviderService> for ShareRequest {
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ValidateRequest;
+pub struct ValidateRequest {
+    /// If true, remove invalid data
+    pub repair: bool,
+}
 
 impl Msg<ProviderService> for ValidateRequest {
     type Pattern = ServerStreaming;
