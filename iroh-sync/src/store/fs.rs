@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use ouroboros::self_referencing;
 use parking_lot::RwLockReadGuard;
 use rand_core::CryptoRngCore;
 use redb::{
@@ -469,9 +470,6 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         range: Range<RecordIdentifier>,
         limit: Option<Range<RecordIdentifier>>,
     ) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_multimap_table(RECORDS_TABLE)?;
-
         // TODO: implement inverted range
         let range_start = range.x();
         let range_end = range.y();
@@ -486,17 +484,18 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
             range_end.author().as_bytes(),
             range_end.key(),
         );
-        // let records: MultimapRange<
-        //     (&[u8; 32], &[u8; 32], &[u8]),
-        //     (u64, &[u8; 64], &[u8; 64], u64, &[u8; 32]),
-        // > = record_table.range(start..end)?;
-
-        Ok(RangeIterator {
-            read_tx,
-            record_table,
-            records: todo!(),
+        let iter = RangeIterator::try_new(
+            self.store.db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_multimap_table(RECORDS_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
             limit,
-        })
+        )?;
+
+        Ok(iter)
     }
 
     fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>> {
@@ -506,34 +505,44 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
     type AllIterator<'a> = RangeIterator<'a>;
 
     fn all(&self) -> Result<Self::AllIterator<'_>> {
-        todo!()
+        // TODO: verify this gives all
+        let start = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let end = (self.namespace.as_bytes(), &[0u8; 32], &[][..]);
+        let iter = RangeIterator::try_new(
+            self.store.db.begin_read()?,
+            |read_tx| {
+                read_tx
+                    .open_multimap_table(RECORDS_TABLE)
+                    .map_err(anyhow::Error::from)
+            },
+            |record_table| record_table.range(start..end).map_err(anyhow::Error::from),
+            None,
+        )?;
+
+        Ok(iter)
     }
 }
 
-#[derive(derive_more::Debug)]
+#[self_referencing]
 pub struct RangeIterator<'a> {
     read_tx: ReadTransaction<'a>,
-    #[debug("ReadOnlyMultimapTable")]
-    record_table: ReadOnlyMultimapTable<'a, RecordsId<'static>, RecordsValue<'static>>,
-    #[debug("MultimapRange")]
-    records: MultimapRange<
-        'a,
-        (&'static [u8; 32], &'static [u8; 32], &'static [u8]),
-        (
-            u64,
-            &'static [u8; 64],
-            &'static [u8; 64],
-            u64,
-            &'static [u8; 32],
-        ),
-    >,
+    #[borrows(read_tx)]
+    #[covariant]
+    record_table: ReadOnlyMultimapTable<'this, RecordsId<'static>, RecordsValue<'static>>,
+    #[covariant]
+    #[borrows(record_table)]
+    records: MultimapRange<'this, RecordsId<'static>, RecordsValue<'static>>,
     limit: Option<Range<RecordIdentifier>>,
 }
 
-impl RangeIterator<'_> {
-    fn matches(&self, x: &RecordIdentifier) -> bool {
-        self.limit.as_ref().map(|r| x.contains(r)).unwrap_or(true)
+impl std::fmt::Debug for RangeIterator<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RangeIterator").finish_non_exhaustive()
     }
+}
+
+fn matches(limit: &Option<Range<RecordIdentifier>>, x: &RecordIdentifier) -> bool {
+    limit.as_ref().map(|r| x.contains(r)).unwrap_or(true)
 }
 
 impl Iterator for RangeIterator<'_> {
@@ -542,22 +551,26 @@ impl Iterator for RangeIterator<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         // TODO: should yield Result<..> instead of just the values
 
-        let mut next = self.records.next()?.ok()?;
-        loop {
-            let (namespace, author, key) = next.0.value();
-            let id = RecordIdentifier::from_parts(key, namespace, author).ok()?;
-            if self.matches(&id) {
-                let value = next.1.last()?.ok()?;
-                let (timestamp, namespace_sig, author_sig, len, hash) = value.value();
-                let record = Record::new(timestamp, len, hash.into());
-                let entry = Entry::new(id.clone(), record);
-                let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
-                let signed_entry = SignedEntry::new(entry_signature, entry);
+        let limit = self.borrow_limit().clone();
+        self.with_records_mut(|records| {
+            let mut next = records.next()?.ok()?;
 
-                return Some((id, signed_entry));
+            loop {
+                let (namespace, author, key) = next.0.value();
+                let id = RecordIdentifier::from_parts(key, namespace, author).ok()?;
+                if matches(&limit, &id) {
+                    let value = next.1.last()?.ok()?;
+                    let (timestamp, namespace_sig, author_sig, len, hash) = value.value();
+                    let record = Record::new(timestamp, len, hash.into());
+                    let entry = Entry::new(id.clone(), record);
+                    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+                    let signed_entry = SignedEntry::new(entry_signature, entry);
+
+                    return Some((id, signed_entry));
+                }
+
+                next = records.next()?.ok()?;
             }
-
-            next = self.records.next()?.ok()?;
-        }
+        })
     }
 }
