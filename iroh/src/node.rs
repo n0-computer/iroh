@@ -807,8 +807,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 }
                 tracing::info!("exporting blob {} to {}", hash, path.display());
                 let id = progress.new_id();
-                db.export(*hash, path, true, |offset| {
-                    Ok(progress.try_send(ShareProgress::ExportProgress { id, offset })?)
+                let progress1 = progress.clone();
+                db.export(*hash, path, true, move |offset| {
+                    Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
             }
@@ -825,8 +826,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                         size: entry.size(),
                     })
                     .await?;
-                db.export(hash, path, true, |offset| {
-                    Ok(progress.try_send(ShareProgress::ExportProgress { id, offset })?)
+                let progress1 = progress.clone();
+                db.export(hash, path, true, move |offset| {
+                    Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
             }

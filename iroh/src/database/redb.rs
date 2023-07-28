@@ -1,11 +1,11 @@
 //! The concrete database used by the iroh binary.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
-use bao_tree::io::outboard::PreOrderMemOutboard;
+use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
@@ -16,6 +16,9 @@ use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
 use rand::Rng;
 use tokio::sync::mpsc;
+use tracing::trace_span;
+
+use crate::util::progress::{self, ProgressReader, ProgressReaderUpdate};
 
 /// File name inside `IROH_DATA_DIR` where paths to data are stored.
 pub const FNAME_PATHS: &str = "paths.bin";
@@ -97,18 +100,12 @@ struct CompleteEntry {
 }
 
 impl CompleteEntry {
-
     fn external_path(&self) -> Option<&PathBuf> {
         self.external.iter().next()
     }
 
-    async fn persist_external(&self, path: &Path) -> io::Result<()> {
-        if self.external.is_empty() {
-            tokio::fs::remove_file(path).await?;
-        } else {
-            let data = postcard::to_std_vec(&self.external)?;
-        }
-        Ok(())
+    fn external_to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(&self.external).unwrap()
     }
 
     // create a new complete entry with the given size
@@ -173,6 +170,21 @@ struct Options {
     partial_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
+}
+
+impl Options {
+    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.complete_path.join(Purpose::Data(*hash).to_string())
+    }
+
+    fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
+        self.complete_path
+            .join(Purpose::Outboard(*hash).to_string())
+    }
+
+    fn paths_path(&self, hash: Hash) -> PathBuf {
+        self.complete_path.join(Purpose::Paths(hash).to_string())
+    }
 }
 
 #[derive(Debug)]
@@ -366,20 +378,24 @@ impl BaoDb for Database {
         hash: Hash,
         target: PathBuf,
         stable: bool,
-        _progress: impl Fn(u64) -> io::Result<()>,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
-        self.export0(hash, target, stable).boxed()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export0(hash, target, stable, progress))
+            .map(|x| x.unwrap())
+            .boxed()
     }
 
     fn import(
         &self,
-        path: impl AsRef<Path>,
+        path: PathBuf,
         stable: bool,
-        progress: impl Fn(u64),
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<Hash>> {
-        let path = path.as_ref();
-        let db = self.clone();
-        async move { todo!() }.boxed()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.import0(path, stable, progress))
+            .map(|x| x.unwrap())
+            .boxed()
     }
 
     fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
@@ -387,10 +403,10 @@ impl BaoDb for Database {
             let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
             let hash = hash.into();
             let data_path = self.owned_data_path(&hash);
-            tokio::fs::write(data_path, &data).await?;
+            std::fs::write(data_path, &data)?;
             if outboard.len() > 8 {
                 let outboard_path = self.owned_outboard_path(&hash);
-                tokio::fs::write(outboard_path, &outboard).await?;
+                std::fs::write(outboard_path, &outboard)?;
             }
             let size = data.len() as u64;
             let mut state = self.0.state.write().unwrap();
@@ -414,9 +430,33 @@ impl State {
             Some(Bytes::from(size.to_le_bytes().to_vec()))
         }
     }
+
+    fn update_entry(
+        &mut self,
+        hash: Hash,
+        new: CompleteEntry,
+        options: &Options,
+    ) -> io::Result<()> {
+        let entry = self.complete.entry(hash).or_default();
+        let n = entry.external.len();
+        entry.union_with(new)?;
+        if entry.external.len() != n {
+            let path = options.paths_path(hash);
+            std::fs::write(path, entry.external_to_bytes())?;
+        }
+        Ok(())
+    }
 }
 
 impl Database {
+    fn update_entry(&self, hash: Hash, new: CompleteEntry) -> io::Result<()> {
+        self.0
+            .state
+            .write()
+            .unwrap()
+            .update_entry(hash, new, &self.0.options)
+    }
+
     async fn insert_entry_inner(
         &self,
         hash: Hash,
@@ -540,7 +580,60 @@ impl Database {
         .boxed()
     }
 
-    async fn export0(&self, hash: Hash, target: PathBuf, stable: bool) -> io::Result<()> {
+    fn import0(
+        self,
+        path: PathBuf,
+        stable: bool,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<Hash> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            ));
+        }
+        if !path.is_file() && !path.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path is not a file or symlink",
+            ));
+        }
+        let size = path.metadata()?.len();
+        let (hash, entry) = if stable {
+            // compute outboard and hash from the data in place, since we assume that it is stable
+            let (hash, data) = compute_outboard(&path, size, move |offset| progress(offset))?;
+            let outboard_path = self.owned_outboard_path(&hash);
+            std::fs::write(outboard_path, data)?;
+            (hash, CompleteEntry::new_external(size, path))
+        } else {
+            let uuid = rand::thread_rng().gen::<[u8; 16]>();
+            let temp_data_path = self
+                .0
+                .options
+                .partial_path
+                .join(format!("{}", hex::encode(uuid)));
+            // copy the data, since it is not stable
+            std::fs::copy(&path, &temp_data_path)?;
+            // hash only now that we own it and can assume that it won't change
+            let (hash, data) =
+                compute_outboard(&temp_data_path, size, move |offset| progress(offset))?;
+            let outboard_path = self.owned_outboard_path(&hash);
+            std::fs::write(outboard_path, data)?;
+            let data_path = self.owned_data_path(&hash);
+            std::fs::rename(temp_data_path, data_path)?;
+            (hash, CompleteEntry::new_default(size))
+        };
+        self.update_entry(hash, entry)?;
+        Ok(hash)
+    }
+
+    fn export0(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
         tracing::info!("exporting {} to {} ({})", hash, target.display(), stable);
 
         if !target.is_absolute() {
@@ -556,7 +649,7 @@ impl Database {
             )
         })?;
         // create the directory in which the target file is
-        tokio::fs::create_dir_all(parent).await?;
+        std::fs::create_dir_all(parent)?;
         let (source, size, owned) = {
             let state = self.0.state.read().unwrap();
             let entry = state.complete.get(&hash).ok_or_else(|| {
@@ -576,9 +669,9 @@ impl Database {
             (source, size, entry.owned_data)
         };
         // copy all the things
-        if size >= self.0.options.move_threshold && stable && owned {
+        let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
             tracing::info!("moving {} to {}", source.display(), target.display());
-            if let Err(e) = tokio::fs::rename(source, &target).await {
+            if let Err(e) = std::fs::rename(source, &target) {
                 tracing::error!("rename failed: {}", e);
                 return Err(e)?;
             }
@@ -591,12 +684,12 @@ impl Database {
             };
             entry.owned_data = false;
             entry.external.insert(target);
-
+            Some(entry.external_to_bytes())
         } else {
             tracing::info!("{} {} {}", size, stable, owned);
             tracing::info!("copying {} to {}", source.display(), target.display());
             // todo: progress
-            hardlink_or_copy(&source, &target).await?;
+            hardlink_or_copy_sync(&source, &target)?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
                 return Err(io::Error::new(
@@ -605,20 +698,27 @@ impl Database {
                 ));
             };
             if stable {
-                entry.external.insert(target.to_owned());
+                entry.external.insert(target);
+                Some(entry.external_to_bytes())
+            } else {
+                None
             }
+        };
+        if let Some(path_bytes) = path_bytes {
+            let pp = self.paths_path(hash);
+            println!("writing paths {}", pp.display());
+            std::fs::write(pp, path_bytes)?;
         }
         Ok(())
     }
 
     /// scan a directory for data
-    pub(crate) fn load0(
-        complete_path: PathBuf,
-        partial_path: PathBuf,
-    ) -> anyhow::Result<Self> {
+    pub(crate) fn load0(complete_path: PathBuf, partial_path: PathBuf) -> anyhow::Result<Self> {
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
-        let mut full_index = BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
+        let mut full_index =
+            BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
+        let mut outboard = BTreeMap::new();
         for entry in std::fs::read_dir(&partial_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -711,7 +811,7 @@ impl Database {
         for (hash, (data_path, outboard_path, paths_path)) in full_index {
             let external: BTreeSet<PathBuf> = if let Some(paths_path) = paths_path {
                 let paths = std::fs::read(paths_path)?;
-                bincode::deserialize(&paths)?
+                postcard::from_bytes(&paths)?
             } else {
                 Default::default()
             };
@@ -721,7 +821,10 @@ impl Database {
             } else if let Some(external) = external.iter().next() {
                 external
             } else {
-                tracing::error!("neither internal nor external file exists for {}", hex::encode(hash));
+                tracing::error!(
+                    "neither internal nor external file exists for {}",
+                    hex::encode(hash)
+                );
                 continue;
             };
 
@@ -730,9 +833,14 @@ impl Database {
                 continue;
             };
             let size = metadata.len();
-            if needs_outboard(size) && outboard_path.is_none() {
-                tracing::error!("missing outboard file for {}", hex::encode(hash));
-                continue;
+            if needs_outboard(size) {
+                if let Some(outboard_path) = outboard_path {
+                    let outboard_data = std::fs::read(outboard_path)?;
+                    outboard.insert(hash, outboard_data.into());
+                } else {
+                    tracing::error!("missing outboard file for {}", hex::encode(hash));
+                    continue;
+                }
             }
             complete.insert(
                 hash,
@@ -776,7 +884,7 @@ impl Database {
             state: RwLock::new(State {
                 complete,
                 partial,
-                outboard: Default::default(),
+                outboard,
                 data: Default::default(),
             }),
             options: Options {
@@ -796,26 +904,24 @@ impl Database {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
         let db =
-            tokio::task::spawn_blocking(move || Self::load0(complete_path, partial_path))
-                .await??;
+            tokio::task::spawn_blocking(move || Self::load0(complete_path, partial_path)).await??;
         Ok(db)
     }
 
     fn owned_data_path(&self, hash: &Hash) -> PathBuf {
-        self.0
-            .options
-            .complete_path
-            .join(Purpose::Data(*hash).to_string())
+        self.0.options.owned_data_path(hash)
     }
 
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
-        self.0
-            .options
-            .complete_path
-            .join(Purpose::Outboard(*hash).to_string())
+        self.0.options.owned_outboard_path(hash)
+    }
+
+    fn paths_path(&self, hash: Hash) -> PathBuf {
+        self.0.options.paths_path(hash)
     }
 }
 
+// hardlink or copy a file
 async fn hardlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
     if src == dst {
         tracing::info!(
@@ -825,12 +931,86 @@ async fn hardlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
         );
         return Ok(());
     }
+    if let Err(e) = std::fs::remove_file(dst) {
+        if e.kind() != io::ErrorKind::NotFound {
+            tracing::info!("remove failed {}", e);
+            return Err(e);
+        }
+    }
     tracing::info!("hardlinking {} to {}", src.display(), dst.display());
     Ok(match tokio::fs::hard_link(src, dst).await {
         Ok(_) => {}
-        Err(_) => {
+        Err(e) => {
+            tracing::info!("hard link failed {}", e);
             tracing::info!("copying {} to {}", src.display(), dst.display());
             tokio::fs::copy(src, dst).await?;
         }
     })
+}
+
+// hardlink or copy a file
+fn hardlink_or_copy_sync(src: &Path, dst: &Path) -> io::Result<()> {
+    if src == dst {
+        tracing::info!(
+            "skipping hardlinking {} to {}",
+            src.display(),
+            dst.display()
+        );
+        return Ok(());
+    }
+    if let Err(e) = std::fs::remove_file(dst) {
+        if e.kind() != io::ErrorKind::NotFound {
+            tracing::info!("remove failed {}", e);
+            return Err(e);
+        }
+    }
+    tracing::info!("hardlinking {} to {}", src.display(), dst.display());
+    Ok(match std::fs::hard_link(src, dst) {
+        Ok(_) => {}
+        Err(e) => {
+            tracing::info!("hard link failed {}", e);
+            tracing::info!("copying {} to {}", src.display(), dst.display());
+            std::fs::copy(src, dst)?;
+        }
+    })
+}
+
+/// Synchronously compute the outboard of a file, and return hash and outboard.
+///
+/// It is assumed that the file is not modified while this is running.
+///
+/// If it is modified while or after this is running, the outboard will be
+/// invalid, so any attempt to compute a slice from it will fail.
+///
+/// If the size of the file is changed while this is running, an error will be
+/// returned.
+fn compute_outboard(
+    path: &Path,
+    size: u64,
+    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+) -> io::Result<(Hash, Vec<u8>)> {
+    let span = trace_span!("outboard.compute", path = %path.display());
+    let _guard = span.enter();
+    let file = std::fs::File::open(path)?;
+    // compute outboard size so we can pre-allocate the buffer.
+    let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
+    let mut outboard = Vec::with_capacity(outboard_size);
+
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(file, |p| {
+        if let ProgressReaderUpdate::Progress(offset) = p {
+            progress(offset);
+        }
+    });
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
+
+    let hash =
+        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
+    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
+    tracing::trace!(%hash, "done");
+
+    Ok((hash.into(), ob.into_inner()))
 }

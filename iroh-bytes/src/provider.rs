@@ -800,6 +800,8 @@ impl FromStr for Purpose {
                 Ok(Self::Data(hash.into()))
             } else if ext == "outboard" {
                 Ok(Self::Outboard(hash.into()))
+            } else if ext == "paths" {
+                Ok(Self::Paths(hash.into()))
             } else if ext == "meta" {
                 Ok(Self::Meta(hash.into()))
             } else {
@@ -833,7 +835,10 @@ impl fmt::Debug for Purpose {
                 .finish(),
             Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
             Self::Meta(arg0) => f.debug_tuple("Meta").field(&DD(hex::encode(arg0))).finish(),
-            Self::Paths(arg0) => f.debug_tuple("Paths").field(&DD(hex::encode(arg0))).finish(),
+            Self::Paths(arg0) => f
+                .debug_tuple("Paths")
+                .field(&DD(hex::encode(arg0)))
+                .finish(),
         }
     }
 }
@@ -912,7 +917,7 @@ pub trait BaoDb: BaoReadonlyDb {
         hash: Hash,
         target: PathBuf,
         stable: bool,
-        progress: impl Fn(u64) -> io::Result<()>,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let _ = (hash, target, stable, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
@@ -924,14 +929,15 @@ pub trait BaoDb: BaoReadonlyDb {
     /// `stable` is true if the file can be assumed to be retained unchanged in the file system. If
     /// `stable` is false, the file will be copied.
     /// `progress` is a callback that is called with the total number of bytes that have been written
+    /// to the database. This returns an error to allow the caller to abort the import.
     ///
     /// Returns the hash of the imported file. The reason to have this method is that some database
     /// implementations might be able to import a file without copying it.
     fn import(
         &self,
-        data: impl AsRef<Path>,
+        data: PathBuf,
         stable: bool,
-        progress: impl Fn(u64),
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<Hash>> {
         let _ = (data, stable, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
