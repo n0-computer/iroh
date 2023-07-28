@@ -294,7 +294,7 @@ pub struct State<PA> {
     /// message.
     missing_messages: HashMap<MessageId, VecDeque<(PA, Round)>>,
     /// Messages for which the full payload has been seen.
-    received_messages: IndexSet<MessageId>,
+    received_messages: HashSet<MessageId>,
     /// Payloads of received messages.
     cache: HashMap<MessageId, Gossip>,
 
@@ -451,17 +451,17 @@ impl<PA: PeerAddress> State<PA> {
         let round = message.round;
         let best_ihave = previous_ihaves
             .iter()
-            .min_by(|(_froma, ra), (_fromb, rb)| ra.cmp(rb))
+            .min_by(|(_a_peer, a_round), (_b_peer, b_round)| a_round.cmp(b_round))
             .copied();
 
-        if let Some((ihave_node, ihave_round)) = best_ihave {
+        if let Some((ihave_peer, ihave_round)) = best_ihave {
             if (ihave_round < round) && (round - ihave_round) >= self.config.optimization_threshold
             {
                 let message = Message::Graft(Graft {
                     id: None,
                     round: ihave_round,
                 });
-                io.push(OutEvent::SendMessage(ihave_node, message));
+                io.push(OutEvent::SendMessage(ihave_peer, message));
                 io.push(OutEvent::SendMessage(*sender, Message::Prune));
             }
         }
@@ -563,8 +563,8 @@ impl<PA: PeerAddress> State<PA> {
 
     /// Moves peer into eager set.
     fn add_eager(&mut self, peer: PA) {
-        self.eager_push_peers.insert(peer);
         self.lazy_push_peers.remove(&peer);
+        self.eager_push_peers.insert(peer);
     }
 
     /// Moves peer into lazy set.
