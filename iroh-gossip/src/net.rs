@@ -19,7 +19,7 @@ use tracing::{debug, warn};
 use self::util::{read_message, write_message, Dialer, Timers};
 use crate::proto::{self, TopicId};
 
-mod util;
+pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"n0/iroh-gossip/0";
@@ -133,6 +133,14 @@ impl GossipHandle {
         rx.await?
     }
 
+    /// Quit a topic
+    ///
+    /// This leaves the swarm for a topic, notifying other peers.
+    pub async fn quit(&self, topic: TopicId) -> anyhow::Result<()> {
+        self.send(ToActor::Quit(topic)).await?;
+        Ok(())
+    }
+
     /// Broadcast a message on a topic
     ///
     /// Does not join the topic automatically, so you have to call [Self::join] yourself
@@ -231,6 +239,7 @@ enum ConnOrigin {
 enum ToActor {
     ConnIncoming(PeerId, ConnOrigin, quinn::Connection),
     Join(TopicId, Vec<PeerId>, oneshot::Sender<anyhow::Result<()>>),
+    Quit(TopicId),
     Broadcast(TopicId, Bytes, oneshot::Sender<anyhow::Result<()>>),
     Subscribe(
         TopicId,
@@ -246,6 +255,7 @@ impl fmt::Debug for ToActor {
                 write!(f, "ConnIncoming({peer_id:?}, {origin:?})")
             }
             ToActor::Join(topic, peers, _reply) => write!(f, "Join({topic:?}, {peers:?})"),
+            ToActor::Quit(topic) => write!(f, "Quit({topic:?})"),
             ToActor::Broadcast(topic, message, _reply) => {
                 write!(f, "Broadcast({topic:?}, bytes<{}>)", message.len())
             }
@@ -332,7 +342,6 @@ impl GossipActor {
                     for (_instant, timer) in drain {
                         self.handle_in_event(InEvent::TimerExpired(timer), now).await.context("timers.drain_expired -> handle_in_event")?;
                     }
-                    self.timers.reset();
                 }
 
             }
@@ -391,6 +400,11 @@ impl GossipActor {
                         reply.send(res).ok();
                     });
                 }
+            }
+            ToActor::Quit(topic_id) => {
+                self.handle_in_event(InEvent::Command(topic_id, Command::Quit), now)
+                    .await?;
+                self.subscribers_topic.remove(&topic_id);
             }
             ToActor::Broadcast(topic_id, message, reply) => {
                 self.handle_in_event(InEvent::Command(topic_id, Command::Broadcast(message)), now)
