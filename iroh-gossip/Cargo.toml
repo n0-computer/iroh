@@ -17,6 +17,7 @@ data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "display", "from", "try_into"] }
 ed25519-dalek = { version = "=2.0.0-rc.3", features = ["serde", "rand_core"] }
 indexmap = "2.0"
+postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
@@ -28,7 +29,6 @@ futures = { version = "0.3.25", optional = true }
 iroh-net = { path = "../iroh-net", optional = true }
 quinn = { version = "0.10", optional = true }
 tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
-postcard = { version = "1", optional = true, default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
 once_cell = "1.18.0"
 genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
@@ -40,7 +40,7 @@ url = "2.4.0"
 
 [features]
 default = ["net"]
-net = ["futures", "iroh-net", "quinn", "tokio", "postcard", "tokio-util"]
+net = ["futures", "iroh-net", "quinn", "tokio", "tokio-util"]
 
 [[example]]
 name = "chat"
