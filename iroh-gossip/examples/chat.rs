@@ -198,7 +198,7 @@ async fn subscribe_loop(gossip: GossipHandle, topic: TopicId) -> anyhow::Result<
     let mut stream = gossip.subscribe(topic).await?;
     loop {
         let event = stream.recv().await?;
-        if let Event::Received(data) = event {
+        if let Event::Received(data, _prev_peer) = event {
             let (from, message) = SignedMessage::verify_and_decode(&data)?;
             match message {
                 Message::AboutMe { name } => {
