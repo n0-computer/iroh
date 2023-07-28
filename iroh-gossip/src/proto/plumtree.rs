@@ -42,18 +42,27 @@ pub enum OutEvent<PA> {
     SendMessage(PA, Message),
     /// Schedule a [`Timer`].
     ScheduleTimer(Duration, Timer),
+    /// Emit an [`Event`] to the application.
     EmitEvent(Event),
 }
 
 /// Kinds of timers Plumtree needs to schedule.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Timer {
+    /// Request the content for [`MessageId`] by sending [`Message::Graft`].
+    ///
+    /// The message will be sent to a peer that sent us an [`Message::IHave`] for this [`MessageId`],
+    /// which will send us the message content in reply and also move the peer into the eager set.
+    /// Will be a no-op if the message for [`MessageId`] was already received from another peer by now.
     SendGraft(MessageId),
+    /// Dispatch the [`Message::IHave`] in our lazy push queue.
     DispatchLazyPush,
 }
 
+/// Event emitted by the [`State`] to the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    /// A new gossip message was received.
     Received(Bytes),
 }
 
@@ -103,7 +112,7 @@ impl fmt::Debug for MessageId {
     }
 }
 
-/// Delivery hops in a message.
+/// Number of delivery hops a message has taken.
 #[derive(
     From, Add, Sub, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Clone, Copy, Debug, Hash,
 )]
@@ -166,8 +175,10 @@ pub struct IHave {
 /// peer to do the same with this node.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Graft {
-    /// Message id that triggers the graft if any. On graft, the payload message must be sent.
+    /// Message id that triggers the graft, if any.
+    /// On receiving a graft, the payload message must be sent in reply if a message id is set.
     id: Option<MessageId>,
+    /// Delivery round of the [`Message::IHave`] that triggered this Graft message.
     round: Round,
 }
 
@@ -469,7 +480,7 @@ impl<PA: PeerAddress> State<PA> {
         }
     }
 
-    /// A scheduled [`Timer::SendGraft`] hs reached it's deadline.
+    /// A scheduled [`Timer::SendGraft`] has reached it's deadline.
     fn on_send_graft_timer(&mut self, id: MessageId, io: &mut impl IO<PA>) {
         // if the message was received before the timer ran out, there is no need to request it
         // again
@@ -519,7 +530,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle a [`InEvent::NeighborDown`] when a peer leaves the topic.
-    /// >When a neighbor is detected to leave the overlay, it is simple removed from the
+    /// > When a neighbor is detected to leave the overlay, it is simple removed from the
     /// membership. Furthermore, the record of IHAVE messages sent from failed members is deleted
     /// from the missing history. (p9)
     fn on_neighbor_down(&mut self, peer: PA) {
