@@ -275,7 +275,7 @@ impl Actor {
         };
         match event {
             // We received a gossip message. Try to insert it into our replica.
-            Event::Received(data) => {
+            Event::Received(data, _prev_peer) => {
                 let op: Op = postcard::from_bytes(&data)?;
                 match op {
                     Op::Put(entry) => doc.insert_remote_entry(entry)?,
