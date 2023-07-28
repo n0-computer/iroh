@@ -27,7 +27,6 @@ pub type ProtocolMessage = crate::ranger::Message<RecordIdentifier, SignedEntry>
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Author {
     priv_key: SigningKey,
-    id: AuthorId,
 }
 
 impl Display for Author {
@@ -39,17 +38,26 @@ impl Display for Author {
 impl Author {
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let priv_key = SigningKey::generate(rng);
-        let id = AuthorId(priv_key.verifying_key());
 
-        Author { priv_key, id }
+        Author { priv_key }
     }
 
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    pub fn id(&self) -> &AuthorId {
-        &self.id
+    /// Returns the Author byte representation.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.priv_key.to_bytes()
+    }
+
+    /// Returns the AuthorId byte representation.
+    pub fn id_bytes(&self) -> [u8; 32] {
+        self.priv_key.verifying_key().to_bytes()
+    }
+
+    pub fn id(&self) -> AuthorId {
+        AuthorId(self.priv_key.verifying_key())
     }
 
     pub fn sign(&self, msg: &[u8]) -> Signature {
@@ -57,7 +65,7 @@ impl Author {
     }
 
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.id.verify(msg, signature)
+        self.priv_key.verify_strict(msg, signature)
     }
 }
 
@@ -89,7 +97,6 @@ impl AuthorId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Namespace {
     priv_key: SigningKey,
-    id: NamespaceId,
 }
 
 impl Display for Namespace {
@@ -104,8 +111,8 @@ impl FromStr for Namespace {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let priv_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
         let priv_key = SigningKey::from_bytes(&priv_key);
-        let id = NamespaceId(priv_key.verifying_key());
-        Ok(Namespace { priv_key, id })
+
+        Ok(Namespace { priv_key })
     }
 }
 
@@ -115,39 +122,46 @@ impl FromStr for Author {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let priv_key: [u8; 32] = hex::decode(s).map_err(|_| ())?.try_into().map_err(|_| ())?;
         let priv_key = SigningKey::from_bytes(&priv_key);
-        let id = AuthorId(priv_key.verifying_key());
-        Ok(Author { priv_key, id })
+
+        Ok(Author { priv_key })
     }
 }
 
 impl From<SigningKey> for Author {
     fn from(priv_key: SigningKey) -> Self {
-        let id = AuthorId(priv_key.verifying_key());
-        Self { priv_key, id }
+        Self { priv_key }
     }
 }
 
 impl From<SigningKey> for Namespace {
     fn from(priv_key: SigningKey) -> Self {
-        let id = NamespaceId(priv_key.verifying_key());
-        Self { priv_key, id }
+        Self { priv_key }
     }
 }
 
 impl Namespace {
     pub fn new<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
         let priv_key = SigningKey::generate(rng);
-        let id = NamespaceId(priv_key.verifying_key());
 
-        Namespace { priv_key, id }
+        Namespace { priv_key }
     }
 
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         SigningKey::from_bytes(bytes).into()
     }
 
-    pub fn id(&self) -> &NamespaceId {
-        &self.id
+    /// Returns the Namespace byte representation.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.priv_key.to_bytes()
+    }
+
+    /// Returns the NamespaceId byte representation.
+    pub fn id_bytes(&self) -> [u8; 32] {
+        self.priv_key.verifying_key().to_bytes()
+    }
+
+    pub fn id(&self) -> NamespaceId {
+        NamespaceId(self.priv_key.verifying_key())
     }
 
     pub fn sign(&self, msg: &[u8]) -> Signature {
@@ -155,7 +169,7 @@ impl Namespace {
     }
 
     pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.id.verify(msg, signature)
+        self.priv_key.verify_strict(msg, signature)
     }
 }
 
@@ -216,6 +230,7 @@ struct ReplicaData {
 }
 
 impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
+    // TODO: check that read only replicas are possible
     pub fn new(namespace: Namespace, store: S) -> Self {
         Replica {
             inner: Arc::new(RwLock::new(InnerReplica {
@@ -232,36 +247,50 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     }
 
     // TODO: not horrible
-    pub fn all(&self) -> Vec<(RecordIdentifier, SignedEntry)> {
-        self.inner
+    pub fn all(&self) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
+        let res = self
+            .inner
             .read()
             .peer
-            .all()
+            .all()?
             .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+            .collect();
+        Ok(res)
     }
 
     // TODO: not horrible
-    pub fn all_for_key(&self, key: impl AsRef<[u8]>) -> Vec<(RecordIdentifier, SignedEntry)> {
-        self.all()
+    pub fn all_for_key(
+        &self,
+        key: impl AsRef<[u8]>,
+    ) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
+        let res = self
+            .all()?
             .into_iter()
             .filter(|(id, _entry)| id.key() == key.as_ref())
-            .collect()
+            .collect();
+        Ok(res)
     }
 
     // TODO: not horrible
     pub fn all_with_key_prefix(
         &self,
         prefix: impl AsRef<[u8]>,
-    ) -> Vec<(RecordIdentifier, SignedEntry)> {
-        self.all()
+    ) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
+        let res = self
+            .all()?
             .into_iter()
             .filter(|(id, _entry)| id.key().starts_with(prefix.as_ref()))
-            .collect()
+            .collect();
+        Ok(res)
     }
 
     pub fn to_bytes(&self) -> anyhow::Result<Bytes> {
-        let entries = self.all().into_iter().map(|(_id, entry)| entry).collect();
+        let entries = self
+            .all()
+            .map_err(Into::into)?
+            .into_iter()
+            .map(|(_id, entry)| entry)
+            .collect();
         let data = ReplicaData {
             entries,
             namespace: self.inner.read().namespace.clone(),
@@ -280,7 +309,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     }
 
     /// Inserts a new record at the given key.
-    pub fn insert(&self, key: impl AsRef<[u8]>, author: &Author, hash: Hash, len: u64) {
+    pub fn insert(
+        &self,
+        key: impl AsRef<[u8]>,
+        author: &Author,
+        hash: Hash,
+        len: u64,
+    ) -> Result<(), S::Error> {
         let mut inner = self.inner.write();
 
         let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
@@ -289,12 +324,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         // Store signed entries
         let entry = Entry::new(id.clone(), record);
         let signed_entry = entry.sign(&inner.namespace, author);
-        inner.peer.put(id, signed_entry.clone());
+        inner.peer.put(id, signed_entry.clone())?;
         drop(inner);
         let on_insert = self.on_insert.read();
         for cb in &*on_insert {
             cb(InsertOrigin::Local, signed_entry.clone());
         }
+        Ok(())
     }
 
     /// Hashes the given data and inserts it.
@@ -306,11 +342,11 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> Hash {
+    ) -> Result<Hash, S::Error> {
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
-        self.insert(key, author, hash, len);
-        hash
+        self.insert(key, author, hash, len)?;
+        Ok(hash)
     }
 
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
@@ -323,7 +359,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         entry.verify()?;
         let mut inner = self.inner.write();
         let id = entry.entry.id.clone();
-        inner.peer.put(id, entry.clone());
+        inner.peer.put(id, entry.clone()).map_err(Into::into)?;
         drop(inner);
         let on_insert = self.on_insert.read();
         for cb in &*on_insert {
@@ -332,14 +368,16 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         Ok(())
     }
 
-    pub fn sync_initial_message(&self) -> crate::ranger::Message<RecordIdentifier, SignedEntry> {
+    pub fn sync_initial_message(
+        &self,
+    ) -> Result<crate::ranger::Message<RecordIdentifier, SignedEntry>, S::Error> {
         self.inner.read().peer.initial_message()
     }
 
     pub fn sync_process_message(
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
-    ) -> Option<crate::ranger::Message<RecordIdentifier, SignedEntry>> {
+    ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
         let reply = self
             .inner
             .write()
@@ -349,13 +387,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
                 for cb in &*on_insert {
                     cb(InsertOrigin::Sync, entry.clone());
                 }
-            });
+            })?;
 
-        reply
+        Ok(reply)
     }
 
     pub fn namespace(&self) -> NamespaceId {
-        *self.inner.read().namespace.id()
+        self.inner.read().namespace.id()
     }
 }
 
@@ -522,11 +560,11 @@ impl RangeKey for RecordIdentifier {
 }
 
 impl RecordIdentifier {
-    pub fn new(key: impl AsRef<[u8]>, namespace: &NamespaceId, author: &AuthorId) -> Self {
+    pub fn new(key: impl AsRef<[u8]>, namespace: NamespaceId, author: AuthorId) -> Self {
         RecordIdentifier {
             key: key.as_ref().to_vec(),
-            namespace: *namespace,
-            author: *author,
+            namespace,
+            author,
         }
     }
 
@@ -588,7 +626,7 @@ impl Record {
     }
 
     // TODO: remove
-    pub fn from_data(data: impl AsRef<[u8]>, namespace: &NamespaceId) -> Self {
+    pub fn from_data(data: impl AsRef<[u8]>, namespace: NamespaceId) -> Self {
         // Salted hash
         // TODO: do we actually want this?
         // TODO: this should probably use a namespace prefix if used
@@ -625,11 +663,13 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
 
-        let replica_store = memory::ReplicaStore::default();
+        let replica_store = memory::Store::default();
 
         let my_replica = replica_store.new_replica(myspace);
         for i in 0..10 {
-            my_replica.hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"));
+            my_replica
+                .hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"))
+                .unwrap();
         }
 
         for i in 0..10 {
@@ -642,12 +682,16 @@ mod tests {
         }
 
         // Test multiple records for the same key
-        my_replica.hash_and_insert("/cool/path", &alice, "round 1");
+        my_replica
+            .hash_and_insert("/cool/path", &alice, "round 1")
+            .unwrap();
         let _entry = replica_store
             .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .unwrap();
         // Second
-        my_replica.hash_and_insert("/cool/path", &alice, "round 2");
+        my_replica
+            .hash_and_insert("/cool/path", &alice, "round 2")
+            .unwrap();
         let _entry = replica_store
             .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
             .unwrap();
@@ -738,10 +782,10 @@ mod tests {
         let k = vec!["a", "c", "z"];
 
         let mut n: Vec<_> = (0..3).map(|_| Namespace::new(&mut rng)).collect();
-        n.sort_by_key(|n| *n.id());
+        n.sort_by_key(|n| n.id());
 
         let mut a: Vec<_> = (0..3).map(|_| Author::new(&mut rng)).collect();
-        a.sort_by_key(|a| *a.id());
+        a.sort_by_key(|a| a.id());
 
         // Just key
         {
@@ -800,16 +844,16 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice_replica_store = memory::ReplicaStore::default();
+        let alice_replica_store = memory::Store::default();
         let alice = alice_replica_store.new_replica(myspace.clone());
         for el in &alice_set {
-            alice.hash_and_insert(el, &author, el.as_bytes());
+            alice.hash_and_insert(el, &author, el.as_bytes()).unwrap();
         }
 
-        let bob_replica_store = memory::ReplicaStore::default();
+        let bob_replica_store = memory::Store::default();
         let bob = bob_replica_store.new_replica(myspace);
         for el in &bob_set {
-            bob.hash_and_insert(el, &author, el.as_bytes());
+            bob.hash_and_insert(el, &author, el.as_bytes()).unwrap();
         }
 
         sync(
@@ -826,21 +870,21 @@ mod tests {
     fn sync(
         author: &Author,
         alice: &memory::Replica,
-        alice_store: &memory::ReplicaStore,
+        alice_store: &memory::Store,
         bob: &memory::Replica,
-        bob_store: &memory::ReplicaStore,
+        bob_store: &memory::Store,
         alice_set: &[&str],
         bob_set: &[&str],
     ) {
         // Sync alice - bob
-        let mut next_to_bob = Some(alice.sync_initial_message());
+        let mut next_to_bob = Some(alice.sync_initial_message().unwrap());
         let mut rounds = 0;
         while let Some(msg) = next_to_bob.take() {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg) {
-                next_to_bob = alice.sync_process_message(msg);
+            if let Some(msg) = bob.sync_process_message(msg).unwrap() {
+                next_to_bob = alice.sync_process_message(msg).unwrap();
             }
         }
 

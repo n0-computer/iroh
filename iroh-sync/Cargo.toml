@@ -25,5 +25,12 @@ bytes = "1.4.0"
 parking_lot = "0.12.1"
 hex = "0.4"
 
+# fs-store
+redb = { version = "1.0.5", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1.28.2", features = ["sync", "macros"] }
+
+[features]
+default = ["fs-store"]
+fs-store = ["redb"]
