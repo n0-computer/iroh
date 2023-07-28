@@ -8,6 +8,7 @@ use std::{fmt, io, result};
 
 use anyhow::Context;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
+use bao_tree::ChunkNum;
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
@@ -17,6 +18,7 @@ use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs};
 use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
+use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 use tracing::{trace, trace_span};
 use walkdir::WalkDir;
@@ -59,6 +61,10 @@ impl BaoMapEntry<Database> for DbPair {
             DbEntry::External { size, .. } => *size,
             DbEntry::Internal { data, .. } => data.len() as u64,
         }
+    }
+
+    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {

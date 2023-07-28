@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
+use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
 use futures::future::{self, BoxFuture};
 use futures::FutureExt;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
+use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
@@ -36,6 +38,14 @@ pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
     fn hash(&self) -> blake3::Hash;
     /// the size of the entry
     fn size(&self) -> u64;
+    /// Compute the available ranges.
+    ///
+    /// Depending on the implementation, this may be an expensive operation.
+    ///
+    /// It can also only ever be a best effort, since the underlying data may
+    /// change at any time. E.g. somebody could flip a bit in the file, or download
+    /// more chunks.
+    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>>;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
@@ -951,16 +961,40 @@ pub trait BaoDb: BaoReadonlyDb {
     }
 }
 
+/// Progress messages for an import operation
+///
+/// An import operation involves computing the outboard of a file, and then
+/// either copying or moving the file into the database.
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub enum ImportProgress {
     /// Found a path
-    Found { id: u64, path: PathBuf },
+    ///
+    /// This will be the first message for an id
+    Found {
+        id: u64,
+        path: PathBuf,
+        stable: bool,
+    },
+    /// Progress when copying the file to the store
+    ///
+    /// This will be omitted if the store can use the file in place
+    ///
+    /// There will be multiple of these messages for an id
+    CopyProgress { id: u64, offset: u64 },
     /// Determined the size
+    ///
+    /// This will come after `Found` and zero or more `CopyProgress` messages.
+    /// For unstable files, determining the size will only be done once the file
+    /// is fully copied.
     Size { id: u64, size: u64 },
     /// Progress when computing the outboard
+    ///
+    /// There will be multiple of these messages for an id
     OutboardProgress { id: u64, offset: u64 },
     /// Done computing the outboard
+    ///
+    /// This comes after `Size` and zero or more `OutboardProgress` messages
     OutboardDone { id: u64, hash: Hash },
 }
 

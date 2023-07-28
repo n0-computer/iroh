@@ -12,12 +12,15 @@ use iroh_bytes::{provider::ProvideProgress, Hash};
 
 use crate::commands::make_rpc_client;
 
-pub async fn run(path: PathBuf, rpc_port: u16) -> Result<()> {
+pub async fn run(path: PathBuf, in_place: bool, rpc_port: u16) -> Result<()> {
     let client = make_rpc_client(rpc_port).await?;
     let absolute = path.canonicalize()?;
     println!("Adding {} as {}...", path.display(), absolute.display());
     let stream = client
-        .server_streaming(ProvideRequest { path: absolute })
+        .server_streaming(ProvideRequest {
+            path: absolute,
+            in_place,
+        })
         .await?;
     let (hash, entries) = aggregate_add_response(stream).await?;
     print_add_response(hash, entries);

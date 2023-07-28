@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
+use bao_tree::ChunkNum;
 use bytes::Bytes;
 use futures::future::Either;
 use futures::future::{self, BoxFuture};
@@ -18,6 +19,7 @@ use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::File;
 use rand::Rng;
+use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
@@ -200,6 +202,7 @@ pub struct Database(Arc<Inner>);
 /// The [BaoMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
 pub struct DbPair {
+    /// the hash is not part of the entry itself
     hash: blake3::Hash,
     entry: DbEntry,
 }
@@ -214,6 +217,10 @@ impl BaoMapEntry<Database> for DbPair {
             Either::Left(bytes) => bytes.len() as u64,
             Either::Right((_, size)) => *size,
         }
+    }
+
+    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
@@ -603,6 +610,7 @@ impl Database {
         progress.blocking_send(ImportProgress::Found {
             id,
             path: path.clone(),
+            stable,
         })?;
         let (hash, entry) = if stable {
             // compute outboard and hash from the data in place, since we assume that it is stable
@@ -622,12 +630,13 @@ impl Database {
                 .0
                 .options
                 .partial_path
-                .join(format!("{}", hex::encode(uuid)));
+                .join(format!("{}.temp", hex::encode(uuid)));
             // copy the data, since it is not stable
-            std::fs::copy(&path, &temp_data_path)?;
-            // hash only now that we own it and can assume that it won't change
-            let size = temp_data_path.metadata()?.len();
+            progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+            let size = std::fs::copy(&path, &temp_data_path)?;
+            // report the size only after the copy is done
             progress.blocking_send(ImportProgress::Size { id, size })?;
+            // compute outboard and hash from the temp file that we own
             let progress2 = progress.clone();
             let (hash, data) = compute_outboard(&temp_data_path, size, move |offset| {
                 Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)

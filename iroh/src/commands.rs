@@ -161,6 +161,7 @@ impl Cli {
                 addr,
                 rpc_port,
                 request_token,
+                in_place,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
@@ -170,6 +171,7 @@ impl Cli {
                 self::provide::run(
                     rt,
                     path,
+                    in_place,
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -195,7 +197,11 @@ impl Cli {
                 println!("PeerID: {}", response.peer_id);
                 Ok(())
             }
-            Commands::Add { path, rpc_port } => self::add::run(path, rpc_port).await,
+            Commands::Add {
+                path,
+                rpc_port,
+                in_place,
+            } => self::add::run(path, in_place, rpc_port).await,
             Commands::Addresses { rpc_port } => {
                 let client = make_rpc_client(rpc_port).await?;
                 let response = client.rpc(AddrsRequest).await?;
@@ -223,6 +229,12 @@ pub enum Commands {
     Provide {
         /// Path to initial file or directory to provide
         path: Option<PathBuf>,
+        /// Serve data in place
+        ///
+        /// Set this to true only if you are sure that the data in its current location
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
         #[clap(long, short)]
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
@@ -267,6 +279,12 @@ pub enum Commands {
     Add {
         /// The path to the file or folder to add
         path: PathBuf,
+        /// Add in place
+        ///
+        /// Set this to true only if you are sure that the data in its current location
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,

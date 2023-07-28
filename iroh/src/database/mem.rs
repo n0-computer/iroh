@@ -23,6 +23,7 @@ use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
 use rand::Rng;
+use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
 /// An in memory database for iroh-bytes.
@@ -91,6 +92,10 @@ impl BaoMapEntry<Database> for DbEntry {
 
     fn size(&self) -> u64 {
         self.data.len() as u64
+    }
+
+    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
     }
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
@@ -293,6 +298,12 @@ pub struct MutableDbEntry {
 impl BaoMapEntry<MutableDatabase> for MutableDbEntry {
     fn hash(&self) -> blake3::Hash {
         self.hash.into()
+    }
+
+    fn available(
+        &self,
+    ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
     }
 
     fn size(&self) -> u64 {

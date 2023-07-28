@@ -34,7 +34,12 @@ pub struct ProvideOptions {
     pub derp_map: Option<DerpMap>,
 }
 
-pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptions) -> Result<()> {
+pub async fn run(
+    rt: &runtime::Handle,
+    path: Option<PathBuf>,
+    in_place: bool,
+    opts: ProvideOptions,
+) -> Result<()> {
     if let Some(ref path) = path {
         ensure!(
             path.exists(),
@@ -87,7 +92,9 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
                 (path_buf, Some(path))
             };
             // tell the provider to add the data
-            let stream = controller.server_streaming(ProvideRequest { path }).await?;
+            let stream = controller
+                .server_streaming(ProvideRequest { path, in_place })
+                .await?;
             let (hash, entries) = aggregate_add_response(stream).await?;
             print_add_response(hash, entries);
             let ticket = provider.ticket(hash).await?.with_token(token);

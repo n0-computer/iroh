@@ -59,7 +59,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use quinn::VarInt;
 use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc::error::TrySendError;
@@ -745,7 +744,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-        let (tx, rx) = mpsc::channel(1);
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = mpsc::channel(32);
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
             if let Err(e) = self.provide0(msg, tx).await {
@@ -1258,12 +1258,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         .flatten_stream()
     }
 
-    #[cfg(feature = "flat-db")]
+    #[cfg(feature = "iroh-collection")]
     async fn provide0(
         self,
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
+        use std::{collections::BTreeMap, sync::Mutex};
+
         use iroh_bytes::{
             provider::ImportProgress,
             util::progress::{ProgressSender, TokioProgressSender},
@@ -1271,23 +1273,28 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
 
         use crate::database::flat::create_data_sources;
         let progress = TokioProgressSender::new(progress);
-        let ip = progress.clone().with_map::<ImportProgress, _>(|x| match x {
-            ImportProgress::Found { id, path } => ProvideProgress::Found {
-                id,
-                name: path.display().to_string(),
-                size: 0,
-            },
-            ImportProgress::Size { id, size } => ProvideProgress::Found {
-                id,
-                name: "".to_string(),
-                size,
-            },
-            ImportProgress::OutboardProgress { id, offset } => {
-                ProvideProgress::Progress { id, offset }
+        let names = Arc::new(Mutex::new(BTreeMap::new()));
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id, path, .. } => {
+                names.lock().unwrap().insert(id, path);
+                None
             }
-            ImportProgress::OutboardDone { hash, id } => ProvideProgress::Done { hash, id },
+            ImportProgress::Size { id, size } => {
+                let path = names.lock().unwrap().remove(&id)?;
+                Some(ProvideProgress::Found {
+                    id,
+                    name: path.display().to_string(),
+                    size,
+                })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(ProvideProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => Some(ProvideProgress::Done { hash, id }),
+            _ => None,
         });
         let root = msg.path;
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
@@ -1307,11 +1314,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     size: 0,
                 })
                 .await?;
-            let ip2 = ip.clone();
+            let import_progress2 = import_progress.clone();
             let (hash, size) = self
                 .inner
                 .db
-                .import(source.path().to_owned(), false, ip2)
+                .import(source.path().to_owned(), msg.in_place, import_progress2)
                 .await?;
             total_blobs_size += size;
             blobs.push(Blob { hash, name });
@@ -1320,6 +1327,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let collection = Collection::new(blobs, total_blobs_size)?;
         let data = collection.to_bytes()?;
         let hash = self.inner.db.import_bytes(data.into()).await?;
+        progress.send(ProvideProgress::AllDone { hash }).await?;
 
         self.inner
             .callbacks
@@ -1331,13 +1339,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         Ok(())
     }
 
-    #[cfg(not(feature = "flat-db"))]
+    #[cfg(not(feature = "iroh-collection"))]
     async fn provide0(
         self,
         _msg: ProvideRequest,
         _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("provide not supported yet for this database type");
+        anyhow::bail!("collections not supported");
     }
 
     async fn version(self, _: VersionRequest) -> VersionResponse {
@@ -1397,6 +1405,11 @@ fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: Collecti
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
+        tracing::info!(
+            "handling rpc request: {:?} {}",
+            msg,
+            std::any::type_name::<E>()
+        );
         match msg {
             ListBlobs(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::list_blobs)
@@ -1654,6 +1667,7 @@ mod tests {
                 .controller()
                 .server_streaming(ProvideRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                    in_place: false,
                 })
                 .await?;
 

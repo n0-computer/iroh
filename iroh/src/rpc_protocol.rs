@@ -32,6 +32,9 @@ pub struct ProvideRequest {
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
     pub path: PathBuf,
+    /// True if the provider can assume that the data will not change, so it
+    /// can be shared in place.
+    pub in_place: bool,
 }
 
 impl Msg<ProviderService> for ProvideRequest {
