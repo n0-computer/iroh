@@ -11,7 +11,6 @@ use std::{collections::HashSet, fmt, net::SocketAddr, path::PathBuf, str::FromSt
 
 use anyhow::{anyhow, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
-use core::fmt::{Display, Formatter};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
 use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
@@ -359,11 +358,7 @@ async fn handle_command(
         } => {
             println!(
                 "> Hammering with prefix \"{prefix}\" for {threads} x {count} messages of size {size} bytes in {mode} mode",
-                prefix = prefix,
-                threads = threads,
-                count = count,
-                size = size,
-                mode = mode,
+                mode = format!("{mode:?}").to_lowercase()
             );
             let start = std::time::Instant::now();
             let mut handles = Vec::new();
@@ -583,45 +578,20 @@ pub enum Cmd {
         /// The size of each entry in Bytes
         #[clap(long, short, default_value = "1024")]
         size: usize,
-        /// Select the hammer mode (set or get)
-        #[clap(long, short, default_value = "set")]
+        /// Select the hammer mode
+        #[clap(long, short, value_enum, default_value = "set")]
         mode: HammerMode,
     },
     /// Quit
     Exit,
 }
 
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, clap::ValueEnum)]
 pub enum HammerMode {
+    /// Set mode (create entries)
     Set,
+    /// Get mode (read entries)
     Get,
-}
-
-impl FromStr for HammerMode {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "set" => Ok(HammerMode::Set),
-            "get" => Ok(HammerMode::Get),
-            _ => Err(anyhow!("Invalid hammer mode")),
-        }
-    }
-}
-
-impl HammerMode {
-    pub fn to_string(&self) -> &'static str {
-        match self {
-            HammerMode::Set => "set",
-            HammerMode::Get => "get",
-        }
-    }
-}
-
-impl Display for HammerMode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
 }
 
 #[derive(Parser, Debug)]
