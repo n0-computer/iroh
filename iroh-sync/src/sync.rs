@@ -211,10 +211,13 @@ impl NamespaceId {
 /// [parking_lot::RwLock] requiring `Sync`.
 pub type OnInsertCallback = Box<dyn Fn(InsertOrigin, SignedEntry) + Send + Sync + 'static>;
 
+/// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-common crate with `PeerId`.
+pub type PeerIdBytes = [u8; 32];
+
 #[derive(Debug, Clone)]
 pub enum InsertOrigin {
     Local,
-    Sync,
+    Sync(Option<PeerIdBytes>),
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -299,7 +302,11 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         RecordIdentifier::new(key, inner.namespace.id(), author.id())
     }
 
-    pub fn insert_remote_entry(&self, entry: SignedEntry) -> anyhow::Result<()> {
+    pub fn insert_remote_entry(
+        &self,
+        entry: SignedEntry,
+        received_from: Option<PeerIdBytes>,
+    ) -> anyhow::Result<()> {
         entry.verify()?;
         let mut inner = self.inner.write();
         let id = entry.entry.id.clone();
@@ -307,7 +314,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         drop(inner);
         let on_insert = self.on_insert.read();
         for cb in &*on_insert {
-            cb(InsertOrigin::Sync, entry.clone());
+            cb(InsertOrigin::Sync(received_from), entry.clone());
         }
         Ok(())
     }
@@ -321,6 +328,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn sync_process_message(
         &self,
         message: crate::ranger::Message<RecordIdentifier, SignedEntry>,
+        from_peer: Option<PeerIdBytes>,
     ) -> Result<Option<crate::ranger::Message<RecordIdentifier, SignedEntry>>, S::Error> {
         let reply = self
             .inner
@@ -329,7 +337,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
             .process_message(message, |_key, entry| {
                 let on_insert = self.on_insert.read();
                 for cb in &*on_insert {
-                    cb(InsertOrigin::Sync, entry.clone());
+                    cb(InsertOrigin::Sync(from_peer), entry.clone());
                 }
             })?;
 
@@ -915,8 +923,8 @@ mod tests {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg).map_err(Into::into)? {
-                next_to_bob = alice.sync_process_message(msg).map_err(Into::into)?;
+            if let Some(msg) = bob.sync_process_message(msg, None).map_err(Into::into)? {
+                next_to_bob = alice.sync_process_message(msg, None).map_err(Into::into);
             }
         }
 
