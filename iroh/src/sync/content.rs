@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -20,7 +20,7 @@ use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store::{self, Store as _},
-    sync::{Author, InsertOrigin, Namespace, OnInsertCallback, Replica, SignedEntry},
+    sync::{Author, InsertOrigin, Namespace, OnInsertCallback, PeerIdBytes, Replica, SignedEntry},
 };
 use tokio::{io::AsyncRead, sync::oneshot};
 use tokio_stream::StreamExt;
@@ -114,11 +114,13 @@ impl<S: store::Store> Doc<S> {
         // setup on_insert callback to trigger download on remote insert
         if let DownloadMode::Always = download_mode {
             let doc_clone = doc.clone();
-            doc.replica.on_insert(Box::new(move |origin, entry| {
-                if matches!(origin, InsertOrigin::Sync) {
-                    doc_clone.download_content_from_author(&entry);
-                }
-            }));
+            doc.replica
+                .on_insert(Box::new(move |origin, entry| match origin {
+                    InsertOrigin::Sync(peer) => {
+                        doc_clone.download_content_from_author_and_other_peer(&entry, peer);
+                    }
+                    InsertOrigin::Local => {}
+                }));
         }
 
         // Collect metrics
@@ -129,7 +131,7 @@ impl<S: store::Store> Doc<S> {
                     inc!(Metrics, new_entries_local);
                     inc_by!(Metrics, new_entries_local_size, size);
                 }
-                InsertOrigin::Sync => {
+                InsertOrigin::Sync(_) => {
                     inc!(Metrics, new_entries_remote);
                     inc_by!(Metrics, new_entries_remote_size, size);
                 }
@@ -184,11 +186,26 @@ impl<S: store::Store> Doc<S> {
         self.insert_reader(&key, reader).await
     }
 
-    pub fn download_content_from_author(&self, entry: &SignedEntry) {
-        let hash = *entry.entry().record().content_hash();
-        let peer_id = PeerId::from_bytes(entry.entry().id().author().as_bytes())
+    pub fn download_content_from_author_and_other_peer(
+        &self,
+        entry: &SignedEntry,
+        other_peer: Option<PeerIdBytes>,
+    ) {
+        let author_peer_id = PeerId::from_bytes(entry.entry().id().author().as_bytes())
             .expect("failed to convert author to peer id");
-        self.blobs.start_download(hash, peer_id);
+
+        let mut peers = vec![author_peer_id];
+
+        if let Some(other_peer) = other_peer {
+            let other_peer_id =
+                PeerId::from_bytes(&other_peer).expect("failed to convert author to peer id");
+            if other_peer_id != peers[0] {
+                peers.push(other_peer_id);
+            }
+        }
+
+        let hash = *entry.entry().record().content_hash();
+        self.blobs.start_download(hash, peers);
     }
 
     pub async fn get_content_bytes(&self, entry: &SignedEntry) -> Option<Bytes> {
@@ -234,9 +251,9 @@ impl BlobStore {
         self.db.db()
     }
 
-    pub fn start_download(&self, hash: Hash, peer: PeerId) {
+    pub fn start_download(&self, hash: Hash, peers: Vec<PeerId>) {
         if !self.db.has(&hash) {
-            self.downloader.start_download(hash, peer);
+            self.downloader.start_download(hash, peers);
         }
     }
 
@@ -273,7 +290,7 @@ pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
 #[derive(Debug)]
 pub struct DownloadRequest {
     hash: Hash,
-    peer: PeerId,
+    peers: Vec<PeerId>,
     reply: DownloadReply,
 }
 
@@ -320,19 +337,21 @@ impl Downloader {
         }
     }
 
-    pub fn start_download(&self, hash: Hash, peer: PeerId) {
+    pub fn start_download(&self, hash: Hash, peers: Vec<PeerId>) {
         let (reply, reply_rx) = oneshot::channel();
-        let req = DownloadRequest { hash, peer, reply };
-        let pending_downloads = self.pending_downloads.clone();
-        let fut = async move {
-            let res = reply_rx.await;
-            pending_downloads.lock().unwrap().remove(&hash);
-            res.ok().flatten()
-        };
-        self.pending_downloads
-            .lock()
-            .unwrap()
-            .insert(hash, fut.boxed().shared());
+        let req = DownloadRequest { hash, peers, reply };
+        if self.pending_downloads.lock().unwrap().get(&hash).is_none() {
+            let pending_downloads = self.pending_downloads.clone();
+            let fut = async move {
+                let res = reply_rx.await;
+                pending_downloads.lock().unwrap().remove(&hash);
+                res.ok().flatten()
+            };
+            self.pending_downloads
+                .lock()
+                .unwrap()
+                .insert(hash, fut.boxed().shared());
+        }
         // TODO: this is potentially blocking inside an async call. figure out a better solution
         if let Err(err) = self.to_actor_tx.send(req) {
             warn!("download actor dropped: {err}");
@@ -349,9 +368,8 @@ pub struct DownloadActor {
     db: WritableFileDatabase,
     conns: HashMap<PeerId, quinn::Connection>,
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
-    peer_hashes: HashMap<PeerId, VecDeque<Hash>>,
-    hash_peers: HashMap<Hash, HashSet<PeerId>>,
-    pending_downloads: PendingDownloadsFutures,
+    pending_download_futs: PendingDownloadsFutures,
+    queue: DownloadQueue,
     rx: flume::Receiver<DownloadRequest>,
 }
 impl DownloadActor {
@@ -366,9 +384,8 @@ impl DownloadActor {
             dialer: Dialer::new(endpoint),
             replies: Default::default(),
             conns: Default::default(),
-            pending_downloads: Default::default(),
-            peer_hashes: Default::default(),
-            hash_peers: Default::default(),
+            pending_download_futs: Default::default(),
+            queue: Default::default(),
         }
     }
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -386,8 +403,9 @@ impl DownloadActor {
                     },
                     Err(err) => self.on_peer_fail(&peer, err),
                 },
-                Some((peer, hash, res)) = self.pending_downloads.next() => match res {
+                Some((peer, hash, res)) = self.pending_download_futs.next() => match res {
                     Ok(Some((hash, size))) => {
+                        self.queue.on_success(hash, peer);
                         self.reply(hash, Some((hash, size)));
                         self.on_peer_ready(peer);
                     }
@@ -409,66 +427,169 @@ impl DownloadActor {
 
     fn on_peer_fail(&mut self, peer: &PeerId, err: anyhow::Error) {
         warn!("download from {peer} failed: {err}");
-        for hash in self.peer_hashes.remove(peer).into_iter().flatten() {
-            self.on_not_found(peer, hash);
+        for hash in self.queue.on_peer_fail(peer) {
+            self.reply(hash, None);
         }
         self.conns.remove(peer);
     }
 
     fn on_not_found(&mut self, peer: &PeerId, hash: Hash) {
-        if let Some(peers) = self.hash_peers.get_mut(&hash) {
-            peers.remove(peer);
-            if peers.is_empty() {
-                self.reply(hash, None);
-                self.hash_peers.remove(&hash);
-            }
+        self.queue.on_not_found(hash, *peer);
+        if self.queue.has_no_candidates(&hash) {
+            self.reply(hash, None);
         }
     }
 
     fn on_peer_ready(&mut self, peer: PeerId) {
-        if let Some(hash) = self
-            .peer_hashes
-            .get_mut(&peer)
-            .and_then(|hashes| hashes.pop_front())
-        {
-            let conn = self.conns.get(&peer).unwrap().clone();
-            let blobs = self.db.clone();
-            let fut = async move {
-                let start = Instant::now();
-                let res = blobs.download_single(conn, hash).await;
-                // record metrics
-                let elapsed = start.elapsed().as_millis();
-                match &res {
-                    Ok(Some((_hash, len))) => {
-                        inc!(Metrics, downloads_success);
-                        inc_by!(Metrics, download_bytes_total, *len);
-                        inc_by!(Metrics, download_time_total, elapsed as u64);
-                    }
-                    Ok(None) => inc!(Metrics, downloads_notfound),
-                    Err(_) => inc!(Metrics, downloads_error),
-                }
-                (peer, hash, res)
-            };
-            self.pending_downloads.push(fut.boxed_local());
+        if let Some(hash) = self.queue.try_next_for_peer(peer) {
+            self.start_download_unchecked(peer, hash);
         } else {
             self.conns.remove(&peer);
-            self.peer_hashes.remove(&peer);
         }
     }
 
+    fn start_download_unchecked(&mut self, peer: PeerId, hash: Hash) {
+        let conn = self.conns.get(&peer).unwrap().clone();
+        let blobs = self.db.clone();
+        let fut = async move {
+            let start = Instant::now();
+            let res = blobs.download_single(conn, hash).await;
+            // record metrics
+            let elapsed = start.elapsed().as_millis();
+            match &res {
+                Ok(Some((_hash, len))) => {
+                    inc!(Metrics, downloads_success);
+                    inc_by!(Metrics, download_bytes_total, *len);
+                    inc_by!(Metrics, download_time_total, elapsed as u64);
+                }
+                Ok(None) => inc!(Metrics, downloads_notfound),
+                Err(_) => inc!(Metrics, downloads_error),
+            }
+            (peer, hash, res)
+        };
+        self.pending_download_futs.push(fut.boxed_local());
+    }
+
     async fn on_download_request(&mut self, req: DownloadRequest) {
-        let DownloadRequest { peer, hash, reply } = req;
+        let DownloadRequest { peers, hash, reply } = req;
         if self.db.has(&hash) {
             let size = self.db.get_size(&hash).await.unwrap();
             reply.send(Some((hash, size))).ok();
             return;
         }
-        debug!("queue download {hash} from {peer}");
         self.replies.entry(hash).or_default().push_back(reply);
-        self.hash_peers.entry(hash).or_default().insert(peer);
-        self.peer_hashes.entry(peer).or_default().push_back(hash);
-        if self.conns.get(&peer).is_none() && !self.dialer.is_pending(&peer) {
-            self.dialer.queue_dial(peer, &iroh_bytes::protocol::ALPN);
+        for peer in peers {
+            self.queue.push_candidate(hash, peer);
+            // TODO: Don't dial all peers instantly.
+            if self.conns.get(&peer).is_none() && !self.dialer.is_pending(&peer) {
+                self.dialer.queue_dial(peer, &iroh_bytes::protocol::ALPN);
+            }
         }
     }
 }
+
+#[derive(Debug, Default)]
+struct DownloadQueue {
+    candidates_by_hash: HashMap<Hash, VecDeque<PeerId>>,
+    candidates_by_peer: HashMap<PeerId, VecDeque<Hash>>,
+    running_by_hash: HashMap<Hash, PeerId>,
+    running_by_peer: HashMap<PeerId, Hash>,
+}
+
+impl DownloadQueue {
+    pub fn push_candidate(&mut self, hash: Hash, peer: PeerId) {
+        self.candidates_by_hash
+            .entry(hash)
+            .or_default()
+            .push_back(peer);
+        self.candidates_by_peer
+            .entry(peer)
+            .or_default()
+            .push_back(hash);
+    }
+
+    pub fn try_next_for_peer(&mut self, peer: PeerId) -> Option<Hash> {
+        let mut next = None;
+        for (idx, hash) in self.candidates_by_peer.get(&peer)?.iter().enumerate() {
+            if !self.running_by_hash.contains_key(hash) {
+                next = Some((idx, *hash));
+                break;
+            }
+        }
+        if let Some((idx, hash)) = next {
+            self.running_by_hash.insert(hash, peer);
+            self.running_by_peer.insert(peer, hash);
+            self.candidates_by_peer.get_mut(&peer).unwrap().remove(idx);
+            if let Some(peers) = self.candidates_by_hash.get_mut(&hash) {
+                peers.retain(|p| p != &peer);
+            }
+            self.ensure_no_empty(hash, peer);
+            return Some(hash);
+        } else {
+            None
+        }
+    }
+
+    pub fn has_no_candidates(&self, hash: &Hash) -> bool {
+        self.candidates_by_hash.get(hash).is_none() && self.running_by_hash.get(&hash).is_none()
+    }
+
+    pub fn on_success(&mut self, hash: Hash, peer: PeerId) -> Option<(PeerId, Hash)> {
+        let peer2 = self.running_by_hash.remove(&hash);
+        debug_assert_eq!(peer2, Some(peer));
+        self.running_by_peer.remove(&peer);
+        self.try_next_for_peer(peer).map(|hash| (peer, hash))
+    }
+
+    pub fn on_peer_fail(&mut self, peer: &PeerId) -> Vec<Hash> {
+        let mut failed = vec![];
+        for hash in self
+            .candidates_by_peer
+            .remove(peer)
+            .map(|hashes| hashes.into_iter())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(peers) = self.candidates_by_hash.get_mut(&hash) {
+                peers.retain(|p| p != peer);
+                if peers.is_empty() && self.running_by_hash.get(&hash).is_none() {
+                    failed.push(hash);
+                }
+            }
+        }
+        if let Some(hash) = self.running_by_peer.remove(&peer) {
+            self.running_by_hash.remove(&hash);
+            if self.candidates_by_hash.get(&hash).is_none() {
+                failed.push(hash);
+            }
+        }
+        failed
+    }
+
+    pub fn on_not_found(&mut self, hash: Hash, peer: PeerId) {
+        let peer2 = self.running_by_hash.remove(&hash);
+        debug_assert_eq!(peer2, Some(peer));
+        self.running_by_peer.remove(&peer);
+        self.ensure_no_empty(hash, peer);
+    }
+
+    fn ensure_no_empty(&mut self, hash: Hash, peer: PeerId) {
+        if self
+            .candidates_by_peer
+            .get(&peer)
+            .map_or(false, |hashes| hashes.is_empty())
+        {
+            self.candidates_by_peer.remove(&peer);
+        }
+        if self
+            .candidates_by_hash
+            .get(&hash)
+            .map_or(false, |peers| peers.is_empty())
+        {
+            self.candidates_by_hash.remove(&hash);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {}
