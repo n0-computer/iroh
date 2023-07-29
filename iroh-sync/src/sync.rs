@@ -684,12 +684,30 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ranger::Range, store::memory};
+    use anyhow::Result;
+
+    use crate::{ranger::Range, store};
 
     use super::*;
 
     #[test]
-    fn test_basics() {
+    fn test_basics_memory() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_basics(store)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_basics_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_basics(store)?;
+        Ok(())
+    }
+
+    fn test_basics<S: store::Store>(store: S) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
@@ -701,116 +719,126 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify().expect("failed to verify");
 
-        let replica_store = memory::Store::default();
-
-        let my_replica = replica_store.new_replica(myspace);
+        let my_replica = store.new_replica(myspace)?;
         for i in 0..10 {
             my_replica
                 .hash_and_insert(format!("/{i}"), &alice, format!("{i}: hello from alice"))
-                .unwrap();
+                .map_err(Into::into)?;
         }
 
         for i in 0..10 {
-            let res = replica_store
-                .get_latest_by_key_and_author(my_replica.namespace(), format!("/{i}"), alice.id())
+            let res = store
+                .get_latest_by_key_and_author(my_replica.namespace(), format!("/{i}"), alice.id())?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
-            res.verify().expect("invalid signature");
+            res.verify()?;
         }
 
         // Test multiple records for the same key
         my_replica
             .hash_and_insert("/cool/path", &alice, "round 1")
-            .unwrap();
-        let _entry = replica_store
-            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
+            .map_err(Into::into)?;
+        let _entry = store
+            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
             .unwrap();
         // Second
         my_replica
             .hash_and_insert("/cool/path", &alice, "round 2")
-            .unwrap();
-        let _entry = replica_store
-            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
+            .map_err(Into::into)?;
+        let _entry = store
+            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
             .unwrap();
 
         // Get All by author
-        let entries: Vec<_> = replica_store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by key
-        let entries: Vec<_> = replica_store
-            .get_all_by_key(my_replica.namespace(), b"/cool/path")
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_key(my_replica.namespace(), b"/cool/path")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get latest by key
-        let entries: Vec<_> = replica_store
-            .get_latest_by_key(my_replica.namespace(), b"/cool/path")
-            .collect();
+        let entries: Vec<_> = store
+            .get_latest_by_key(my_replica.namespace(), b"/cool/path")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get latest by prefix
-        let entries: Vec<_> = replica_store
-            .get_latest_by_prefix(my_replica.namespace(), b"/cool")
-            .collect();
+        let entries: Vec<_> = store
+            .get_latest_by_prefix(my_replica.namespace(), b"/cool")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
-        let entries: Vec<_> = replica_store.get_all(my_replica.namespace()).collect();
+        let entries: Vec<_> = store
+            .get_all(my_replica.namespace())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
         // Get All latest
-        let entries: Vec<_> = replica_store.get_latest(my_replica.namespace()).collect();
+        let entries: Vec<_> = store
+            .get_latest(my_replica.namespace())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // insert record from different author
-        let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1");
+        let _entry = my_replica
+            .hash_and_insert("/cool/path", &bob, "bob round 1")
+            .map_err(Into::into)?;
 
         // Get All by author
-        let entries: Vec<_> = replica_store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
-        let entries: Vec<_> = replica_store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", bob.id())
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", bob.id())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
-        let entries: Vec<_> = replica_store
-            .get_all_by_key(my_replica.namespace(), b"/cool/path")
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_key(my_replica.namespace(), b"/cool/path")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 3);
 
         // Get latest by key
-        let entries: Vec<_> = replica_store
-            .get_latest_by_key(my_replica.namespace(), b"/cool/path")
-            .collect();
+        let entries: Vec<_> = store
+            .get_latest_by_key(my_replica.namespace(), b"/cool/path")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get latest by prefix
-        let entries: Vec<_> = replica_store
-            .get_latest_by_prefix(my_replica.namespace(), b"/cool")
-            .collect();
+        let entries: Vec<_> = store
+            .get_latest_by_prefix(my_replica.namespace(), b"/cool")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
-        let entries: Vec<_> = replica_store
-            .get_all_by_prefix(my_replica.namespace(), b"/cool")
-            .collect();
+        let entries: Vec<_> = store
+            .get_all_by_prefix(my_replica.namespace(), b"/cool")?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 3);
 
         // Get All
-        let entries: Vec<_> = replica_store.get_all(my_replica.namespace()).collect();
+        let entries: Vec<_> = store
+            .get_all(my_replica.namespace())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 13);
 
         // Get All latest
-        let entries: Vec<_> = replica_store.get_latest(my_replica.namespace()).collect();
+        let entries: Vec<_> = store
+            .get_latest(my_replica.namespace())?
+            .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
+
+        Ok(())
     }
 
     #[test]
@@ -875,74 +903,89 @@ mod tests {
     }
 
     #[test]
-    fn test_replica_sync() {
+    fn test_replica_sync_memory() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+
+        test_replica_sync(alice_store, bob_store)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_replica_sync_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        let bob_dbfile = tempfile::NamedTempFile::new()?;
+        let bob_store = store::fs::Store::new(bob_dbfile.path())?;
+        test_replica_sync(alice_store, bob_store)?;
+
+        Ok(())
+    }
+
+    fn test_replica_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let alice_set = ["ape", "eel", "fox", "gnu"];
         let bob_set = ["bee", "cat", "doe", "eel", "fox", "hog"];
 
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = Namespace::new(&mut rng);
-        let alice_replica_store = memory::Store::default();
-        let alice = alice_replica_store.new_replica(myspace.clone());
+        let alice = alice_store.new_replica(myspace.clone())?;
         for el in &alice_set {
-            alice.hash_and_insert(el, &author, el.as_bytes()).unwrap();
+            alice
+                .hash_and_insert(el, &author, el.as_bytes())
+                .map_err(Into::into)?;
         }
 
-        let bob_replica_store = memory::Store::default();
-        let bob = bob_replica_store.new_replica(myspace);
+        let bob = bob_store.new_replica(myspace)?;
         for el in &bob_set {
-            bob.hash_and_insert(el, &author, el.as_bytes()).unwrap();
+            bob.hash_and_insert(el, &author, el.as_bytes())
+                .map_err(Into::into)?;
         }
 
         sync(
             &author,
             &alice,
-            &alice_replica_store,
+            &alice_store,
             &bob,
-            &bob_replica_store,
+            &bob_store,
             &alice_set,
             &bob_set,
-        );
+        )?;
+        Ok(())
     }
 
-    fn sync(
+    fn sync<S: store::Store>(
         author: &Author,
-        alice: &memory::Replica,
-        alice_store: &memory::Store,
-        bob: &memory::Replica,
-        bob_store: &memory::Store,
+        alice: &Replica<S::Instance>,
+        alice_store: &S,
+        bob: &Replica<S::Instance>,
+        bob_store: &S,
         alice_set: &[&str],
         bob_set: &[&str],
-    ) {
+    ) -> Result<()> {
         // Sync alice - bob
-        let mut next_to_bob = Some(alice.sync_initial_message().unwrap());
+        let mut next_to_bob = Some(alice.sync_initial_message().map_err(Into::into)?);
         let mut rounds = 0;
         while let Some(msg) = next_to_bob.take() {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg).unwrap() {
-                next_to_bob = alice.sync_process_message(msg).unwrap();
+            if let Some(msg) = bob.sync_process_message(msg).map_err(Into::into)? {
+                next_to_bob = alice.sync_process_message(msg).map_err(Into::into)?;
             }
         }
 
         // Check result
         for el in alice_set {
-            alice_store
-                .get_latest_by_key_and_author(alice.namespace(), el, author.id())
-                .unwrap();
-            bob_store
-                .get_latest_by_key_and_author(bob.namespace(), el, author.id())
-                .unwrap();
+            alice_store.get_latest_by_key_and_author(alice.namespace(), el, author.id())?;
+            bob_store.get_latest_by_key_and_author(bob.namespace(), el, author.id())?;
         }
 
         for el in bob_set {
-            alice_store
-                .get_latest_by_key_and_author(alice.namespace(), el, author.id())
-                .unwrap();
-            bob_store
-                .get_latest_by_key_and_author(bob.namespace(), el, author.id())
-                .unwrap();
+            alice_store.get_latest_by_key_and_author(alice.namespace(), el, author.id())?;
+            bob_store.get_latest_by_key_and_author(bob.namespace(), el, author.id())?;
         }
+        Ok(())
     }
 }

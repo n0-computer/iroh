@@ -6,172 +6,172 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Result;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rand_core::CryptoRngCore;
 
 use crate::{
     ranger::{AsFingerprint, Fingerprint, Range, RangeKey},
-    sync::{
-        Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica as SyncReplica,
-        SignedEntry,
-    },
+    sync::{Author, AuthorId, Namespace, NamespaceId, RecordIdentifier, Replica, SignedEntry},
 };
-
-pub type Replica = SyncReplica<ReplicaStoreInstance>;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
-    replicas: Arc<RwLock<HashMap<NamespaceId, Replica>>>,
+    replicas: Arc<RwLock<HashMap<NamespaceId, Replica<ReplicaStoreInstance>>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records:
         Arc<RwLock<HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>>>,
 }
 
-impl Store {
-    pub fn get_replica(&self, namespace: &NamespaceId) -> Option<Replica> {
+impl super::Store for Store {
+    type Instance = ReplicaStoreInstance;
+    type GetLatestIter<'a> = GetLatestIter<'a>;
+    type GetAllIter<'a> = GetAllIter<'a>;
+
+    fn get_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
-        replicas.get(namespace).cloned()
+        Ok(replicas.get(namespace).cloned())
     }
 
-    pub fn get_author(&self, author: &AuthorId) -> Option<Author> {
+    fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
         let authors = &*self.authors.read();
-        authors.get(author).cloned()
+        Ok(authors.get(author).cloned())
     }
 
-    pub fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Author {
+    fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
         let author = Author::new(rng);
         self.authors.write().insert(author.id(), author.clone());
-        author
+        Ok(author)
     }
 
-    pub fn new_replica(&self, namespace: Namespace) -> Replica {
+    fn new_replica(&self, namespace: Namespace) -> Result<Replica<ReplicaStoreInstance>> {
         let id = namespace.id();
         let replica = Replica::new(namespace, ReplicaStoreInstance::new(id, self.clone()));
         self.replicas
             .write()
             .insert(replica.namespace(), replica.clone());
-        replica
+        Ok(replica)
     }
 
-    /// Gets all entries matching this key and author.
-    pub fn get_latest_by_key_and_author(
+    fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
         author: AuthorId,
-    ) -> Option<SignedEntry> {
+    ) -> Result<Option<SignedEntry>> {
         let inner = self.replica_records.read();
-        let records = inner.get(&namespace)?;
-        let values = records.get(&RecordIdentifier::new(key, namespace, author))?;
-        values.last_key_value().map(|(_, v)| v.clone())
+
+        let value = inner
+            .get(&namespace)
+            .and_then(|records| records.get(&RecordIdentifier::new(key, namespace, author)))
+            .and_then(|values| values.last_key_value());
+
+        Ok(value.map(|(_, v)| v.clone()))
     }
 
-    /// Returns the latest version of the matching documents by key.
-    pub fn get_latest_by_key(
+    fn get_latest_by_key(
         &self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]>,
-    ) -> GetLatestIter<'_> {
+    ) -> Result<GetLatestIter<'_>> {
         let records = self.replica_records.read();
         let key = key.as_ref().to_vec();
         let filter = GetFilter::Key { namespace, key };
 
-        GetLatestIter {
+        Ok(GetLatestIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns the latest version of the matching documents by prefix.
-    pub fn get_latest_by_prefix(
+    fn get_latest_by_prefix(
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> GetLatestIter<'_> {
+    ) -> Result<GetLatestIter<'_>> {
         let records = self.replica_records.read();
         let prefix = prefix.as_ref().to_vec();
         let filter = GetFilter::Prefix { namespace, prefix };
 
-        GetLatestIter {
+        Ok(GetLatestIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns the latest versions of all documents.
-    pub fn get_latest(&self, namespace: NamespaceId) -> GetLatestIter<'_> {
+    fn get_latest(&self, namespace: NamespaceId) -> Result<GetLatestIter<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
-        GetLatestIter {
+        Ok(GetLatestIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns all versions of the matching documents by author.
-    pub fn get_all_by_key_and_author<'a, 'b: 'a>(
+    fn get_all_by_key_and_author<'a, 'b: 'a>(
         &'a self,
         namespace: NamespaceId,
         key: impl AsRef<[u8]> + 'b,
         author: AuthorId,
-    ) -> GetAllIter<'a> {
+    ) -> Result<GetAllIter<'a>> {
         let records = self.replica_records.read();
         let record_id = RecordIdentifier::new(key, namespace, author);
         let filter = GetFilter::KeyAuthor(record_id);
 
-        GetAllIter {
+        Ok(GetAllIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns all versions of the matching documents by key.
-    pub fn get_all_by_key(&self, namespace: NamespaceId, key: impl AsRef<[u8]>) -> GetAllIter<'_> {
+    fn get_all_by_key(
+        &self,
+        namespace: NamespaceId,
+        key: impl AsRef<[u8]>,
+    ) -> Result<GetAllIter<'_>> {
         let records = self.replica_records.read();
         let key = key.as_ref().to_vec();
         let filter = GetFilter::Key { namespace, key };
 
-        GetAllIter {
+        Ok(GetAllIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns all versions of the matching documents by prefix.
-    pub fn get_all_by_prefix(
+    fn get_all_by_prefix(
         &self,
         namespace: NamespaceId,
         prefix: impl AsRef<[u8]>,
-    ) -> GetAllIter<'_> {
+    ) -> Result<GetAllIter<'_>> {
         let records = self.replica_records.read();
         let prefix = prefix.as_ref().to_vec();
         let filter = GetFilter::Prefix { namespace, prefix };
 
-        GetAllIter {
+        Ok(GetAllIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 
-    /// Returns all versions of all documents.
-    pub fn get_all(&self, namespace: NamespaceId) -> GetAllIter<'_> {
+    fn get_all(&self, namespace: NamespaceId) -> Result<GetAllIter<'_>> {
         let records = self.replica_records.read();
         let filter = GetFilter::All { namespace };
 
-        GetAllIter {
+        Ok(GetAllIter {
             records,
             filter,
             index: 0,
-        }
+        })
     }
 }
 
@@ -216,7 +216,7 @@ pub struct GetLatestIter<'a> {
 }
 
 impl<'a> Iterator for GetLatestIter<'a> {
-    type Item = SignedEntry;
+    type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.records.get(self.filter.namespace())?;
@@ -255,7 +255,7 @@ impl<'a> Iterator for GetLatestIter<'a> {
             }
         };
         self.index += 1;
-        Some(res)
+        Some(Ok(res))
     }
 }
 
@@ -271,7 +271,7 @@ pub struct GetAllIter<'a> {
 }
 
 impl<'a> Iterator for GetAllIter<'a> {
-    type Item = (RecordIdentifier, u64, SignedEntry);
+    type Item = Result<(u64, SignedEntry)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let records = self.records.get(self.filter.namespace())?;
@@ -279,25 +279,17 @@ impl<'a> Iterator for GetAllIter<'a> {
             GetFilter::All { namespace } => records
                 .iter()
                 .filter(|(k, _)| k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
+                .flat_map(|(_, value)| value.iter().map(|(t, value)| (*t, value.clone())))
                 .nth(self.index)?,
             GetFilter::KeyAuthor(ref record_id) => {
                 let values = records.get(record_id)?;
                 let (t, value) = values.iter().nth(self.index)?;
-                (record_id.clone(), *t, value.clone())
+                (*t, value.clone())
             }
             GetFilter::Key { namespace, ref key } => records
                 .iter()
                 .filter(|(k, _)| k.key() == key && k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
+                .flat_map(|(_, value)| value.iter().map(|(t, value)| (*t, value.clone())))
                 .nth(self.index)?,
             GetFilter::Prefix {
                 namespace,
@@ -305,15 +297,11 @@ impl<'a> Iterator for GetAllIter<'a> {
             } => records
                 .iter()
                 .filter(|(k, _)| k.key().starts_with(prefix) && k.namespace() == &namespace)
-                .flat_map(|(key, value)| {
-                    value
-                        .iter()
-                        .map(|(t, value)| (key.clone(), *t, value.clone()))
-                })
+                .flat_map(|(_, value)| value.iter().map(|(t, value)| (*t, value.clone())))
                 .nth(self.index)?,
         };
         self.index += 1;
-        Some(res)
+        Some(Ok(res))
     }
 }
 
