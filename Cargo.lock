@@ -244,8 +244,6 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300ecc0fc879f191300741b6e7de87d3303e843f2d6e1ff9f33f2eadd3f857ec"
 dependencies = [
  "blake3",
  "bytes",
@@ -333,15 +331,13 @@ checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
 [[package]]
 name = "blake3"
 version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199c42ab6972d92c9f8995f086273d25c42fc0f7b2a1fcefba465c1352d25ba5"
+source = "git+https://github.com/rklaehn/BLAKE3.git?branch=more-guts#c8b199b0a6d6dd7fd60ad9a977a4582979c8569e"
 dependencies = [
  "arrayref",
  "arrayvec",
  "cc",
  "cfg-if",
  "constant_time_eq",
- "digest",
 ]
 
 [[package]]
