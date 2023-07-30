@@ -442,12 +442,13 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for ReplicaStoreInstanc
         })
     }
 
-    fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>, Self::Error> {
-        Ok(self.with_records_mut(|records| {
+    fn remove(&mut self, key: &RecordIdentifier) -> Result<Vec<(u64, SignedEntry)>, Self::Error> {
+        let res = self.with_records_mut(|records| {
             records
-                .and_then(|records| records.remove(key))
-                .and_then(|mut v| v.last_entry().map(|e| e.remove_entry().1))
-        }))
+                .and_then(|records| records.remove(key).map(|v| v.into_iter().collect()))
+                .unwrap_or_default()
+        });
+        Ok(res)
     }
 
     type AllIterator<'a> = RangeIterator<'a>;

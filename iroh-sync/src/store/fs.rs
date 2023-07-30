@@ -495,8 +495,26 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
         Ok(iter)
     }
 
-    fn remove(&mut self, key: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        todo!()
+    fn remove(&mut self, k: &RecordIdentifier) -> Result<Vec<(u64, SignedEntry)>> {
+        let write_tx = self.store.db.begin_write()?;
+        let res = {
+            let mut records_table = write_tx.open_multimap_table(RECORDS_TABLE)?;
+            let key = (k.namespace().as_bytes(), k.author().as_bytes(), k.key());
+            let records = records_table.remove_all(key)?;
+            let mut res = Vec::new();
+            for record in records.into_iter() {
+                let record = record?;
+                let (timestamp, namespace_sig, author_sig, len, hash) = record.value();
+                let record = Record::new(timestamp, len, hash.into());
+                let entry = Entry::new(k.clone(), record);
+                let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+                let signed_entry = SignedEntry::new(entry_signature, entry);
+                res.push((timestamp, signed_entry));
+            }
+            res
+        };
+        write_tx.commit()?;
+        Ok(res)
     }
 
     type AllIterator<'a> = RangeIterator<'a>;
@@ -611,6 +629,31 @@ mod tests {
         // all
         let all: Vec<_> = wrapper.all()?.collect();
         assert_eq!(all.len(), 5);
+
+        // add a second version
+        for i in 0..5 {
+            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let entry = Entry::new(
+                id.clone(),
+                Record::from_data(format!("world-{i}-2"), namespace.id()),
+            );
+            let entry = SignedEntry::from_entry(entry, &namespace, &author);
+            wrapper.put(id, entry)?;
+        }
+
+        // delete and get
+        for i in 0..5 {
+            let id = RecordIdentifier::new(format!("hello-{i}"), namespace.id(), author.id());
+            let res = wrapper.get(&id)?;
+            assert!(res.is_some());
+            let out = wrapper.remove(&id)?;
+            assert_eq!(out.len(), 2);
+            for (_timestamp, val) in out {
+                assert_eq!(val.entry().id(), &id);
+            }
+            let res = wrapper.get(&id)?;
+            assert!(res.is_none());
+        }
 
         Ok(())
     }

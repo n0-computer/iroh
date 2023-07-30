@@ -225,7 +225,7 @@ where
         range: Range<K>,
         limit: Option<Range<K>>,
     ) -> Result<Self::RangeIterator<'_>, Self::Error>;
-    fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error>;
+    fn remove(&mut self, key: &K) -> Result<Vec<(u64, V)>, Self::Error>;
 
     type AllIterator<'a>: Iterator<Item = (K, V)>
     where
@@ -310,8 +310,11 @@ where
         Ok(SimpleRangeIterator { iter, range, limit })
     }
 
-    fn remove(&mut self, key: &K) -> Result<Option<V>, Self::Error> {
-        Ok(self.data.remove(key))
+    fn remove(&mut self, key: &K) -> Result<Vec<(u64, V)>, Self::Error> {
+        // No versions stored
+
+        let res = self.data.remove(key).into_iter().map(|v| (0, v)).collect();
+        Ok(res)
     }
 
     type AllIterator<'a> = std::collections::btree_map::IntoIter<K, V>
@@ -597,7 +600,7 @@ where
     }
 
     /// Remove the given key.
-    pub fn remove(&mut self, k: &K) -> Result<Option<V>, S::Error> {
+    pub fn remove(&mut self, k: &K) -> Result<Vec<(u64, V)>, S::Error> {
         self.store.remove(k)
     }
 
