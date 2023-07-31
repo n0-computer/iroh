@@ -143,7 +143,7 @@ impl GossipHandle {
 
     /// Quit a topic.
     ///
-    /// This sends a [`proto::Message::Disconnect`] to all active peers and then drops the state
+    /// This sends a disconnect message to all active peers and then drops the state
     /// for this topic.
     pub async fn quit(&self, topic: TopicId) -> anyhow::Result<()> {
         self.send(ToActor::Quit(topic)).await?;
