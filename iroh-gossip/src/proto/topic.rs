@@ -141,7 +141,7 @@ impl<PA> From<plumtree::Event<PA>> for Event<PA> {
 
 /// A timer to be registered for a particular topic.
 ///
-/// This should be treated an an opaque value by the implementor and, once emitted, simply returned
+/// This should be treated as an opaque value by the implementer and, once emitted, simply returned
 /// to the protocol through [`InEvent::TimerExpired`].
 #[derive(Clone, From, Debug, PartialEq, Eq)]
 pub enum Timer<PA> {
@@ -154,11 +154,14 @@ pub enum Timer<PA> {
 /// A command to the protocol state for a particular topic.
 #[derive(Clone, derive_more::Debug)]
 pub enum Command<PA> {
-    /// Join a peer for this topic
-    Join(PA),
-    /// Broadcast a message for this topic
+    /// Join this topic and connect to peers.
+    ///
+    /// If the list of peers is empty, will prepare the state and accept incoming join requests,
+    /// but only become operational after the first join request by another peer.
+    Join(Vec<PA>),
+    /// Broadcast a message for this topic.
     Broadcast(#[debug("<{}b>", _0.len())] Bytes),
-    /// Leave this topic and drop all state
+    /// Leave this topic and drop all state.
     Quit,
 }
 
@@ -224,7 +227,11 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
         // Process the event, store out events in outbox.
         match event {
             InEvent::Command(command) => match command {
-                Command::Join(peer) => self.swarm.handle(SwarmIn::RequestJoin(peer), now, io),
+                Command::Join(peers) => {
+                    for peer in peers {
+                        self.swarm.handle(SwarmIn::RequestJoin(peer), now, io);
+                    }
+                }
                 Command::Broadcast(data) => self.gossip.handle(GossipIn::Broadcast(data), io),
                 Command::Quit => self.swarm.handle(SwarmIn::Quit, now, io),
             },
@@ -287,7 +294,7 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
         &self.stats
     }
 
-    /// Get statistics for the gossip broacast state
+    /// Get statistics for the gossip broadcast state
     ///
     /// TODO: Remove/replace with metrics?
     pub fn gossip_stats(&self) -> &plumtree::Stats {
@@ -303,7 +310,7 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
 /// Statistics for the protocol state of a topic
 #[derive(Clone, Debug, Default)]
 pub struct Stats {
-    /// Number of messges sent
+    /// Number of messages sent
     pub messages_sent: usize,
     /// Number of messages received
     pub messages_received: usize,

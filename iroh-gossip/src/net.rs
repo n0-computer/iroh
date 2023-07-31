@@ -1,10 +1,13 @@
 //! Networking for the `iroh-gossip` protocol
 
-use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap, fmt, future::Future, net::SocketAddr, sync::Arc, task::Poll,
+    time::Instant,
+};
 
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use futures::stream::Stream;
+use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use rand::rngs::StdRng;
@@ -117,33 +120,39 @@ impl GossipHandle {
         }
     }
 
-    /// Join a topic
+    /// Join a topic and connect to peers.
     ///
-    /// Note that this method does only ask for [`PeerId`]s. You must supply information on how to
+    ///
+    /// This method only asks for [`PeerId`]s. You must supply information on how to
     /// connect to these peers manually before, by calling [`MagicEndpoint::add_known_addrs`] on
-    /// the underlying `[MagicEndpoint]`.
+    /// the underlying [`MagicEndpoint`].
     ///
-    /// The returned future completes immediately if we have active peer connections for this
-    /// topic, and otherwise waits for at least one peer connection to be established successfully.
-    /// Note that there is no timeout attached, so this can stall indefinitely. Usually you will
-    /// want to add a timeout yourself.
-    pub async fn join(&self, topic: TopicId, known_peers: Vec<PeerId>) -> anyhow::Result<()> {
+    /// This method returns a future that completes once the request reached the local actor.
+    /// This completion returns a [`JoinTopicFut`] which completes once at least peer was joined
+    /// successfully and the swarm thus becomes operational.
+    ///
+    /// The [`JoinTopicFut`] has no timeout, so it will remain pending indefinitely if no peer
+    /// could be contacted. Usually you will want to add a timeout yourself.
+    ///
+    /// TODO: Resolve to an error once all connection attempts failed.
+    pub async fn join(&self, topic: TopicId, peers: Vec<PeerId>) -> anyhow::Result<JoinTopicFut> {
         let (tx, rx) = oneshot::channel();
-        self.send(ToActor::Join(topic, known_peers, tx)).await?;
-        rx.await?
+        self.send(ToActor::Join(topic, peers, tx)).await?;
+        Ok(JoinTopicFut(rx))
     }
 
-    /// Quit a topic
+    /// Quit a topic.
     ///
-    /// This leaves the swarm for a topic, notifying other peers.
+    /// This sends a [`proto::Message::Disconnect`] to all active peers and then drops the state
+    /// for this topic.
     pub async fn quit(&self, topic: TopicId) -> anyhow::Result<()> {
         self.send(ToActor::Quit(topic)).await?;
         Ok(())
     }
 
-    /// Broadcast a message on a topic
+    /// Broadcast a message on a topic.
     ///
-    /// Does not join the topic automatically, so you have to call [Self::join] yourself
+    /// This does not join the topic automatically, so you have to call [Self::join] yourself
     /// for messages to be broadcast to peers.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
@@ -216,12 +225,35 @@ impl GossipHandle {
     }
 }
 
-/// Addressing information for peers
+/// Future that completes once at least one peer is joined for this topic.
+///
+/// The future has no timeout, so it will remain pending indefinitely if no peer
+/// could be contacted. Usually you will want to add a timeout yourself.
+///
+/// TODO: Optionally resolve to an error once all connection attempts failed.
+pub struct JoinTopicFut(oneshot::Receiver<anyhow::Result<()>>);
+impl Future for JoinTopicFut {
+    type Output = anyhow::Result<()>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let res = self.0.poll_unpin(cx);
+        match res {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(_err)) => Poll::Ready(Err(anyhow!("gossip actor dropped"))),
+            Poll::Ready(Ok(res)) => Poll::Ready(res),
+        }
+    }
+}
+
+/// Addressing information for peers.
 ///
 /// This struct is serialized and transmitted to peers in `Join` and `ForwardJoin` messages.
 /// It contains the information needed by `iroh-net` to connect to peers.
 ///
-/// TODO: Add `region` id
+/// TODO: Replace with type from iroh-net
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IrohInfo {
     addrs: Vec<SocketAddr>,
@@ -237,14 +269,23 @@ enum ConnOrigin {
 
 /// Input messages for the [GossipActor]
 enum ToActor {
+    /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
+    /// (happens internally in the actor).
     ConnIncoming(PeerId, ConnOrigin, quinn::Connection),
+    /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
     Join(TopicId, Vec<PeerId>, oneshot::Sender<anyhow::Result<()>>),
+    /// Leave a topic, send disconnect messages and drop all state.
     Quit(TopicId),
+    /// Broadcast a message on a topic.
     Broadcast(TopicId, Bytes, oneshot::Sender<anyhow::Result<()>>),
+    /// Subscribe to a topic. Return oneshot which resolves to a broadcast receiver for events on a
+    /// topic.
     Subscribe(
         TopicId,
         oneshot::Sender<anyhow::Result<broadcast::Receiver<Event>>>,
     ),
+    /// Subscribe to a topic. Return oneshot which resolves to a broadcast receiver for events on a
+    /// topic.
     SubscribeAll(oneshot::Sender<anyhow::Result<broadcast::Receiver<(TopicId, Event)>>>),
 }
 
@@ -282,7 +323,7 @@ struct GossipActor {
     on_endpoints_rx: watch::Receiver<Vec<iroh_net::config::Endpoint>>,
     /// Queued timers
     timers: Timers<Timer>,
-    /// Currently opened quinn conections to peers
+    /// Currently opened quinn connections to peers
     conns: HashMap<PeerId, quinn::Connection>,
     /// Channels to send outbound messages into the connection loops
     conn_send_tx: HashMap<PeerId, mpsc::Sender<ProtoMessage>>,
@@ -385,10 +426,8 @@ impl GossipActor {
                 }
             }
             ToActor::Join(topic_id, peers, reply) => {
-                for peer_id in peers.iter() {
-                    self.handle_in_event(InEvent::Command(topic_id, Command::Join(*peer_id)), now)
-                        .await?;
-                }
+                self.handle_in_event(InEvent::Command(topic_id, Command::Join(peers)), now)
+                    .await?;
                 if self.state.has_active_peers(&topic_id) {
                     // If the active_view contains at least one peer, reply now
                     reply.send(Ok(())).ok();
@@ -621,9 +660,9 @@ mod test {
         ep2.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
         ep3.add_known_addrs(pi1, derp_region, &[]).await.unwrap();
         // join the topics and wait for the connection to succeed
-        go2.join(topic, vec![pi1]).await.unwrap();
-        go3.join(topic, vec![pi1]).await.unwrap();
         go1.join(topic, vec![]).await.unwrap();
+        go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();
+        go3.join(topic, vec![pi1]).await.unwrap().await.unwrap();
 
         let len = 10;
 
