@@ -446,12 +446,14 @@ impl<PA: PeerAddress> State<PA> {
         }
     }
 
-    /// Decide whether `sender` should be grafted.
+    /// Optimize the tree by pruning the `sender` of a [`Message::Gossip`] if we previously
+    /// received a [`Message::IHave`] for the same message with a much lower number of delivery
+    /// hops from the original broadcaster of the message.
     ///
     /// See [Config::optimization_threshold].
     fn optimize_tree(
         &mut self,
-        sender: &PA,
+        gossip_sender: &PA,
         message: &Gossip,
         previous_ihaves: VecDeque<(PA, Round)>,
         io: &mut impl IO<PA>,
@@ -465,12 +467,16 @@ impl<PA: PeerAddress> State<PA> {
         if let Some((ihave_peer, ihave_round)) = best_ihave {
             if (ihave_round < round) && (round - ihave_round) >= self.config.optimization_threshold
             {
-                let message = Message::Graft(Graft {
-                    id: None,
-                    round: ihave_round,
-                });
-                io.push(OutEvent::SendMessage(ihave_peer, message));
-                io.push(OutEvent::SendMessage(*sender, Message::Prune));
+                // Graft the sender of the IHave, but only if it's not already eager.
+                if !self.eager_push_peers.contains(&ihave_peer) {
+                    let message = Message::Graft(Graft {
+                        id: None,
+                        round: ihave_round,
+                    });
+                    io.push(OutEvent::SendMessage(ihave_peer, message));
+                }
+                // Prune the sender of the Gossip.
+                io.push(OutEvent::SendMessage(*gossip_sender, Message::Prune));
             }
         }
     }
