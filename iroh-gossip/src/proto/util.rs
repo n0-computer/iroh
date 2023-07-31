@@ -16,15 +16,9 @@ use std::{
 /// This is wrapper around [indexmap::IndexSet] that limits the removal API to
 /// always do shift_remove (preserving the order of other elements) and adds a
 /// couple of utility methods to randomly select elements from the set.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone, derive_more::Deref)]
 pub(crate) struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
-}
-
-impl<T: Hash + Eq + PartialEq> Default for IndexSet<T> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<T: Hash + Eq + PartialEq> IndexSet<T> {
@@ -34,23 +28,8 @@ impl<T: Hash + Eq + PartialEq> IndexSet<T> {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
     pub fn insert(&mut self, value: T) -> bool {
         self.inner.insert(value)
-    }
-
-    pub fn contains(&self, value: &T) -> bool {
-        self.inner.contains(value)
-    }
-
-    pub fn get_index_of(&self, value: &T) -> Option<usize> {
-        self.inner.get_index_of(value)
     }
 
     /// Remove a random element from the set.
@@ -87,11 +66,6 @@ impl<T: Hash + Eq + PartialEq> IndexSet<T> {
     /// Remove an element from the set by its index.
     pub fn remove_index(&mut self, index: usize) -> Option<T> {
         self.inner.shift_remove_index(index)
-    }
-
-    /// Create an iterator over the set in the order of insertion.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.inner.iter()
     }
 
     /// Create an iterator over the set in the order of insertion, while skipping the element in
