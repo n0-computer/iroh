@@ -9,10 +9,7 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     collection::IrohCollectionParser,
-    database::{
-        flat::{self, Database, FNAME_PATHS},
-        flat2,
-    },
+    database::flat2,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };

@@ -1213,9 +1213,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn share0(self, msg: ShareRequest, progress: ShareProgressSender) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
-        let db = self.inner.db.clone();
-        // true to force download even if we have the blobs
-        let force = true;
         tracing::info!("share: {:?}", msg);
         let conn = self
             .inner
@@ -1309,7 +1306,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         const IO_PARALLELISM: usize = 4;
         let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
             .map(|source| {
-                let progress = progress.clone();
                 let import_progress = import_progress.clone();
                 let db = self.inner.db.clone();
                 async move {

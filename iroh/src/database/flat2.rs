@@ -152,6 +152,7 @@ impl CompleteEntry {
     //     })
     // }
 
+    #[allow(dead_code)]
     fn is_valid(&self) -> bool {
         !self.external.is_empty() || self.owned_data
     }
@@ -995,33 +996,6 @@ impl Database {
     fn paths_path(&self, hash: Hash) -> PathBuf {
         self.0.options.paths_path(hash)
     }
-}
-
-// hardlink or copy a file
-fn hardlink_or_copy_sync(src: &Path, dst: &Path) -> io::Result<()> {
-    if src == dst {
-        tracing::info!(
-            "skipping hardlinking {} to {}",
-            src.display(),
-            dst.display()
-        );
-        return Ok(());
-    }
-    if let Err(e) = std::fs::remove_file(dst) {
-        if e.kind() != io::ErrorKind::NotFound {
-            tracing::info!("remove failed {}", e);
-            return Err(e);
-        }
-    }
-    tracing::info!("hardlinking {} to {}", src.display(), dst.display());
-    Ok(match std::fs::hard_link(src, dst) {
-        Ok(_) => {}
-        Err(e) => {
-            tracing::info!("hard link failed {}", e);
-            tracing::info!("copying {} to {}", src.display(), dst.display());
-            std::fs::copy(src, dst)?;
-        }
-    })
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
