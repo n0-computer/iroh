@@ -55,17 +55,17 @@ type ProtoMessage = proto::Message<PeerId>;
 /// Each topic is a separate broadcast tree with separate memberships.
 ///
 /// A topic has to be joined before you can publish or subscribe on the topic.
-/// To join the swarm for a topic, you have to know the [PeerId] of at least one peer that also joined the topic.
+/// To join the swarm for a topic, you have to know the [`PeerId`] of at least one peer that also joined the topic.
 ///
 /// Messages published on the swarm will be delivered to all peers that joined the swarm for that
 /// topic. You will also be relaying (gossiping) messages published by other peers.
 ///
 /// With the default settings, the protocol will maintain up to 5 peer connections per topic.
 ///
-/// While the GossipHandle is created from a [MagicEndpoint], it does not accept connections
+/// While the GossipHandle is created from a [`MagicEndpoint`], it does not accept connections
 /// itself. You should run an accept loop on the MagicEndpoint yourself, check the ALPN protocol of incoming
-/// connections, and if the ALPN protocol equals [GOSSIP_ALPN], forward the connection to the
-/// gossip actor through [Self::handle_connection].
+/// connections, and if the ALPN protocol equals [`GOSSIP_ALPN`], forward the connection to the
+/// gossip actor through [`Self::handle_connection`].
 ///
 /// The gossip actor will, however, initiate new connections to other peers by itself.
 #[derive(Debug, Clone)]
@@ -152,7 +152,7 @@ impl Gossip {
 
     /// Broadcast a message on a topic.
     ///
-    /// This does not join the topic automatically, so you have to call [Self::join] yourself
+    /// This does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// for messages to be broadcast to peers.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
@@ -163,7 +163,7 @@ impl Gossip {
 
     /// Subscribe to messages and event notifications for a topic.
     ///
-    /// Does not join the topic automatically, so you have to call [Self::join] yourself
+    /// Does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// to actually receive messages.
     pub async fn subscribe(&self, topic: TopicId) -> anyhow::Result<broadcast::Receiver<Event>> {
         let (tx, rx) = oneshot::channel();
@@ -174,7 +174,7 @@ impl Gossip {
 
     /// Subscribe to all events published on topics that you joined.
     ///
-    /// Note that this method takes self by value. Usually you would clone the [GossipHandle]
+    /// Note that this method takes self by value. Usually you would clone the [`GossipHandle`]
     /// before.
     pub fn subscribe_all(self) -> impl Stream<Item = anyhow::Result<(TopicId, Event)>> {
         Gen::new(|co| async move {
@@ -197,7 +197,7 @@ impl Gossip {
         }
     }
 
-    /// Pass an incoming [quinn::Connection] to the gossip actor.
+    /// Pass an incoming [`quinn::Connection`] to the gossip actor.
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
     pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
@@ -267,7 +267,7 @@ enum ConnOrigin {
     Dial,
 }
 
-/// Input messages for the [GossipActor]
+/// Input messages for the [`GossipActor`]
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).

@@ -13,7 +13,7 @@ use std::{
 /// A hash set where the iteration order of the values is independent of their
 /// hash values.
 ///
-/// This is wrapper around [indexmap::IndexSet] that limits the removal API to
+/// This is wrapper around [`indexmap::IndexSet`] that limits the removal API to
 /// always do shift_remove (preserving the order of other elements) and adds a
 /// couple of utility methods to randomly select elements from the set.
 #[derive(Default, Debug, Clone, derive_more::Deref)]

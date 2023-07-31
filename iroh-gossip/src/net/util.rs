@@ -81,7 +81,7 @@ pub type DialFuture = BoxFuture<'static, (PeerId, anyhow::Result<quinn::Connecti
 
 /// Dial peers and maintain a queue of pending dials
 ///
-/// This wraps a [MagicEndpoint], connects to peers through the endpoint, stores
+/// This wraps a [`MagicEndpoint`], connects to peers through the endpoint, stores
 /// the pending connect futures and emits finished connect results.
 ///
 /// TODO: Move to iroh-net
@@ -185,9 +185,9 @@ impl<T> Timers<T> {
 
     /// Wait for the next timer to expire and return an iterator of all expired timers
     ///
-    /// If the [TimerMap] is empty, this will return a future that is pending forever.
+    /// If the [`TimerMap`] is empty, this will return a future that is pending forever.
     /// After inserting a new entry, prior futures returned from this method will not become ready.
-    /// They should be dropped after calling [Self::insert], and a new future as returned from
+    /// They should be dropped after calling [`Self::insert`], and a new future as returned from
     /// this method should be awaited instead.
     pub async fn wait_and_drain(&mut self) -> impl Iterator<Item = (Instant, T)> {
         self.reset();

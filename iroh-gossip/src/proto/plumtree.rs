@@ -77,7 +77,7 @@ pub enum Event<PA> {
 pub struct MessageId([u8; 32]);
 
 impl MessageId {
-    /// Create a `[MessageId]` by hashing the message content.
+    /// Create a `[`MessageId`]` by hashing the message content.
     ///
     /// This hashes the input with [`blake3::hash`].
     pub fn from_content(message: &[u8]) -> Self {
@@ -450,7 +450,7 @@ impl<PA: PeerAddress> State<PA> {
     /// received a [`Message::IHave`] for the same message with a much lower number of delivery
     /// hops from the original broadcaster of the message.
     ///
-    /// See [Config::optimization_threshold].
+    /// See [`Config::optimization_threshold`].
     fn optimize_tree(
         &mut self,
         gossip_sender: &PA,

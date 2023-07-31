@@ -137,7 +137,7 @@ pub enum OutEvent<PA> {
     SendMessage(PA, Message<PA>),
     /// Emit an event to the application.
     EmitEvent(TopicId, topic::Event<PA>),
-    /// Schedule a timer. The runtime is responsible for sending an [InEvent::TimerExpired]
+    /// Schedule a timer. The runtime is responsible for sending an [`InEvent::TimerExpired`]
     /// after the duration.
     ScheduleTimer(Duration, Timer<PA>),
     /// Close the connection to a peer on the network level.
