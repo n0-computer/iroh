@@ -18,3 +18,7 @@ incremental = false
 [profile.ffi]
 inherits = 'release'
 strip = "symbols"
+
+[patch.crates-io]
+# https://github.com/mullvad/system-configuration-rs/pull/42
+system-configuration = { git = "https://github.com/tmpfs/system-configuration-rs", branch = "ios-hack" }
