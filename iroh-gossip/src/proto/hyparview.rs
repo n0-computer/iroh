@@ -360,6 +360,12 @@ where
     }
 
     fn on_join(&mut self, peer: PA, data: PeerData, now: Instant, io: &mut impl IO<PA>) {
+        // If the peer is already in our active view, there's nothing to do.
+        if self.active_view.contains(&peer) {
+            // .. but we still update the peer data.
+            self.insert_peer_info((peer, data).into(), io);
+            return;
+        }
         // "A node that receives a join request will start by adding the new
         // node to its active view, even if it has to drop a random node from it. (6)"
         self.add_active(peer, data.clone(), Priority::High, now, io);
