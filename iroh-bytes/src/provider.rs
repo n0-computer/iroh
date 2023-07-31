@@ -923,7 +923,7 @@ pub type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
 pub type VfsWriter<T> = <<T as BaoDb>::Vfs as Vfs>::WriteRaw;
 
 /// The mutable part of a BaoDb
-pub trait BaoDb: BaoReadonlyDb {
+pub trait BaoDb: BaoReadonlyDb + BaoMapMut {
     /// The Vfs type to use
     type Vfs: Vfs;
     /// The Vfs of this database

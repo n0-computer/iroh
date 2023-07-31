@@ -9,11 +9,14 @@ use std::sync::RwLock;
 
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderMemOutboard;
+use bao_tree::io::outboard::PreOrderOutboard;
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::future::{self, BoxFuture};
 use futures::FutureExt;
 use iroh_bytes::provider::BaoDb;
+use iroh_bytes::provider::BaoMapEntryMut;
+use iroh_bytes::provider::BaoMapMut;
 use iroh_bytes::provider::Purpose;
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::Vfs;
@@ -372,6 +375,80 @@ impl BaoReadonlyDb for MutableDatabase {
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
+        todo!()
+    }
+}
+
+impl BaoMapEntryMut<Database> for DbEntry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+        todo!()
+    }
+
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+        todo!()
+    }
+}
+
+impl BaoMapEntry<MutableDatabase> for DbEntry {
+    fn hash(&self) -> blake3::Hash {
+        todo!()
+    }
+
+    fn size(&self) -> u64 {
+        todo!()
+    }
+
+    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
+        todo!()
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<<MutableDatabase as BaoMap>::Outboard>> {
+        todo!()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<<MutableDatabase as BaoMap>::DataReader>> {
+        todo!()
+    }
+}
+
+impl BaoMapEntryMut<MutableDatabase> for DbEntry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+        todo!()
+    }
+
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+        todo!()
+    }
+}
+
+impl BaoMapMut for MutableDatabase {
+    type OutboardMut = PreOrderOutboard<BytesMut>;
+
+    type DataWriter = BytesMut;
+
+    type TempEntry = DbEntry;
+
+    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry {
+        todo!()
+    }
+
+    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, anyhow::Result<()>> {
+        todo!()
+    }
+}
+
+impl BaoMapMut for Database {
+    type OutboardMut = PreOrderOutboard<BytesMut>;
+
+    type DataWriter = BytesMut;
+
+    type TempEntry = DbEntry;
+
+    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry {
+        todo!()
+    }
+
+    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, anyhow::Result<()>> {
         todo!()
     }
 }
