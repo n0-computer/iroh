@@ -1,6 +1,7 @@
 # export RUSTFLAGS="-C embed-bitcode=yes"
 # export CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="/usr/bin/clang"
 # export LIBRARY_PATH="//usr/lib"
+set -eu
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="$HOME/.cargo/bin:$PATH"
 

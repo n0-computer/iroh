@@ -9,7 +9,8 @@ fn main() {
     // macOS or iOS
     let libs_priv = if target_triple.contains("apple") || target_triple.contains("darwin") {
         // TODO: verify all these are needed
-        "-framework SystemConfiguration -framework Security -framework Foundation"
+        // "-framework SystemConfiguration -framework Security -framework Foundation"
+        "-framework SystemConfiguration"
     } else {
         ""
     };
