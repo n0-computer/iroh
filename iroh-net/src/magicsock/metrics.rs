@@ -32,6 +32,8 @@ pub struct Metrics {
     pub recv_data_derp: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
+    /// Number of QUIC datagrams received.
+    pub recv_datagrams: Counter,
 
     // Disco packets
     pub send_disco_udp: Counter,
@@ -85,6 +87,7 @@ impl Default for Metrics {
             recv_data_derp: Counter::new("recv_data_derp"),
             recv_data_ipv4: Counter::new("recv_data_ipv4"),
             recv_data_ipv6: Counter::new("recv_data_ipv6"),
+            recv_datagrams: Counter::new("recv_datagrams"),
 
             // Disco packets
             send_disco_udp: Counter::new("disco_send_udp"),

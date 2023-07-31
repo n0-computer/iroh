@@ -26,11 +26,12 @@ use iroh_net::{
     },
     key, stun,
 };
+
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -81,14 +82,17 @@ impl CertMode {
                 let config = config.with_cert_resolver(state.resolver());
                 let acceptor = state.acceptor();
 
-                tokio::spawn(async move {
-                    loop {
-                        match state.next().await.unwrap() {
-                            Ok(ok) => debug!("acme event: {:?}", ok),
-                            Err(err) => error!("error: {:?}", err),
+                tokio::spawn(
+                    async move {
+                        loop {
+                            match state.next().await.unwrap() {
+                                Ok(ok) => debug!("acme event: {:?}", ok),
+                                Err(err) => error!("error: {:?}", err),
+                            }
                         }
                     }
-                });
+                    .instrument(info_span!("acme")),
+                );
 
                 Ok((Arc::new(config), TlsAcceptor::LetsEncrypt(acceptor)))
             }
@@ -184,6 +188,9 @@ struct Config {
     limits: Option<Limits>,
     /// Mesh network configuration
     mesh: Option<MeshConfig>,
+    #[cfg(feature = "metrics")]
+    /// Metrics serve address. If not set, metrics are not served.
+    metrics_addr: Option<SocketAddr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -242,6 +249,8 @@ impl Default for Config {
             tls: None,
             limits: None,
             mesh: None,
+            #[cfg(feature = "metrics")]
+            metrics_addr: None,
         }
     }
 }
@@ -295,6 +304,30 @@ impl Config {
     }
 }
 
+#[cfg(feature = "metrics")]
+pub fn init_metrics_collection(
+    metrics_addr: Option<SocketAddr>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    use iroh_metrics::core::Metric;
+
+    let rt = tokio::runtime::Handle::current();
+
+    // doesn't start the server if the address is None
+    if let Some(metrics_addr) = metrics_addr {
+        iroh_metrics::core::Core::init(|reg, metrics| {
+            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+        });
+
+        return Some(rt.spawn(async move {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
+        }));
+    }
+    tracing::info!("Metrics server not started, no address provided");
+    None
+}
+
 /// Only used when in `dev` mode & the given port is `443`
 const DEV_PORT: u16 = 3340;
 /// Only used when tls is enabled & a captive protal port is not given
@@ -309,7 +342,18 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let cfg = Config::load(&cli).await?;
-    run(cli.dev, cfg, None).await
+
+    #[cfg(feature = "metrics")]
+    let metrics_fut = init_metrics_collection(cfg.metrics_addr);
+
+    let r = run(cli.dev, cfg, None).await;
+
+    #[cfg(feature = "metrics")]
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
+        drop(metrics_fut);
+    }
+    r
 }
 
 async fn run(
@@ -476,38 +520,44 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
     let http_addr = http_listener.local_addr()?;
     info!("[CaptivePortalService]: serving on {}", http_addr);
 
-    let task = tokio::spawn(async move {
-        loop {
-            match http_listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    debug!(
-                        "[CaptivePortalService] Connection opened from {}",
-                        peer_addr
-                    );
-                    let handler = CaptivePortalService;
+    let task = tokio::spawn(
+        async move {
+            loop {
+                match http_listener.accept().await {
+                    Ok((stream, peer_addr)) => {
+                        debug!(
+                            "[CaptivePortalService] Connection opened from {}",
+                            peer_addr
+                        );
+                        let handler = CaptivePortalService;
 
-                    tokio::task::spawn(async move {
-                        if let Err(err) = Http::new()
-                            .serve_connection(derp::MaybeTlsStreamServer::Plain(stream), handler)
-                            .with_upgrades()
-                            .await
-                        {
-                            error!(
-                                "[CaptivePortalService] Failed to serve connection: {:?}",
-                                err
-                            );
-                        }
-                    });
-                }
-                Err(err) => {
-                    error!(
-                        "[CaptivePortalService] failed to accept connection: {:#?}",
-                        err
-                    );
+                        tokio::task::spawn(async move {
+                            if let Err(err) = Http::new()
+                                .serve_connection(
+                                    derp::MaybeTlsStreamServer::Plain(stream),
+                                    handler,
+                                )
+                                .with_upgrades()
+                                .await
+                            {
+                                error!(
+                                    "[CaptivePortalService] Failed to serve connection: {:?}",
+                                    err
+                                );
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(
+                            "[CaptivePortalService] failed to accept connection: {:#?}",
+                            err
+                        );
+                    }
                 }
             }
         }
-    });
+        .instrument(info_span!("captive-portal.service")),
+    );
     Ok(task)
 }
 

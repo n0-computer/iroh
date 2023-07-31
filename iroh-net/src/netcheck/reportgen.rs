@@ -30,7 +30,9 @@ use rand::seq::IteratorRandom;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
-use tracing::{debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{
+    debug, debug_span, error, info, info_span, instrument, trace, warn, Instrument, Span,
+};
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
@@ -258,6 +260,7 @@ impl Actor {
 
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
+                    info!(report=?pm, "Portmapper probe report");
                     self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
@@ -421,16 +424,19 @@ impl Actor {
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
-            tokio::spawn(async move {
-                time::sleep(timeout).await;
-                // Because we do this after a timeout it is entirely normal that the actor
-                // is no longer there by the time we send this message.
-                reportcheck
-                    .send(Message::AbortProbes)
-                    .await
-                    .map_err(|err| trace!("Failed to abort all probes: {err:#}"))
-                    .ok();
-            });
+            tokio::spawn(
+                async move {
+                    time::sleep(timeout).await;
+                    // Because we do this after a timeout it is entirely normal that the actor
+                    // is no longer there by the time we send this message.
+                    reportcheck
+                        .send(Message::AbortProbes)
+                        .await
+                        .map_err(|err| trace!("Failed to abort all probes: {err:#}"))
+                        .ok();
+                }
+                .instrument(Span::current()),
+            );
         }
 
         if let Some(ipp) = ipp {
@@ -716,7 +722,7 @@ async fn run_probe(
     pinger: Option<Pinger>,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
-        debug!("delaying probe");
+        trace!("delaying probe");
         tokio::time::sleep(probe.delay()).await;
     }
     debug!("starting probe");

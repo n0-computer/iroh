@@ -10,7 +10,7 @@ pub use opcode_data::*;
 pub use request::*;
 pub use response::*;
 
-// PCP and NAT-PMP share same ports, reasigned by IANA from the older version to the new one. See
+// PCP and NAT-PMP share same ports, reassigned by IANA from the older version to the new one. See
 // <https://datatracker.ietf.org/doc/html/rfc6887#section-19>
 
 /// Port to use when acting as a server. This is the one we direct requests to.
@@ -37,4 +37,10 @@ pub enum Opcode {
     ///
     /// See [RFC 6887 ANNOUNCE Opcode](https://datatracker.ietf.org/doc/html/rfc6887#section-14.1)
     Announce = 0,
+    /// Map Opcode,
+    ///
+    /// Used to deal with endpoint-idependent mappings.
+    ///
+    /// See [RFC 6887 MAP Opcode](https://datatracker.ietf.org/doc/html/rfc6887#section-11)
+    Map = 1,
 }

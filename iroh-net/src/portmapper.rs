@@ -15,10 +15,12 @@ use iroh_metrics::inc;
 
 use crate::{net::interfaces::HomeRouter, util};
 
-use mapping::CurrentMapping;
+use current_mapping::CurrentMapping;
 
+mod current_mapping;
 mod mapping;
 mod metrics;
+mod nat_pmp;
 mod pcp;
 mod upnp;
 
@@ -31,22 +33,26 @@ const AVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(60 * 10); // 1
 /// Capacity of the channel to communicate with the long-running service.
 const SERVICE_CHANNEL_CAPACITY: usize = 32; // should be plenty
 
+/// If a port mapping service has not been seen within the last [`UNAVAILABILITY_TRUST_DURATION`]
+/// we allow trying a mapping using said protocol.
+const UNAVAILABILITY_TRUST_DURATION: Duration = Duration::from_secs(5);
+
 /// Output of a port mapping probe.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-#[display("portmap={{ UPnP: {upnp}, PMP: {pmp}, PCP: {pcp} }}")]
+#[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
 pub struct ProbeOutput {
     /// If UPnP can be considered available.
     pub upnp: bool,
     /// If PCP can be considered available.
     pub pcp: bool,
     /// If PMP can be considered available.
-    pub pmp: bool,
+    pub nat_pmp: bool,
 }
 
 impl ProbeOutput {
     /// Indicates if all port mapping protocols are available.
     pub fn all_available(&self) -> bool {
-        self.upnp && self.pcp && self.pmp
+        self.upnp && self.pcp && self.nat_pmp
     }
 }
 
@@ -201,14 +207,27 @@ impl Client {
 }
 
 /// Port mapping protocol information obtained during a probe.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Probe {
+    /// When was the probe last updated.
+    last_probe: Instant,
     /// The last [`igd::aio::Gateway`] and when was it last seen.
     last_upnp_gateway_addr: Option<(upnp::Gateway, Instant)>,
     /// Last time PCP was seen.
     last_pcp: Option<Instant>,
-    // TODO(@divma): PMP placeholder.
-    last_pmp: Option<Instant>,
+    /// Last time NAT-PMP was seen.
+    last_nat_pmp: Option<Instant>,
+}
+
+impl Default for Probe {
+    fn default() -> Self {
+        Self {
+            last_probe: Instant::now() - AVAILABILITY_TRUST_DURATION,
+            last_upnp_gateway_addr: None,
+            last_pcp: None,
+            last_nat_pmp: None,
+        }
+    }
 }
 
 impl Probe {
@@ -219,11 +238,11 @@ impl Probe {
         local_ip: Ipv4Addr,
         gateway: Ipv4Addr,
     ) -> Probe {
-        let ProbeOutput { upnp, pcp, pmp: _ } = output;
+        let ProbeOutput { upnp, pcp, nat_pmp } = output;
         let Config {
             enable_upnp,
             enable_pcp,
-            enable_nat_pmp: _,
+            enable_nat_pmp,
         } = config;
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (enable_upnp && !upnp).then(|| {
@@ -246,7 +265,15 @@ impl Probe {
             }),
         };
 
-        let pmp_probing_task = async { None };
+        let mut nat_pmp_probing_task = util::MaybeFuture {
+            inner: (enable_nat_pmp && !nat_pmp).then(|| {
+                Box::pin(async {
+                    nat_pmp::probe_available(local_ip, gateway)
+                        .await
+                        .then(Instant::now)
+                })
+            }),
+        };
 
         if upnp_probing_task.inner.is_some() {
             inc!(Metrics, upnp_probes);
@@ -254,23 +281,21 @@ impl Probe {
 
         let mut upnp_done = upnp_probing_task.inner.is_none();
         let mut pcp_done = pcp_probing_task.inner.is_none();
-        let mut pmp_done = true;
-
-        tokio::pin!(pmp_probing_task);
+        let mut nat_pmp_done = nat_pmp_probing_task.inner.is_none();
 
         let mut probe = Probe::default();
 
-        while !upnp_done || !pcp_done || !pmp_done {
+        while !upnp_done || !pcp_done || !nat_pmp_done {
             tokio::select! {
                 last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
                     trace!("tick: upnp probe ready");
                     probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
                     upnp_done = true;
                 },
-                last_pmp = &mut pmp_probing_task, if !pmp_done => {
-                    trace!("tick: pmp probe ready");
-                    probe.last_pmp = last_pmp;
-                    pmp_done = true;
+                last_nat_pmp = &mut nat_pmp_probing_task, if !nat_pmp_done => {
+                    trace!("tick: nat_pmp probe ready");
+                    probe.last_nat_pmp = last_nat_pmp;
+                    nat_pmp_done = true;
                 },
                 last_pcp = &mut pcp_probing_task, if !pcp_done => {
                     trace!("tick: pcp probe ready");
@@ -300,18 +325,22 @@ impl Probe {
             .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
             .unwrap_or_default();
 
-        // not probing for now
-        let pmp = false;
+        let nat_pmp = self
+            .last_nat_pmp
+            .as_ref()
+            .map(|last_probed| *last_probed + AVAILABILITY_TRUST_DURATION > now)
+            .unwrap_or_default();
 
-        ProbeOutput { upnp, pcp, pmp }
+        ProbeOutput { upnp, pcp, nat_pmp }
     }
 
-    /// Updates a probe with the `Some` values of another probe.
+    /// Updates a probe with the `Some` values of another probe that is _assumed_ newer.
     fn update(&mut self, probe: Probe) {
         let Probe {
+            last_probe,
             last_upnp_gateway_addr,
             last_pcp,
-            last_pmp,
+            last_nat_pmp,
         } = probe;
         if last_upnp_gateway_addr.is_some() {
             inc!(Metrics, upnp_available);
@@ -340,9 +369,11 @@ impl Probe {
             inc!(Metrics, pcp_available);
             self.last_pcp = last_pcp;
         }
-        if last_pmp.is_some() {
-            self.last_pmp = last_pmp;
+        if last_nat_pmp.is_some() {
+            self.last_nat_pmp = last_nat_pmp;
         }
+
+        self.last_probe = last_probe;
     }
 }
 
@@ -367,7 +398,7 @@ pub struct Service {
     ///
     /// This task will be cancelled if a request to set the local port arrives before it's
     /// finished.
-    mapping_task: Option<util::AbortingJoinHandle<Result<upnp::Mapping>>>,
+    mapping_task: Option<util::AbortingJoinHandle<Result<mapping::Mapping>>>,
     /// Task probing the necessary protocols.
     ///
     /// Requests for a probe that arrive while this task is still in progress will receive the same
@@ -444,8 +475,8 @@ impl Service {
                 Some(event) = self.current_mapping.next() => {
                     trace!("tick: mapping event {event:?}");
                     match event {
-                        mapping::Event::Renew { external_port } | mapping::Event::Expired { external_port } => {
-                            self.get_mapping(Some(external_port));
+                        current_mapping::Event::Renew { external_ip, external_port } | current_mapping::Event::Expired { external_ip, external_port } => {
+                            self.get_mapping(Some((external_ip, external_port)));
                         },
                     }
 
@@ -468,7 +499,7 @@ impl Service {
                 // still assumes the current mapping is valid/active and will return it even after
                 // this
                 let output = self.full_probe.output();
-                debug!("probe output {output}");
+                trace!(?output, "probe output");
                 Ok(output)
             }
         };
@@ -478,7 +509,7 @@ impl Service {
         }
     }
 
-    async fn on_mapping_result(&mut self, result: Result<upnp::Mapping>) {
+    async fn on_mapping_result(&mut self, result: Result<mapping::Mapping>) {
         match result {
             Ok(mapping) => {
                 self.current_mapping.update(Some(mapping));
@@ -524,51 +555,61 @@ impl Service {
             }
 
             // get the current external port if any to try to get it again
-            let port = self.current_mapping.external().map(|(_addr, port)| port);
+            let external_addr = self.current_mapping.external();
 
             // since the port has changed, the current mapping is no longer valid and should be
             // released
 
-            if port.is_some() {
+            if external_addr.is_some() {
                 self.invalidate_mapping().await;
             }
 
             // start a new mapping task to account for the new port if necessary
-            self.get_mapping(port)
+            self.get_mapping(external_addr);
         } else if self.current_mapping.external().is_none() {
             // if the local port has not changed, but there is no active mapping try to get one
             self.get_mapping(None)
         }
     }
 
-    fn get_mapping(&mut self, external_port: Option<NonZeroU16>) {
+    fn get_mapping(&mut self, external_addr: Option<(Ipv4Addr, NonZeroU16)>) {
         if let Some(local_port) = self.local_port {
             inc!(Metrics, mapping_attempts);
-            let local_ip = match default_net::interface::get_local_ipaddr() {
-                Some(std::net::IpAddr::V4(ip))
-                    if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() =>
-                {
-                    ip
-                }
-                _ => {
-                    debug!("no address suitable for portmapping found, attempting localhost");
-                    std::net::Ipv4Addr::LOCALHOST
-                }
+
+            let (local_ip, gateway) = match ip_and_gateway() {
+                Ok(ip_and_gw) => ip_and_gw,
+                Err(e) => return debug!("can't get mapping: {e}"),
             };
 
-            debug!("getting a port mapping for {local_ip}:{local_port} -> {external_port:?}");
-            let gateway = self
-                .full_probe
-                .last_upnp_gateway_addr
-                .as_ref()
-                .map(|(gateway, _last_seen)| gateway.clone());
-            self.mapping_task = Some(
-                tokio::spawn(
-                    upnp::Mapping::new(local_ip, local_port, gateway, external_port)
-                        .instrument(info_span!("portmapper.mapping")),
-                )
-                .into(),
-            );
+            let ProbeOutput { upnp, pcp, nat_pmp } = self.full_probe.output();
+
+            debug!("getting a port mapping for {local_ip}:{local_port} -> {external_addr:?}");
+            let recently_probed =
+                self.full_probe.last_probe + UNAVAILABILITY_TRUST_DURATION > Instant::now();
+            // strategy:
+            // 1. check the available services and prefer pcp, then nat_pmp then upnp since it's
+            //    the most unreliable, but possibly the most deployed one
+            // 2. if no service was available, fallback to upnp if enabled
+            self.mapping_task = if pcp || (!recently_probed && self.config.enable_pcp) {
+                let task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
+                Some(tokio::spawn(task.instrument(info_span!("pcp"))).into())
+            } else if nat_pmp || (!recently_probed && self.config.enable_nat_pmp) {
+                let task =
+                    mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
+                Some(tokio::spawn(task.instrument(info_span!("pmp"))).into())
+            } else if upnp || self.config.enable_upnp {
+                let external_port = external_addr.map(|(_addr, port)| port);
+                let gateway = self
+                    .full_probe
+                    .last_upnp_gateway_addr
+                    .as_ref()
+                    .map(|(gateway, _last_seen)| gateway.clone());
+                let task = mapping::Mapping::new_upnp(local_ip, local_port, gateway, external_port);
+                Some(tokio::spawn(task.instrument(info_span!("upnp"))).into())
+            } else {
+                // give up
+                return;
+            }
         }
     }
 

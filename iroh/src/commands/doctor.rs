@@ -122,9 +122,14 @@ pub enum Commands {
         /// Whether to enable PCP.
         #[clap(long)]
         enable_pcp: bool,
+        /// Whether to enable NAT-PMP.
+        #[clap(long)]
+        enable_nat_pmp: bool,
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
+        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
+        protocol: String,
         /// Local port to get a mapping.
         local_port: NonZeroU16,
         /// How long to wait for an external port to be ready in seconds.
@@ -606,8 +611,23 @@ async fn accept(
     Ok(())
 }
 
-async fn port_map(local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    let port_mapper = portmapper::Client::default().await;
+async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
+    // create the config that enables exlusively the required protocol
+    let mut enable_upnp = false;
+    let mut enable_pcp = false;
+    let mut enable_nat_pmp = false;
+    match protocol.to_ascii_lowercase().as_ref() {
+        "upnp" => enable_upnp = true,
+        "nat_pmp" => enable_nat_pmp = true,
+        "pcp" => enable_pcp = true,
+        other => anyhow::bail!("Unknown port mapping protocol {other}"),
+    }
+    let config = portmapper::Config {
+        enable_upnp,
+        enable_pcp,
+        enable_nat_pmp,
+    };
+    let port_mapper = portmapper::Client::new(config).await;
     let mut watcher = port_mapper.watch_external_address();
     port_mapper.update_local_port(local_port);
 
@@ -812,17 +832,19 @@ pub async fn run(command: Commands, config: &Config) -> anyhow::Result<()> {
             accept(private_key, config, derp_map).await
         }
         Commands::PortMap {
+            protocol,
             local_port,
             timeout_secs,
-        } => port_map(local_port, Duration::from_secs(timeout_secs)).await,
+        } => port_map(&protocol, local_port, Duration::from_secs(timeout_secs)).await,
         Commands::PortMapProbe {
             enable_upnp,
             enable_pcp,
+            enable_nat_pmp,
         } => {
             let config = portmapper::Config {
                 enable_upnp,
                 enable_pcp,
-                enable_nat_pmp: false,
+                enable_nat_pmp,
             };
 
             port_map_probe(config).await

@@ -8,6 +8,7 @@ use futures::future::join_all;
 use tokio::sync::mpsc;
 
 use iroh_metrics::inc;
+use tracing::{Instrument, Span};
 
 use super::{
     client_conn::ClientConnManager,
@@ -55,10 +56,13 @@ impl Client {
     }
 
     pub fn shutdown(self) {
-        tokio::spawn(async move {
-            self.conn.shutdown().await;
-            // notify peers of disconnect?
-        });
+        tokio::spawn(
+            async move {
+                self.conn.shutdown().await;
+                // notify peers of disconnect?
+            }
+            .instrument(Span::current()),
+        );
     }
 
     pub async fn shutdown_await(self) {
@@ -159,7 +163,9 @@ impl Clients {
     pub async fn shutdown(&mut self) {
         let mut handles = Vec::new();
         for (_, client) in self.inner.drain() {
-            handles.push(tokio::spawn(async move { client.shutdown_await().await }));
+            handles.push(tokio::spawn(
+                async move { client.shutdown_await().await }.instrument(Span::current()),
+            ));
         }
         join_all(handles).await;
     }
