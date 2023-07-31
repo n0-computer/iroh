@@ -78,16 +78,17 @@ pub enum Message<PA> {
     /// A shuffle request is sent occasionally to re-shuffle the PassiveView with contacts from
     /// other peers.
     Shuffle(Shuffle<PA>),
-    /// Peers reply to Shuffle requests with a random subset of their PassiveView.
+    /// Peers reply to [`Message::Shuffle`] requests with a random peers from their active and
+    /// passive views.
     ShuffleReply(ShuffleReply<PA>),
-    /// Request to add sender to an active view of recipient. If `highPriority` is set, it cannot
-    /// be denied.
+    /// Request to add sender to an active view of recipient. If [`Neighbor::priority`] is
+    /// [`Priority::High`], the request cannot be denied.
     Neighbor(Neighbor),
     /// Request to disconnect from a peer.
-    /// If `alive` is true, the other peer is not shutting down, so it should be added to the
-    /// passive set.
-    /// If `respond` is true, the peer should answer the disconnect request before shutting down
-    /// the connection.
+    /// If [`Disconnect::alive`] is true, the other peer is not shutting down, so it should be
+    /// added to the passive set.
+    /// If [`Disconnect::respond`] is true, the peer should answer the disconnect request
+    /// before shutting down the connection.
     Disconnect(Disconnect),
 }
 
@@ -117,7 +118,7 @@ pub struct ForwardJoin<PA> {
     ttl: Ttl,
 }
 
-/// Shuffle messages are send occasionally to shuffle our passive view with peers from other peer's
+/// Shuffle messages are sent occasionally to shuffle our passive view with peers from other peer's
 /// active and passive views.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Shuffle<PA> {
@@ -184,7 +185,7 @@ pub struct Config {
     /// is added to a peer's active view.
     pub active_random_walk_length: Ttl,
     /// Number of hops a `ForwardJoin` message is propagated until the new peer's info
-    /// is added to a peer'passive active view.
+    /// is added to a peer's passive view.
     pub passive_random_walk_length: Ttl,
     /// Number of hops a `Shuffle` message is propagated until a peer replies to it.
     pub shuffle_random_walk_length: Ttl,
@@ -413,9 +414,7 @@ where
                 .pick_random_without(&[&sender], &mut self.rng)
             {
                 None => {
-                    // TODO: I think this is unreachable!() but will have to check, maybe decrease
-                    // to warn
-                    unreachable!("no peers in active view but also did not add this node on forward join, this should not happen");
+                    unreachable!("if the peer was not added, there are at least two peers in our active view.");
                 }
                 Some(next) => {
                     let message = Message::ForwardJoin(ForwardJoin {
@@ -637,7 +636,10 @@ where
             }
             io.push(OutEvent::DisconnectPeer(peer));
             io.push(OutEvent::EmitEvent(Event::NeighborDown(peer)));
-            let data = self.peer_data.remove(&peer).unwrap();
+            let data = self
+                .peer_data
+                .remove(&peer)
+                .expect("peer data for peer in active view is known");
             self.add_passive(peer, data, io);
             debug!(peer = ?self.me, other = ?peer, "removed from active view, reason: {reason:?}");
             Some(peer)
