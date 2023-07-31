@@ -480,7 +480,7 @@ where
             }
             let nodes = self
                 .passive_view
-                .shuffled_max(len, &mut self.rng)
+                .shuffled_and_capped(len, &mut self.rng)
                 .into_iter()
                 .map(|id| self.peer_info(&id).unwrap());
             let message = Message::ShuffleReply(ShuffleReply {
@@ -520,12 +520,12 @@ where
 
     fn handle_shuffle_timer(&mut self, io: &mut impl IO<PA>) {
         if let Some(node) = self.active_view.pick_random(&mut self.rng) {
-            let active = self.active_view.shuffled_without_max(
+            let active = self.active_view.shuffled_without_and_capped(
                 &[node],
                 self.config.shuffle_active_view_count,
                 &mut self.rng,
             );
-            let passive = self.passive_view.shuffled_without_max(
+            let passive = self.passive_view.shuffled_without_and_capped(
                 &[node],
                 self.config.shuffle_passive_view_count,
                 &mut self.rng,

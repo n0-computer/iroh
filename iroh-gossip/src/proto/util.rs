@@ -114,7 +114,7 @@ where
 
     /// Create a vector of all elements in the set in random order, and shorten to
     /// the first `len` elements after shuffling.
-    pub fn shuffled_max<R: Rng + ?Sized>(&self, len: usize, rng: &mut R) -> Vec<T> {
+    pub fn shuffled_and_capped<R: Rng + ?Sized>(&self, len: usize, rng: &mut R) -> Vec<T> {
         let mut items = self.shuffled(rng);
         items.truncate(len);
         items
@@ -135,7 +135,7 @@ where
 
     /// Create a vector of the elements in the set in random order while omitting
     /// the elements in `without`, and shorten to the first `len` elements.
-    pub fn shuffled_without_max<R: Rng + ?Sized>(
+    pub fn shuffled_without_and_capped<R: Rng + ?Sized>(
         &self,
         without: &[&T],
         len: usize,
