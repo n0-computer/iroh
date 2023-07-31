@@ -12,7 +12,8 @@ use futures::future::Either;
 use futures::future::{self, BoxFuture};
 use futures::{Future, FutureExt};
 use iroh_bytes::provider::{
-    BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, ImportProgress, Purpose, Vfs,
+    BaoDb, BaoMap, BaoMapEntry, BaoMapEntryMut, BaoMapMut, BaoReadonlyDb, ImportProgress, Purpose,
+    Vfs,
 };
 use iroh_bytes::provider::{ValidateProgress, VfsId};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
@@ -22,9 +23,6 @@ use rand::Rng;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 use tracing::trace_span;
-
-/// File name inside `IROH_DATA_DIR` where paths to data are stored.
-pub const FNAME_PATHS: &str = "paths.bin";
 
 impl Vfs for Database {
     type Id = std::path::PathBuf;
@@ -86,10 +84,16 @@ impl Vfs for Database {
 
 #[derive(Debug, Default)]
 struct State {
+    // complete entries
     complete: BTreeMap<Hash, CompleteEntry>,
-    outboard: BTreeMap<Hash, Bytes>,
-    data: BTreeMap<Hash, Bytes>,
+    // partial entries
     partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
+    // partial entries
+    partial2: BTreeMap<Hash, PartialEntry>,
+    // outboard data, cached for all complete entries
+    outboard: BTreeMap<Hash, Bytes>,
+    // data, cached for all complete entries that are small enough
+    data: BTreeMap<Hash, Bytes>,
 }
 
 #[derive(Debug, Default)]
@@ -168,6 +172,124 @@ impl CompleteEntry {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct PartialEntry {
+    // size of the data
+    #[allow(dead_code)]
+    size: u64,
+    // unique id for this entry
+    uuid: [u8; 16],
+}
+
+impl PartialEntry {
+    fn new(size: u64, uuid: [u8; 16]) -> Self {
+        Self { size, uuid }
+    }
+}
+
+impl BaoMapEntryMut<Database> for DbPair {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+        let hash = self.hash;
+        let size = self.entry.size();
+        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let outboard = self.entry.outboard.clone();
+        async move {
+            if let Either::Right(path) = outboard {
+                let writer = iroh_io::File::create(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(path.clone())
+                })
+                .await?;
+                Ok(PreOrderOutboard {
+                    root: hash,
+                    tree,
+                    data: writer,
+                })
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "cannot write to in-memory outboard",
+                ))
+            }
+        }
+        .boxed()
+    }
+
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+        let data = self.entry.data.clone();
+        async move {
+            if let Either::Right((path, _)) = data {
+                let writer = iroh_io::File::create(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(path.clone())
+                })
+                .await?;
+                Ok(writer)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "cannot write to in-memory data",
+                ))
+            }
+        }
+        .boxed()
+    }
+}
+
+impl BaoMapMut for Database {
+    type OutboardMut = PreOrderOutboard<File>;
+
+    type DataWriter = iroh_io::File;
+
+    type TempEntry = DbPair;
+
+    fn create_temp_entry(&self, hash: Hash, size: u64) -> DbPair {
+        let mut state = self.0.state.write().unwrap();
+        let entry = state.partial2.entry(hash).or_insert_with(|| {
+            let uuid = rand::thread_rng().gen::<[u8; 16]>();
+            PartialEntry::new(size, uuid)
+        });
+        let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
+        let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
+        DbPair {
+            hash: blake3::Hash::from(hash),
+            entry: DbEntry {
+                data: Either::Right((data_path, size)),
+                outboard: Either::Right(outboard_path),
+            },
+        }
+    }
+
+    fn insert_temp_entry(&self, entry: DbPair) -> BoxFuture<'_, anyhow::Result<()>> {
+        let hash = entry.hash.into();
+        let Either::Right((temp_data_path, size)) = entry.entry.data else {
+            todo!()
+        };
+        let Either::Right(temp_outboard_path) = entry.entry.outboard else {
+            todo!()
+        };
+        let data_path = self.0.options.owned_data_path(&hash);
+        async move {
+            // for a short time we will have neither partial nor complete
+            self.0.state.write().unwrap().partial2.remove(&hash);
+            tokio::fs::rename(temp_data_path, &data_path).await?;
+            if tokio::fs::try_exists(&temp_outboard_path).await? {
+                let outboard_path = self.0.options.owned_outboard_path(&hash);
+                tokio::fs::rename(temp_outboard_path, &outboard_path).await?;
+            }
+            let mut state = self.0.state.write().unwrap();
+            let entry = state.complete.entry(hash).or_default();
+            entry.union_with(CompleteEntry::new_default(size))?;
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
 #[derive(Debug)]
 struct Options {
     complete_path: PathBuf,
@@ -177,6 +299,16 @@ struct Options {
 }
 
 impl Options {
+    fn partial_data_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.partial_path
+            .join(Purpose::PartialData(hash, *uuid).to_string())
+    }
+
+    fn partial_outboard_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.partial_path
+            .join(Purpose::PartialOutboard(hash, *uuid).to_string())
+    }
+
     fn owned_data_path(&self, hash: &Hash) -> PathBuf {
         self.complete_path.join(Purpose::Data(*hash).to_string())
     }
@@ -251,21 +383,21 @@ impl BaoMapEntry<Database> for DbPair {
 #[derive(Debug, Clone)]
 pub struct DbEntry {
     /// The bao outboard data.
-    outboard: Either<Bytes, (PathBuf, u64)>,
-    /// The
+    outboard: Either<Bytes, PathBuf>,
+    /// The data itself.
     data: Either<Bytes, (PathBuf, u64)>,
 }
 
 /// A reader for either a file or a byte slice.
 #[derive(Debug)]
-pub enum MemOrFile {
+pub enum MemOrFile<M = Bytes> {
     /// We got it all in memory
-    Mem(Bytes),
+    Mem(M),
     /// An iroh_io::File
     File(File),
 }
 
-impl AsyncSliceReader for MemOrFile {
+impl AsyncSliceReader for MemOrFile<Bytes> {
     type ReadAtFuture<'a> = futures::future::Either<
         <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
         <File as AsyncSliceReader>::ReadAtFuture<'a>,
@@ -296,9 +428,9 @@ impl DbEntry {
     pub fn outboard_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
         let outboard = self.outboard.clone();
         async move {
-            Ok(match &outboard {
-                Either::Left(mem) => MemOrFile::Mem(mem.clone()),
-                Either::Right((path, _)) => MemOrFile::File(File::open(path.clone()).await?),
+            Ok(match outboard {
+                Either::Left(mem) => MemOrFile::Mem(mem),
+                Either::Right(path) => MemOrFile::File(File::open(path).await?),
             })
         }
     }
@@ -307,9 +439,9 @@ impl DbEntry {
     pub fn data_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
         let data = self.data.clone();
         async move {
-            Ok(match &data {
-                Either::Left(mem) => MemOrFile::Mem(mem.clone()),
-                Either::Right((path, _)) => MemOrFile::File(File::open(path.clone()).await?),
+            Ok(match data {
+                Either::Left(mem) => MemOrFile::Mem(mem),
+                Either::Right((path, _)) => MemOrFile::File(File::open(path).await?),
             })
         }
     }
@@ -961,6 +1093,7 @@ impl Database {
             state: RwLock::new(State {
                 complete,
                 partial,
+                partial2: Default::default(),
                 outboard,
                 data: Default::default(),
             }),

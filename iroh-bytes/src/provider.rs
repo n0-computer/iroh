@@ -70,6 +70,32 @@ pub trait BaoMap: Clone + Send + Sync + 'static {
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
+///
+pub trait BaoMapEntryMut<D: BaoMapMut>: BaoMapEntry<D> {
+    /// A future that resolves to a writer that can be used to write the outboard
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
+    /// A future that resolves to a writer that can be used to write the data
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
+}
+
+///
+pub trait BaoMapMut: BaoMap {
+    /// The outboard type. This can be an in memory outboard or an outboard that
+    /// retrieves the data asynchronously from a remote database.
+    type OutboardMut: bao_tree::io::fsm::OutboardMut;
+    /// The writer type.
+    type DataWriter: AsyncSliceWriter;
+    /// The entry type. An entry is a cheaply cloneable handle that can be used
+    /// to open readers for both the data and the outboard
+    type TempEntry: BaoMapEntryMut<Self>;
+
+    ///
+    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry;
+
+    ///
+    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, Result<()>>;
+}
+
 /// Extension of BaoMap to add misc methods used by the rpc calls
 pub trait BaoReadonlyDb: BaoMap {
     /// list all blobs in the database. This should include collections, since
