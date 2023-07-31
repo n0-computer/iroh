@@ -107,7 +107,7 @@ impl<PA: Serialize> Message<PA> {
 ///
 /// As the implementation of the protocol is an IO-less state machine, registering timers does not
 /// happen within the protocol implementation. Instead, these `Timer` structs are emitted as
-/// [`OutEvent`]s. The implementor must register the timer in its runtime to be emitted on the specified [`Instant`],
+/// [`OutEvent`]s. The implementer must register the timer in its runtime to be emitted on the specified [`Instant`],
 /// and once triggered inject an [`InEvent::TimerExpired`] into the protocol state.
 #[derive(Clone, Debug)]
 pub struct Timer<PA> {
@@ -174,7 +174,7 @@ impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
 
 /// The state of the `iroh-gossip` protocol.
 ///
-/// The implementation works as an IO-less state machine. The implementor injects events through
+/// The implementation works as an IO-less state machine. The implementer injects events through
 /// [`Self::handle`], which returns an iterator of [`OutEvent`]s to be processed.
 ///
 /// This struct contains a map of [`topic::State`] for each topic that was joined. It mostly acts as
