@@ -263,7 +263,6 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
 
         let event: InEventMapped<PA> = event.into();
 
-        // todo: add command to leave a topic
         match event {
             InEventMapped::TopicEvent(topic, event) => {
                 // when receiving messages, update our conn map to take note that this topic state may want
