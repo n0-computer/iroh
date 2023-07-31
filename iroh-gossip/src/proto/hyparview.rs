@@ -347,8 +347,7 @@ where
     }
 
     fn handle_quit(&mut self, io: &mut impl IO<PA>) {
-        let peers = self.active_view.iter().cloned().collect::<Vec<_>>();
-        for peer in peers {
+        for peer in self.active_view.clone().into_iter() {
             self.on_disconnect(
                 peer,
                 Disconnect {

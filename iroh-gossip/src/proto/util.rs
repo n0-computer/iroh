@@ -147,6 +147,14 @@ where
     }
 }
 
+impl<T> IntoIterator for IndexSet<T> {
+    type Item = T;
+    type IntoIter = <indexmap::IndexSet<T> as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
 /// A [`BTreeMap`] with [`Instant`] as key. Allows to process expired items.
 #[derive(Debug)]
 pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
