@@ -5,7 +5,7 @@ use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use iroh_gossip::{
-    net::{GossipHandle, GOSSIP_ALPN},
+    net::{Gossip, GOSSIP_ALPN},
     proto::{Event, TopicId},
 };
 use iroh_net::{
@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
 
     // init a cell that will hold our gossip handle to be used in endpoint callbacks
-    let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+    let gossip_cell: OnceCell<Gossip> = OnceCell::new();
 
     // setup a notification to emit once the initial endpoints of our local node are discovered
     let notify = Arc::new(Notify::new());
@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> our peer id: {}", endpoint.peer_id());
 
     // create the gossip protocol
-    let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
     // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
     gossip_cell.set(gossip.clone()).unwrap();
 
@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn subscribe_loop(gossip: GossipHandle, topic: TopicId) -> anyhow::Result<()> {
+async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
     // init a peerid -> name hashmap
     let mut names = HashMap::new();
     // get a stream that emits updates on our topic
@@ -216,7 +216,7 @@ async fn subscribe_loop(gossip: GossipHandle, topic: TopicId) -> anyhow::Result<
     }
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: GossipHandle) {
+async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
     while let Some(conn) = endpoint.accept().await {
         let gossip = gossip.clone();
         tokio::spawn(async move {
@@ -226,7 +226,7 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: GossipHandle) {
         });
     }
 }
-async fn handle_connection(conn: quinn::Connecting, gossip: GossipHandle) -> anyhow::Result<()> {
+async fn handle_connection(conn: quinn::Connecting, gossip: Gossip) -> anyhow::Result<()> {
     let (peer_id, alpn, conn) = accept_conn(conn).await?;
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip
