@@ -365,7 +365,16 @@ async fn test_server_close() {
     // Prepare a Provider transferring a file.
     setup_logging();
     let mut db = iroh::database::mem::Database::default();
-    let hash = db.insert(b"hello there");
+    let child_hash = db.insert(b"hello there");
+    let collection = Collection::new(
+        vec![Blob {
+            name: "hello".to_string(),
+            hash: child_hash,
+        }],
+        0,
+    )
+    .unwrap();
+    let hash = db.insert(collection.to_bytes().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();

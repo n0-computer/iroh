@@ -90,6 +90,9 @@ pub trait BaoMapMut: BaoMap {
     type TempEntry: BaoMapEntryMut<Self>;
 
     ///
+    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry>;
+
+    ///
     fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry;
 
     ///
@@ -711,45 +714,6 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
-/// A virtual file system for storing blobs
-///
-/// A file is just a persistent blob that can be read and written with random access.
-pub trait Vfs: Clone + Debug + Send + Sync + 'static {
-    /// The unique identifier for a file
-    ///
-    /// In case of a file on disk, this is the path to the file.
-    /// In case of a file in memory this could be an id.
-    /// In case of web storage this could be an url.
-    type Id: Debug + Clone + Send + Sync + 'static;
-    /// The reader type
-    type ReadRaw: AsyncSliceReader;
-    /// The writer type
-    type WriteRaw: AsyncSliceWriter;
-    /// Create a new temporary file pair
-    ///
-    /// `hash` is the hash of the data file.
-    /// `outboard` is true if we need an outboard file.
-    /// `location_hint` is a hint for the location of the temporary file. E.g. you
-    /// might want to store
-    ///
-    /// Returns a tuple of data file and optional outboard file id, where
-    /// the two ids are marked in some way to indicate that they belong together.
-    ///
-    /// These are new, empty files.
-    fn create_temp_pair(
-        &self,
-        hash: Hash,
-        outboard: bool,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>>;
-
-    /// open an internal handle for reading
-    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>>;
-    /// open an internal handle for writing
-    fn open_write(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>>;
-    /// delete an internal handle
-    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>>;
-}
-
 ///
 #[derive(Debug, Clone)]
 pub struct PartialData(Hash, [u8; 16]);
@@ -916,38 +880,8 @@ impl Purpose {
     }
 }
 
-///
-pub type VfsId<T> = <<T as BaoDb>::Vfs as Vfs>::Id;
-
-///
-pub type VfsWriter<T> = <<T as BaoDb>::Vfs as Vfs>::WriteRaw;
-
 /// The mutable part of a BaoDb
 pub trait BaoDb: BaoReadonlyDb + BaoMapMut {
-    /// The Vfs type to use
-    type Vfs: Vfs;
-    /// The Vfs of this database
-    fn vfs(&self) -> &Self::Vfs;
-    /// Insert a new complete entry into the database
-    ///
-    /// `hash` is the hash of the entry
-    /// `data_id` is the complete data of the entry
-    /// `outboard_id` is an optional outboard for the entry
-    fn insert_entry(
-        &self,
-        hash: Hash,
-        data_id: VfsId<Self>,
-        outboard_id: Option<VfsId<Self>>,
-    ) -> BoxFuture<'_, io::Result<()>>;
-
-    /// Check if we have a partial entry for `hash`, and if so, return it
-    fn get_partial_entry(
-        &self,
-        _hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
-        futures::future::ok(None).boxed()
-    }
-
     /// list partial blobs in the database
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(std::iter::empty())

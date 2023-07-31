@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
+use bao_tree::{
+    io::outboard::{PreOrderMemOutboard, PreOrderOutboard},
+    ByteNum, ChunkNum,
+};
 use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
@@ -93,21 +96,30 @@ impl GetInteractive {
         tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
         let (curr, size) = header.next().await?;
         pb.set_length(size);
-        let mut outboard_file = if size > 0 {
-            let outboard_path = outboard_path.clone();
-            let outboard_file = File::create(move || {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(&outboard_path)
-            })
-            .await?;
-            Some(outboard_file)
-        } else {
-            None
-        };
-        let curr = curr
-            .write_all_with_outboard(outboard_file.as_mut(), &mut data_file)
+        let (curr, ob) = curr
+            .write_all_with_outboard(
+                |hash, tree| {
+                    let outboard_path = outboard_path.clone();
+                    async move {
+                        let mut outboard_file = File::create(move || {
+                            std::fs::OpenOptions::new()
+                                .write(true)
+                                .create(true)
+                                .open(&outboard_path)
+                        })
+                        .await?;
+                        outboard_file
+                            .write_at(0, &tree.size().0.to_le_bytes())
+                            .await?;
+                        Ok(PreOrderOutboard {
+                            root: hash.into(),
+                            tree,
+                            data: outboard_file,
+                        })
+                    }
+                },
+                &mut data_file,
+            )
             .await?;
         // Flush the data file first, it is the only thing that matters at this point
         data_file.sync().await?;
@@ -115,7 +127,8 @@ impl GetInteractive {
         // Rename temp file, to target name
         // once this is done, the file is considered complete
         tokio::fs::rename(data_path, final_path).await?;
-        if let Some(mut outboard_file) = outboard_file.take() {
+        if let Some(outboard) = ob {
+            let mut outboard_file = outboard.into_inner();
             // not sure if we have to do this
             outboard_file.sync().await?;
             // delete the outboard file
@@ -225,19 +238,6 @@ impl GetInteractive {
                 tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
                 let (curr, size) = header.next().await?;
                 pb.set_length(size);
-                let mut outboard_file = if size > 0 {
-                    let outboard_path = outboard_path.clone();
-                    let outboard_file = File::create(move || {
-                        std::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .open(&outboard_path)
-                    })
-                    .await?;
-                    Some(outboard_file)
-                } else {
-                    None
-                };
 
                 let (on_write, mut receive_on_write) = mpsc::channel(1);
                 let pb2 = pb.clone();
@@ -248,8 +248,30 @@ impl GetInteractive {
                     }
                 });
                 let mut data_file = ProgressSliceWriter::new(data_file, on_write);
-                let curr = curr
-                    .write_all_with_outboard(outboard_file.as_mut(), &mut data_file)
+                let (curr, outboard) = curr
+                    .write_all_with_outboard(
+                        |hash, tree| {
+                            let outboard_path = outboard_path.clone();
+                            async move {
+                                let mut outboard_file = File::create(move || {
+                                    std::fs::OpenOptions::new()
+                                        .write(true)
+                                        .create(true)
+                                        .open(&outboard_path)
+                                })
+                                .await?;
+                                outboard_file
+                                    .write_at(0, &tree.size().0.to_le_bytes())
+                                    .await?;
+                                Ok(PreOrderOutboard {
+                                    root: hash.into(),
+                                    tree,
+                                    data: outboard_file,
+                                })
+                            }
+                        },
+                        &mut data_file,
+                    )
                     .await?;
                 // Flush the data file first, it is the only thing that matters at this point
                 data_file.sync().await?;
@@ -266,7 +288,8 @@ impl GetInteractive {
                 // Rename temp file, to target name
                 // once this is done, the file is considered complete
                 tokio::fs::rename(data_path, final_path).await?;
-                if let Some(mut outboard_file) = outboard_file.take() {
+                if let Some(outboard) = outboard {
+                    let mut outboard_file = outboard.into_inner();
                     // not sure if we have to do this
                     outboard_file.sync().await?;
                     // delete the outboard file

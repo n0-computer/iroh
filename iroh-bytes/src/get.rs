@@ -51,16 +51,20 @@ impl Stats {
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
 pub mod fsm {
-    use std::result;
+    use std::{io, result};
 
     use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
 
     use super::*;
 
-    use bao_tree::io::fsm::{
-        ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+    use bao_tree::{
+        io::fsm::{
+            OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
+        },
+        BaoTree,
     };
     use derive_more::From;
+    use futures::Future;
     use iroh_io::AsyncSliceWriter;
 
     self_cell::self_cell! {
@@ -391,24 +395,24 @@ pub mod fsm {
             self,
             data: D,
         ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(None, data).await
+            let (content, _size) = self.next().await?;
+            content.write_all(data).await
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<D, O>(
+        pub async fn write_all_with_outboard<D, F, Fut, O>(
             self,
-            mut outboard: Option<O>,
+            outboard: F,
             data: D,
-        ) -> result::Result<AtEndBlob, DecodeError>
+        ) -> result::Result<(AtEndBlob, Option<O>), DecodeError>
         where
             D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
+            F: FnOnce(Hash, BaoTree) -> Fut,
+            Fut: Future<Output = io::Result<O>>,
+            O: OutboardMut,
         {
-            let (content, size) = self.next().await?;
-            if let Some(o) = outboard.as_mut() {
-                o.write_at(0, &size.to_le_bytes()).await?;
-            }
+            let (content, _size) = self.next().await?;
             content.write_all_with_outboard(outboard, data).await
         }
 
@@ -460,24 +464,65 @@ pub mod fsm {
             self.stream.tree()
         }
 
-        /// Write the entire blob to a slice writer
-        pub async fn write_all<D: AsyncSliceWriter>(
-            self,
-            data: D,
-        ) -> result::Result<AtEndBlob, DecodeError> {
-            self.write_all_with_outboard::<D, D>(None, data).await
+        /// The hash of the blob we are reading
+        pub fn hash(&self) -> &blake3::Hash {
+            self.stream.hash()
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
         /// an outboard.
-        pub async fn write_all_with_outboard<D, O>(
+        pub async fn write_all_with_outboard<D, F, Fut, O>(
             self,
-            mut outboard: Option<O>,
+            of: F,
             mut data: D,
-        ) -> result::Result<AtEndBlob, DecodeError>
+        ) -> result::Result<(AtEndBlob, Option<O>), DecodeError>
         where
             D: AsyncSliceWriter,
-            O: AsyncSliceWriter,
+            F: FnOnce(Hash, BaoTree) -> Fut,
+            Fut: Future<Output = io::Result<O>>,
+            O: OutboardMut,
+        {
+            let mut content = self;
+            let mut outboard: Option<O> = None;
+            let mut of = Some(of);
+            loop {
+                match content.next().await {
+                    BlobContentNext::More((content1, item)) => {
+                        content = content1;
+                        match item? {
+                            BaoContentItem::Parent(parent) => {
+                                let outboard = if let Some(outboard) = outboard.as_mut() {
+                                    outboard
+                                } else {
+                                    let f = of.take().unwrap();
+                                    let tree = content.tree();
+                                    let hash = content.hash();
+                                    outboard = Some(
+                                        (f)((*hash).into(), *tree)
+                                            .await
+                                            .map_err(DecodeError::Io)?,
+                                    );
+                                    outboard.as_mut().unwrap()
+                                };
+                                outboard.save(parent.node, &parent.pair).await?;
+                            }
+                            BaoContentItem::Leaf(leaf) => {
+                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                            }
+                        }
+                    }
+                    BlobContentNext::Done(end) => {
+                        return Ok((end, outboard));
+                    }
+                }
+            }
+        }
+
+        /// Write the entire blob to a slice writer, optionally also writing
+        /// an outboard.
+        pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, DecodeError>
+        where
+            D: AsyncSliceWriter,
         {
             let mut content = self;
             loop {
@@ -485,18 +530,7 @@ pub mod fsm {
                     BlobContentNext::More((content1, item)) => {
                         content = content1;
                         match item? {
-                            BaoContentItem::Parent(parent) => {
-                                if let Some(outboard) = outboard.as_mut() {
-                                    if let Some(offset) =
-                                        content.tree().pre_order_offset(parent.node)
-                                    {
-                                        let offset = offset * 64 + 8;
-                                        let (l_hash, r_hash) = parent.pair;
-                                        outboard.write_at(offset, l_hash.as_bytes()).await?;
-                                        outboard.write_at(offset + 32, r_hash.as_bytes()).await?;
-                                    }
-                                }
-                            }
+                            BaoContentItem::Parent(_) => {}
                             BaoContentItem::Leaf(leaf) => {
                                 data.write_bytes_at(leaf.offset.0, leaf.data).await?;
                             }

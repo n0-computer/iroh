@@ -19,13 +19,10 @@ use iroh_bytes::provider::BaoMapEntryMut;
 use iroh_bytes::provider::BaoMapMut;
 use iroh_bytes::provider::Purpose;
 use iroh_bytes::provider::ValidateProgress;
-use iroh_bytes::provider::Vfs;
-use iroh_bytes::provider::VfsId;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
-use rand::Rng;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
@@ -208,81 +205,6 @@ impl AsyncSliceWriter for MemVfsEntry {
 #[derive(Debug, Clone, Default)]
 pub struct MemVfs(Arc<RwLock<MemVfsInner>>);
 
-impl Vfs for MemVfs {
-    type Id = u64;
-
-    type ReadRaw = MemVfsEntry;
-
-    type WriteRaw = MemVfsEntry;
-
-    fn create_temp_pair(
-        &self,
-        hash: Hash,
-        outboard: bool,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        let mut inner = self.0.write().unwrap();
-        let uuid = rand::thread_rng().gen::<[u8; 16]>();
-        let data_id = inner.next_id;
-        let purpose = Purpose::PartialData(hash, uuid);
-        inner.next_id += 1;
-        inner.entries.insert(
-            data_id,
-            MemVfsEntry {
-                id: data_id,
-                purpose,
-                data: Arc::new(Mutex::new(BytesMut::new())),
-            },
-        );
-        let outboard_id = if outboard {
-            let outboard_id = inner.next_id;
-            let purpose = Purpose::PartialOutboard(hash, uuid);
-            inner.next_id += 1;
-            inner.entries.insert(
-                outboard_id,
-                MemVfsEntry {
-                    id: outboard_id,
-                    purpose,
-                    data: Arc::new(Mutex::new(BytesMut::new())),
-                },
-            );
-            Some(outboard_id)
-        } else {
-            None
-        };
-        futures::future::ok((data_id, outboard_id)).boxed()
-    }
-
-    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
-        let inner = self.0.read().unwrap();
-        let Some(entry) = inner.entries.get(handle) else {
-            return futures::future::err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no such entry",
-            ))
-            .boxed();
-        };
-        futures::future::ok(entry.clone()).boxed()
-    }
-
-    fn open_write(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
-        let inner = self.0.read().unwrap();
-        let Some(entry) = inner.entries.get(handle) else {
-            return futures::future::err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no such entry",
-            ))
-            .boxed();
-        };
-        futures::future::ok(entry.clone()).boxed()
-    }
-
-    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>> {
-        let mut inner = self.0.write().unwrap();
-        inner.entries.remove(handle);
-        futures::future::ok(()).boxed()
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 ///
 pub struct MutableDatabase {
@@ -428,6 +350,10 @@ impl BaoMapMut for MutableDatabase {
 
     type TempEntry = DbEntry;
 
+    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry> {
+        todo!()
+    }
+
     fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry {
         todo!()
     }
@@ -448,75 +374,16 @@ impl BaoMapMut for Database {
         todo!()
     }
 
+    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry> {
+        todo!()
+    }
+
     fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, anyhow::Result<()>> {
         todo!()
     }
 }
 
 impl BaoDb for MutableDatabase {
-    type Vfs = MemVfs;
-
-    fn vfs(&self) -> &Self::Vfs {
-        &self.vfs
-    }
-
-    fn insert_entry(
-        &self,
-        hash: Hash,
-        data_id: u64,
-        outboard_id: Option<u64>,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        let mut vfs = self.vfs.0.write().unwrap();
-        // get the actual entries
-        let Some(data) = vfs.entries.get_mut(&data_id) else {
-            panic!();
-        };
-        assert!(data.purpose.temporary());
-        data.purpose = Purpose::Data(hash);
-        if let Some(outboard_id) = outboard_id {
-            let Some(outboard) = vfs.entries.get_mut(&outboard_id) else {
-                panic!();
-            };
-            assert!(outboard.purpose.temporary());
-            outboard.purpose = Purpose::Outboard(hash)
-        }
-
-        let mut inner = self.inner.write().unwrap();
-        inner.insert(hash, (data_id, outboard_id));
-        futures::future::ok(()).boxed()
-    }
-
-    fn get_partial_entry(
-        &self,
-        hash: &Hash,
-    ) -> BoxFuture<'_, io::Result<Option<(VfsId<Self>, VfsId<Self>)>>> {
-        let vfs = self.vfs.0.read().unwrap();
-        let data_id = vfs
-            .entries
-            .iter()
-            .filter_map(|(id, entry)| match entry.purpose {
-                Purpose::PartialData(h, uid) if h == *hash => Some((uid, *id)),
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
-        let outboard_id = vfs
-            .entries
-            .iter()
-            .filter_map(|(id, entry)| match entry.purpose {
-                Purpose::PartialOutboard(h, uid) if h == *hash => Some((uid, *id)),
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
-        // find a pair that belongs together
-        // todo: optimize
-        for entry in data_id.into_iter() {
-            if let Some(outboard) = outboard_id.get(&entry.0) {
-                return futures::future::ok(Some((entry.1, *outboard))).boxed();
-            }
-        }
-        futures::future::ok(None).boxed()
-    }
-
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let vfs = self.vfs.0.read().unwrap();
         let hashes = vfs
@@ -531,19 +398,4 @@ impl BaoDb for MutableDatabase {
     }
 }
 
-impl BaoDb for Database {
-    type Vfs = MemVfs;
-
-    fn vfs(&self) -> &Self::Vfs {
-        todo!()
-    }
-
-    fn insert_entry(
-        &self,
-        _hash: Hash,
-        _data: VfsId<Self>,
-        _outboard: Option<VfsId<Self>>,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        todo!()
-    }
-}
+impl BaoDb for Database {}

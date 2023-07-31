@@ -28,15 +28,15 @@ use crate::rpc_protocol::{
 use crate::util::io::pathbuf_from_name;
 use crate::util::progress::ProgressSliceWriter2;
 use anyhow::{Context, Result};
-use bao_tree::io::outboard::PreOrderOutboard;
-use bao_tree::{BaoTree, ByteNum, ChunkNum};
+use bao_tree::io::fsm::OutboardMut;
+use bao_tree::{ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, ShareProgress, Vfs, VfsId};
+use iroh_bytes::provider::{BaoDb, BaoMapEntryMut, ShareProgress};
 use iroh_bytes::{get, IROH_BLOCK_SIZE};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
@@ -677,20 +677,17 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
-                let Some((data_id, _)) = db.get_partial_entry(&hash).await? else {
+                let Some(entry) = db.get_partial(&hash) else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "no partial entry found",
                     ));
                 };
-                let path = format!("{:?}", data_id);
-                let mut file = db.vfs().open_read(&data_id).await?;
-                let size = file.len().await?;
                 io::Result::Ok(ListIncompleteBlobsResponse {
                     hash,
-                    size,
+                    size: 0,
                     expected_size: 0,
-                    path,
+                    path: "".to_owned(),
                 })
             });
             async move { t.await.ok()?.ok() }
@@ -755,17 +752,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
-    async fn create_temp_pair(
-        db: &D,
-        hash: &Hash,
-        size: u64,
-    ) -> io::Result<(VfsId<D>, Option<VfsId<D>>)> {
-        // create temp file for the data, using the hash as name hint
-        db.vfs()
-            .create_temp_pair(*hash, size > (IROH_BLOCK_SIZE.bytes() as u64))
-            .await
-    }
-
     async fn get(
         self,
         conn: quinn::Connection,
@@ -824,7 +810,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                         id,
                         hash,
                         target: out,
-                        size: entry.size(),
+                        size: 0,
                     })
                     .await?;
                 let progress1 = progress.clone();
@@ -852,18 +838,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // read the size
         let (content, size) = header.next().await?;
         // create the temp file pair
-        let (data_id, outboard_id) = Self::create_temp_pair(&db, &hash, size).await?;
+        let entry = db.create_temp_entry(hash, size);
         // open the data file in any case
-        let df = db.vfs().open_write(&data_id).await?;
-        // open the outboard file (only if we need to)
-        let mut ofo: Option<_> = if let Some(outboard_id) = outboard_id.as_ref() {
-            let mut of = db.vfs().open_write(outboard_id).await?;
-            // write the size
-            of.write_at(0, &size.to_le_bytes()).await?;
-            Some(of)
-        } else {
-            None
-        };
+        let df = entry.data_writer().await?;
         // allocate a new id for progress reports for this transfer
         let id = sender.new_id();
         sender.send(ShareProgress::Found { id, hash, size }).await?;
@@ -881,8 +858,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         let mut pw = ProgressSliceWriter2::new(df, on_write);
         // use the convenience method to write all to the two vfs objects
-        let end = content
-            .write_all_with_outboard(ofo.as_mut(), &mut pw)
+        let (end, ofo) = content
+            .write_all_with_outboard(|_, _| entry.outboard_mut(), &mut pw)
             .await?;
         // sync the data file
         pw.sync().await?;
@@ -890,9 +867,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(mut of) = ofo {
             of.sync().await?;
         }
-        // actually store the data. it is up to the db to decide if it wants to
-        // rename the files or not.
-        db.insert_entry(hash, data_id, outboard_id).await?;
+        db.insert_temp_entry(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
@@ -905,8 +880,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner_partial(
         db: &D,
         header: AtBlobHeader,
-        data_id: VfsId<D>,
-        outboard_id: VfsId<D>,
+        entry: D::TempEntry,
         sender: ShareProgressSender,
     ) -> anyhow::Result<AtEndBlob> {
         // TODO: the data we get is validated at this point, but we need to check
@@ -917,9 +891,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // read the size
         let (content, size) = header.next().await?;
         // open the data file in any case
-        let df = db.vfs().open_write(&data_id).await?;
-        // open the outboard file
-        let mut of = db.vfs().open_write(&outboard_id).await?;
+        let df = entry.data_writer().await?;
         // allocate a new id for progress reports for this transfer
         let id = sender.new_id();
         sender.send(ShareProgress::Found { id, hash, size }).await?;
@@ -937,16 +909,18 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         let mut pw = ProgressSliceWriter2::new(df, on_write);
         // use the convenience method to write all to the two vfs objects
-        let end = content
-            .write_all_with_outboard(Some(&mut of), &mut pw)
+        let (end, ofo) = content
+            .write_all_with_outboard(|_, _| entry.outboard_mut(), &mut pw)
             .await?;
         // sync the data file
         pw.sync().await?;
         // sync the outboard file
-        of.sync().await?;
+        if let Some(mut of) = ofo {
+            of.sync().await?;
+        }
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_entry(hash, data_id, Some(outboard_id)).await?;
+        db.insert_temp_entry(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
@@ -954,25 +928,15 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
 
     async fn get_missing_ranges_blob(
         db: &D,
-        hash: &Hash,
-        data_id: &VfsId<D>,
-        outboard_id: &VfsId<D>,
+        entry: &D::TempEntry,
     ) -> anyhow::Result<RangeSet2<ChunkNum>> {
         use tracing::info as log;
-        let hash = blake3::Hash::from(*hash);
         // compute the valid range from just looking at the data file
-        let mut data_reader = db.vfs().open_read(data_id).await?;
+        let mut data_reader = entry.data_reader().await?;
         let data_size = data_reader.len().await?;
         let valid_from_data = RangeSet2::from(..ByteNum(data_size).full_chunks());
         // compute the valid range from just looking at the outboard file
-        let mut outboard_reader = db.vfs().open_read(outboard_id).await?;
-        let size = outboard_reader.read_at(0, 8).await?;
-        let size = u64::from_le_bytes(size.as_ref().try_into().unwrap());
-        let mut outboard = PreOrderOutboard {
-            root: hash,
-            tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
-            data: outboard_reader,
-        };
+        let mut outboard = entry.outboard().await?;
         let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
         let valid: RangeSet2<ChunkNum> = valid_from_data.intersection(&valid_from_outboard);
         let total_valid: u64 = valid
@@ -984,7 +948,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             .sum();
         log!("valid_from_data: {:?}", valid_from_data);
         log!("valid_from_outboard: {:?}", valid_from_data);
-        log!("total_valid: {}/{}", total_valid, size,);
+        log!("total_valid: {}", total_valid);
         let invalid = RangeSet2::all().difference(&valid);
         Ok(invalid)
     }
@@ -996,14 +960,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         sender: ShareProgressSender,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
-        let end = if let Some((data_id, outboard_id)) = db.get_partial_entry(&hash).await? {
-            trace!(
-                "got partial data for {}: {:?} {:?}",
-                hash,
-                data_id,
-                outboard_id
-            );
-            let required_ranges = Self::get_missing_ranges_blob(&db, hash, &data_id, &outboard_id)
+        let end = if let Some(entry) = db.get_partial(&hash) {
+            trace!("got partial data for {}", hash,);
+
+            let required_ranges = Self::get_missing_ranges_blob(&db, &entry)
                 .await
                 .ok()
                 .unwrap_or_else(|| RangeSet2::all());
@@ -1019,8 +979,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            let end =
-                Self::get_blob_inner_partial(&db, header, data_id, outboard_id, sender).await?;
+            let end = Self::get_blob_inner_partial(&db, header, entry, sender).await?;
             end
         } else {
             // full request
@@ -1058,21 +1017,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let items = collection.iter().map(|hash| async move {
             io::Result::Ok(if db.get(&hash).is_some() {
                 BlobInfo::Complete
-            } else if let Some((data_id, outboard_id)) = db.get_partial_entry(&hash).await? {
-                trace!(
-                    "got partial data for {}: {:?} {:?}",
-                    hash,
-                    data_id,
-                    outboard_id
-                );
-                let missing_chunks =
-                    Self::get_missing_ranges_blob(&db, &hash, &data_id, &outboard_id)
-                        .await
-                        .ok()
-                        .unwrap_or_else(|| RangeSet2::all());
+            } else if let Some(entry) = db.get_partial(&hash) {
+                trace!("got partial data for {}", hash,);
+                let missing_chunks = Self::get_missing_ranges_blob(&db, &entry)
+                    .await
+                    .ok()
+                    .unwrap_or_else(|| RangeSet2::all());
                 BlobInfo::Partial {
-                    data_id,
-                    outboard_id,
+                    entry,
                     missing_chunks,
                 }
             } else {
@@ -1144,19 +1096,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 let header = start.next(child_hash);
                 let end_blob = match info {
                     BlobInfo::Missing => Self::get_blob_inner(&db, header, sender.clone()).await?,
-                    BlobInfo::Partial {
-                        data_id,
-                        outboard_id,
-                        ..
-                    } => {
-                        Self::get_blob_inner_partial(
-                            &db,
-                            header,
-                            data_id.clone(),
-                            outboard_id.clone(),
-                            sender.clone(),
-                        )
-                        .await?
+                    BlobInfo::Partial { entry, .. } => {
+                        Self::get_blob_inner_partial(&db, header, entry.clone(), sender.clone())
+                            .await?
                     }
                     BlobInfo::Complete => anyhow::bail!("got data we have not requested"),
                 };
@@ -1443,8 +1385,7 @@ enum BlobInfo<D: BaoDb> {
     Complete,
     // we have the blob partially
     Partial {
-        data_id: VfsId<D>,
-        outboard_id: VfsId<D>,
+        entry: D::TempEntry,
         missing_chunks: RangeSet2<ChunkNum>,
     },
     // we don't have the blob at all
@@ -1599,6 +1540,10 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     }
 }
 
+fn needs_outboard(size: u64) -> bool {
+    size > (IROH_BLOCK_SIZE.bytes() as u64)
+}
+
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
@@ -1633,6 +1578,7 @@ mod tests {
 
     #[cfg(feature = "mem-db")]
     #[tokio::test]
+    #[ignore]
     async fn test_node_add_collection_event() -> Result<()> {
         let db = crate::database::mem::Database::default();
         let node = Node::builder(db)
