@@ -11,9 +11,9 @@ pub mod fs;
 pub mod memory;
 
 /// Abstraction over the different available storage solutions.
-pub trait Store: std::fmt::Debug {
+pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
-    type Instance: ranger::Store<RecordIdentifier, SignedEntry>;
+    type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
 
     type GetLatestIter<'a>: Iterator<Item = Result<SignedEntry>>
     where

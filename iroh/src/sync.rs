@@ -5,7 +5,10 @@ use std::net::SocketAddr;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use iroh_net::{tls::PeerId, MagicEndpoint};
-use iroh_sync::sync::{NamespaceId, Replica, ReplicaStore};
+use iroh_sync::{
+    store,
+    sync::{NamespaceId, Replica},
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::debug;
@@ -38,9 +41,9 @@ enum Message {
 }
 
 /// Connect to a peer and sync a replica
-pub async fn connect_and_sync(
+pub async fn connect_and_sync<S: store::Store>(
     endpoint: &MagicEndpoint,
-    doc: &Replica,
+    doc: &Replica<S::Instance>,
     peer_id: PeerId,
     derp_region: Option<u16>,
     addrs: &[SocketAddr],
@@ -51,16 +54,16 @@ pub async fn connect_and_sync(
         .await
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice(&mut send_stream, &mut recv_stream, doc).await;
+    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc).await;
     debug!("sync with peer {}: finish {:?}", peer_id, res);
     res
 }
 
 /// Runs the initiator side of the sync protocol.
-pub async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
-    alice: &Replica,
+    alice: &Replica<S::Instance>,
 ) -> Result<()> {
     let mut buffer = BytesMut::with_capacity(1024);
 
@@ -68,7 +71,7 @@ pub async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 
     let init_message = Message::Init {
         namespace: alice.namespace(),
-        message: alice.sync_initial_message(),
+        message: alice.sync_initial_message().map_err(Into::into)?,
     };
     let msg_bytes = postcard::to_stdvec(&init_message)?;
     iroh_bytes::protocol::write_lp(writer, &msg_bytes).await?;
@@ -83,7 +86,7 @@ pub async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 bail!("unexpected message: init");
             }
             Message::Sync(msg) => {
-                if let Some(msg) = alice.sync_process_message(msg) {
+                if let Some(msg) = alice.sync_process_message(msg).map_err(Into::into)? {
                     send_sync_message(writer, msg).await?;
                 } else {
                     break;
@@ -96,9 +99,9 @@ pub async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 }
 
 /// Handle an iroh-sync connection and sync all shared documents in the replica store.
-pub async fn handle_connection(
+pub async fn handle_connection<S: store::Store>(
     connecting: quinn::Connecting,
-    replica_store: ReplicaStore,
+    replica_store: S,
 ) -> Result<()> {
     let connection = connecting.await?;
     debug!("> connection established!");
@@ -113,10 +116,10 @@ pub async fn handle_connection(
 }
 
 /// Runs the receiver side of the sync protocol.
-pub async fn run_bob<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
-    replica_store: ReplicaStore,
+    replica_store: S,
 ) -> Result<()> {
     let mut buffer = BytesMut::with_capacity(1024);
 
@@ -129,10 +132,10 @@ pub async fn run_bob<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             Message::Init { namespace, message } => {
                 ensure!(replica.is_none(), "double init message");
 
-                match replica_store.get_replica(&namespace) {
+                match replica_store.get_replica(&namespace)? {
                     Some(r) => {
                         debug!("starting sync for {}", namespace);
-                        if let Some(msg) = r.sync_process_message(message) {
+                        if let Some(msg) = r.sync_process_message(message).map_err(Into::into)? {
                             send_sync_message(writer, msg).await?;
                         } else {
                             break;
@@ -147,7 +150,7 @@ pub async fn run_bob<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             }
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
-                    if let Some(msg) = replica.sync_process_message(msg) {
+                    if let Some(msg) = replica.sync_process_message(msg).map_err(Into::into)? {
                         send_sync_message(writer, msg).await?;
                     } else {
                         break;
@@ -174,7 +177,7 @@ async fn send_sync_message<W: AsyncWrite + Unpin>(
 
 #[cfg(test)]
 mod tests {
-    use iroh_sync::sync::Namespace;
+    use iroh_sync::{store::Store as _, sync::Namespace};
 
     use super::*;
 
@@ -182,38 +185,83 @@ mod tests {
     async fn test_sync_simple() -> Result<()> {
         let mut rng = rand::thread_rng();
 
-        let replica_store = ReplicaStore::default();
+        let alice_replica_store = store::memory::Store::default();
         // For now uses same author on both sides.
-        let author = replica_store.new_author(&mut rng);
+        let author = alice_replica_store.new_author(&mut rng).unwrap();
+
         let namespace = Namespace::new(&mut rng);
-        let bob_replica = replica_store.new_replica(namespace.clone());
-        bob_replica.hash_and_insert("hello alice", &author, "from bob");
 
-        let alice_replica = Replica::new(namespace.clone());
-        alice_replica.hash_and_insert("hello bob", &author, "from alice");
+        let alice_replica = alice_replica_store.new_replica(namespace.clone()).unwrap();
+        alice_replica
+            .hash_and_insert("hello bob", &author, "from alice")
+            .unwrap();
 
-        assert_eq!(bob_replica.all().len(), 1);
-        assert_eq!(alice_replica.all().len(), 1);
+        let bob_replica_store = store::memory::Store::default();
+        let bob_replica = bob_replica_store.new_replica(namespace.clone()).unwrap();
+        bob_replica
+            .hash_and_insert("hello alice", &author, "from bob")
+            .unwrap();
+
+        assert_eq!(
+            bob_replica_store
+                .get_all(bob_replica.namespace())
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            alice_replica_store
+                .get_all(alice_replica.namespace())
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .len(),
+            1
+        );
 
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
         let replica = alice_replica.clone();
         let alice_task = tokio::task::spawn(async move {
-            run_alice(&mut alice_writer, &mut alice_reader, &replica).await
+            run_alice::<store::memory::Store, _, _>(&mut alice_writer, &mut alice_reader, &replica)
+                .await
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_replica_store = replica_store.clone();
+        let bob_replica_store_task = bob_replica_store.clone();
         let bob_task = tokio::task::spawn(async move {
-            run_bob(&mut bob_writer, &mut bob_reader, bob_replica_store).await
+            run_bob::<store::memory::Store, _, _>(
+                &mut bob_writer,
+                &mut bob_reader,
+                bob_replica_store_task,
+            )
+            .await
         });
 
         alice_task.await??;
         bob_task.await??;
 
-        assert_eq!(bob_replica.all().len(), 2);
-        assert_eq!(alice_replica.all().len(), 2);
+        assert_eq!(
+            bob_replica_store
+                .get_all(bob_replica.namespace())
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            alice_replica_store
+                .get_all(alice_replica.namespace())
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .len(),
+            2
+        );
 
         Ok(())
     }

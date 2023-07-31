@@ -448,7 +448,7 @@ impl crate::ranger::Store<RecordIdentifier, SignedEntry> for StoreInstance {
                 let key = (k.namespace().as_bytes(), k.author().as_bytes(), k.key());
                 let record = v.entry().record();
                 let value = (
-                    record.timestamp(),
+                    timestamp,
                     &v.signature().namespace_signature().to_bytes(),
                     &v.signature().author_signature().to_bytes(),
                     record.content_len(),

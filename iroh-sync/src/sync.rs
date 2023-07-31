@@ -14,7 +14,6 @@ use std::{
 
 use parking_lot::RwLock;
 
-use bytes::Bytes;
 use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey};
 use iroh_bytes::Hash;
 use rand_core::CryptoRngCore;
@@ -252,68 +251,6 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
     pub fn on_insert(&self, callback: OnInsertCallback) {
         let mut on_insert = self.on_insert.write();
         on_insert.push(callback);
-    }
-
-    // TODO: not horrible
-    pub fn all(&self) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
-        let res = self
-            .inner
-            .read()
-            .peer
-            .all()?
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        Ok(res)
-    }
-
-    // TODO: not horrible
-    pub fn all_for_key(
-        &self,
-        key: impl AsRef<[u8]>,
-    ) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
-        let res = self
-            .all()?
-            .into_iter()
-            .filter(|(id, _entry)| id.key() == key.as_ref())
-            .collect();
-        Ok(res)
-    }
-
-    // TODO: not horrible
-    pub fn all_with_key_prefix(
-        &self,
-        prefix: impl AsRef<[u8]>,
-    ) -> Result<Vec<(RecordIdentifier, SignedEntry)>, S::Error> {
-        let res = self
-            .all()?
-            .into_iter()
-            .filter(|(id, _entry)| id.key().starts_with(prefix.as_ref()))
-            .collect();
-        Ok(res)
-    }
-
-    pub fn to_bytes(&self) -> anyhow::Result<Bytes> {
-        let entries = self
-            .all()
-            .map_err(Into::into)?
-            .into_iter()
-            .map(|(_id, entry)| entry)
-            .collect();
-        let data = ReplicaData {
-            entries,
-            namespace: self.inner.read().namespace.clone(),
-        };
-        let bytes = postcard::to_stdvec(&data)?;
-        Ok(bytes.into())
-    }
-
-    pub fn from_bytes(bytes: &[u8], store: S) -> anyhow::Result<Self> {
-        let data: ReplicaData = postcard::from_bytes(bytes)?;
-        let replica = Self::new(data.namespace, store);
-        for entry in data.entries {
-            replica.insert_remote_entry(entry)?;
-        }
-        Ok(replica)
     }
 
     /// Inserts a new record at the given key.
