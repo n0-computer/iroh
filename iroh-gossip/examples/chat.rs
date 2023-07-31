@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let peer_ids = peers.iter().map(|p| p.peer_id).collect();
-    gossip.join(topic, peer_ids).await?;
+    gossip.join(topic, peer_ids).await?.await?;
     println!("> connected!");
 
     // broadcast our name, if set

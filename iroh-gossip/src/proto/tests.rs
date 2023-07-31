@@ -288,15 +288,16 @@ impl Simulator {
         }
     }
     pub fn bootstrap(&mut self) {
+        self.network.command(0, TOPIC, Command::Join(vec![]));
         for i in 1..self.simulator_config.bootstrap_count {
-            self.network.command(i, TOPIC, Command::Join(0));
+            self.network.command(i, TOPIC, Command::Join(vec![0]));
         }
         self.network.ticks(self.simulator_config.bootstrap_ticks);
         let _ = self.network.events();
 
         for i in self.simulator_config.bootstrap_count..self.simulator_config.peers_count {
             let contact = i % self.simulator_config.bootstrap_count;
-            self.network.command(i, TOPIC, Command::Join(contact));
+            self.network.command(i, TOPIC, Command::Join(vec![contact]));
             self.network.ticks(self.simulator_config.join_ticks);
             let _ = self.network.events();
         }

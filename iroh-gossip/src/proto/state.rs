@@ -10,8 +10,12 @@ use std::{
 use anyhow::anyhow;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use tracing::trace;
 
-use crate::proto::{topic, Config, PeerAddress};
+use crate::proto::{
+    topic::{self, Command},
+    Config, PeerAddress,
+};
 use iroh_metrics::{inc, inc_by};
 
 use super::PeerData;
@@ -35,20 +39,8 @@ impl TopicId {
     }
 }
 
-impl From<[u8; 32]> for TopicId {
-    fn from(value: [u8; 32]) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&[u8; 32]> for TopicId {
-    fn from(value: &[u8; 32]) -> Self {
-        Self(*value)
-    }
-}
-
-impl From<blake3::Hash> for TopicId {
-    fn from(value: blake3::Hash) -> Self {
+impl<T: Into<[u8; 32]>> From<T> for TopicId {
+    fn from(value: T) -> Self {
         Self(value.into())
     }
 }
@@ -98,7 +90,7 @@ impl<PA> Message<PA> {
 /// Whether this is a control or data message
 #[derive(Debug)]
 pub enum MessageKind {
-    /// A data message and its payload size.
+    /// A data message.
     Data,
     /// A control message.
     Control,
@@ -129,7 +121,7 @@ pub enum InEvent<PA> {
     /// Message received from the network.
     RecvMessage(PA, Message<PA>),
     /// Execute a command from the application.
-    Command(TopicId, topic::Command<PA>),
+    Command(TopicId, Command<PA>),
     /// Trigger a previously scheduled timer.
     TimerExpired(Timer<PA>),
     /// Peer disconnected on the network level.
@@ -196,7 +188,7 @@ pub struct State<PA, R> {
     rng: R,
     states: HashMap<TopicId, topic::State<PA, R>>,
     outbox: Outbox<PA>,
-    conns: ConnsMap<PA>,
+    peer_topics: ConnsMap<PA>,
 }
 
 impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
@@ -214,7 +206,7 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
             rng,
             states: Default::default(),
             outbox: Default::default(),
-            conns: Default::default(),
+            peer_topics: Default::default(),
         }
     }
 
@@ -259,6 +251,7 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
         event: InEvent<PA>,
         now: Instant,
     ) -> impl Iterator<Item = OutEvent<PA>> + '_ {
+        trace!("gossp event: {event:?}");
         track_in_event(&event);
 
         let event: InEventMapped<PA> = event.into();
@@ -267,12 +260,11 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
             InEventMapped::TopicEvent(topic, event) => {
                 // when receiving messages, update our conn map to take note that this topic state may want
                 // to keep this connection
-                // TODO: this is a lot of hashmap lookups, maybe there's ways to optimize?
                 if let topic::InEvent::RecvMessage(from, _message) = &event {
-                    self.conns.entry(*from).or_default().insert(topic);
+                    self.peer_topics.entry(*from).or_default().insert(topic);
                 }
                 // when receiving a join command, initialize state if it doesn't exist
-                if let topic::InEvent::Command(topic::Command::Join(_peer)) = &event {
+                if matches!(&event, topic::InEvent::Command(Command::Join(_peers))) {
                     if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
                         e.insert(topic::State::with_rng(
                             self.me,
@@ -285,22 +277,13 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
 
                 // when receiving a quit command, note this and drop the topic state after
                 // processing this last event
-                let quit = matches!(event, topic::InEvent::Command(topic::Command::Quit));
-
-                if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
-                    e.insert(topic::State::with_rng(
-                        self.me,
-                        self.me_data.clone(),
-                        self.config.clone(),
-                        self.rng.clone(),
-                    ));
-                }
+                let quit = matches!(event, topic::InEvent::Command(Command::Quit));
 
                 // pass the event to the state handler
                 if let Some(state) = self.states.get_mut(&topic) {
                     let out = state.handle(event, now);
                     for event in out {
-                        handle_out_event(topic, event, &mut self.conns, &mut self.outbox);
+                        handle_out_event(topic, event, &mut self.peer_topics, &mut self.outbox);
                     }
                 }
 
@@ -316,7 +299,7 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                 for (topic, state) in self.states.iter_mut() {
                     let out = state.handle(event.clone(), now);
                     for event in out {
-                        handle_out_event(*topic, event, &mut self.conns, &mut self.outbox);
+                        handle_out_event(*topic, event, &mut self.peer_topics, &mut self.outbox);
                     }
                 }
             }

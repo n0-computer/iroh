@@ -134,9 +134,10 @@ mod test {
         let t: TopicId = [0u8; 32].into();
 
         // Do some joins between nodes 0,1,2
-        network.command(0, t, Command::Join(1));
-        network.command(0, t, Command::Join(2));
-        network.command(1, t, Command::Join(2));
+        network.command(0, t, Command::Join(vec![1]));
+        network.command(0, t, Command::Join(vec![2]));
+        network.command(1, t, Command::Join(vec![2]));
+        network.command(2, t, Command::Join(vec![]));
         network.ticks(10);
 
         // Confirm emitted events
@@ -156,7 +157,7 @@ mod test {
 
         // Now let node 3 join node 0.
         // Node 0 is full, so it will disconnect from either node 1 or node 2.
-        network.command(3, t, Command::Join(0));
+        network.command(3, t, Command::Join(vec![0]));
         network.ticks(8);
 
         // Confirm emitted events. There's two options because whether node 0 disconnects from
@@ -205,10 +206,13 @@ mod test {
 
         let t = [0u8; 32].into();
 
+        // let node 0 join the topic but do not connect to any peers
+        network.command(0, t, Command::Join(vec![]));
         // connect nodes 1 and 2 to node 0
-        (1..3).for_each(|i| network.command(i, t, Command::Join(0)));
+        (1..3).for_each(|i| network.command(i, t, Command::Join(vec![0])));
         // connect nodes 4 and 5 to node 3
-        (4..6).for_each(|i| network.command(i, t, Command::Join(3)));
+        network.command(3, t, Command::Join(vec![]));
+        (4..6).for_each(|i| network.command(i, t, Command::Join(vec![3])));
         // run ticks and drain events
         network.ticks(join_ticks);
         let _ = network.events();
@@ -224,7 +228,7 @@ mod test {
         assert!(assert_synchronous_active(&network));
 
         // now connect the two sections of the swarm
-        network.command(2, t, Command::Join(5));
+        network.command(2, t, Command::Join(vec![5]));
         network.ticks(join_ticks);
         let _ = network.events();
         report_round_distribution(&network);
@@ -302,9 +306,10 @@ mod test {
         let t: TopicId = [0u8; 32].into();
 
         // join all nodes
-        network.command(1, t, Command::Join(0));
-        network.command(2, t, Command::Join(1));
-        network.command(3, t, Command::Join(2));
+        network.command(0, t, Command::Join(vec![]));
+        network.command(1, t, Command::Join(vec![0]));
+        network.command(2, t, Command::Join(vec![1]));
+        network.command(3, t, Command::Join(vec![2]));
         network.ticks(10);
 
         // assert all peers appear in the connections
