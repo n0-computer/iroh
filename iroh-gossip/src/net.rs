@@ -69,13 +69,13 @@ type ProtoMessage = proto::Message<PeerId>;
 ///
 /// The gossip actor will, however, initiate new connections to other peers by itself.
 #[derive(Debug, Clone)]
-pub struct GossipHandle {
+pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
     on_endpoints_tx: Arc<watch::Sender<Vec<iroh_net::config::Endpoint>>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
 }
 
-impl GossipHandle {
+impl Gossip {
     /// Spawn a gossip actor and get a handle for it
     pub fn from_endpoint(endpoint: MagicEndpoint, config: proto::Config) -> Self {
         let peer_id = endpoint.peer_id();
@@ -90,7 +90,7 @@ impl GossipHandle {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(TO_ACTOR_CAP);
         let (in_event_tx, in_event_rx) = mpsc::channel(IN_EVENT_CAP);
         let (on_endpoints_tx, on_endpoints_rx) = watch::channel(Default::default());
-        let actor = GossipActor {
+        let actor = Actor {
             endpoint,
             state,
             dialer,
@@ -307,7 +307,7 @@ impl fmt::Debug for ToActor {
 }
 
 /// Actor that sends and handles messages between the connection and main state loops
-struct GossipActor {
+struct Actor {
     /// Protocol state
     state: proto::State<PeerId, StdRng>,
     endpoint: MagicEndpoint,
@@ -335,7 +335,7 @@ struct GossipActor {
     subscribers_all: Option<broadcast::Sender<(TopicId, Event)>>,
 }
 
-impl GossipActor {
+impl Actor {
     pub async fn run(mut self) -> anyhow::Result<()> {
         let me = *self.state.me();
         loop {
@@ -613,7 +613,7 @@ mod test {
 
     async fn endpoint_loop(
         endpoint: MagicEndpoint,
-        gossip: GossipHandle,
+        gossip: Gossip,
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         loop {
@@ -640,9 +640,9 @@ mod test {
         let ep2 = create_endpoint(derp_map.clone()).await.unwrap();
         let ep3 = create_endpoint(derp_map.clone()).await.unwrap();
 
-        let go1 = GossipHandle::from_endpoint(ep1.clone(), Default::default());
-        let go2 = GossipHandle::from_endpoint(ep2.clone(), Default::default());
-        let go3 = GossipHandle::from_endpoint(ep3.clone(), Default::default());
+        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default());
+        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default());
+        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default());
         debug!("peer1 {:?}", ep1.peer_id());
         debug!("peer2 {:?}", ep2.peer_id());
         debug!("peer3 {:?}", ep3.peer_id());
