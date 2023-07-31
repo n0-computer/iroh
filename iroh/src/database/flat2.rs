@@ -973,6 +973,17 @@ impl Database {
         })))
     }
 
+    /// Blocking load a database from disk.
+    pub fn load_blocking(
+        complete_path: impl AsRef<Path>,
+        partial_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let complete_path = complete_path.as_ref().to_path_buf();
+        let partial_path = partial_path.as_ref().to_path_buf();
+        let db = Self::load0(complete_path, partial_path)?;
+        Ok(db)
+    }
+
     /// Load a database from disk.
     pub async fn load(
         complete_path: impl AsRef<Path>,

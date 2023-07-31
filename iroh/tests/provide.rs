@@ -25,8 +25,7 @@ use iroh_net::{
 };
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use testdir::testdir;
-use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
+use tokio::sync::mpsc;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
@@ -150,7 +149,7 @@ fn get_options(peer_id: PeerId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     }
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "legacy-flat-db")]
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     use iroh::database::flat::{create_collection, DataSource};
@@ -359,18 +358,14 @@ fn setup_logging() {
         .ok();
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "mem-db")]
 #[tokio::test]
 async fn test_server_close() {
-    use iroh::database::flat::create_collection;
-
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     setup_logging();
-    let dir = testdir!();
-    let src = dir.join("src");
-    fs::write(&src, "hello there").await.unwrap();
-    let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
+    let mut db = iroh::database::mem::Database::default();
+    let hash = db.insert(b"hello there");
     let addr = "127.0.0.1:0".parse().unwrap();
     let mut node = test_node(db, addr).runtime(&rt).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
@@ -416,7 +411,7 @@ async fn test_server_close() {
         .expect("supervisor failed");
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "legacy-flat-db")]
 #[tokio::test]
 async fn test_blob_reader_partial() -> Result<()> {
     use iroh::database::flat::create_collection;

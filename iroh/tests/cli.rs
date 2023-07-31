@@ -26,7 +26,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     Ok(hash.into())
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "legacy-flat-db")]
 /// Given a directory, make a partial download of it.
 ///
 /// Takes all files and splits them in half, and leaves the collection alone.
@@ -125,7 +125,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "legacy-flat-db")]
 #[test]
 fn cli_provide_tree_resume() -> Result<()> {
     let dir = testdir!().join("src");
@@ -164,7 +164,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::database::flat::Database;
+    use iroh::database::flat2::Database;
+    use iroh_bytes::provider::BaoReadonlyDb;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -218,16 +219,15 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     };
     provide(&foo_path)?;
     // should have some data now
-    let db = Database::load_test(iroh_data_dir.clone())?;
-    let blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
-    assert_eq!(blobs, vec![foo_path.clone()]);
+    let db = Database::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
+    let blobs = db.blobs().collect::<Vec<_>>();
+    assert_eq!(blobs.len(), 2);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Database::load_test(&iroh_data_dir)?;
-    let mut blobs = db.external().map(|x| x.1).collect::<Vec<_>>();
-    blobs.sort();
-    assert_eq!(blobs, vec![bar_path, foo_path]);
+    let db = Database::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
+    let blobs = db.blobs().collect::<Vec<_>>();
+    assert_eq!(blobs.len(), 4);
 
     Ok(())
 }

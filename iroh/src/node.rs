@@ -1273,7 +1273,6 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             util::progress::{ProgressSender, TokioProgressSender},
         };
 
-        use crate::database::flat::create_data_sources;
         let progress = TokioProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
@@ -1302,7 +1301,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = create_data_sources(root)?;
+        let data_sources = crate::util::fs::scan_path(root)?;
         const IO_PARALLELISM: usize = 4;
         let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
             .map(|source| {
@@ -1604,7 +1603,6 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -1633,10 +1631,10 @@ mod tests {
         assert!(!ticket.addrs().is_empty());
     }
 
-    #[cfg(feature = "flat-db")]
+    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::database::flat::Database::from(HashMap::new());
+        let db = crate::database::mem::Database::default();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())

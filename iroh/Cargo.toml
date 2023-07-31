@@ -57,11 +57,11 @@ bincode = "1.3.3"
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "redb-db", "iroh-collection"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "mem-db", "iroh-collection"]
 metrics = ["iroh-metrics"]
-flat-db = []
+legacy-flat-db = []
 mem-db = []
-redb-db = []
+flat-db = []
 iroh-collection = []
 test = []
 

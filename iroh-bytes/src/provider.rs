@@ -9,7 +9,7 @@ use anyhow::{ensure, Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
-use futures::future::{self, BoxFuture};
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use range_collections::RangeSet2;
@@ -1006,52 +1006,4 @@ pub enum ImportProgress {
     ///
     /// This comes after `Size` and zero or more `OutboardProgress` messages
     OutboardDone { id: u64, hash: Hash },
-}
-
-/// A local filesystem based Vfs
-#[derive(Debug, Clone)]
-pub struct LocalFs;
-
-impl Vfs for LocalFs {
-    type Id = std::path::PathBuf;
-    type ReadRaw = iroh_io::File;
-    type WriteRaw = iroh_io::File;
-
-    fn create_temp_pair(
-        &self,
-        hash: Hash,
-        outboard: bool,
-    ) -> BoxFuture<'_, io::Result<(Self::Id, Option<Self::Id>)>> {
-        use rand::Rng;
-        let dir = std::env::temp_dir();
-        let rand = rand::thread_rng().gen::<[u8; 16]>();
-        let data = dir.join(Purpose::PartialData(hash, rand).to_string());
-        let outboard = if outboard {
-            Some(dir.join(Purpose::PartialOutboard(hash, rand).to_string()))
-        } else {
-            None
-        };
-        future::ok((data, outboard)).boxed()
-    }
-
-    fn open_read(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<Self::ReadRaw>> {
-        let handle = handle.clone();
-        iroh_io::File::create(move || std::fs::File::open(handle.as_path())).boxed()
-    }
-
-    fn open_write(&self, handle: &std::path::PathBuf) -> BoxFuture<'_, io::Result<Self::WriteRaw>> {
-        let handle = handle.clone();
-        iroh_io::File::create(move || {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(handle.as_path())
-        })
-        .boxed()
-    }
-
-    fn delete(&self, handle: &Self::Id) -> BoxFuture<'_, io::Result<()>> {
-        let handle = handle.clone();
-        tokio::fs::remove_file(handle).boxed()
-    }
 }
