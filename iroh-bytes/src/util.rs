@@ -96,16 +96,22 @@ impl Ord for Hash {
 
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // result will be 58 bytes plus prefix
-        let mut res = [b'b'; 59];
-        // write the encoded bytes
-        data_encoding::BASE32_NOPAD.encode_mut(&self.as_cid_bytes(), &mut res[1..]);
-        // convert to string, this is guaranteed to succeed
-        let t = std::str::from_utf8_mut(res.as_mut()).unwrap();
-        // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
-        t.make_ascii_lowercase();
-        // write the str, no allocations
-        f.write_str(t)
+        if f.alternate() {
+            let mut tmp = [0u8; 64];
+            hex::encode_to_slice(self, &mut tmp).unwrap();
+            f.write_str(std::str::from_utf8(&tmp).unwrap())
+        } else {
+            // result will be 58 bytes plus prefix
+            let mut res = [b'b'; 59];
+            // write the encoded bytes
+            data_encoding::BASE32_NOPAD.encode_mut(&self.as_cid_bytes(), &mut res[1..]);
+            // convert to string, this is guaranteed to succeed
+            let t = std::str::from_utf8_mut(res.as_mut()).unwrap();
+            // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
+            t.make_ascii_lowercase();
+            // write the str, no allocations
+            f.write_str(t)
+        }
     }
 }
 
