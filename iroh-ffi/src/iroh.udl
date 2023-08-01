@@ -1,9 +1,13 @@
 namespace iroh {
-  u32 add(u32 a, u32 b);
-  string hello();
 };
 
 interface IrohNode {
+  [Throws=IrohError]
   constructor();
   string peer_id();
+};
+
+[Error]
+enum IrohError {
+  "Runtime", "NodeCreate"
 };

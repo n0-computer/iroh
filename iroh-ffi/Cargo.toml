@@ -22,7 +22,6 @@ path = "uniffi-bindgen.rs"
 
 [features]
 default = []
-c-headers = ["safer-ffi/headers"]
 
 [dependencies]
 anyhow = "1.0.69"
@@ -37,8 +36,8 @@ multibase = { version = "0.9.1"}
 num_cpus = { version = "1.15.0" }
 quinn = "0.10"
 range-collections = "0.4.0"
-safer-ffi = { version = "0.1.0-rc1", features = ["proc_macros"] }
 tempfile = "3.4"
+thiserror = "1.0.44"
 tokio = "1.25.0"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 uniffi = { version = "0.24.3", features = ["cli"] }

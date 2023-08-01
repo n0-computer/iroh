@@ -5,6 +5,8 @@ use iroh::{
     node::{Node, DEFAULT_BIND_ADDR},
 };
 
+use crate::error::{IrohError as Error, Result};
+
 #[derive(Clone, Debug)]
 pub struct IrohNode {
     inner: Node<mem::Database>,
@@ -12,13 +14,13 @@ pub struct IrohNode {
 }
 
 impl IrohNode {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let tokio_rt = tokio::runtime::Builder::new_multi_thread()
             .thread_name("main-runtime")
             .worker_threads(2)
             .enable_all()
             .build()
-            .unwrap(); // TODO: error handling
+            .map_err(|e| Error::Runtime(e.to_string()))?;
 
         let tpc = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
         let rt = iroh::bytes::util::runtime::Handle::new(tokio_rt.handle().clone(), tpc);
@@ -35,12 +37,12 @@ impl IrohNode {
                     .spawn()
                     .await
             })
-            .unwrap(); // TODO: error handling
+            .map_err(|e| Error::NodeCreate(e.to_string()))?;
 
-        IrohNode {
+        Ok(IrohNode {
             inner: node,
             async_runtime: rt,
-        }
+        })
     }
 
     pub fn peer_id(&self) -> String {

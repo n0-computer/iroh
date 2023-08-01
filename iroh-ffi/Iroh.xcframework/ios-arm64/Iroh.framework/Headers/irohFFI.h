@@ -60,7 +60,6 @@ typedef struct RustCallStatus {
 #endif // def UNIFFI_SHARED_H
 
 // Callbacks for UniFFI Futures
-typedef void (*UniFfiFutureCallbackUInt32)(const void * _Nonnull, uint32_t, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackRustBuffer)(const void * _Nonnull, RustBuffer, RustCallStatus);
 
@@ -72,11 +71,6 @@ void*_Nonnull uniffi_iroh_fn_constructor_irohnode_new(RustCallStatus *_Nonnull o
 );
 RustBuffer uniffi_iroh_fn_method_irohnode_peer_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
-uint32_t uniffi_iroh_fn_func_add(uint32_t a, uint32_t b, RustCallStatus *_Nonnull out_status
-);
-RustBuffer uniffi_iroh_fn_func_hello(RustCallStatus *_Nonnull out_status
-    
-);
 RustBuffer ffi_iroh_rustbuffer_alloc(int32_t size, RustCallStatus *_Nonnull out_status
 );
 RustBuffer ffi_iroh_rustbuffer_from_bytes(ForeignBytes bytes, RustCallStatus *_Nonnull out_status
@@ -84,12 +78,6 @@ RustBuffer ffi_iroh_rustbuffer_from_bytes(ForeignBytes bytes, RustCallStatus *_N
 void ffi_iroh_rustbuffer_free(RustBuffer buf, RustCallStatus *_Nonnull out_status
 );
 RustBuffer ffi_iroh_rustbuffer_reserve(RustBuffer buf, int32_t additional, RustCallStatus *_Nonnull out_status
-);
-uint16_t uniffi_iroh_checksum_func_add(void
-    
-);
-uint16_t uniffi_iroh_checksum_func_hello(void
-    
 );
 uint16_t uniffi_iroh_checksum_method_irohnode_peer_id(void
     

@@ -294,19 +294,6 @@ private func uniffiCheckCallStatus(
 
 // Public interface members begin here.
 
-private struct FfiConverterUInt32: FfiConverterPrimitive {
-    typealias FfiType = UInt32
-    typealias SwiftType = UInt32
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
-        return try lift(readInt(&buf))
-    }
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
 private struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -359,8 +346,8 @@ public class IrohNode: IrohNodeProtocol {
         self.pointer = pointer
     }
 
-    public convenience init() {
-        self.init(unsafeFromRawPointer: try! rustCall {
+    public convenience init() throws {
+        try self.init(unsafeFromRawPointer: rustCallWithError(FfiConverterTypeIrohError.lift) {
             uniffi_iroh_fn_constructor_irohnode_new($0)
         })
     }
@@ -417,24 +404,49 @@ public func FfiConverterTypeIrohNode_lower(_ value: IrohNode) -> UnsafeMutableRa
     return FfiConverterTypeIrohNode.lower(value)
 }
 
-public func add(a: UInt32, b: UInt32) -> UInt32 {
-    return try! FfiConverterUInt32.lift(
-        try! rustCall {
-            uniffi_iroh_fn_func_add(
-                FfiConverterUInt32.lower(a),
-                FfiConverterUInt32.lower(b), $0
-            )
-        }
-    )
+public enum IrohError {
+    // Simple error enums only carry a message
+    case Runtime(message: String)
+
+    // Simple error enums only carry a message
+    case NodeCreate(message: String)
+
+    fileprivate static func uniffiErrorHandler(_ error: RustBuffer) throws -> Error {
+        return try FfiConverterTypeIrohError.lift(error)
+    }
 }
 
-public func hello() -> String {
-    return try! FfiConverterString.lift(
-        try! rustCall {
-            uniffi_iroh_fn_func_hello($0)
+public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
+    typealias SwiftType = IrohError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IrohError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        case 1: return try .Runtime(
+                message: FfiConverterString.read(from: &buf)
+            )
+
+        case 2: return try .NodeCreate(
+                message: FfiConverterString.read(from: &buf)
+            )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
         }
-    )
+    }
+
+    public static func write(_ value: IrohError, into buf: inout [UInt8]) {
+        switch value {
+        case let .Runtime(message):
+            writeInt(&buf, Int32(1))
+        case let .NodeCreate(message):
+            writeInt(&buf, Int32(2))
+        }
+    }
 }
+
+extension IrohError: Equatable, Hashable {}
+
+extension IrohError: Error {}
 
 private enum InitializationResult {
     case ok
@@ -452,16 +464,10 @@ private var initializationResult: InitializationResult {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if uniffi_iroh_checksum_func_add() != 28883 {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if uniffi_iroh_checksum_func_hello() != 50866 {
-        return InitializationResult.apiChecksumMismatch
-    }
     if uniffi_iroh_checksum_method_irohnode_peer_id() != 46487 {
         return InitializationResult.apiChecksumMismatch
     }
-    if uniffi_iroh_checksum_constructor_irohnode_new() != 31222 {
+    if uniffi_iroh_checksum_constructor_irohnode_new() != 18953 {
         return InitializationResult.apiChecksumMismatch
     }
 
