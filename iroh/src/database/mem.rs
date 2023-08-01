@@ -320,7 +320,7 @@ impl BaoPartialMap for Database {
 
     type PartialEntry = PartialEntry;
 
-    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
+    fn get_partial(&self, hash: &Hash) -> Option<PartialEntry> {
         let state = self.state.read().unwrap();
         let (data, outboard) = state.partial.get(&hash)?;
         Some(PartialEntry {
@@ -330,7 +330,7 @@ impl BaoPartialMap for Database {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard_size =
             usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
@@ -359,8 +359,10 @@ impl BaoPartialMap for Database {
         })
     }
 
-    fn insert_complete_entry(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete_entry(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+        println!("insert_complete_entry {}", entry.hash());
         async move {
+            let hash = entry.hash.into();
             let data = entry.data.freeze();
             let outboard = entry.outboard.data.freeze();
             let mut state = self.state.write().unwrap();
@@ -369,7 +371,8 @@ impl BaoPartialMap for Database {
                 tree: entry.outboard.tree,
                 data: outboard,
             };
-            state.complete.insert(entry.hash.into(), (data, outboard));
+            state.partial.remove(&hash);
+            state.complete.insert(hash, (data, outboard));
             Ok(())
         }
         .boxed()

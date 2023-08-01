@@ -774,7 +774,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         out: String,
         hash: Hash,
         recursive: bool,
-        in_place: bool,
+        stable: bool,
         progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
@@ -794,7 +794,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 tracing::info!("exporting blob {} to {}", hash, path.display());
                 let id = progress.new_id();
                 let progress1 = progress.clone();
-                db.export(*hash, path, true, move |offset| {
+                db.export(*hash, path, stable, move |offset| {
                     Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
@@ -813,7 +813,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     })
                     .await?;
                 let progress1 = progress.clone();
-                db.export(hash, path, in_place, move |offset| {
+                db.export(hash, path, stable, move |offset| {
                     Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                 })
                 .await?;

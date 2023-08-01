@@ -71,7 +71,7 @@ impl Cli {
                 ticket,
                 derp_region,
                 mut out,
-                in_place,
+                stable: in_place,
                 ..
             } => {
                 println!("{:#?}", ticket); // todo: remove
@@ -372,11 +372,13 @@ pub enum Commands {
         derp_region: Option<u16>,
         #[clap(long, conflicts_with_all = &["peer", "hash", "recursive"])]
         ticket: Option<Ticket>,
-        /// Directory in which to save the file(s), defaults to writing to STDOUT
+        /// Directory in which to save the file(s)
         #[clap(long, short)]
         out: Option<PathBuf>,
+        /// If this is set to true, the data will be moved to the output directory,
+        /// and iroh will assume that it will not change.
         #[clap(long, default_value_t = false)]
-        in_place: bool,
+        stable: bool,
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,

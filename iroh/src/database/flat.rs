@@ -714,7 +714,6 @@ impl Database {
         };
         if let Some(path_bytes) = path_bytes {
             let pp = self.paths_path(hash);
-            println!("writing paths {}", pp.display());
             std::fs::write(pp, path_bytes)?;
         }
         Ok(())
