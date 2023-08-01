@@ -928,7 +928,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_missing_ranges_blob(
         entry: &D::PartialEntry,
     ) -> anyhow::Result<RangeSet2<ChunkNum>> {
-        use tracing::info as log;
+        use tracing::trace as log;
         // compute the valid range from just looking at the data file
         let mut data_reader = entry.data_reader().await?;
         let data_size = data_reader.len().await?;

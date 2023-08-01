@@ -418,7 +418,7 @@ impl BaoMap for Database {
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.complete.get(hash) {
-            println!("got complete: {} {}", hash, entry.size);
+            tracing::trace!("got complete: {} {}", hash, entry.size);
             let outboard = state.load_outboard(entry.size, hash)?;
             // check if we have the data cached
             let data = state.data.get(hash).cloned();
@@ -445,7 +445,7 @@ impl BaoMap for Database {
         } else if let Some(entry) = state.partial.get(hash) {
             let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
             let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
-            println!(
+            tracing::trace!(
                 "got partial: {} {} {}",
                 hash,
                 entry.size,
@@ -459,7 +459,7 @@ impl BaoMap for Database {
                 },
             })
         } else {
-            println!("got none {}", hash);
+            tracing::trace!("got none {}", hash);
             None
         }
     }

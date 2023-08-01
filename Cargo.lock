@@ -1636,7 +1636,6 @@ version = "0.5.1"
 dependencies = [
  "anyhow",
  "bao-tree",
- "bincode",
  "blake3",
  "bytes",
  "clap",
