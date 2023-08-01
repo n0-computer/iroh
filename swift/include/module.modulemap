@@ -1,4 +1,0 @@
-module IrohSwift {
-    header "iroh.h"
-    export *
-}
