@@ -10,6 +10,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
+use bao_tree::io::sync::ReadAt;
 use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -17,7 +18,7 @@ use futures::future::Either;
 use futures::{Future, FutureExt};
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{
-    BaoDb, BaoMap, BaoMapEntry, BaoMapMut, BaoPartialEntry, BaoReadonlyDb, ImportProgress,
+    BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ImportProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -32,9 +33,7 @@ struct State {
     // complete entries
     complete: BTreeMap<Hash, CompleteEntry>,
     // partial entries
-    partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
-    // partial entries
-    partial2: BTreeMap<Hash, PartialEntry>,
+    partial: BTreeMap<Hash, PartialEntry>,
     // outboard data, cached for all complete entries
     outboard: BTreeMap<Hash, Bytes>,
     // data, cached for all complete entries that are small enough
@@ -132,8 +131,8 @@ impl PartialEntry {
     }
 }
 
-impl BaoPartialEntry<Database> for Entry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+impl BaoPartialMapEntry<Database> for Entry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::OutboardMut>> {
         let hash = self.hash;
         let size = self.entry.size();
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
@@ -162,7 +161,7 @@ impl BaoPartialEntry<Database> for Entry {
         .boxed()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::DataWriter>> {
         let data = self.entry.data.clone();
         async move {
             if let Either::Right((path, _)) = data {
@@ -185,7 +184,7 @@ impl BaoPartialEntry<Database> for Entry {
     }
 }
 
-impl BaoMapMut for Database {
+impl BaoPartialMap for Database {
     type OutboardMut = PreOrderOutboard<File>;
 
     type DataWriter = iroh_io::File;
@@ -193,7 +192,7 @@ impl BaoMapMut for Database {
     type PartialEntry = Entry;
 
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
-        let entry = self.0.state.read().unwrap().partial2.get(hash)?.clone();
+        let entry = self.0.state.read().unwrap().partial.get(hash)?.clone();
         Some(Entry {
             hash: blake3::Hash::from(*hash),
             entry: EntryData {
@@ -208,7 +207,7 @@ impl BaoMapMut for Database {
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Entry> {
         let mut state = self.0.state.write().unwrap();
-        let entry = state.partial2.entry(hash).or_insert_with(|| {
+        let entry = state.partial.entry(hash).or_insert_with(|| {
             let uuid = rand::thread_rng().gen::<[u8; 16]>();
             PartialEntry::new(size, uuid)
         });
@@ -234,7 +233,7 @@ impl BaoMapMut for Database {
         let data_path = self.0.options.owned_data_path(&hash);
         async move {
             // for a short time we will have neither partial nor complete
-            self.0.state.write().unwrap().partial2.remove(&hash);
+            self.0.state.write().unwrap().partial.remove(&hash);
             tokio::fs::rename(temp_data_path, &data_path).await?;
             if tokio::fs::try_exists(&temp_outboard_path).await? {
                 let outboard_path = self.0.options.owned_outboard_path(&hash);
@@ -288,10 +287,12 @@ struct Inner {
     state: RwLock<State>,
 }
 
-/// Database containing content-addressed data (blobs or collections).
+/// Flat file database implementation.
+/// 
+/// This 
 #[derive(Debug, Clone)]
 pub struct Database(Arc<Inner>);
-/// The [BaoMapEntry] and [BaoPartialEntry] implementation for [Database].
+/// The [BaoMapEntry] and [BaoPartialMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
 pub struct Entry {
     /// the hash is not part of the entry itself
@@ -348,15 +349,17 @@ struct EntryData {
 }
 
 /// A reader for either a file or a byte slice.
+/// 
+/// This is used to read small data from memory, and large data from disk.
 #[derive(Debug)]
-pub enum MemOrFile<M = Bytes> {
+pub enum MemOrFile {
     /// We got it all in memory
-    Mem(M),
+    Mem(Bytes),
     /// An iroh_io::File
     File(File),
 }
 
-impl AsyncSliceReader for MemOrFile<Bytes> {
+impl AsyncSliceReader for MemOrFile {
     type ReadAtFuture<'a> = futures::future::Either<
         <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
         <File as AsyncSliceReader>::ReadAtFuture<'a>,
@@ -476,8 +479,8 @@ impl BaoDb for Database {
         let lock = self.0.state.read().unwrap();
         let res = lock
             .partial
-            .iter()
-            .map(|(hash, _)| *hash)
+            .keys()
+            .cloned()
             .collect::<Vec<_>>();
         Box::new(res.into_iter())
     }
@@ -859,23 +862,43 @@ impl Database {
         }
         let mut partial = BTreeMap::new();
         for (hash, entries) in partial_index {
-            let best = entries.into_iter().filter_map(|(_, (data_path, outboard_path))| {
-                let data_path = data_path?;
-                let outboard_path = outboard_path?;
+            let best = entries.iter().filter_map(|(uuid, (data_path, outboard_path))| {
+                let data_path = data_path.as_ref()?;
+                let outboard_path = outboard_path.as_ref()?;
                 let Ok(data_meta) = std::fs::metadata(&data_path) else {
                     tracing::warn!("unable to open partial data file {}", data_path.display());
                     return None
                 };
-                let Ok(_outboard_meta) = std::fs::metadata(&outboard_path) else {
+                let Ok(outboard_file) = std::fs::File::open(&outboard_path) else {
                     tracing::warn!("unable to open partial outboard file {}", outboard_path.display());
                     return None
                 };
-                let data_size = data_meta.len();
-                Some((data_size, data_path, outboard_path))
+                let mut expected_size = [0u8; 8];
+                let Ok(_) = outboard_file.read_at(0, &mut expected_size) else {
+                    tracing::warn!("partial outboard file is missing length {}", outboard_path.display());
+                    return None
+                };
+                let current_size = data_meta.len();
+                let expected_size = u64::from_le_bytes(expected_size);
+                Some((current_size, expected_size, uuid))
             }).max_by_key(|x| x.0);
-            if let Some((size, data, outboard)) = best {
-                if size > 0 {
-                    partial.insert(hash, (data, outboard));
+            if let Some((expected_size, current_size, uuid)) = best {
+                if current_size > 0 {
+                    partial.insert(hash, PartialEntry { size: expected_size, uuid: *uuid });
+                }
+            }
+            // remove all other entries
+            let keep = partial.get(&hash).map(|x| x.uuid);
+            for (uuid, (data_path, outboard_path)) in entries {
+                if Some(uuid) != keep {
+                    if let Some(data_path) = data_path {
+                        tracing::info!("removing partial data file {}", data_path.display());
+                        std::fs::remove_file(data_path)?;
+                    }
+                    if let Some(outboard_path) = outboard_path {
+                        tracing::info!("removing partial outboard file {}", outboard_path.display());
+                        std::fs::remove_file(outboard_path)?;
+                    }
                 }
             }
         }
@@ -890,7 +913,6 @@ impl Database {
             state: RwLock::new(State {
                 complete,
                 partial,
-                partial2: Default::default(),
                 outboard,
                 data: Default::default(),
             }),

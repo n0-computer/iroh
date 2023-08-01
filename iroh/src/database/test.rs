@@ -1,4 +1,4 @@
-//! A readonly in memory database for iroh-bytes.
+//! A readonly in memory database for iroh-bytes, usable for testing and sharing static data.
 //!
 //! Main entry point is [Database].
 use std::{
@@ -18,7 +18,7 @@ use futures::{
 };
 use iroh_bytes::{
     provider::{
-        BaoDb, BaoMap, BaoMapEntry, BaoMapMut, BaoPartialEntry, BaoReadonlyDb, ValidateProgress,
+        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ValidateProgress,
     },
     Hash, IROH_BLOCK_SIZE,
 };
@@ -97,16 +97,18 @@ impl Database {
 
 /// The [BaoMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
-pub struct DbEntry {
+pub struct Entry {
     outboard: PreOrderMemOutboard<Bytes>,
     data: Bytes,
 }
 
-///
+/// The [BaoPartialMapEntry] implementation for [Database].
+/// 
+/// This is an unoccupied type, since [Database] is does not allow creating partial entries.
 #[derive(Debug, Clone)]
-pub enum NoPartialEntry {}
+pub enum PartialEntry {}
 
-impl BaoMapEntry<Database> for DbEntry {
+impl BaoMapEntry<Database> for Entry {
     fn hash(&self) -> blake3::Hash {
         self.outboard.root()
     }
@@ -131,36 +133,36 @@ impl BaoMapEntry<Database> for DbEntry {
 impl BaoMap for Database {
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Bytes;
-    type Entry = DbEntry;
+    type Entry = Entry;
 
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let (o, d) = self.0.get(hash)?;
-        Some(DbEntry {
+        Some(Entry {
             outboard: o.clone(),
             data: d.clone(),
         })
     }
 }
 
-impl BaoMapMut for Database {
+impl BaoPartialMap for Database {
     type OutboardMut = PreOrderOutboard<BytesMut>;
 
     type DataWriter = BytesMut;
 
-    type PartialEntry = NoPartialEntry;
+    type PartialEntry = PartialEntry;
 
-    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<NoPartialEntry> {
+    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",
         ))
     }
 
-    fn get_partial(&self, _hash: &Hash) -> Option<NoPartialEntry> {
+    fn get_partial(&self, _hash: &Hash) -> Option<PartialEntry> {
         None
     }
 
-    fn insert_complete_entry(&self, _entry: NoPartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete_entry(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         unreachable!()
     }
 }
@@ -182,7 +184,7 @@ impl BaoReadonlyDb for Database {
     }
 }
 
-impl BaoMapEntry<Database> for NoPartialEntry {
+impl BaoMapEntry<Database> for PartialEntry {
     fn hash(&self) -> blake3::Hash {
         unreachable!()
     }
@@ -206,12 +208,12 @@ impl BaoMapEntry<Database> for NoPartialEntry {
     }
 }
 
-impl BaoPartialEntry<Database> for NoPartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+impl BaoPartialMapEntry<Database> for PartialEntry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::OutboardMut>> {
         unreachable!()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::DataWriter>> {
         unreachable!()
     }
 }

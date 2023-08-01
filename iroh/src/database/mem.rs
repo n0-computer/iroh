@@ -1,5 +1,6 @@
-//! An in memory implementation of [BaoMap] and [BaoReadonlyDb], useful for
-//! testing and short lived nodes.
+//! A full in memory database for iroh-bytes
+//! 
+//! Main entry point is [Database].
 use std::collections::BTreeMap;
 use std::io;
 use std::num::TryFromIntError;
@@ -18,8 +19,8 @@ use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_bytes::provider::BaoDb;
-use iroh_bytes::provider::BaoMapMut;
-use iroh_bytes::provider::BaoPartialEntry;
+use iroh_bytes::provider::BaoPartialMap;
+use iroh_bytes::provider::BaoPartialMapEntry;
 use iroh_bytes::provider::ImportProgress;
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
@@ -309,7 +310,7 @@ impl BaoReadonlyDb for Database {
     }
 }
 
-impl BaoMapMut for Database {
+impl BaoPartialMap for Database {
     type OutboardMut = PreOrderOutboard<MutableMemFile>;
 
     type DataWriter = MutableMemFile;
@@ -411,7 +412,7 @@ impl BaoDb for Database {
     }
 }
 
-impl BaoPartialEntry<Database> for PartialEntry {
+impl BaoPartialMapEntry<Database> for PartialEntry {
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }

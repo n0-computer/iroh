@@ -73,7 +73,7 @@ pub trait BaoMap: Clone + Send + Sync + 'static {
 }
 
 /// A partial entry
-pub trait BaoPartialEntry<D: BaoMapMut>: BaoMapEntry<D> {
+pub trait BaoPartialMapEntry<D: BaoPartialMap>: BaoMapEntry<D> {
     /// A future that resolves to an writeable outboard
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
     /// A future that resolves to a writer that can be used to write the data
@@ -81,7 +81,7 @@ pub trait BaoPartialEntry<D: BaoMapMut>: BaoMapEntry<D> {
 }
 
 /// A mutable bao map
-pub trait BaoMapMut: BaoMap {
+pub trait BaoPartialMap: BaoMap {
     /// The outboard type to write data to the partial entry.
     type OutboardMut: bao_tree::io::fsm::OutboardMut;
     /// The writer type to write data to the partial entry.
@@ -89,7 +89,7 @@ pub trait BaoMapMut: BaoMap {
     /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
     /// It must also be readable.
-    type PartialEntry: BaoPartialEntry<Self>;
+    type PartialEntry: BaoPartialMapEntry<Self>;
 
     /// Get an existing partial entry, or create a new one
     ///
@@ -720,7 +720,7 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 /// The mutable part of a BaoDb
-pub trait BaoDb: BaoReadonlyDb + BaoMapMut {
+pub trait BaoDb: BaoReadonlyDb + BaoPartialMap {
     /// list partial blobs in the database
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(std::iter::empty())

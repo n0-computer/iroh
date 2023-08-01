@@ -36,7 +36,7 @@ use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get;
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, BaoPartialEntry, ShareProgress};
+use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ShareProgress};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
