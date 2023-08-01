@@ -1,18 +1,21 @@
 # iroh-ffi 
 
-> C bindings for Iroh
+> FFI bindings for Iroh
 
 Running `cargo build --release` will produce a dynamic library and a static library.
 
 For builds targeting older versions of MacOS, build with with:  `MACOSX_DEPLOYMENT_TARGET=10.7 && cargo build --target x86_64-apple-darwin --release`.
 
+## Xcode and IOS 
+
+- Run `make.sh`. 
+- Make sure you have `Lib` folder ("New Group") in your Xcode project.
+- After that you can drag the `IrohLib` folder into the `Lib` folder in Xcode. 
+- Then you add it to the `Frameworks, Libraries, and Embedded Content` in the `General` settings of your project. 
+- Now you can just import the library in Swift with a standard import statement like `import IrohLib`.
+
 ## Development
 
-### Regenerating `iroh.h`:
-
-```sh
-cargo test build_headers --features c-headers
-```
 
 # License
 

@@ -33,4 +33,6 @@ fn main() {
         pkg_config.as_bytes(),
     )
     .unwrap();
+
+    uniffi::generate_scaffolding("./src/iroh.udl").unwrap();
 }

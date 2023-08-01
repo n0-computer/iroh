@@ -14,7 +14,11 @@ rust-version = "1.66"
 
 [lib]
 name = "iroh"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
 
 [features]
 default = []
@@ -37,3 +41,8 @@ safer-ffi = { version = "0.1.0-rc1", features = ["proc_macros"] }
 tempfile = "3.4"
 tokio = "1.25.0"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
+uniffi = { version = "0.24.3", features = ["cli"] }
+
+[build-dependencies]
+uniffi = { version = "0.24.3", features = ["build"] }
+
