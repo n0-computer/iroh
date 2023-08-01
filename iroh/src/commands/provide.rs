@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
     collection::IrohCollectionParser,
-    database::flat2,
+    database::flat,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
@@ -54,7 +54,7 @@ pub async fn run(
         iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
     }
     tokio::fs::create_dir_all(&iroh_data_root).await?;
-    let db = flat2::Database::load(&iroh_data_root, &iroh_data_root)
+    let db = flat::Database::load(&iroh_data_root, &iroh_data_root)
         .await
         .with_context(|| {
             format!(

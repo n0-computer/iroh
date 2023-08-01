@@ -7,14 +7,13 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::future::Future;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-use std::{io, result};
 
 use crate::collection::{Blob, Collection};
 use crate::dial::Ticket;
@@ -34,10 +33,11 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
+use iroh_bytes::get;
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, BaoMapEntryMut, ShareProgress};
-use iroh_bytes::{get, IROH_BLOCK_SIZE};
+use iroh_bytes::provider::{BaoDb, BaoPartialEntry, ShareProgress};
+use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
@@ -61,7 +61,6 @@ use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_stream::wrappers::ReceiverStream;
@@ -686,7 +685,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 io::Result::Ok(ListIncompleteBlobsResponse {
                     hash,
                     size: 0,
-                    expected_size: 0,
+                    expected_size: entry.size(),
                     path: "".to_owned(),
                 })
             });
@@ -757,7 +756,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         hash: Hash,
         recursive: bool,
-        sender: ShareProgressSender,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let res = if recursive {
             self.get_collection(conn, &hash, sender).await
@@ -776,7 +775,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         hash: Hash,
         recursive: bool,
         in_place: bool,
-        progress: ShareProgressSender,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
@@ -810,7 +809,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                         id,
                         hash,
                         target: out,
-                        size: 0,
+                        size: entry.size(),
                     })
                     .await?;
                 let progress1 = progress.clone();
@@ -830,7 +829,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner(
         db: &D,
         header: AtBlobHeader,
-        sender: ShareProgressSender,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<AtEndBlob> {
         use iroh_io::AsyncSliceWriter;
 
@@ -838,7 +837,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         // read the size
         let (content, size) = header.next().await?;
         // create the temp file pair
-        let entry = db.create_temp_entry(hash, size);
+        let entry = db.get_or_create_partial(hash, size)?;
         // open the data file in any case
         let df = entry.data_writer().await?;
         // allocate a new id for progress reports for this transfer
@@ -867,7 +866,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(mut of) = ofo {
             of.sync().await?;
         }
-        db.insert_temp_entry(entry).await?;
+        db.insert_complete_entry(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
@@ -880,8 +879,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     async fn get_blob_inner_partial(
         db: &D,
         header: AtBlobHeader,
-        entry: D::TempEntry,
-        sender: ShareProgressSender,
+        entry: D::PartialEntry,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<AtEndBlob> {
         // TODO: the data we get is validated at this point, but we need to check
         // that it actually contains the requested ranges. Or DO WE?
@@ -920,15 +919,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         }
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_temp_entry(entry).await?;
+        db.insert_complete_entry(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
     }
 
     async fn get_missing_ranges_blob(
-        db: &D,
-        entry: &D::TempEntry,
+        entry: &D::PartialEntry,
     ) -> anyhow::Result<RangeSet2<ChunkNum>> {
         use tracing::info as log;
         // compute the valid range from just looking at the data file
@@ -957,13 +955,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         hash: &Hash,
-        sender: ShareProgressSender,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let end = if let Some(entry) = db.get_partial(&hash) {
             trace!("got partial data for {}", hash,);
 
-            let required_ranges = Self::get_missing_ranges_blob(&db, &entry)
+            let required_ranges = Self::get_missing_ranges_blob(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(|| RangeSet2::all());
@@ -979,7 +977,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            let end = Self::get_blob_inner_partial(&db, header, entry, sender).await?;
+            let end = Self::get_blob_inner_partial(&db, header, entry, progress).await?;
             end
         } else {
             // full request
@@ -996,7 +994,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            Self::get_blob_inner(&db, header, sender).await?
+            Self::get_blob_inner(&db, header, progress).await?
         };
 
         // we have requested a single hash, so we must be at closing
@@ -1019,7 +1017,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 BlobInfo::Complete
             } else if let Some(entry) = db.get_partial(&hash) {
                 trace!("got partial data for {}", hash,);
-                let missing_chunks = Self::get_missing_ranges_blob(&db, &entry)
+                let missing_chunks = Self::get_missing_ranges_blob(&entry)
                     .await
                     .ok()
                     .unwrap_or_else(|| RangeSet2::all());
@@ -1043,7 +1041,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         &self,
         conn: quinn::Connection,
         root_hash: &Hash,
-        sender: ShareProgressSender,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         use tracing::info as log;
         let db = &self.inner.db;
@@ -1152,7 +1150,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         anyhow::Ok(())
     }
 
-    async fn share0(self, msg: ShareRequest, progress: ShareProgressSender) -> anyhow::Result<()> {
+    async fn share0(
+        self,
+        msg: ShareRequest,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<()> {
         let local = self.inner.rt.local_pool().clone();
         let hash = msg.hash;
         tracing::info!("share: {:?}", msg);
@@ -1189,7 +1191,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
         async move {
             let (sender, receiver) = mpsc::channel(1024);
-            let sender = ShareProgressSender::new(sender);
+            let sender = TokioProgressSender::new(sender);
             if let Err(cause) = self.share0(msg, sender.clone()).await {
                 sender
                     .send(ShareProgress::Abort(cause.into()))
@@ -1210,10 +1212,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         use futures::TryStreamExt;
         use std::{collections::BTreeMap, sync::Mutex};
 
-        use iroh_bytes::{
-            provider::ImportProgress,
-            util::progress::{ProgressSender, TokioProgressSender},
-        };
+        use iroh_bytes::provider::ImportProgress;
 
         let progress = TokioProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
@@ -1385,7 +1384,7 @@ enum BlobInfo<D: BaoDb> {
     Complete,
     // we have the blob partially
     Partial {
-        entry: D::TempEntry,
+        entry: D::PartialEntry,
         missing_chunks: RangeSet2<ChunkNum>,
     },
     // we don't have the blob at all
@@ -1398,71 +1397,6 @@ impl<D: BaoDb> BlobInfo<D> {
             BlobInfo::Complete => RangeSet2::empty(),
             BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
             BlobInfo::Missing => RangeSet2::all(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ShareProgressSender {
-    sender: mpsc::Sender<ShareProgress>,
-    id: Arc<AtomicU64>,
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-enum ShareProgressSendError {
-    #[error("receiver dropped")]
-    ReceiverDropped,
-}
-
-impl From<ShareProgressSendError> for io::Error {
-    fn from(e: ShareProgressSendError) -> Self {
-        io::Error::new(io::ErrorKind::BrokenPipe, e)
-    }
-}
-
-impl ShareProgressSender {
-    fn new(sender: mpsc::Sender<ShareProgress>) -> Self {
-        Self {
-            sender,
-            id: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// allocate a new id for progress reports for this transfer
-    fn new_id(&self) -> u64 {
-        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// send a message and yield if the receiver is full.
-    /// this will only fail if the receiver is dropped.
-    /// It can be used to send important progress messages where delivery must be guaranteed.
-    /// E.g. start(id)/end(id)
-    async fn send(
-        &self,
-        msg: impl Into<ShareProgress>,
-    ) -> result::Result<(), ShareProgressSendError> {
-        let msg = msg.into();
-        tracing::trace!("sending share progress: {:?}", msg);
-        self.sender
-            .send(msg)
-            .await
-            .map_err(|_| ShareProgressSendError::ReceiverDropped)
-    }
-
-    /// try to send a message and drop it if the receiver is full.
-    /// this will only fail if the receiver is dropped.
-    /// It can be used to send progress messages where delivery is not important, e.g.
-    /// a self contained progress message.
-    fn try_send(
-        &self,
-        msg: impl Into<ShareProgress>,
-    ) -> result::Result<(), ShareProgressSendError> {
-        let msg = msg.into();
-        tracing::trace!("trying to send share progress: {:?}", msg);
-        match self.sender.try_send(msg) {
-            Ok(_) => Ok(()),
-            Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Closed(_)) => Err(ShareProgressSendError::ReceiverDropped),
         }
     }
 }
@@ -1540,10 +1474,6 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     }
 }
 
-fn needs_outboard(size: u64) -> bool {
-    size > (IROH_BLOCK_SIZE.bytes() as u64)
-}
-
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
@@ -1562,7 +1492,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::database::mem::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::database::test::Database::new([("test", b"hello")]);
         let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1578,7 +1508,6 @@ mod tests {
 
     #[cfg(feature = "mem-db")]
     #[tokio::test]
-    #[ignore]
     async fn test_node_add_collection_event() -> Result<()> {
         let db = crate::database::mem::Database::default();
         let node = Node::builder(db)

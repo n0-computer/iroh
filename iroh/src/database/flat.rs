@@ -1,65 +1,313 @@
-//! The concrete database used by the iroh binary.
-use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
-use std::io::BufReader;
+//! A flat file database implementation.
+//!
+//! This is a simple database implementation that stores all data in the file system.
+//! It is used by the iroh binary.
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use std::{fmt, io, result};
 
-use anyhow::Context;
-use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
-use bao_tree::ChunkNum;
+use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
+use bao_tree::{BaoTree, ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
-use futures::{Future, FutureExt, StreamExt};
-use iroh_bytes::protocol::MAX_MESSAGE_SIZE;
-use iroh_bytes::provider::{BaoDb, BaoMap, BaoMapEntry, BaoReadonlyDb, LocalFs};
-use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+use futures::{Future, FutureExt};
+use iroh_bytes::provider::ValidateProgress;
+use iroh_bytes::provider::{
+    BaoDb, BaoMap, BaoMapEntry, BaoMapMut, BaoPartialEntry, BaoReadonlyDb, ImportProgress,
+};
+use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
-use iroh_io::File;
+use iroh_io::{AsyncSliceReader, File};
+use rand::Rng;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
-use tracing::{trace, trace_span};
-use walkdir::WalkDir;
+use tracing::trace_span;
 
-use crate::collection::Blob;
-use crate::collection::Collection;
-use crate::util::io::canonicalize_path;
-use crate::util::io::validate_bao;
-use crate::util::io::BaoValidationError;
-use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
-
-/// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
-const FNAME_OUTBOARDS: &str = "outboards";
-
-/// File name of directory inside `IROH_DATA_DIR` where collections are stored.
-///
-/// This is now used not just for collections but also for internally generated blobs.
-const FNAME_COLLECTIONS: &str = "collections";
-
-/// File name inside `IROH_DATA_DIR` where paths to data are stored.
-pub const FNAME_PATHS: &str = "paths.bin";
-
-/// Database containing content-addressed data (blobs or collections).
-#[derive(Debug, Clone, Default)]
-pub struct Database(Arc<RwLock<HashMap<Hash, DbEntry>>>);
-/// The [BaoMapEntry] implementation for [Database].
-#[derive(Debug, Clone)]
-pub struct DbPair {
-    hash: blake3::Hash,
-    entry: DbEntry,
+#[derive(Debug, Default)]
+struct State {
+    // complete entries
+    complete: BTreeMap<Hash, CompleteEntry>,
+    // partial entries
+    partial: BTreeMap<Hash, (PathBuf, PathBuf)>,
+    // partial entries
+    partial2: BTreeMap<Hash, PartialEntry>,
+    // outboard data, cached for all complete entries
+    outboard: BTreeMap<Hash, Bytes>,
+    // data, cached for all complete entries that are small enough
+    data: BTreeMap<Hash, Bytes>,
 }
 
-impl BaoMapEntry<Database> for DbPair {
+#[derive(Debug, Default)]
+struct CompleteEntry {
+    // size of the data
+    size: u64,
+    // true means we own the data, false means it is stored externally
+    owned_data: bool,
+    // external storage locations
+    external: BTreeSet<PathBuf>,
+}
+
+impl CompleteEntry {
+    fn external_path(&self) -> Option<&PathBuf> {
+        self.external.iter().next()
+    }
+
+    fn external_to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(&self.external).unwrap()
+    }
+
+    // create a new complete entry with the given size
+    //
+    // the generated entry will have no data or outboard data yet
+    fn new_default(size: u64) -> Self {
+        Self {
+            owned_data: true,
+            external: Default::default(),
+            size,
+        }
+    }
+
+    /// create a new complete entry with the given size and path
+    ///
+    /// the generated entry will have no data or outboard data yet
+    fn new_external(size: u64, path: PathBuf) -> Self {
+        Self {
+            owned_data: false,
+            external: [path].into_iter().collect(),
+            size,
+        }
+    }
+
+    // /// load the cache parts
+    // async fn load(size: u64, data_id: Option<PathBuf>, outboard_id: Option<PathBuf>) -> io::Result<Self> {
+    //     let outboard = Some(if let Some(outboard_id) = outboard_id {
+    //         Bytes::from(tokio::fs::read(outboard_id).await?)
+    //     } else {
+    //         size.to_le_bytes().to_vec().into()
+    //     });
+    //     let data = if let Some(data_id) = data_id {
+    //         Some(Bytes::from(tokio::fs::read(data_id).await?))
+    //     } else {
+    //         None
+    //     };
+    //     Ok(Self {
+    //         owned_data: false,
+    //         external: Default::default(),
+    //         size,
+    //     })
+    // }
+
+    #[allow(dead_code)]
+    fn is_valid(&self) -> bool {
+        !self.external.is_empty() || self.owned_data
+    }
+
+    fn union_with(&mut self, new: CompleteEntry) -> io::Result<()> {
+        if self.size != 0 && self.size != new.size {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "size mismatch"));
+        }
+        self.size = new.size;
+        self.owned_data |= new.owned_data;
+        self.external.extend(new.external.into_iter());
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialEntry {
+    // size of the data
+    #[allow(dead_code)]
+    size: u64,
+    // unique id for this entry
+    uuid: [u8; 16],
+}
+
+impl PartialEntry {
+    fn new(size: u64, uuid: [u8; 16]) -> Self {
+        Self { size, uuid }
+    }
+}
+
+impl BaoPartialEntry<Database> for Entry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
+        let hash = self.hash;
+        let size = self.entry.size();
+        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let outboard = self.entry.outboard.clone();
+        async move {
+            if let Either::Right(path) = outboard {
+                let writer = iroh_io::File::create(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(path.clone())
+                })
+                .await?;
+                Ok(PreOrderOutboard {
+                    root: hash,
+                    tree,
+                    data: writer,
+                })
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "cannot write to in-memory outboard",
+                ))
+            }
+        }
+        .boxed()
+    }
+
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
+        let data = self.entry.data.clone();
+        async move {
+            if let Either::Right((path, _)) = data {
+                let writer = iroh_io::File::create(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(path.clone())
+                })
+                .await?;
+                Ok(writer)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "cannot write to in-memory data",
+                ))
+            }
+        }
+        .boxed()
+    }
+}
+
+impl BaoMapMut for Database {
+    type OutboardMut = PreOrderOutboard<File>;
+
+    type DataWriter = iroh_io::File;
+
+    type PartialEntry = Entry;
+
+    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
+        let entry = self.0.state.read().unwrap().partial2.get(hash)?.clone();
+        Some(Entry {
+            hash: blake3::Hash::from(*hash),
+            entry: EntryData {
+                data: Either::Right((
+                    self.0.options.partial_data_path(*hash, &entry.uuid),
+                    entry.size,
+                )),
+                outboard: Either::Right(self.0.options.partial_outboard_path(*hash, &entry.uuid)),
+            },
+        })
+    }
+
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Entry> {
+        let mut state = self.0.state.write().unwrap();
+        let entry = state.partial2.entry(hash).or_insert_with(|| {
+            let uuid = rand::thread_rng().gen::<[u8; 16]>();
+            PartialEntry::new(size, uuid)
+        });
+        let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
+        let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
+        Ok(Entry {
+            hash: blake3::Hash::from(hash),
+            entry: EntryData {
+                data: Either::Right((data_path, size)),
+                outboard: Either::Right(outboard_path),
+            },
+        })
+    }
+
+    fn insert_complete_entry(&self, entry: Entry) -> BoxFuture<'_, io::Result<()>> {
+        let hash = entry.hash.into();
+        let Either::Right((temp_data_path, size)) = entry.entry.data else {
+            todo!()
+        };
+        let Either::Right(temp_outboard_path) = entry.entry.outboard else {
+            todo!()
+        };
+        let data_path = self.0.options.owned_data_path(&hash);
+        async move {
+            // for a short time we will have neither partial nor complete
+            self.0.state.write().unwrap().partial2.remove(&hash);
+            tokio::fs::rename(temp_data_path, &data_path).await?;
+            if tokio::fs::try_exists(&temp_outboard_path).await? {
+                let outboard_path = self.0.options.owned_outboard_path(&hash);
+                tokio::fs::rename(temp_outboard_path, &outboard_path).await?;
+            }
+            let mut state = self.0.state.write().unwrap();
+            let entry = state.complete.entry(hash).or_default();
+            entry.union_with(CompleteEntry::new_default(size))?;
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+#[derive(Debug)]
+struct Options {
+    complete_path: PathBuf,
+    partial_path: PathBuf,
+    move_threshold: u64,
+    inline_threshold: u64,
+}
+
+impl Options {
+    fn partial_data_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.partial_path
+            .join(FileName::PartialData(hash, *uuid).to_string())
+    }
+
+    fn partial_outboard_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
+        self.partial_path
+            .join(FileName::PartialOutboard(hash, *uuid).to_string())
+    }
+
+    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.complete_path.join(FileName::Data(*hash).to_string())
+    }
+
+    fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
+        self.complete_path
+            .join(FileName::Outboard(*hash).to_string())
+    }
+
+    fn paths_path(&self, hash: Hash) -> PathBuf {
+        self.complete_path.join(FileName::Paths(hash).to_string())
+    }
+}
+
+#[derive(Debug)]
+struct Inner {
+    options: Options,
+    state: RwLock<State>,
+}
+
+/// Database containing content-addressed data (blobs or collections).
+#[derive(Debug, Clone)]
+pub struct Database(Arc<Inner>);
+/// The [BaoMapEntry] and [BaoPartialEntry] implementation for [Database].
+#[derive(Debug, Clone)]
+pub struct Entry {
+    /// the hash is not part of the entry itself
+    hash: blake3::Hash,
+    entry: EntryData,
+}
+
+impl BaoMapEntry<Database> for Entry {
     fn hash(&self) -> blake3::Hash {
         self.hash
     }
 
     fn size(&self) -> u64 {
-        match &self.entry {
-            DbEntry::External { size, .. } => *size,
-            DbEntry::Internal { data, .. } => data.len() as u64,
+        match &self.entry.data {
+            Either::Left(bytes) => bytes.len() as u64,
+            Either::Right((_, size)) => *size,
         }
     }
 
@@ -67,16 +315,20 @@ impl BaoMapEntry<Database> for DbPair {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard>> {
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
         async move {
-            let bytes = self.entry.outboard_reader().await?;
-            let hash = self.hash;
-            PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, bytes)
+            let size = self.entry.size();
+            let data = self.entry.outboard_reader().await?;
+            Ok(PreOrderOutboard {
+                root: self.hash,
+                tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+                data,
+            })
         }
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Either<Bytes, File>>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
         self.entry.data_reader().boxed()
     }
 }
@@ -87,758 +339,604 @@ impl BaoMapEntry<Database> for DbPair {
 ///
 /// Internally stored entries are stored in the iroh home directory when the database is
 /// persisted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DbEntry {
-    /// A blob.
-    External {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// Path to the original data, which must not change while in use.
-        ///
-        /// Note that when adding multiple files with the same content, only one of them
-        /// will get added to the store. So the path is not that useful for information.  It
-        /// is just a place to look for the data correspoding to the hash and outboard.
-        // TODO: Change this to a list of paths.
-        path: PathBuf,
-        /// Size of the original data.
-        size: u64,
-    },
-    /// A collection.
-    Internal {
-        /// The bao outboard data.
-        outboard: Bytes,
-        /// The inline data.
-        data: Bytes,
-    },
+#[derive(Debug, Clone)]
+struct EntryData {
+    /// The bao outboard data.
+    outboard: Either<Bytes, PathBuf>,
+    /// The data itself.
+    data: Either<Bytes, (PathBuf, u64)>,
 }
 
-impl DbEntry {
-    /// True if this is an entry that is stored externally.
-    pub fn is_external(&self) -> bool {
-        matches!(self, DbEntry::External { .. })
-    }
+/// A reader for either a file or a byte slice.
+#[derive(Debug)]
+pub enum MemOrFile<M = Bytes> {
+    /// We got it all in memory
+    Mem(M),
+    /// An iroh_io::File
+    File(File),
+}
 
-    /// Path to the external data, or `None` if this is an internal entry.
-    pub fn blob_path(&self) -> Option<&Path> {
+impl AsyncSliceReader for MemOrFile<Bytes> {
+    type ReadAtFuture<'a> = futures::future::Either<
+        <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
+        <File as AsyncSliceReader>::ReadAtFuture<'a>,
+    >;
+
+    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         match self {
-            DbEntry::External { path, .. } => Some(path),
-            DbEntry::Internal { .. } => None,
+            MemOrFile::Mem(mem) => Either::Left(mem.read_at(offset, len)),
+            MemOrFile::File(file) => Either::Right(file.read_at(offset, len)),
         }
     }
 
-    /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<Bytes>> + 'static {
-        futures::future::ok(match self {
-            DbEntry::External { outboard, .. } => outboard.clone(),
-            DbEntry::Internal { outboard, .. } => outboard.clone(),
-        })
-    }
+    type LenFuture<'a> = futures::future::Either<
+        <Bytes as AsyncSliceReader>::LenFuture<'a>,
+        <File as AsyncSliceReader>::LenFuture<'a>,
+    >;
 
-    /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<Either<Bytes, File>>> + 'static {
-        let this = self.clone();
+    fn len(&mut self) -> Self::LenFuture<'_> {
+        match self {
+            MemOrFile::Mem(mem) => Either::Left(mem.len()),
+            MemOrFile::File(file) => Either::Right(file.len()),
+        }
+    }
+}
+
+impl EntryData {
+    /// Get the outboard data for this entry, as a `Bytes`.
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+        let outboard = self.outboard.clone();
         async move {
-            Ok(match this {
-                DbEntry::External { path, .. } => Either::Right(File::open(path).await?),
-                DbEntry::Internal { data, .. } => Either::Left(data),
+            Ok(match outboard {
+                Either::Left(mem) => MemOrFile::Mem(mem),
+                Either::Right(path) => MemOrFile::File(File::open(path).await?),
             })
         }
     }
 
-    /// Returns the size of the blob or collection.
-    ///
-    /// For collections this is the size of the serialized collection.
-    /// For blobs it is the blob size.
-    pub async fn size(&self) -> u64 {
-        match self {
-            DbEntry::External { size, .. } => *size,
-            DbEntry::Internal { data, .. } => data.len() as u64,
+    /// A reader for the data.
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+        let data = self.data.clone();
+        async move {
+            Ok(match data {
+                Either::Left(mem) => MemOrFile::Mem(mem),
+                Either::Right((path, _)) => MemOrFile::File(File::open(path).await?),
+            })
+        }
+    }
+
+    /// Returns the size of the blob
+    pub fn size(&self) -> u64 {
+        match &self.data {
+            Either::Left(mem) => mem.len() as u64,
+            Either::Right((_, size)) => *size,
         }
     }
 }
 
+fn needs_outboard(size: u64) -> bool {
+    size > (IROH_BLOCK_SIZE.bytes() as u64)
+}
+
 impl BaoMap for Database {
-    type Entry = DbPair;
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Either<Bytes, File>;
+    type Entry = Entry;
+    type Outboard = PreOrderOutboard<MemOrFile>;
+    type DataReader = MemOrFile;
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let entry = self.get(hash)?;
-        Some(DbPair {
+        let state = self.0.state.read().unwrap();
+        let entry = state.complete.get(hash)?;
+        let outboard = state.load_outboard(entry.size, hash)?;
+        // check if we have the data cached
+        let data = state.data.get(hash).cloned();
+        Some(Entry {
             hash: blake3::Hash::from(*hash),
-            entry,
+            entry: EntryData {
+                data: if let Some(data) = data {
+                    Either::Left(data)
+                } else {
+                    // get the data path
+                    let path = if entry.owned_data {
+                        // use the path for the data in the default location
+                        self.owned_data_path(hash)
+                    } else {
+                        // use the first external path. if we don't have any
+                        // we don't have a valid entry
+                        entry.external_path()?.clone()
+                    };
+                    Either::Right((path, entry.size))
+                },
+                outboard: Either::Left(outboard),
+            },
         })
     }
 }
 
 impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let inner = self.0.read().unwrap();
-        let items = inner.iter().map(|(hash, _)| *hash).collect::<Vec<_>>();
-        Box::new(items.into_iter())
-    }
-
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let inner = self.0.read().unwrap();
+        let inner = self.0.state.read().unwrap();
         let items = inner
+            .complete
             .iter()
-            .filter(|(_, entry)| !entry.is_external())
             .map(|(hash, _)| *hash)
             .collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
 
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
-        self.validate0(tx).boxed()
+    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        unimplemented!()
+    }
+
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
+        unimplemented!()
     }
 }
 
 impl BaoDb for Database {
-    type Vfs = LocalFs;
-
-    fn vfs(&self) -> &Self::Vfs {
-        &LocalFs
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let lock = self.0.state.read().unwrap();
+        let res = lock
+            .partial
+            .iter()
+            .map(|(hash, _)| *hash)
+            .collect::<Vec<_>>();
+        Box::new(res.into_iter())
     }
 
-    fn insert_entry(
+    fn export(
         &self,
         hash: Hash,
-        data: PathBuf,
-        outboard: Option<PathBuf>,
+        target: PathBuf,
+        stable: bool,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
-        let db = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let outboard = std::fs::read(outboard.unwrap())?.into();
-            let size = std::fs::metadata(data.as_path())?.len();
-            let entry = DbEntry::External {
-                outboard,
-                path: data,
-                size,
-            };
-            let mut inner = db.0.write().unwrap();
-            inner.insert(hash, entry);
-            Ok(())
-        })
-        .map(make_io_error)
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export0(hash, target, stable, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn import(
+        &self,
+        path: PathBuf,
+        stable: bool,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.import0(path, stable, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+        async move {
+            let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
+            let hash = hash.into();
+            let data_path = self.owned_data_path(&hash);
+            std::fs::write(data_path, &data)?;
+            if outboard.len() > 8 {
+                let outboard_path = self.owned_outboard_path(&hash);
+                std::fs::write(outboard_path, &outboard)?;
+            }
+            let size = data.len() as u64;
+            let mut state = self.0.state.write().unwrap();
+            let entry = state.complete.entry(hash).or_default();
+            entry.union_with(CompleteEntry::new_default(size))?;
+            state.outboard.insert(hash, outboard.into());
+            if size < self.0.options.inline_threshold {
+                state.data.insert(hash, data.to_vec().into());
+            }
+            Ok(hash)
+        }
         .boxed()
     }
 }
 
-fn make_io_error<T>(
-    r: std::result::Result<io::Result<T>, tokio::task::JoinError>,
-) -> io::Result<T> {
-    match r {
-        Ok(Ok(t)) => Ok(t),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(io::Error::new(io::ErrorKind::Other, e)),
-    }
-}
-
-impl From<HashMap<Hash, DbEntry>> for Database {
-    fn from(map: HashMap<Hash, DbEntry>) -> Self {
-        Self(Arc::new(RwLock::new(map)))
-    }
-}
-
-/// A snapshot of the database.
-///
-/// `E` can be `Infallible` if we take a snapshot from an in memory database,
-/// or `io::Error` if we read a database from disk.
-pub(crate) struct Snapshot<E> {
-    /// list of paths we have, hash is the hash of the blob or collection
-    paths: Box<dyn Iterator<Item = (Hash, u64, Option<PathBuf>)>>,
-    /// map of hash to outboard, hash is the hash of the outboard and is unique
-    outboards: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
-    /// map of hash to collection, hash is the hash of the collection and is unique
-    collections: Box<dyn Iterator<Item = result::Result<(Hash, Bytes), E>>>,
-}
-
-impl<E> fmt::Debug for Snapshot<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Snapshot").finish()
-    }
-}
-
-/// An error that can never happen
-#[derive(Debug)]
-pub enum NoError {}
-
-impl From<NoError> for io::Error {
-    fn from(_: NoError) -> Self {
-        unreachable!()
-    }
-}
-
-struct DataPaths {
-    #[allow(dead_code)]
-    data_dir: PathBuf,
-    outboards_dir: PathBuf,
-    collections_dir: PathBuf,
-    paths_file: PathBuf,
-}
-
-impl DataPaths {
-    fn new(data_dir: PathBuf) -> Self {
-        Self {
-            outboards_dir: data_dir.join(FNAME_OUTBOARDS),
-            collections_dir: data_dir.join(FNAME_COLLECTIONS),
-            paths_file: data_dir.join(FNAME_PATHS),
-            data_dir,
+impl State {
+    fn load_outboard(&self, size: u64, hash: &Hash) -> Option<Bytes> {
+        if needs_outboard(size) {
+            self.outboard.get(hash).cloned()
+        } else {
+            Some(Bytes::from(size.to_le_bytes().to_vec()))
         }
     }
-}
 
-/// Using base64 you have all those weird characters like + and /.
-/// So we use hex for file names.
-fn format_hash(hash: &Hash) -> String {
-    hex::encode(hash.as_ref())
-}
-
-/// Parse a hash from a string, e.g. a file name.
-fn parse_hash(hash: &str) -> anyhow::Result<Hash> {
-    let hash = hex::decode(hash)?;
-    let hash: [u8; 32] = hash.try_into().ok().context("wrong size for hash")?;
-    Ok(Hash::from(hash))
-}
-
-impl Snapshot<io::Error> {
-    /// Load a snapshot from disk.
-    pub fn load(data_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
-        use std::fs;
-        let DataPaths {
-            outboards_dir,
-            collections_dir,
-            paths_file,
-            ..
-        } = DataPaths::new(data_dir.as_ref().to_path_buf());
-        let paths = fs::read(&paths_file)
-            .with_context(|| format!("Failed reading {}", paths_file.display()))?;
-        let paths = postcard::from_bytes::<Vec<(Hash, u64, Option<PathBuf>)>>(&paths)?;
-        let hashes = paths
-            .iter()
-            .map(|(hash, _, _)| *hash)
-            .collect::<BTreeSet<_>>();
-        let outboards = hashes.clone().into_iter().map(move |hash| {
-            let path = outboards_dir.join(format_hash(&hash));
-            fs::read(path).map(|x| (hash, Bytes::from(x)))
-        });
-        let collections = fs::read_dir(&collections_dir)
-            .with_context(|| {
-                format!(
-                    "Failed reading collections directory {}",
-                    collections_dir.display()
-                )
-            })?
-            .map(move |entry| {
-                let entry = entry?;
-                let path = entry.path();
-                // skip directories
-                if entry.file_type()?.is_dir() {
-                    tracing::debug!("skipping directory: {:?}", path);
-                    return Ok(None);
-                }
-                // try to get the file name as an OsStr
-                let name = if let Some(name) = path.file_name() {
-                    name
-                } else {
-                    tracing::debug!("skipping unexpected path: {:?}", path);
-                    return Ok(None);
-                };
-                // try to convert into a std str
-                let name = if let Some(name) = name.to_str() {
-                    name
-                } else {
-                    tracing::debug!("skipping unexpected path: {:?}", path);
-                    return Ok(None);
-                };
-                // try to parse the file name as a hash
-                let hash = match parse_hash(name) {
-                    Ok(hash) => hash,
-                    Err(err) => {
-                        tracing::debug!("skipping unexpected path: {:?}: {}", path, err);
-                        return Ok(None);
-                    }
-                };
-                // skip files that are not in the paths file
-                if !hashes.contains(&hash) {
-                    tracing::debug!("skipping unexpected hash: {:?}", hash);
-                    return Ok(None);
-                }
-                // read the collection data and turn it into a Bytes
-                let collection = Bytes::from(fs::read(path)?);
-                io::Result::Ok(Some((hash, collection)))
-            })
-            .filter_map(|x| x.transpose());
-        Ok(Self {
-            paths: Box::new(paths.into_iter()),
-            outboards: Box::new(outboards),
-            collections: Box::new(collections),
-        })
-    }
-}
-
-impl<E> Snapshot<E>
-where
-    io::Error: From<E>,
-{
-    /// Persist the snapshot to disk.
-    pub fn persist(self, data_dir: impl AsRef<Path>) -> io::Result<()> {
-        use std::fs;
-        let DataPaths {
-            outboards_dir,
-            collections_dir,
-            paths_file,
-            ..
-        } = DataPaths::new(data_dir.as_ref().to_path_buf());
-        fs::create_dir_all(&data_dir)?;
-        fs::create_dir_all(&outboards_dir)?;
-        fs::create_dir_all(&collections_dir)?;
-        for item in self.outboards {
-            let (hash, outboard) = item.map_err(Into::into)?;
-            let path = outboards_dir.join(format_hash(&hash));
-            fs::write(path, &outboard)?;
+    fn update_entry(
+        &mut self,
+        hash: Hash,
+        new: CompleteEntry,
+        options: &Options,
+    ) -> io::Result<()> {
+        let entry = self.complete.entry(hash).or_default();
+        let n = entry.external.len();
+        entry.union_with(new)?;
+        if entry.external.len() != n {
+            let path = options.paths_path(hash);
+            std::fs::write(path, entry.external_to_bytes())?;
         }
-        for item in self.collections {
-            let (hash, collection) = item.map_err(Into::into)?;
-            let path = collections_dir.join(format_hash(&hash));
-            fs::write(path, &collection)?;
-        }
-        let mut paths = self.paths.collect::<Vec<_>>();
-        paths.sort_by_key(|(path, _, _)| *path);
-        let paths_content = postcard::to_stdvec(&paths).expect("failed to serialize paths file");
-        fs::write(paths_file, paths_content)?;
         Ok(())
     }
 }
 
 impl Database {
-    /// Load a database from disk for testing. Synchronous.
-    pub fn load_test(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
-        Self::load_internal(dir)
+    fn update_entry(&self, hash: Hash, new: CompleteEntry) -> io::Result<()> {
+        self.0
+            .state
+            .write()
+            .unwrap()
+            .update_entry(hash, new, &self.0.options)
     }
 
-    /// Save a database to disk for testing. Synchronous.
-    pub fn save_test(&self, dir: impl AsRef<Path>) -> io::Result<()> {
-        let dir = dir.as_ref().to_path_buf();
-        self.save_internal(dir)
+    fn import0(
+        self,
+        path: PathBuf,
+        stable: bool,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<(Hash, u64)> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            ));
+        }
+        if !path.is_file() && !path.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path is not a file or symlink",
+            ));
+        }
+        let id = progress.new_id();
+        progress.blocking_send(ImportProgress::Found {
+            id,
+            path: path.clone(),
+            stable,
+        })?;
+        let (hash, entry) = if stable {
+            // compute outboard and hash from the data in place, since we assume that it is stable
+            let size = path.metadata()?.len();
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            let progress2 = progress.clone();
+            let (hash, data) = compute_outboard(&path, size, move |offset| {
+                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+            })?;
+            let outboard_path = self.owned_outboard_path(&hash);
+            std::fs::write(outboard_path, data)?;
+            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+            (hash, CompleteEntry::new_external(size, path))
+        } else {
+            let uuid = rand::thread_rng().gen::<[u8; 16]>();
+            let temp_data_path = self
+                .0
+                .options
+                .partial_path
+                .join(format!("{}.temp", hex::encode(uuid)));
+            // copy the data, since it is not stable
+            progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+            let size = std::fs::copy(&path, &temp_data_path)?;
+            // report the size only after the copy is done
+            progress.blocking_send(ImportProgress::Size { id, size })?;
+            // compute outboard and hash from the temp file that we own
+            let progress2 = progress.clone();
+            let (hash, data) = compute_outboard(&temp_data_path, size, move |offset| {
+                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+            })?;
+            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+            let outboard_path = self.owned_outboard_path(&hash);
+            std::fs::write(outboard_path, data)?;
+            let data_path = self.owned_data_path(&hash);
+            std::fs::rename(temp_data_path, data_path)?;
+            (hash, CompleteEntry::new_default(size))
+        };
+        let size = entry.size;
+        self.update_entry(hash, entry)?;
+        Ok((hash, size))
     }
 
-    fn load_internal(dir: PathBuf) -> anyhow::Result<Self> {
-        tracing::info!("Loading snapshot from {}...", dir.display());
-        let snapshot = Snapshot::load(dir)?;
-        let db = Self::from_snapshot(snapshot)?;
-        tracing::info!("Database loaded");
-        anyhow::Ok(db)
+    fn export0(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        tracing::info!("exporting {} to {} ({})", hash, target.display(), stable);
+
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        std::fs::create_dir_all(parent)?;
+        let (source, size, owned) = {
+            let state = self.0.state.read().unwrap();
+            let entry = state.complete.get(&hash).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
+            })?;
+            let source = if entry.owned_data {
+                self.owned_data_path(&hash)
+            } else {
+                entry
+                    .external
+                    .iter()
+                    .next()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no valid path found"))?
+                    .clone()
+            };
+            let size = entry.size;
+            (source, size, entry.owned_data)
+        };
+        // copy all the things
+        let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
+            tracing::info!("moving {} to {}", source.display(), target.display());
+            if let Err(e) = std::fs::rename(source, &target) {
+                tracing::error!("rename failed: {}", e);
+                return Err(e)?;
+            }
+            let mut state = self.0.state.write().unwrap();
+            let Some(entry) = state.complete.get_mut(&hash) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "hash not found in database",
+                ));
+            };
+            entry.owned_data = false;
+            entry.external.insert(target);
+            Some(entry.external_to_bytes())
+        } else {
+            tracing::info!("{} {} {}", size, stable, owned);
+            tracing::info!("copying {} to {}", source.display(), target.display());
+            // todo: progress
+            std::fs::copy(&source, &target)?;
+            let mut state = self.0.state.write().unwrap();
+            let Some(entry) = state.complete.get_mut(&hash) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "hash not found in database",
+                ));
+            };
+            if stable {
+                entry.external.insert(target);
+                Some(entry.external_to_bytes())
+            } else {
+                None
+            }
+        };
+        if let Some(path_bytes) = path_bytes {
+            let pp = self.paths_path(hash);
+            println!("writing paths {}", pp.display());
+            std::fs::write(pp, path_bytes)?;
+        }
+        Ok(())
     }
 
-    fn save_internal(&self, dir: PathBuf) -> io::Result<()> {
-        tracing::info!("Persisting database to {}...", dir.display());
-        let snapshot = self.snapshot();
-        snapshot.persist(dir)?;
-        tracing::info!("Database stored");
-        io::Result::Ok(())
+    /// scan a directory for data
+    pub(crate) fn load0(complete_path: PathBuf, partial_path: PathBuf) -> anyhow::Result<Self> {
+        let mut partial_index =
+            BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
+        let mut full_index =
+            BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
+        let mut outboard = BTreeMap::new();
+        for entry in std::fs::read_dir(&partial_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let Some(name) = path.file_name() else {
+                    tracing::warn!("skipping unexpected partial file: {:?}", path);
+                    continue;
+                };
+                let Some(name) = name.to_str() else {
+                    tracing::warn!("skipping unexpected partial file: {:?}", path);
+                    continue;
+                };
+                if let Ok(purpose) = FileName::from_str(name) {
+                    match purpose {
+                        FileName::PartialData(hash, uuid) => {
+                            let m = partial_index.entry(hash).or_default();
+                            let (data, _) = m.entry(uuid).or_default();
+                            *data = Some(path);
+                        }
+                        FileName::PartialOutboard(hash, uuid) => {
+                            let m = partial_index.entry(hash).or_default();
+                            let (_, outboard) = m.entry(uuid).or_default();
+                            *outboard = Some(path);
+                        }
+                        _ => {
+                            // silently ignore other files, there could be a valid reason for them
+                        }
+                    }
+                }
+            }
+        }
+
+        for entry in std::fs::read_dir(&complete_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let Some(name) = path.file_name() else {
+                    tracing::warn!("skipping unexpected complete file: {:?}", path);
+                    continue;
+                };
+                let Some(name) = name.to_str() else {
+                    tracing::warn!("skipping unexpected complete file: {:?}", path);
+                    continue;
+                };
+                if let Ok(purpose) = FileName::from_str(name) {
+                    match purpose {
+                        FileName::Data(hash) => {
+                            let (data, _, _) = full_index.entry(hash).or_default();
+                            *data = Some(path);
+                        }
+                        FileName::Outboard(hash) => {
+                            let (_, outboard, _) = full_index.entry(hash).or_default();
+                            *outboard = Some(path);
+                        }
+                        FileName::Paths(hash) => {
+                            let (_, _, paths) = full_index.entry(hash).or_default();
+                            *paths = Some(path);
+                        }
+                        _ => {
+                            // silently ignore other files, there could be a valid reason for them
+                        }
+                    }
+                }
+            }
+        }
+        // retain only entries for which we have both outboard and data
+        partial_index.retain(|hash, entries| {
+            entries.retain(|uuid, (data, outboard)| {
+                if !data.is_some() {
+                    tracing::warn!(
+                        "missing partial data file for {} {}",
+                        hex::encode(hash),
+                        hex::encode(uuid)
+                    );
+                    return false;
+                }
+                if !outboard.is_some() {
+                    tracing::warn!(
+                        "missing partial outboard file for {} {}",
+                        hex::encode(hash),
+                        hex::encode(uuid)
+                    );
+                    return false;
+                }
+                true
+            });
+            !entries.is_empty()
+        });
+        let mut complete = BTreeMap::new();
+        for (hash, (data_path, outboard_path, paths_path)) in full_index {
+            let external: BTreeSet<PathBuf> = if let Some(paths_path) = paths_path {
+                let paths = std::fs::read(paths_path)?;
+                postcard::from_bytes(&paths)?
+            } else {
+                Default::default()
+            };
+            let owned_data = data_path.is_some();
+            let size = if let Some(data_path) = &data_path {
+                let Ok(meta) = std::fs::metadata(data_path) else {
+                    tracing::warn!("unable to open owned data file {}. removing {}", data_path.display(), hex::encode(hash));
+                    continue
+                };
+                meta.len()
+            } else if let Some(external) = external.iter().next() {
+                let Ok(meta) = std::fs::metadata(external) else {
+                    tracing::warn!("unable to open external data file {}. removing {}", external.display(), hex::encode(hash));
+                    continue
+                };
+                meta.len()
+            } else {
+                tracing::error!(
+                    "neither internal nor external file exists. removing {}",
+                    hex::encode(hash)
+                );
+                continue;
+            };
+            if needs_outboard(size) {
+                if let Some(outboard_path) = outboard_path {
+                    let outboard_data = std::fs::read(outboard_path)?;
+                    outboard.insert(hash, outboard_data.into());
+                } else {
+                    tracing::error!("missing outboard file for {}", hex::encode(hash));
+                    continue;
+                }
+            }
+            complete.insert(
+                hash,
+                CompleteEntry {
+                    owned_data,
+                    external,
+                    size,
+                },
+            );
+        }
+        let mut partial = BTreeMap::new();
+        for (hash, entries) in partial_index {
+            let best = entries.into_iter().filter_map(|(_, (data_path, outboard_path))| {
+                let data_path = data_path?;
+                let outboard_path = outboard_path?;
+                let Ok(data_meta) = std::fs::metadata(&data_path) else {
+                    tracing::warn!("unable to open partial data file {}", data_path.display());
+                    return None
+                };
+                let Ok(_outboard_meta) = std::fs::metadata(&outboard_path) else {
+                    tracing::warn!("unable to open partial outboard file {}", outboard_path.display());
+                    return None
+                };
+                let data_size = data_meta.len();
+                Some((data_size, data_path, outboard_path))
+            }).max_by_key(|x| x.0);
+            if let Some((size, data, outboard)) = best {
+                if size > 0 {
+                    partial.insert(hash, (data, outboard));
+                }
+            }
+        }
+        for hash in complete.keys() {
+            tracing::info!("complete {}", hash);
+            partial.remove(hash);
+        }
+        for hash in partial.keys() {
+            tracing::info!("partial {}", hash);
+        }
+        Ok(Self(Arc::new(Inner {
+            state: RwLock::new(State {
+                complete,
+                partial,
+                partial2: Default::default(),
+                outboard,
+                data: Default::default(),
+            }),
+            options: Options {
+                complete_path,
+                partial_path,
+                move_threshold: 1024 * 128,
+                inline_threshold: 1024 * 16,
+            },
+        })))
     }
 
-    /// Load a database from disk.
-    pub async fn load(dir: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
-        let db = tokio::task::spawn_blocking(|| Self::load_internal(dir)).await??;
+    /// Blocking load a database from disk.
+    pub fn load_blocking(
+        complete_path: impl AsRef<Path>,
+        partial_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let complete_path = complete_path.as_ref().to_path_buf();
+        let partial_path = partial_path.as_ref().to_path_buf();
+        let db = Self::load0(complete_path, partial_path)?;
         Ok(db)
     }
 
-    /// Save a database to disk.
-    pub async fn save(&self, dir: impl AsRef<Path>) -> io::Result<()> {
-        let dir = dir.as_ref().to_path_buf();
-        let db = self.clone();
-        tokio::task::spawn_blocking(move || db.save_internal(dir)).await??;
-        Ok(())
-    }
-
     /// Load a database from disk.
-    pub(crate) fn from_snapshot<E: Into<io::Error>>(snapshot: Snapshot<E>) -> anyhow::Result<Self> {
-        let Snapshot {
-            outboards,
-            collections,
-            paths,
-        } = snapshot;
-        let outboards = outboards
-            .collect::<result::Result<HashMap<_, _>, E>>()
-            .map_err(Into::into)
-            .context("Failed reading outboards")?;
-        let collections = collections
-            .collect::<result::Result<HashMap<_, _>, E>>()
-            .map_err(Into::into)
-            .context("Failed reading collections")?;
-        let mut db = HashMap::new();
-        for (hash, size, path) in paths {
-            if let (Some(path), Some(outboard)) = (path, outboards.get(&hash)) {
-                db.insert(
-                    hash,
-                    DbEntry::External {
-                        outboard: outboard.clone(),
-                        path,
-                        size,
-                    },
-                );
-            }
-        }
-        for (hash, data) in collections {
-            if let Some(outboard) = outboards.get(&hash) {
-                db.insert(
-                    hash,
-                    DbEntry::Internal {
-                        outboard: outboard.clone(),
-                        data,
-                    },
-                );
-            }
-        }
-
-        Ok(Self(Arc::new(RwLock::new(db))))
+    pub async fn load(
+        complete_path: impl AsRef<Path>,
+        partial_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let complete_path = complete_path.as_ref().to_path_buf();
+        let partial_path = partial_path.as_ref().to_path_buf();
+        let db =
+            tokio::task::spawn_blocking(move || Self::load0(complete_path, partial_path)).await??;
+        Ok(db)
     }
 
-    /// Validate the entire database, including collections.
-    ///
-    /// This works by taking a snapshot of the database, and then validating. So anything you add after this call will not be validated.
-    async fn validate0(&self, tx: mpsc::Sender<ValidateProgress>) -> anyhow::Result<()> {
-        // This makes a copy of the db, but since the outboards are Bytes, it's not expensive.
-        let mut data = self
-            .0
-            .read()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>();
-        data.sort_by_key(|(k, e)| (e.is_external(), e.blob_path().map(ToOwned::to_owned), *k));
-        tx.send(ValidateProgress::Starting {
-            total: data.len() as u64,
-        })
-        .await?;
-        futures::stream::iter(data)
-            .enumerate()
-            .map(|(id, (hash, boc))| {
-                let id = id as u64;
-                let path = if let DbEntry::External { path, .. } = &boc {
-                    Some(path.clone())
-                } else {
-                    None
-                };
-                let entry_tx = tx.clone();
-                let done_tx = tx.clone();
-                async move {
-                    let size = boc.size().await;
-                    entry_tx
-                        .send(ValidateProgress::Entry {
-                            id,
-                            hash,
-                            path: path.map(|x| x.display().to_string()),
-                            size,
-                        })
-                        .await?;
-                    let error = tokio::task::spawn_blocking(move || {
-                        let progress_tx = entry_tx.clone();
-                        let progress = |offset| {
-                            progress_tx
-                                .try_send(ValidateProgress::Progress { id, offset })
-                                .ok();
-                        };
-                        let res = match boc {
-                            DbEntry::External { outboard, path, .. } => {
-                                match std::fs::File::open(&path) {
-                                    Ok(data) => {
-                                        tracing::info!("validating {}", path.display());
-                                        let res = validate_bao(hash, data, outboard, progress);
-                                        tracing::info!("done validating {}", path.display());
-                                        res
-                                    }
-                                    Err(cause) => Err(BaoValidationError::from(cause)),
-                                }
-                            }
-                            DbEntry::Internal { outboard, data } => {
-                                validate_bao(hash, data.as_ref(), outboard, progress)
-                            }
-                        };
-                        res.err()
-                    })
-                    .await?;
-                    let error = error.map(|x| x.to_string());
-                    done_tx.send(ValidateProgress::Done { id, error }).await?;
-                    anyhow::Ok(())
-                }
-            })
-            .buffer_unordered(num_cpus::get())
-            .map(|item| {
-                // unwrapping is fine here, because it will only happen if the task panicked
-                // basically we are just moving the panic on this task.
-                item.expect("task panicked");
-                Ok(())
-            })
-            .forward(futures::sink::drain())
-            .await?;
-        Ok(())
+    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.0.options.owned_data_path(hash)
     }
 
-    /// take a snapshot of the database
-    pub(crate) fn snapshot(&self) -> Snapshot<NoError> {
-        let this = self.0.read().unwrap();
-        let outboards = this
-            .iter()
-            .map(|(k, v)| match v {
-                DbEntry::External { outboard, .. } => (*k, outboard.clone()),
-                DbEntry::Internal { outboard, .. } => (*k, outboard.clone()),
-            })
-            .collect::<Vec<_>>();
-
-        let collections = this
-            .iter()
-            .filter_map(|(k, v)| match v {
-                DbEntry::External { .. } => None,
-                DbEntry::Internal { data, .. } => Some((*k, data.clone())),
-            })
-            .collect::<Vec<_>>();
-
-        let paths = this
-            .iter()
-            .map(|(k, v)| match v {
-                DbEntry::External { path, size, .. } => (*k, *size, Some(path.clone())),
-                DbEntry::Internal { data, .. } => (*k, data.len() as u64, None),
-            })
-            .collect::<Vec<_>>();
-
-        Snapshot {
-            outboards: Box::new(outboards.into_iter().map(Ok)),
-            collections: Box::new(collections.into_iter().map(Ok)),
-            paths: Box::new(paths.into_iter()),
-        }
+    fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
+        self.0.options.owned_outboard_path(hash)
     }
 
-    /// Get the entry for a given hash.
-    pub fn get(&self, key: &Hash) -> Option<DbEntry> {
-        self.0.read().unwrap().get(key).cloned()
+    fn paths_path(&self, hash: Hash) -> PathBuf {
+        self.0.options.paths_path(hash)
     }
-
-    /// Compute the union of this database with another.
-    pub fn union_with(&self, db: HashMap<Hash, DbEntry>) {
-        let mut inner = self.0.write().unwrap();
-        for (k, v) in db {
-            inner.entry(k).or_insert(v);
-        }
-    }
-
-    /// Iterate over all blobs that are stored externally.
-    pub fn external(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
-        let items = self
-            .0
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(k, v)| match v {
-                DbEntry::External { path, size, .. } => Some((*k, path.clone(), *size)),
-                DbEntry::Internal { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        // todo: make this a proper lazy iterator at some point
-        // e.g. by using an immutable map or a real database that supports snapshots.
-        items.into_iter()
-    }
-
-    /// Iterate over all collections in the database.
-    pub fn internal(&self) -> impl Iterator<Item = (Hash, Bytes)> + 'static {
-        let items = self
-            .0
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(hash, v)| match v {
-                DbEntry::External { .. } => None,
-                DbEntry::Internal { data, .. } => Some((*hash, data.clone())),
-            })
-            .collect::<Vec<_>>();
-        // todo: make this a proper lazy iterator at some point
-        // e.g. by using an immutable map or a real database that supports snapshots.
-        items.into_iter()
-    }
-
-    /// Unwrap into the inner HashMap
-    pub fn to_inner(&self) -> HashMap<Hash, DbEntry> {
-        self.0.read().unwrap().clone()
-    }
-}
-
-/// Data for a blob
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlobData {
-    /// Outboard data from bao.
-    outboard: Bytes,
-    /// Path to the original data, which must not change while in use.
-    ///
-    /// Note that when adding multiple files with the same content, only one of them
-    /// will get added to the store. So the path is not that useful for information.
-    /// It is just a place to look for the data correspoding to the hash and outboard.
-    path: PathBuf,
-    /// Size of the original data.
-    size: u64,
-}
-
-/// A data source
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct DataSource {
-    /// Custom name
-    name: String,
-    /// Path to the file
-    path: PathBuf,
-}
-
-impl DataSource {
-    /// Creates a new [`DataSource`] from a [`PathBuf`].
-    pub fn new(path: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        DataSource { path, name }
-    }
-    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
-    pub fn with_name(path: PathBuf, name: String) -> Self {
-        DataSource { path, name }
-    }
-
-    /// Returns blob name for this data source.
-    ///
-    /// If no name was provided when created it is derived from the path name.
-    pub(crate) fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.name)
-    }
-
-    /// Returns the path of this data source.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl From<PathBuf> for DataSource {
-    fn from(value: PathBuf) -> Self {
-        DataSource::new(value)
-    }
-}
-
-impl From<&std::path::Path> for DataSource {
-    fn from(value: &std::path::Path) -> Self {
-        DataSource::new(value.to_path_buf())
-    }
-}
-
-/// Create data sources from a path.
-pub fn create_data_sources(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
-    Ok(if root.is_dir() {
-        let files = WalkDir::new(&root).into_iter();
-        let data_sources = files
-            .map(|entry| {
-                let entry = entry?;
-                let root = root.clone();
-                if !entry.file_type().is_file() {
-                    // Skip symlinks. Directories are handled by WalkDir.
-                    return Ok(None);
-                }
-                let path = entry.into_path();
-                let name = canonicalize_path(path.strip_prefix(&root)?)?;
-                anyhow::Ok(Some(DataSource { name, path }))
-            })
-            .filter_map(Result::transpose);
-        let data_sources: Vec<anyhow::Result<DataSource>> = data_sources.collect::<Vec<_>>();
-        data_sources
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
-    } else {
-        // A single file, use the file name as the name of the blob.
-        vec![DataSource {
-            name: canonicalize_path(root.file_name().context("path must be a file")?)?,
-            path: root,
-        }]
-    })
-}
-
-/// Outboard data for a blob.
-struct BlobWithOutboard {
-    /// The path of the file containing the original blob data.
-    path: PathBuf,
-    /// The blob name.
-    // TODO: This is not optional!  crate::blobs::Blob::name is String.
-    name: String,
-    /// The size of the original data.
-    size: u64,
-    /// The hash of the blob.
-    hash: Hash,
-    /// The bao outboard data.
-    outboard: Bytes,
-}
-
-/// Computes all the outboards, using parallelism.
-async fn compute_all_outboards(
-    data_sources: Vec<DataSource>,
-    progress: Progress<ProvideProgress>,
-) -> anyhow::Result<Vec<BlobWithOutboard>> {
-    let outboards: Vec<_> = futures::stream::iter(data_sources)
-        .enumerate()
-        .map(|(id, data)| {
-            let progress = progress.clone();
-            tokio::task::spawn_blocking(move || outboard_from_datasource(id as u64, data, progress))
-        })
-        // Allow at most num_cpus tasks at a time, otherwise we might get too many open
-        // files.
-        // TODO: this assumes that this is 100% cpu bound, which is likely not true.  we
-        // might get better performance by using a larger number here.
-        .buffer_unordered(num_cpus::get())
-        .collect()
-        .await;
-
-    // Flatten JoinError and computation error, then bail on any error.
-    outboards
-        .into_iter()
-        .map(|join_res| {
-            join_res
-                .map_err(|_| anyhow::Error::msg("Task JoinError"))
-                .and_then(|res| res)
-        })
-        .collect::<anyhow::Result<Vec<BlobWithOutboard>>>()
-}
-
-/// Computes a single outboard synchronously.
-///
-/// This includes the file access and sending progress reports.  Moving all file access here
-/// is simpler and faster to do on the sync pool anyway.
-fn outboard_from_datasource(
-    id: u64,
-    data_source: DataSource,
-    progress: Progress<ProvideProgress>,
-) -> anyhow::Result<BlobWithOutboard> {
-    let file_meta = data_source.path().metadata().with_context(|| {
-        format!(
-            "Failed to read file size from {}",
-            data_source.path().display()
-        )
-    })?;
-    let size = file_meta.len();
-    // TODO: Found should really send the PathBuf, not the name?
-    progress.blocking_send(ProvideProgress::Found {
-        name: data_source.name().to_string(),
-        id,
-        size,
-    });
-    let (hash, outboard) = {
-        let progress = progress.clone();
-        compute_outboard(data_source.path(), size, move |offset| {
-            progress.try_send(ProvideProgress::Progress { id, offset })
-        })?
-    };
-    progress.blocking_send(ProvideProgress::Done { id, hash });
-    Ok(BlobWithOutboard {
-        path: data_source.path().to_path_buf(),
-        name: data_source.name().to_string(),
-        size,
-        hash,
-        outboard: Bytes::from(outboard),
-    })
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
@@ -853,33 +951,18 @@ fn outboard_from_datasource(
 fn compute_outboard(
     path: &Path,
     size: u64,
-    progress: impl Fn(u64) + Send + Sync + 'static,
-) -> anyhow::Result<(Hash, Vec<u8>)> {
-    anyhow::ensure!(
-        path.is_file(),
-        "can only transfer blob data: {}",
-        path.display()
-    );
+    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+) -> io::Result<(Hash, Vec<u8>)> {
     let span = trace_span!("outboard.compute", path = %path.display());
     let _guard = span.enter();
     let file = std::fs::File::open(path)?;
     // compute outboard size so we can pre-allocate the buffer.
-    //
-    // outboard is ~1/16 of data size, so this will fail for really large files
-    // on really small devices. E.g. you want to transfer a 1TB file from a pi4 with 1gb ram.
-    //
-    // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
-    // I think we really want to keep the outboard in memory for simplicity.
     let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
-        .context("outboard too large to fit in memory")?;
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader::new(file, |p| {
-        if let ProgressReaderUpdate::Progress(offset) = p {
-            progress(offset);
-        }
-    });
+    let reader = ProgressReader2::new(file, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
@@ -887,204 +970,200 @@ fn compute_outboard(
     let hash =
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
-    trace!(%hash, "done");
+    tracing::trace!(%hash, "done");
 
     Ok((hash.into(), ob.into_inner()))
 }
 
-/// Creates a collection blob and returns all blobs in a hashmap.
-///
-/// Returns the hashmap with all blobs, including the created collection blob itself, as
-/// well as the [`iroh_bytes::Hash`] of the collection blob.
-pub async fn create_collection_inner(
-    data_sources: Vec<DataSource>,
-    progress: Progress<ProvideProgress>,
-) -> anyhow::Result<(HashMap<Hash, DbEntry>, Hash)> {
-    let mut outboards = compute_all_outboards(data_sources, progress.clone()).await?;
-
-    // TODO: Don't sort on async runtime?
-    outboards.sort_by_key(|o| (o.name.clone(), o.hash));
-
-    let mut map = HashMap::with_capacity(outboards.len() + 1);
-    let mut blobs = Vec::with_capacity(outboards.len());
-    let mut total_blobs_size: u64 = 0;
-
-    for BlobWithOutboard {
-        path,
-        name,
-        size,
-        hash,
-        outboard,
-    } in outboards
-    {
-        debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
-        map.insert(
-            hash,
-            DbEntry::External {
-                outboard,
-                path,
-                size,
-            },
-        );
-        total_blobs_size += size;
-        blobs.push(Blob { name, hash });
-    }
-
-    let collection = Collection::new(blobs, total_blobs_size)?;
-    let data = postcard::to_stdvec(&collection).context("collection blob encoding")?;
-    if data.len() > MAX_MESSAGE_SIZE {
-        anyhow::bail!("Serialised collection exceeds {MAX_MESSAGE_SIZE}");
-    }
-    let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
-    let hash = Hash::from(hash);
-    map.insert(
-        hash,
-        DbEntry::Internal {
-            outboard: Bytes::from(outboard),
-            data: Bytes::from(data.to_vec()),
-        },
-    );
-    progress.send(ProvideProgress::AllDone { hash }).await?;
-    Ok((map, hash))
+pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {
+    inner: R,
+    offset: u64,
+    cb: F,
 }
 
-/// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
-/// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_collection(data_sources: Vec<DataSource>) -> anyhow::Result<(Database, Hash)> {
-    let (db, hash) = create_collection_inner(data_sources, Progress::none()).await?;
-    Ok((Database::from(db), hash))
+impl<R: io::Read, F: Fn(u64) -> io::Result<()>> ProgressReader2<R, F> {
+    #[allow(dead_code)]
+    pub fn new(inner: R, cb: F) -> Self {
+        Self {
+            inner,
+            offset: 0,
+            cb,
+        }
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-    use std::collections::HashMap;
-    use std::str::FromStr;
-    use testdir::testdir;
-
-    use crate::database::flat::Snapshot;
-
-    use super::*;
-
-    fn blob(size: usize) -> impl Strategy<Value = Bytes> {
-        proptest::collection::vec(any::<u8>(), 0..size).prop_map(Bytes::from)
+impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.offset += read as u64;
+        (self.cb)(self.offset)?;
+        Ok(read)
     }
+}
 
-    fn blobs(count: usize, size: usize) -> impl Strategy<Value = Vec<Bytes>> {
-        proptest::collection::vec(blob(size), 0..count)
+fn flatten_to_io<T>(
+    e: std::result::Result<io::Result<T>, tokio::task::JoinError>,
+) -> io::Result<T> {
+    match e {
+        Ok(x) => x,
+        Err(cause) => Err(io::Error::new(io::ErrorKind::Other, cause)),
     }
+}
 
-    fn db(blob_count: usize, blob_size: usize) -> impl Strategy<Value = Database> {
-        let blobs = blobs(blob_count, blob_size);
-        blobs.prop_map(|blobs| {
-            let mut map = HashMap::new();
-            let mut cblobs = Vec::new();
-            let mut total_blobs_size = 0u64;
-            for blob in blobs {
-                let size = blob.len() as u64;
-                total_blobs_size += size;
-                let (outboard, hash) = bao_tree::io::outboard(&blob, IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                let path = PathBuf::from_str(&hash.to_string()).unwrap();
-                cblobs.push(Blob {
-                    name: hash.to_string(),
-                    hash,
-                });
-                map.insert(
-                    hash,
-                    DbEntry::External {
-                        outboard,
-                        size,
-                        path,
-                    },
-                );
+/// A file name that indicates the purpose of the file.
+#[derive(Clone)]
+pub enum FileName {
+    /// Incomplete data for the hash, with an unique id
+    PartialData(Hash, [u8; 16]),
+    /// File is storing data for the hash
+    Data(Hash),
+    /// File is storing a partial outboard
+    PartialOutboard(Hash, [u8; 16]),
+    /// File is storing an outboard
+    ///
+    /// We can have multiple files with the same outboard, in case the outboard
+    /// does not contain hashes. But we don't store those outboards.
+    Outboard(Hash),
+    /// External paths for the hash
+    Paths(Hash),
+    /// File is going to be used to store metadata
+    Meta(Vec<u8>),
+}
+
+impl FileName {
+    /// Get the file purpose from a path, handling weird cases
+    pub fn from_path(path: impl AsRef<Path>) -> std::result::Result<Self, &'static str> {
+        let path = path.as_ref();
+        let name = path.file_name().ok_or("no file name")?;
+        let name = name.to_str().ok_or("invalid file name")?;
+        let purpose = Self::from_str(name).map_err(|_| "invalid file name")?;
+        Ok(purpose)
+    }
+}
+
+// todo: use "obao4" instead to indicate that it is pre order bao like in the spec,
+// but with a chunk group size of 2^4?
+const OUTBOARD_EXT: &str = "outboard";
+
+impl fmt::Display for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PartialData(hash, uuid) => {
+                write!(f, "{}-{}.data", hex::encode(hash), hex::encode(uuid))
             }
-            let collection = Collection::new(cblobs, total_blobs_size).unwrap();
-            // encode collection and add it
-            {
-                let data = Bytes::from(postcard::to_stdvec(&collection).unwrap());
-                let (outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
-                let outboard = Bytes::from(outboard);
-                let hash = Hash::from(hash);
-                map.insert(hash, DbEntry::Internal { outboard, data });
+            Self::PartialOutboard(hash, uuid) => {
+                write!(
+                    f,
+                    "{}-{}.{}",
+                    hex::encode(hash),
+                    hex::encode(uuid),
+                    OUTBOARD_EXT
+                )
             }
-            let db = Database::default();
-            db.union_with(map);
-            db
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn database_snapshot_roundtrip(db in db(10, 1024 * 64)) {
-            let snapshot = db.snapshot();
-            let db2 = Database::from_snapshot(snapshot).unwrap();
-            prop_assert_eq!(db.to_inner(), db2.to_inner());
-        }
-
-        #[test]
-        fn database_persistence_roundtrip(db in db(10, 1024 * 64)) {
-            let dir = tempfile::tempdir().unwrap();
-            let snapshot = db.snapshot();
-            snapshot.persist(&dir).unwrap();
-            let snapshot2 = Snapshot::load(&dir).unwrap();
-            let db2 = Database::from_snapshot(snapshot2).unwrap();
-            let db = db.to_inner();
-            let db2 = db2.to_inner();
-            prop_assert_eq!(db, db2);
+            Self::Paths(hash) => {
+                write!(f, "{}.paths", hex::encode(hash))
+            }
+            Self::Data(hash) => write!(f, "{}.data", hex::encode(hash)),
+            Self::Outboard(hash) => write!(f, "{}.{}", hex::encode(hash), OUTBOARD_EXT),
+            Self::Meta(name) => write!(f, "{}.meta", hex::encode(name)),
         }
     }
+}
 
-    #[tokio::test]
-    async fn test_create_collection() -> anyhow::Result<()> {
-        let dir: PathBuf = testdir!();
-        let mut expect_blobs = vec![];
-        let hash = blake3::hash(&[]);
-        let hash = Hash::from(hash);
+impl FromStr for FileName {
+    type Err = ();
 
-        // DataSource::File
-        let foo = dir.join("foo");
-        tokio::fs::write(&foo, vec![]).await?;
-        let foo = DataSource::new(foo);
-        expect_blobs.push(Blob {
-            name: "foo".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile
-        let bar = dir.join("bar");
-        tokio::fs::write(&bar, vec![]).await?;
-        let bar = DataSource::with_name(bar, "bat".to_string());
-        expect_blobs.push(Blob {
-            name: "bat".to_string(),
-            hash,
-        });
-
-        // DataSource::NamedFile, empty string name
-        let baz = dir.join("baz");
-        tokio::fs::write(&baz, vec![]).await?;
-        let baz = DataSource::with_name(baz, "".to_string());
-        expect_blobs.push(Blob {
-            name: "".to_string(),
-            hash,
-        });
-
-        let expect_collection = Collection::new(expect_blobs, 0).unwrap();
-
-        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
-
-        let collection = {
-            let c = db.get(&hash).unwrap();
-            if let DbEntry::Internal { data, .. } = c {
-                Collection::from_bytes(&data)?
-            } else {
-                panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
-            }
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        // split into base and extension
+        let Some((base, ext)) = s.rsplit_once('.') else {
+            return Err(());
         };
+        // strip optional leading dot
+        let base = base.strip_prefix('.').unwrap_or(base);
+        let mut hash = [0u8; 32];
+        if let Some((base, uuid_text)) = base.split_once('-') {
+            let mut uuid = [0u8; 16];
+            hex::decode_to_slice(uuid_text, &mut uuid).map_err(|_| ())?;
+            if ext == "data" {
+                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                Ok(Self::PartialData(hash.into(), uuid))
+            } else if ext == OUTBOARD_EXT {
+                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                Ok(Self::PartialOutboard(hash.into(), uuid))
+            } else {
+                Err(())
+            }
+        } else {
+            hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+            if ext == "data" {
+                Ok(Self::Data(hash.into()))
+            } else if ext == OUTBOARD_EXT {
+                Ok(Self::Outboard(hash.into()))
+            } else if ext == "paths" {
+                Ok(Self::Paths(hash.into()))
+            } else if ext == "meta" {
+                Ok(Self::Meta(hash.into()))
+            } else {
+                Err(())
+            }
+        }
+    }
+}
 
-        assert_eq!(expect_collection, collection);
+struct DD<T: fmt::Display>(T);
 
-        Ok(())
+impl<T: fmt::Display> fmt::Debug for DD<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PartialData(hash, guid) => f
+                .debug_tuple("PartialData")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
+            Self::Data(hash) => f.debug_tuple("Data").field(&DD(hash)).finish(),
+            Self::PartialOutboard(hash, guid) => f
+                .debug_tuple("PartialOutboard")
+                .field(&DD(hash))
+                .field(&DD(hex::encode(guid)))
+                .finish(),
+            Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
+            Self::Meta(arg0) => f.debug_tuple("Meta").field(&DD(hex::encode(arg0))).finish(),
+            Self::Paths(arg0) => f
+                .debug_tuple("Paths")
+                .field(&DD(hex::encode(arg0)))
+                .finish(),
+        }
+    }
+}
+
+impl FileName {
+    /// true if the purpose is for a temporary file
+    pub fn temporary(&self) -> bool {
+        match self {
+            FileName::PartialData(_, _) => true,
+            FileName::Data(_) => false,
+            FileName::PartialOutboard(_, _) => true,
+            FileName::Outboard(_) => false,
+            FileName::Meta(_) => false,
+            FileName::Paths(_) => false,
+        }
+    }
+
+    /// some bytes that can be used as a hint for the name of the file
+    pub fn name_hint(&self) -> &[u8] {
+        match self {
+            FileName::PartialData(hash, _) => hash.as_bytes(),
+            FileName::Data(hash) => hash.as_bytes(),
+            FileName::PartialOutboard(hash, _) => hash.as_bytes(),
+            FileName::Meta(data) => data.as_slice(),
+            FileName::Outboard(_) => &[],
+            FileName::Paths(_) => &[],
+        }
     }
 }

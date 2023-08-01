@@ -1,8 +1,7 @@
 //! The server side API
-use std::fmt::{self, Debug};
+use std::fmt::Debug;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
@@ -67,36 +66,42 @@ pub trait BaoMap: Clone + Send + Sync + 'static {
     /// This can also be used for a membership test by just checking if there
     /// is an entry. Creating an entry should be cheap, any expensive ops should
     /// be deferred to the creation of the actual readers.
+    ///
+    /// It is not guaranteed that the entry is complete. A BaoMapMut would return
+    /// here both complete and partial entries, so that you can share partial entries.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
-///
-pub trait BaoMapEntryMut<D: BaoMapMut>: BaoMapEntry<D> {
-    /// A future that resolves to a writer that can be used to write the outboard
+/// A partial entry
+pub trait BaoPartialEntry<D: BaoMapMut>: BaoMapEntry<D> {
+    /// A future that resolves to an writeable outboard
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
     /// A future that resolves to a writer that can be used to write the data
     fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
 }
 
-///
+/// A mutable bao map
 pub trait BaoMapMut: BaoMap {
-    /// The outboard type. This can be an in memory outboard or an outboard that
-    /// retrieves the data asynchronously from a remote database.
+    /// The outboard type to write data to the partial entry.
     type OutboardMut: bao_tree::io::fsm::OutboardMut;
-    /// The writer type.
+    /// The writer type to write data to the partial entry.
     type DataWriter: AsyncSliceWriter;
-    /// The entry type. An entry is a cheaply cloneable handle that can be used
-    /// to open readers for both the data and the outboard
-    type TempEntry: BaoMapEntryMut<Self>;
-
+    /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
-    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry>;
+    /// It must also be readable.
+    type PartialEntry: BaoPartialEntry<Self>;
 
+    /// Get an existing partial entry, or create a new one
     ///
-    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry;
+    /// We need to know the size of the partial entry. This might produce an
+    /// error e.g. if there is not enough space on disk.
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
-    ///
-    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, Result<()>>;
+    /// Get an existing partial entry
+    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
+
+    /// Upgrade a partial entry to a complete entry
+    fn insert_complete_entry(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls
@@ -710,172 +715,6 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
         _ => {
             debug!("blob not found {}", name);
             Ok((SentStatus::NotFound, 0))
-        }
-    }
-}
-
-///
-#[derive(Debug, Clone)]
-pub struct PartialData(Hash, [u8; 16]);
-
-///
-#[derive(Debug, Clone)]
-pub struct PartialOutboard(Hash, [u8; 16]);
-
-///
-#[derive(Clone)]
-pub enum Purpose {
-    /// Incomplete data for the hash, with an unique id
-    PartialData(Hash, [u8; 16]),
-    /// File is storing data for the hash
-    Data(Hash),
-    /// File is storing a partial outboard
-    PartialOutboard(Hash, [u8; 16]),
-    /// File is storing an outboard
-    ///
-    /// We can have multiple files with the same outboard, in case the outboard
-    /// does not contain hashes. But we don't store those outboards.
-    Outboard(Hash),
-    /// External paths for the hash
-    Paths(Hash),
-    /// File is going to be used to store metadata
-    Meta(Vec<u8>),
-}
-
-impl Purpose {
-    /// Get the file purpose from a path, handling weird cases
-    pub fn from_path(path: impl AsRef<Path>) -> std::result::Result<Self, &'static str> {
-        let path = path.as_ref();
-        let name = path.file_name().ok_or("no file name")?;
-        let name = name.to_str().ok_or("invalid file name")?;
-        let purpose = Self::from_str(name).map_err(|_| "invalid file name")?;
-        Ok(purpose)
-    }
-}
-
-// todo: use "obao4" instead to indicate that it is pre order bao like in the spec,
-// but with a chunk group size of 2^4?
-const OUTBOARD_EXT: &str = "outboard";
-
-impl fmt::Display for Purpose {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PartialData(hash, uuid) => {
-                write!(f, "{}-{}.data", hex::encode(hash), hex::encode(uuid))
-            }
-            Self::PartialOutboard(hash, uuid) => {
-                write!(
-                    f,
-                    "{}-{}.{}",
-                    hex::encode(hash),
-                    hex::encode(uuid),
-                    OUTBOARD_EXT
-                )
-            }
-            Self::Paths(hash) => {
-                write!(f, "{}.paths", hex::encode(hash))
-            }
-            Self::Data(hash) => write!(f, "{}.data", hex::encode(hash)),
-            Self::Outboard(hash) => write!(f, "{}.{}", hex::encode(hash), OUTBOARD_EXT),
-            Self::Meta(name) => write!(f, "{}.meta", hex::encode(name)),
-        }
-    }
-}
-
-impl FromStr for Purpose {
-    type Err = ();
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        // split into base and extension
-        let Some((base, ext)) = s.rsplit_once('.') else {
-            return Err(());
-        };
-        // strip optional leading dot
-        let base = base.strip_prefix('.').unwrap_or(base);
-        let mut hash = [0u8; 32];
-        if let Some((base, uuid_text)) = base.split_once('-') {
-            let mut uuid = [0u8; 16];
-            hex::decode_to_slice(uuid_text, &mut uuid).map_err(|_| ())?;
-            if ext == "data" {
-                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
-                Ok(Self::PartialData(hash.into(), uuid))
-            } else if ext == OUTBOARD_EXT {
-                hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
-                Ok(Self::PartialOutboard(hash.into(), uuid))
-            } else {
-                Err(())
-            }
-        } else {
-            hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
-            if ext == "data" {
-                Ok(Self::Data(hash.into()))
-            } else if ext == OUTBOARD_EXT {
-                Ok(Self::Outboard(hash.into()))
-            } else if ext == "paths" {
-                Ok(Self::Paths(hash.into()))
-            } else if ext == "meta" {
-                Ok(Self::Meta(hash.into()))
-            } else {
-                Err(())
-            }
-        }
-    }
-}
-
-struct DD<T: fmt::Display>(T);
-
-impl<T: fmt::Display> fmt::Debug for DD<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Debug for Purpose {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PartialData(hash, guid) => f
-                .debug_tuple("PartialData")
-                .field(&DD(hash))
-                .field(&DD(hex::encode(guid)))
-                .finish(),
-            Self::Data(hash) => f.debug_tuple("Data").field(&DD(hash)).finish(),
-            Self::PartialOutboard(hash, guid) => f
-                .debug_tuple("PartialOutboard")
-                .field(&DD(hash))
-                .field(&DD(hex::encode(guid)))
-                .finish(),
-            Self::Outboard(hash) => f.debug_tuple("Outboard").field(&DD(hash)).finish(),
-            Self::Meta(arg0) => f.debug_tuple("Meta").field(&DD(hex::encode(arg0))).finish(),
-            Self::Paths(arg0) => f
-                .debug_tuple("Paths")
-                .field(&DD(hex::encode(arg0)))
-                .finish(),
-        }
-    }
-}
-
-impl Purpose {
-    /// true if the purpose is for a temporary file
-    pub fn temporary(&self) -> bool {
-        match self {
-            Purpose::PartialData(_, _) => true,
-            Purpose::Data(_) => false,
-            Purpose::PartialOutboard(_, _) => true,
-            Purpose::Outboard(_) => false,
-            Purpose::Meta(_) => false,
-            Purpose::Paths(_) => false,
-        }
-    }
-
-    /// some bytes that can be used as a hint for the name of the file
-    pub fn name_hint(&self) -> &[u8] {
-        match self {
-            Purpose::PartialData(hash, _) => hash.as_bytes(),
-            Purpose::Data(hash) => hash.as_bytes(),
-            Purpose::PartialOutboard(hash, _) => hash.as_bytes(),
-            Purpose::Meta(data) => data.as_slice(),
-            Purpose::Outboard(_) => &[],
-            Purpose::Paths(_) => &[],
         }
     }
 }

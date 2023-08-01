@@ -1,226 +1,197 @@
 //! An in memory implementation of [BaoMap] and [BaoReadonlyDb], useful for
 //! testing and short lived nodes.
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::io;
+use std::num::TryFromIntError;
+use std::ops::DerefMut;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::RwLock;
 
 use bao_tree::io::fsm::Outboard;
-use bao_tree::io::outboard::PreOrderMemOutboard;
 use bao_tree::io::outboard::PreOrderOutboard;
+use bao_tree::io::outboard_size;
+use bao_tree::BaoTree;
+use bao_tree::ByteNum;
 use bytes::Bytes;
 use bytes::BytesMut;
-use futures::future::{self, BoxFuture};
+use derive_more::From;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_bytes::provider::BaoDb;
-use iroh_bytes::provider::BaoMapEntryMut;
 use iroh_bytes::provider::BaoMapMut;
-use iroh_bytes::provider::Purpose;
+use iroh_bytes::provider::BaoPartialEntry;
+use iroh_bytes::provider::ImportProgress;
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
+use iroh_bytes::util::progress::IdGenerator;
+use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-/// An in memory database for iroh-bytes.
+/// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
-pub struct Database(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
+#[repr(transparent)]
+pub struct MutableMemFile(Arc<RwLock<BytesMut>>);
 
-impl Database {
-    /// Create a new [Database] from a sequence of entries.
+impl MutableMemFile {
+    /// Create a new empty file
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Arc::new(RwLock::new(BytesMut::with_capacity(capacity))))
+    }
+
+    /// Freeze the data, returning the content
     ///
-    /// Returns the database and a map of names to computed blake3 hashes.
-    /// In case of duplicate names, the last entry is used.
-    pub fn new(
-        entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-    ) -> (Self, BTreeMap<String, blake3::Hash>) {
-        let mut names = BTreeMap::new();
-        let mut res = HashMap::new();
-        for (name, data) in entries.into_iter() {
-            let name = name.into();
-            let data: &[u8] = data.as_ref();
-            // compute the outboard
-            let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-            // add the name, this assumes that names are unique
-            names.insert(name, hash);
-            // wrap into the right types
-            let outboard =
-                PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
-            let data = Bytes::from(data.to_vec());
-            let hash = Hash::from(hash);
-            res.insert(hash, (outboard, data));
-        }
-        (Self(Arc::new(res)), names)
-    }
-
-    /// Insert a new entry into the database, and return the hash of the entry.
-    pub fn insert(&mut self, data: impl AsRef<[u8]>) -> Hash {
-        let inner = Arc::make_mut(&mut self.0);
-        let data: &[u8] = data.as_ref();
-        // compute the outboard
-        let (outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-        // wrap into the right types
-        let outboard = PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard.into()).unwrap();
-        let data = Bytes::from(data.to_vec());
-        let hash = Hash::from(hash);
-        inner.insert(hash, (outboard, data));
-        hash
-    }
-
-    /// Get the bytes associated with a hash, if they exist.
-    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
-        let entry = self.0.get(hash)?;
-        Some(entry.1.clone())
+    /// Note that this will clear other references to the data.
+    pub fn freeze(self) -> Bytes {
+        let mut inner = self.0.write().unwrap();
+        let mut temp = BytesMut::new();
+        std::mem::swap(inner.deref_mut(), &mut temp);
+        temp.clone().freeze()
     }
 }
 
-/// The [BaoMapEntry] implementation for [Database].
-#[derive(Debug, Clone)]
-pub struct DbEntry {
-    outboard: PreOrderMemOutboard<Bytes>,
-    data: Bytes,
-}
-
-impl BaoMapEntry<Database> for DbEntry {
-    fn hash(&self) -> blake3::Hash {
-        self.outboard.root()
-    }
-
-    fn size(&self) -> u64 {
-        self.data.len() as u64
-    }
-
-    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
-        futures::future::ok(RangeSet2::all()).boxed()
-    }
-
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
-    }
-
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
-        futures::future::ok(self.data.clone()).boxed()
-    }
-}
-
-impl BaoMap for Database {
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Bytes;
-    type Entry = DbEntry;
-
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let (o, d) = self.0.get(hash)?;
-        Some(DbEntry {
-            outboard: o.clone(),
-            data: d.clone(),
-        })
-    }
-}
-
-impl BaoReadonlyDb for Database {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
-    }
-
-    fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
-    }
-
-    fn validate(
-        &self,
-        _tx: mpsc::Sender<ValidateProgress>,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        future::ok(()).boxed()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct MemVfsInner {
-    entries: BTreeMap<u64, MemVfsEntry>,
-    next_id: u64,
-}
-
-///
-#[derive(Debug, Clone)]
-pub struct MemVfsEntry {
-    #[allow(dead_code)]
-    id: u64,
-    purpose: Purpose,
-    data: Arc<Mutex<BytesMut>>,
-}
-
-impl AsyncSliceReader for MemVfsEntry {
+impl AsyncSliceReader for MutableMemFile {
     type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        inner.read_at(offset, len)
+        let mut inner = self.0.write().unwrap();
+        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len)
     }
 
     type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
 
     fn len(&mut self) -> Self::LenFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        let reference: &mut BytesMut = &mut inner;
-        AsyncSliceReader::len(reference)
+        let inner = self.0.read().unwrap();
+        futures::future::ok(inner.len() as u64)
     }
 }
 
-impl AsyncSliceWriter for MemVfsEntry {
-    type WriteAtFuture<'a> = <BytesMut as AsyncSliceWriter>::WriteAtFuture<'a>;
+impl AsyncSliceWriter for MutableMemFile {
+    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        inner.write_at(offset, data)
+        let mut write = self.0.write().unwrap();
+        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data)
     }
 
-    type WriteBytesAtFuture<'a> = <BytesMut as AsyncSliceWriter>::WriteBytesAtFuture<'a>;
+    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        inner.write_bytes_at(offset, data)
+        let mut write = self.0.write().unwrap();
+        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data)
     }
 
-    type SetLenFuture<'a> = <BytesMut as AsyncSliceWriter>::SetLenFuture<'a>;
+    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        let reference: &mut BytesMut = &mut inner;
-        AsyncSliceWriter::set_len(reference, len)
+        let mut write = self.0.write().unwrap();
+        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len)
     }
 
-    type SyncFuture<'a> = <BytesMut as AsyncSliceWriter>::SyncFuture<'a>;
+    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
-        let mut inner = self.data.lock().unwrap();
-        inner.sync()
+        futures::future::ok(())
     }
 }
 
-///
-#[derive(Debug, Clone, Default)]
-pub struct MemVfs(Arc<RwLock<MemVfsInner>>);
+/// A file like object that can be in readonly or writeable mode.
+#[derive(Debug, Clone, From)]
+pub enum MemFile {
+    /// immutable data, used for complete entries
+    Immutable(Bytes),
+    /// mutable data, used for partial entries
+    Mutable(MutableMemFile),
+}
+
+impl AsyncSliceReader for MemFile {
+    type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
+
+    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+        match self {
+            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len),
+            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len),
+        }
+    }
+
+    type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
+
+    fn len(&mut self) -> Self::LenFuture<'_> {
+        match self {
+            Self::Immutable(data) => AsyncSliceReader::len(data),
+            Self::Mutable(data) => AsyncSliceReader::len(data),
+        }
+    }
+}
+
+impl AsyncSliceWriter for MemFile {
+    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+
+    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+        match self {
+            Self::Immutable(_) => futures::future::err(io::Error::new(
+                io::ErrorKind::Other,
+                "cannot write to immutable data",
+            )),
+            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data),
+        }
+    }
+
+    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        match self {
+            Self::Immutable(_) => futures::future::err(io::Error::new(
+                io::ErrorKind::Other,
+                "cannot write to immutable data",
+            )),
+            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data),
+        }
+    }
+
+    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+
+    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+        match self {
+            Self::Immutable(_) => futures::future::err(io::Error::new(
+                io::ErrorKind::Other,
+                "cannot write to immutable data",
+            )),
+            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len),
+        }
+    }
+
+    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        futures::future::ok(())
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 ///
-pub struct MutableDatabase {
-    vfs: MemVfs,
-    inner: Arc<RwLock<BTreeMap<Hash, (u64, Option<u64>)>>>,
+pub struct Database {
+    state: Arc<RwLock<State>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct State {
+    complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
+    partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
 }
 
 /// The [BaoMapEntry] implementation for [Database].
 #[derive(Debug, Clone)]
-pub struct MutableDbEntry {
+pub struct Entry {
     hash: blake3::Hash,
-    outboard: PreOrderMemOutboard<Bytes>,
-    data: MemVfsEntry,
+    outboard: PreOrderOutboard<MemFile>,
+    data: MemFile,
 }
 
-impl BaoMapEntry<MutableDatabase> for MutableDbEntry {
+impl BaoMapEntry<Database> for Entry {
     fn hash(&self) -> blake3::Hash {
         self.hash.into()
     }
@@ -232,59 +203,96 @@ impl BaoMapEntry<MutableDatabase> for MutableDbEntry {
     }
 
     fn size(&self) -> u64 {
-        self.data.data.lock().unwrap().len() as u64
+        self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemVfsEntry>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone()).boxed()
     }
 }
 
-impl BaoMap for MutableDatabase {
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = MemVfsEntry;
-    type Entry = MutableDbEntry;
+/// The [BaoMapEntry] implementation for [Database].
+#[derive(Debug, Clone)]
+pub struct PartialEntry {
+    hash: blake3::Hash,
+    outboard: PreOrderOutboard<MutableMemFile>,
+    data: MutableMemFile,
+}
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let inner = self.inner.read().unwrap();
-        // look up the ids
-        let (data_id, outboard_id) = inner.get(hash)?;
-        // get the actual entries
-        let data = self.vfs.0.read().unwrap().entries.get(data_id)?.clone();
-        let hash = (*hash).into();
-        let outboard_bytes = if let Some(outboard_id) = outboard_id {
-            let outboard = self.vfs.0.read().unwrap().entries.get(outboard_id)?.clone();
-            // todo: get rid of copying here
-            let data = outboard.data.lock().unwrap().to_vec();
-            data
-        } else {
-            // we don't have an outboard - make one
-            let size = data.data.lock().unwrap().len() as u64;
-            size.to_le_bytes().to_vec()
-        };
-        let Ok(outboard) = PreOrderMemOutboard::new(hash, IROH_BLOCK_SIZE, outboard_bytes.clone().into()) else {
-            let size = u64::from_le_bytes(outboard_bytes[0..8].try_into().unwrap());
-            let expected_outboard_size = bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE);
-            panic!("failed to create outboard {} {} {} {}", size, expected_outboard_size, outboard_bytes.len(), hex::encode(outboard_bytes));
-        };
-        Some(MutableDbEntry {
-            hash,
-            outboard,
-            data,
+impl BaoMapEntry<Database> for PartialEntry {
+    fn hash(&self) -> blake3::Hash {
+        self.hash.into()
+    }
+
+    fn available(
+        &self,
+    ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
+    }
+
+    fn size(&self) -> u64 {
+        self.outboard.tree().size().0
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
+        futures::future::ok(PreOrderOutboard {
+            root: self.outboard.root,
+            tree: self.outboard.tree,
+            data: self.outboard.data.clone().into(),
         })
+        .boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
+        futures::future::ok(self.data.clone().into()).boxed()
     }
 }
 
-impl BaoReadonlyDb for MutableDatabase {
+impl BaoMap for Database {
+    type Outboard = PreOrderOutboard<MemFile>;
+    type DataReader = MemFile;
+    type Entry = Entry;
+
+    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+        let state = self.state.read().unwrap();
+        // look up the ids
+        if let Some((data, outboard)) = state.complete.get(&hash) {
+            Some(Entry {
+                hash: (*hash).into(),
+                outboard: PreOrderOutboard {
+                    root: outboard.root,
+                    tree: outboard.tree,
+                    data: outboard.data.clone().into(),
+                },
+                data: data.clone().into(),
+            })
+        } else if let Some((data, outboard)) = state.partial.get(&hash) {
+            Some(Entry {
+                hash: (*hash).into(),
+                outboard: PreOrderOutboard {
+                    root: outboard.root,
+                    tree: outboard.tree,
+                    data: outboard.data.clone().into(),
+                },
+                data: data.clone().into(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(
-            self.inner
+            self.state
                 .read()
                 .unwrap()
+                .complete
                 .keys()
                 .cloned()
                 .collect::<Vec<_>>()
@@ -293,7 +301,7 @@ impl BaoReadonlyDb for MutableDatabase {
     }
 
     fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        todo!()
+        Box::new(std::iter::empty())
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -301,101 +309,118 @@ impl BaoReadonlyDb for MutableDatabase {
     }
 }
 
-impl BaoMapEntryMut<Database> for DbEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
-        todo!()
-    }
-
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
-        todo!()
-    }
-}
-
-impl BaoMapEntry<MutableDatabase> for DbEntry {
-    fn hash(&self) -> blake3::Hash {
-        todo!()
-    }
-
-    fn size(&self) -> u64 {
-        todo!()
-    }
-
-    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
-        todo!()
-    }
-
-    fn outboard(&self) -> BoxFuture<'_, io::Result<<MutableDatabase as BaoMap>::Outboard>> {
-        todo!()
-    }
-
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<<MutableDatabase as BaoMap>::DataReader>> {
-        todo!()
-    }
-}
-
-impl BaoMapEntryMut<MutableDatabase> for DbEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::OutboardMut>> {
-        todo!()
-    }
-
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoMapMut>::DataWriter>> {
-        todo!()
-    }
-}
-
-impl BaoMapMut for MutableDatabase {
-    type OutboardMut = PreOrderOutboard<BytesMut>;
-
-    type DataWriter = BytesMut;
-
-    type TempEntry = DbEntry;
-
-    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry> {
-        todo!()
-    }
-
-    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry {
-        todo!()
-    }
-
-    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, anyhow::Result<()>> {
-        todo!()
-    }
-}
-
 impl BaoMapMut for Database {
-    type OutboardMut = PreOrderOutboard<BytesMut>;
+    type OutboardMut = PreOrderOutboard<MutableMemFile>;
 
-    type DataWriter = BytesMut;
+    type DataWriter = MutableMemFile;
 
-    type TempEntry = DbEntry;
+    type PartialEntry = PartialEntry;
 
-    fn create_temp_entry(&self, hash: Hash, size: u64) -> Self::TempEntry {
-        todo!()
+    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
+        let state = self.state.read().unwrap();
+        let (data, outboard) = state.partial.get(&hash)?;
+        Some(PartialEntry {
+            hash: (*hash).into(),
+            outboard: outboard.clone(),
+            data: data.clone(),
+        })
     }
 
-    fn get_partial(&self, hash: &Hash) -> Option<Self::TempEntry> {
-        todo!()
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
+        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let outboard_size =
+            usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
+        let size = usize::try_from(size).map_err(data_too_large)?;
+        let data = MutableMemFile::with_capacity(size);
+        let outboard = MutableMemFile::with_capacity(outboard_size);
+        let ob2 = PreOrderOutboard {
+            root: hash.into(),
+            tree,
+            data: outboard.clone(),
+        };
+        // insert into the partial map, replacing any existing entry
+        self.state
+            .write()
+            .unwrap()
+            .partial
+            .insert(hash, (data.clone(), ob2.clone()));
+        Ok(PartialEntry {
+            hash: hash.into(),
+            outboard: PreOrderOutboard {
+                root: hash.into(),
+                tree,
+                data: outboard,
+            },
+            data,
+        })
     }
 
-    fn insert_temp_entry(&self, entry: Self::TempEntry) -> BoxFuture<'_, anyhow::Result<()>> {
-        todo!()
+    fn insert_complete_entry(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+        async move {
+            let data = entry.data.freeze();
+            let outboard = entry.outboard.data.freeze();
+            let mut state = self.state.write().unwrap();
+            let outboard = PreOrderOutboard {
+                root: entry.outboard.root,
+                tree: entry.outboard.tree,
+                data: outboard,
+            };
+            state.complete.insert(entry.hash.into(), (data, outboard));
+            Ok(())
+        }
+        .boxed()
     }
 }
 
-impl BaoDb for MutableDatabase {
+impl BaoDb for Database {
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let vfs = self.vfs.0.read().unwrap();
-        let hashes = vfs
-            .entries
-            .iter()
-            .filter_map(|(_, entry)| match entry.purpose {
-                Purpose::PartialData(hash, _) => Some(hash),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let state = self.state.read().unwrap();
+        let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
         Box::new(hashes.into_iter())
     }
+
+    fn import(
+        &self,
+        data: std::path::PathBuf,
+        _stable: bool,
+        _progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+        async move {
+            let content: Bytes = tokio::fs::read(data).await?.into();
+            let size = content.len() as u64;
+            let hash = self.import_bytes(content).await?;
+            Ok((hash, size))
+        }
+        .boxed()
+    }
+
+    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+        async move {
+            let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+            let tree = BaoTree::new(ByteNum(bytes.len() as u64), IROH_BLOCK_SIZE);
+            let outboard = PreOrderOutboard {
+                root: hash,
+                tree,
+                data: outboard.into(),
+            };
+            let mut state = self.state.write().unwrap();
+            state.complete.insert(hash.into(), (bytes, outboard));
+            Ok(hash.into())
+        }
+        .boxed()
+    }
 }
 
-impl BaoDb for Database {}
+impl BaoPartialEntry<Database> for PartialEntry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
+        futures::future::ok(self.outboard.clone()).boxed()
+    }
+
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<MutableMemFile>> {
+        futures::future::ok(self.data.clone()).boxed()
+    }
+}
+
+fn data_too_large(_: TryFromIntError) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, "data too large to fit in memory")
+}
