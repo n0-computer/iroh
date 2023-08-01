@@ -16,6 +16,7 @@ use clap::Parser;
 use futures::{Future, StreamExt};
 use http::response::Builder as ResponseBuilder;
 use hyper::{server::conn::Http, Body, Method, Request, Response, StatusCode};
+use iroh_metrics::inc;
 use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
 use iroh_net::{
     derp::{
@@ -33,6 +34,8 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
+
+use metrics::StunMetrics;
 
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
@@ -316,6 +319,7 @@ pub fn init_metrics_collection(
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
             metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+            metrics.insert(StunMetrics::new(reg));
         });
 
         return Some(rt.spawn(async move {
@@ -686,11 +690,13 @@ async fn server_stun_listener(sock: UdpSocket) {
     loop {
         match sock.recv_from(&mut buffer).await {
             Ok((n, src_addr)) => {
+                inc!(StunMetrics, requests);
                 let pkt = buffer[..n].to_vec();
                 let sock = sock.clone();
                 tokio::task::spawn(async move {
                     if !stun::is(&pkt) {
                         debug!(%src_addr, "STUN: ignoring non stun packet");
+                        inc!(StunMetrics, bad_requests);
                         return;
                     }
                     match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
@@ -706,22 +712,33 @@ async fn server_stun_listener(sock: UdpSocket) {
                             match sock.send_to(&res, src_addr).await {
                                 Ok(len) => {
                                     if len != res.len() {
-                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but exepcted {}", len, res.len());
+                                        warn!(%src_addr, %txid, "STUN: failed to write response sent: {}, but expected {}", len, res.len());
+                                    }
+                                    match src_addr {
+                                        SocketAddr::V4(_) => {
+                                            inc!(StunMetrics, ipv4_success);
+                                        }
+                                        SocketAddr::V6(_) => {
+                                            inc!(StunMetrics, ipv6_success);
+                                        }
                                     }
                                     trace!(%src_addr, %txid, "STUN: sent {} bytes", len);
                                 }
                                 Err(err) => {
+                                    inc!(StunMetrics, failures);
                                     warn!(%src_addr, %txid, "STUN: failed to write response: {:?}", err);
                                 }
                             }
                         }
                         Err(err) => {
+                            inc!(StunMetrics, bad_requests);
                             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         }
                     }
                 });
             }
             Err(err) => {
+                inc!(StunMetrics, failures);
                 warn!("STUN: failed to recv: {:?}", err);
             }
         }
@@ -809,6 +826,54 @@ async fn server_stun_listener(sock: UdpSocket) {
 // 	l.numAccepts.Add(1)
 // 	return cn, nil
 // }
+//
+mod metrics {
+    use iroh_metrics::{
+        core::{Counter, Metric},
+        struct_iterable::Iterable,
+    };
+
+    /// StunMetrics tracked for the DERPER
+    #[allow(missing_docs)]
+    #[derive(Debug, Clone, Iterable)]
+    pub struct StunMetrics {
+        /*
+         * Metrics about STUN requests over ipv6
+         */
+        /// Number of stun requests made
+        pub requests: Counter,
+        /// Number of successful requests over ipv4
+        pub ipv4_success: Counter,
+        /// Number of successful requests over ipv6
+        pub ipv6_success: Counter,
+
+        /// Number of bad requests, either non-stun packets or incorrect binding request
+        pub bad_requests: Counter,
+        /// Number of failures
+        pub failures: Counter,
+    }
+
+    impl Default for StunMetrics {
+        fn default() -> Self {
+            Self {
+                /*
+                 * Metrics about STUN requests
+                 */
+                requests: Counter::new("Number of STUN requests made to the server."),
+                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
+                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
+                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
+                failures: Counter::new("Number of STUN requests that end in failure."),
+            }
+        }
+    }
+
+    impl Metric for StunMetrics {
+        fn name() -> &'static str {
+            "stun"
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
