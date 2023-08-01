@@ -74,7 +74,6 @@ impl Cli {
                 stable: in_place,
                 ..
             } => {
-                println!("{:#?}", ticket); // todo: remove
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
                     let absolute = std::env::current_dir()?.join(&out);

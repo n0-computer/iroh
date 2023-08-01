@@ -106,7 +106,7 @@ impl Database {
         _stable: bool,
         _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        tracing::info!("exporting {} to {}", hash, target.display());
+        tracing::trace!("exporting {} to {}", hash, target.display());
 
         if !target.is_absolute() {
             return Err(io::Error::new(
@@ -281,5 +281,9 @@ impl BaoDb for Database {
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let _ = bytes;
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
     }
 }

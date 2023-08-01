@@ -9,9 +9,10 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use iroh::collection::IrohCollectionParser;
-use iroh::database::flat;
+use iroh::database::{flat, mem};
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
+use iroh_bytes::provider::BaoDb;
 use iroh_net::tls::Keypair;
 use quic_rpc::transport::quinn::QuinnServerEndpoint;
 use quic_rpc::ServiceEndpoint;
@@ -41,13 +42,7 @@ fn make_rpc_endpoint(keypair: &Keypair) -> anyhow::Result<impl ServiceEndpoint<P
     Ok(rpc_endpoint)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    setup_logging();
-    let iroh_data_dir = std::env::current_dir()?.join(".iroh");
-    tokio::fs::create_dir_all(&iroh_data_dir).await?;
-    // create a new persistent database
-    let db = flat::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
+async fn run(db: impl BaoDb) -> anyhow::Result<()> {
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
     // create a random keypair
@@ -76,4 +71,17 @@ async fn main() -> anyhow::Result<()> {
     // stop with SIGINT (ctrl+c)
     node.await?;
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    setup_logging();
+    // let iroh_data_dir = std::env::current_dir()?.join(".iroh");
+    // tokio::fs::create_dir_all(&iroh_data_dir).await?;
+    // // create a new persistent database
+    // let db = flat::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
+    // run(db).await
+
+    let db = mem::Database::default();
+    run(db).await
 }

@@ -332,10 +332,10 @@ impl BaoMapEntry<Database> for Entry {
 /// persisted.
 #[derive(Debug, Clone)]
 struct EntryData {
-    /// The bao outboard data.
-    outboard: Either<Bytes, PathBuf>,
     /// The data itself.
     data: Either<Bytes, (PathBuf, u64)>,
+    /// The bao outboard data.
+    outboard: Either<Bytes, PathBuf>,
 }
 
 /// A reader for either a file or a byte slice.
@@ -642,7 +642,7 @@ impl Database {
         stable: bool,
         _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        tracing::info!("exporting {} to {} ({})", hash, target.display(), stable);
+        tracing::trace!("exporting {} to {} ({})", hash, target.display(), stable);
 
         if !target.is_absolute() {
             return Err(io::Error::new(

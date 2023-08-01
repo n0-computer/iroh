@@ -780,7 +780,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
         if recursive {
-            tracing::info!("exporting collection {} to {}", hash, path.display());
+            tracing::trace!("exporting collection {} to {}", hash, path.display());
             tokio::fs::create_dir_all(&path).await?;
             let collection = db.get(&hash).context("collection not there")?;
             let mut reader = collection.data_reader().await?;
@@ -791,7 +791,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
-                tracing::info!("exporting blob {} to {}", hash, path.display());
+                tracing::trace!("exporting blob {} to {}", hash, path.display());
                 let id = progress.new_id();
                 let progress1 = progress.clone();
                 db.export(*hash, path, stable, move |offset| {

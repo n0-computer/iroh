@@ -721,9 +721,7 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
 /// The mutable part of a BaoDb
 pub trait BaoDb: BaoReadonlyDb + BaoPartialMap {
     /// list partial blobs in the database
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
-    }
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
 
     /// extract a file to a local path
     ///

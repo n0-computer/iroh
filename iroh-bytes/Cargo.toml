@@ -13,7 +13,7 @@ rust-version = "1.66"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.5.3", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.5.4", features = ["tokio_fsm"], default-features = false }
 blake3 = "1.3.3"
 bytes = { version = "1.4", features = ["serde"] }
 data-encoding = "2.3.3"
