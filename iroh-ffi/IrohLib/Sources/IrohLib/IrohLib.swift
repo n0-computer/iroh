@@ -345,6 +345,78 @@ private struct FfiConverterString: FfiConverter {
     }
 }
 
+public protocol IrohNodeProtocol {
+    func peerId() -> String
+}
+
+public class IrohNode: IrohNodeProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    public convenience init() {
+        self.init(unsafeFromRawPointer: try! rustCall {
+            uniffi_iroh_fn_constructor_irohnode_new($0)
+        })
+    }
+
+    deinit {
+        try! rustCall { uniffi_iroh_fn_free_irohnode(pointer, $0) }
+    }
+
+    public func peerId() -> String {
+        return try! FfiConverterString.lift(
+            try!
+                rustCall {
+                    uniffi_iroh_fn_method_irohnode_peer_id(self.pointer, $0)
+                }
+        )
+    }
+}
+
+public struct FfiConverterTypeIrohNode: FfiConverter {
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = IrohNode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IrohNode {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if ptr == nil {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: IrohNode, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> IrohNode {
+        return IrohNode(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: IrohNode) -> UnsafeMutableRawPointer {
+        return value.pointer
+    }
+}
+
+public func FfiConverterTypeIrohNode_lift(_ pointer: UnsafeMutableRawPointer) throws -> IrohNode {
+    return try FfiConverterTypeIrohNode.lift(pointer)
+}
+
+public func FfiConverterTypeIrohNode_lower(_ value: IrohNode) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeIrohNode.lower(value)
+}
+
 public func add(a: UInt32, b: UInt32) -> UInt32 {
     return try! FfiConverterUInt32.lift(
         try! rustCall {
@@ -384,6 +456,12 @@ private var initializationResult: InitializationResult {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_func_hello() != 50866 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_method_irohnode_peer_id() != 46487 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_constructor_irohnode_new() != 31222 {
         return InitializationResult.apiChecksumMismatch
     }
 

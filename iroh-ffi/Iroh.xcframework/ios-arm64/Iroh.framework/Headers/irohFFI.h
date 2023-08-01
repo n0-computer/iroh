@@ -61,9 +61,17 @@ typedef struct RustCallStatus {
 
 // Callbacks for UniFFI Futures
 typedef void (*UniFfiFutureCallbackUInt32)(const void * _Nonnull, uint32_t, RustCallStatus);
+typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackRustBuffer)(const void * _Nonnull, RustBuffer, RustCallStatus);
 
 // Scaffolding functions
+void uniffi_iroh_fn_free_irohnode(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void*_Nonnull uniffi_iroh_fn_constructor_irohnode_new(RustCallStatus *_Nonnull out_status
+    
+);
+RustBuffer uniffi_iroh_fn_method_irohnode_peer_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
 uint32_t uniffi_iroh_fn_func_add(uint32_t a, uint32_t b, RustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_iroh_fn_func_hello(RustCallStatus *_Nonnull out_status
@@ -81,6 +89,12 @@ uint16_t uniffi_iroh_checksum_func_add(void
     
 );
 uint16_t uniffi_iroh_checksum_func_hello(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_irohnode_peer_id(void
+    
+);
+uint16_t uniffi_iroh_checksum_constructor_irohnode_new(void
     
 );
 uint32_t ffi_iroh_uniffi_contract_version(void

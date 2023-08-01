@@ -1,4 +1,4 @@
-// swift-tools-version:5.6
+// swift-tools-version:5.8
 import PackageDescription
 
 let package = Package(
@@ -9,18 +9,17 @@ let package = Package(
     products: [
         .library(
             name: "IrohLib",
-            targets: ["IrohLib", "Iroh"])
+            targets: ["IrohLib", "Iroh"]),
     ],
+    dependencies: [],
     targets: [
         .target(
             name: "IrohLib",
             dependencies: [
                 .byName(name: "Iroh")
-            ],
-        ),
+            ]),
         .binaryTarget(
             name: "Iroh",
-            path: "artifacts/Iroh.xcframework"
-        ),
+            path: "artifacts/Iroh.xcframework"),
     ]
 )

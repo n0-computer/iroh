@@ -9,13 +9,16 @@ For builds targeting older versions of MacOS, build with with:  `MACOSX_DEPLOYME
 ## Xcode and IOS 
 
 - Run `make.sh`. 
-- Make sure you have `Lib` folder ("New Group") in your Xcode project.
-- After that you can drag the `IrohLib` folder into the `Lib` folder in Xcode. 
-- Then you add it to the `Frameworks, Libraries, and Embedded Content` in the `General` settings of your project. 
+- Add `IrohLib` as a local package dependency under `Frameworks, Libraries, and Embedded Content` in the `General` settings of your project. 
+- Run `Build`
+- Check that it is now listed under `Frameworks, Libraries, and Embedded Content`, if not click `+` again and add it from the list.
+- Add `SystemConfiguration` as a Framework.
 - Now you can just import the library in Swift with a standard import statement like `import IrohLib`.
 
 ## Development
 
+- `./make.sh` regenerates all code
+- This uses https://mozilla.github.io/uniffi-rs/ for building the interface
 
 # License
 
