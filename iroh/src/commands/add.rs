@@ -47,20 +47,20 @@ where
     while let Some(item) = stream.next().await {
         match item? {
             ProvideProgress::Found { name, id, size } => {
-                tracing::info!("Found({id},{name},{size})");
+                tracing::trace!("Found({id},{name},{size})");
                 if let Some(mp) = mp.as_mut() {
                     mp.found(name.clone(), id, size);
                 }
                 collections.insert(id, (name, size, None));
             }
             ProvideProgress::Progress { id, offset } => {
-                tracing::info!("Progress({id}, {offset})");
+                tracing::trace!("Progress({id}, {offset})");
                 if let Some(mp) = mp.as_mut() {
                     mp.progress(id, offset);
                 }
             }
             ProvideProgress::Done { hash, id } => {
-                tracing::info!("Done({id},{hash:?})");
+                tracing::trace!("Done({id},{hash:?})");
                 if let Some(mp) = mp.as_mut() {
                     mp.done(id, hash);
                 }
@@ -74,7 +74,7 @@ where
                 }
             }
             ProvideProgress::AllDone { hash } => {
-                tracing::info!("AllDone({hash:?})");
+                tracing::trace!("AllDone({hash:?})");
                 if let Some(mp) = mp.take() {
                     mp.all_done();
                 }

@@ -4,6 +4,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     io,
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -18,12 +19,16 @@ use futures::{
 };
 use iroh_bytes::{
     provider::{
-        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ValidateProgress,
+        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb,
+        ImportProgress, ValidateProgress,
     },
+    util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
 };
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
+
+use super::flatten_to_io;
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -93,6 +98,37 @@ impl Database {
         let entry = self.0.get(hash)?;
         Some(entry.1.clone())
     }
+
+    fn export_sync(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        _stable: bool,
+        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        tracing::info!("exporting {} to {}", hash, target.display());
+
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        std::fs::create_dir_all(parent)?;
+        let data = self
+            .get(&hash)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
+
+        std::fs::write(target, data)?;
+        Ok(())
+    }
 }
 
 /// The [BaoMapEntry] implementation for [Database].
@@ -103,7 +139,7 @@ pub struct Entry {
 }
 
 /// The [BaoPartialMapEntry] implementation for [Database].
-/// 
+///
 /// This is an unoccupied type, since [Database] is does not allow creating partial entries.
 #[derive(Debug, Clone)]
 pub enum PartialEntry {}
@@ -218,4 +254,32 @@ impl BaoPartialMapEntry<Database> for PartialEntry {
     }
 }
 
-impl BaoDb for Database {}
+impl BaoDb for Database {
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, stable, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
+    fn import(
+        &self,
+        data: PathBuf,
+        stable: bool,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
+        let _ = (data, stable, progress);
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+
+    /// import a byte slice
+    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
+        let _ = bytes;
+        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    }
+}

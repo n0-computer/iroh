@@ -5,3 +5,12 @@ pub mod flat;
 pub mod mem;
 
 pub mod test;
+
+fn flatten_to_io<T>(
+    e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
+) -> std::io::Result<T> {
+    match e {
+        Ok(x) => x,
+        Err(cause) => Err(std::io::Error::new(std::io::ErrorKind::Other, cause)),
+    }
+}

@@ -1013,9 +1013,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> io::Result<Vec<BlobInfo<D>>> {
         let db = &self.inner.db;
         let items = collection.iter().map(|hash| async move {
-            io::Result::Ok(if db.get(&hash).is_some() {
-                BlobInfo::Complete
-            } else if let Some(entry) = db.get_partial(&hash) {
+            io::Result::Ok(if let Some(entry) = db.get_partial(&hash) {
+                // first look for partial
                 trace!("got partial data for {}", hash,);
                 let missing_chunks = Self::get_missing_ranges_blob(&entry)
                     .await
@@ -1025,6 +1024,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     entry,
                     missing_chunks,
                 }
+            } else if db.get(&hash).is_some() {
+                // then look for complete
+                BlobInfo::Complete
             } else {
                 BlobInfo::Missing
             })

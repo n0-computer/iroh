@@ -9,7 +9,6 @@ use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
-use futures::FutureExt;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
@@ -713,7 +712,7 @@ pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
             Ok((SentStatus::Sent, size))
         }
         _ => {
-            debug!("blob not found {}", name);
+            debug!("blob not found {}", hex::encode(name));
             Ok((SentStatus::NotFound, 0))
         }
     }
@@ -738,10 +737,7 @@ pub trait BaoDb: BaoReadonlyDb + BaoPartialMap {
         target: PathBuf,
         stable: bool,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        let _ = (hash, target, stable, progress);
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
-    }
+    ) -> BoxFuture<'_, io::Result<()>>;
 
     /// import a file from a local path
     ///
@@ -758,16 +754,10 @@ pub trait BaoDb: BaoReadonlyDb + BaoPartialMap {
         data: PathBuf,
         stable: bool,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
-        let _ = (data, stable, progress);
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
-    }
+    ) -> BoxFuture<'_, io::Result<(Hash, u64)>>;
 
     /// import a byte slice
-    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
-        let _ = bytes;
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
-    }
+    fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>>;
 }
 
 /// Progress messages for an import operation
@@ -805,4 +795,26 @@ pub enum ImportProgress {
     ///
     /// This comes after `Size` and zero or more `OutboardProgress` messages
     OutboardDone { id: u64, hash: Hash },
+}
+
+#[allow(missing_docs)]
+#[derive(Debug)]
+pub enum ExportProgress {
+    /// Starting to export to a file
+    ///
+    /// This will be the first message for an id
+    Start {
+        id: u64,
+        hash: Hash,
+        path: PathBuf,
+        stable: bool,
+    },
+    /// Progress when copying the file to the target
+    ///
+    /// This will be omitted if the store can move the file or use copy on write
+    ///
+    /// There will be multiple of these messages for an id
+    Progress { id: u64, offset: u64 },
+    /// Done exporting
+    Done { id: u64 },
 }

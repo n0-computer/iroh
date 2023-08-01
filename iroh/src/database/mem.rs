@@ -1,10 +1,11 @@
 //! A full in memory database for iroh-bytes
-//! 
+//!
 //! Main entry point is [Database].
 use std::collections::BTreeMap;
 use std::io;
 use std::num::TryFromIntError;
 use std::ops::DerefMut;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -31,6 +32,8 @@ use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
+
+use super::flatten_to_io;
 
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
@@ -386,29 +389,90 @@ impl BaoDb for Database {
         _stable: bool,
         _progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
-        async move {
-            let content: Bytes = tokio::fs::read(data).await?.into();
-            let size = content.len() as u64;
-            let hash = self.import_bytes(content).await?;
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let bytes: Bytes = std::fs::read(data)?.into();
+            let size = bytes.len() as u64;
+            let hash = this.import_bytes_sync(bytes);
             Ok((hash, size))
-        }
+        })
+        .map(flatten_to_io)
         .boxed()
     }
 
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        stable: bool,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, stable, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
-        async move {
-            let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
-            let tree = BaoTree::new(ByteNum(bytes.len() as u64), IROH_BLOCK_SIZE);
-            let outboard = PreOrderOutboard {
-                root: hash,
-                tree,
-                data: outboard.into(),
-            };
-            let mut state = self.state.write().unwrap();
-            state.complete.insert(hash.into(), (bytes, outboard));
-            Ok(hash.into())
-        }
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let hash = this.import_bytes_sync(bytes);
+            Ok(hash)
+        })
+        .map(flatten_to_io)
         .boxed()
+    }
+}
+
+impl Database {
+    fn import_bytes_sync(&self, bytes: Bytes) -> Hash {
+        let size = bytes.len() as u64;
+        let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let outboard = PreOrderOutboard {
+            root: hash,
+            tree,
+            data: outboard.into(),
+        };
+        self.state
+            .write()
+            .unwrap()
+            .complete
+            .insert(hash.into(), (bytes, outboard));
+        hash.into()
+    }
+
+    fn export_sync(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        _stable: bool,
+        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        tracing::info!("exporting {} to {}", hash, target.display());
+
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        std::fs::create_dir_all(parent)?;
+        let state = self.state.read().unwrap();
+        let (data, _) = state
+            .complete
+            .get(&hash)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
+
+        std::fs::write(target, data)?;
+        Ok(())
     }
 }
 
