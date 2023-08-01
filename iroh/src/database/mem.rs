@@ -360,7 +360,7 @@ impl BaoPartialMap for Database {
     }
 
     fn insert_complete_entry(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
-        println!("insert_complete_entry {}", entry.hash());
+        tracing::info!("insert_complete_entry {:#}", entry.hash());
         async move {
             let hash = entry.hash.into();
             let data = entry.data.freeze();

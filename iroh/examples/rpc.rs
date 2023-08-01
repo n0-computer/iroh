@@ -9,7 +9,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use iroh::collection::IrohCollectionParser;
-use iroh::database::{flat, mem};
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
 use iroh_bytes::provider::BaoDb;
@@ -79,9 +78,9 @@ async fn main() -> anyhow::Result<()> {
     // let iroh_data_dir = std::env::current_dir()?.join(".iroh");
     // tokio::fs::create_dir_all(&iroh_data_dir).await?;
     // // create a new persistent database
-    // let db = flat::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
+    // let db = iroh::database::flat::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
     // run(db).await
 
-    let db = mem::Database::default();
+    let db = iroh::database::mem::Database::default();
     run(db).await
 }

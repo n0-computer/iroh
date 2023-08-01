@@ -21,7 +21,7 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from"
 flume = "0.10.14"
 futures = "0.3.25"
 hex = { version = "0.4.3" }
-iroh-io = { version = "0.2.1" }
+iroh-io = { version = "0.2.2" }
 iroh-net = { version = "0.5.1", path = "../iroh-net" }
 iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
@@ -64,7 +64,6 @@ test = []
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-blake3 = "1.3.3"
 bytes = "1"
 duct = "0.13.6"
 nix = "0.26.2"
@@ -73,7 +72,6 @@ regex = { version = "1.7.1", features = ["std"] }
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-iroh-io = { version = "0.2.1" }
 postcard = "1"
 proptest = "1.2.0"
 tempfile = "3.4"
