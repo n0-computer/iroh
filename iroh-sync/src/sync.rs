@@ -553,12 +553,20 @@ impl RecordIdentifier {
         &self.key
     }
 
-    pub fn namespace(&self) -> &NamespaceId {
-        &self.namespace
+    pub fn namespace(&self) -> NamespaceId {
+        self.namespace
     }
 
-    pub fn author(&self) -> &AuthorId {
-        &self.author
+    pub fn namespace_bytes(&self) -> &[u8; 32] {
+        self.namespace.as_bytes()
+    }
+
+    pub fn author(&self) -> AuthorId {
+        self.author
+    }
+
+    pub fn author_bytes(&self) -> &[u8; 32] {
+        self.author.as_bytes()
     }
 }
 
@@ -665,7 +673,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_latest_by_key_and_author(my_replica.namespace(), format!("/{i}"), alice.id())?
+                .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), format!("/{i}"))?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -677,19 +685,19 @@ mod tests {
             .hash_and_insert("/cool/path", &alice, "round 1")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
         // Second
         my_replica
             .hash_and_insert("/cool/path", &alice, "round 2")
             .map_err(Into::into)?;
         let _entry = store
-            .get_latest_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .get_latest_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .get_all_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
@@ -730,12 +738,12 @@ mod tests {
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", alice.id())?
+            .get_all_by_key_and_author(my_replica.namespace(), alice.id(), "/cool/path")?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         let entries: Vec<_> = store
-            .get_all_by_key_and_author(my_replica.namespace(), "/cool/path", bob.id())?
+            .get_all_by_key_and_author(my_replica.namespace(), bob.id(), "/cool/path")?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
@@ -915,13 +923,13 @@ mod tests {
 
         // Check result
         for el in alice_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), el, author.id())?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), el, author.id())?;
+            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
 
         for el in bob_set {
-            alice_store.get_latest_by_key_and_author(alice.namespace(), el, author.id())?;
-            bob_store.get_latest_by_key_and_author(bob.namespace(), el, author.id())?;
+            alice_store.get_latest_by_key_and_author(alice.namespace(), author.id(), el)?;
+            bob_store.get_latest_by_key_and_author(bob.namespace(), author.id(), el)?;
         }
         Ok(())
     }

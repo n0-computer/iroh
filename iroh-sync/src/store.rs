@@ -15,10 +15,10 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `Namespace`.
     type Instance: ranger::Store<RecordIdentifier, SignedEntry> + Send + Sync + 'static + Clone;
 
-    type GetLatestIter<'a>: Iterator<Item = Result<SignedEntry>>
+    type GetLatestIter<'a>: Iterator<Item = Result<(RecordIdentifier, SignedEntry)>>
     where
         Self: 'a;
-    type GetAllIter<'a>: Iterator<Item = Result<(u64, SignedEntry)>>
+    type GetAllIter<'a>: Iterator<Item = Result<(RecordIdentifier, SignedEntry)>>
     where
         Self: 'a;
 
@@ -31,8 +31,8 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_latest_by_key_and_author(
         &self,
         namespace: NamespaceId,
-        key: impl AsRef<[u8]>,
         author: AuthorId,
+        key: impl AsRef<[u8]>,
     ) -> Result<Option<SignedEntry>>;
 
     /// Returns the latest version of the matching documents by key.
@@ -56,8 +56,8 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_all_by_key_and_author<'a, 'b: 'a>(
         &'a self,
         namespace: NamespaceId,
-        key: impl AsRef<[u8]> + 'b,
         author: AuthorId,
+        key: impl AsRef<[u8]> + 'b,
     ) -> Result<Self::GetAllIter<'a>>;
 
     /// Returns all versions of the matching documents by key.

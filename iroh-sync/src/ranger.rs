@@ -213,7 +213,7 @@ where
     /// Insert the given key value pair.
     fn put(&mut self, k: K, v: V) -> Result<(), Self::Error>;
 
-    type RangeIterator<'a>: Iterator<Item = (K, V)>
+    type RangeIterator<'a>: Iterator<Item = Result<(K, V), Self::Error>>
     where
         Self: 'a,
         K: 'a,
@@ -225,9 +225,9 @@ where
         range: Range<K>,
         limit: Option<Range<K>>,
     ) -> Result<Self::RangeIterator<'_>, Self::Error>;
-    fn remove(&mut self, key: &K) -> Result<Vec<(u64, V)>, Self::Error>;
+    fn remove(&mut self, key: &K) -> Result<Vec<V>, Self::Error>;
 
-    type AllIterator<'a>: Iterator<Item = (K, V)>
+    type AllIterator<'a>: Iterator<Item = Result<(K, V), Self::Error>>
     where
         Self: 'a,
         K: 'a,
@@ -284,6 +284,7 @@ where
         let elements = self.get_range(range.clone(), limit.cloned())?;
         let mut fp = Fingerprint::empty();
         for el in elements {
+            let el = el?;
             fp ^= el.0.as_fingerprint();
         }
 
@@ -307,29 +308,39 @@ where
         // TODO: this is not very efficient, optimize depending on data structure
         let iter = self.data.iter();
 
-        Ok(SimpleRangeIterator { iter, range, limit })
+        Ok(SimpleRangeIterator {
+            iter,
+            range: Some(range),
+            limit,
+        })
     }
 
-    fn remove(&mut self, key: &K) -> Result<Vec<(u64, V)>, Self::Error> {
+    fn remove(&mut self, key: &K) -> Result<Vec<V>, Self::Error> {
         // No versions stored
 
-        let res = self.data.remove(key).into_iter().map(|v| (0, v)).collect();
+        let res = self.data.remove(key).into_iter().collect();
         Ok(res)
     }
 
-    type AllIterator<'a> = std::collections::btree_map::IntoIter<K, V>
+    type AllIterator<'a> = SimpleRangeIterator<'a, K, V>
     where K: 'a,
           V: 'a;
 
     fn all(&self) -> Result<Self::AllIterator<'_>, Self::Error> {
-        Ok(self.data.clone().into_iter())
+        let iter = self.data.iter();
+
+        Ok(SimpleRangeIterator {
+            iter,
+            range: None,
+            limit: None,
+        })
     }
 }
 
 #[derive(Debug)]
 pub struct SimpleRangeIterator<'a, K: 'a, V: 'a> {
     iter: std::collections::btree_map::Iter<'a, K, V>,
-    range: Range<K>,
+    range: Option<Range<K>>,
     limit: Option<Range<K>>,
 }
 
@@ -338,23 +349,21 @@ where
     K: RangeKey + Clone,
     V: Clone,
 {
-    type Item = (K, V);
+    type Item = Result<(K, V), Infallible>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.iter.next()?;
 
-        let filter = |x: &K| {
-            let r = x.contains(&self.range);
-            if let Some(ref limit) = self.limit {
-                r && x.contains(limit)
-            } else {
-                r
-            }
+        let filter = |x: &K| match (&self.range, &self.limit) {
+            (None, None) => true,
+            (Some(ref range), Some(ref limit)) => x.contains(range) && x.contains(limit),
+            (Some(ref range), None) => x.contains(range),
+            (None, Some(ref limit)) => x.contains(limit),
         };
 
         loop {
             if filter(next.0) {
-                return Some((next.0.clone(), next.1.clone()));
+                return Some(Ok((next.0.clone(), next.1.clone())));
             }
 
             next = self.iter.next()?;
@@ -469,9 +478,17 @@ where
                 Some(
                     self.store
                         .get_range(range.clone(), self.limit.clone())?
-                        .filter(|(k, _)| !values.iter().any(|(vk, _)| vk == k))
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
+                        .filter_map(|el| match el {
+                            Ok((k, v)) => {
+                                if !values.iter().any(|(vk, _)| vk == &k) {
+                                    Some(Ok((k, v)))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(err) => Some(Err(err)),
+                        })
+                        .collect::<Result<_, _>>()?,
                 )
             };
 
@@ -505,7 +522,7 @@ where
             let local_values: Vec<_> = self
                 .store
                 .get_range(range.clone(), self.limit.clone())?
-                .collect();
+                .collect::<Result<_, _>>()?;
             if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
                 let values = local_values
                     .into_iter()
@@ -566,12 +583,15 @@ where
                     } else {
                         let values = chunk
                             .into_iter()
-                            .map(|(k, v)| {
-                                let k: K = k.clone();
-                                let v: V = v.clone();
-                                (k, v)
+                            .map(|el| match el {
+                                Ok((k, v)) => {
+                                    let k: K = k.clone();
+                                    let v: V = v.clone();
+                                    Ok((k, v))
+                                }
+                                Err(err) => Err(err),
                             })
-                            .collect();
+                            .collect::<Result<_, _>>()?;
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
@@ -600,12 +620,12 @@ where
     }
 
     /// Remove the given key.
-    pub fn remove(&mut self, k: &K) -> Result<Vec<(u64, V)>, S::Error> {
+    pub fn remove(&mut self, k: &K) -> Result<Vec<V>, S::Error> {
         self.store.remove(k)
     }
 
     /// List all existing key value pairs.
-    pub fn all(&self) -> Result<impl Iterator<Item = (K, V)> + '_, S::Error> {
+    pub fn all(&self) -> Result<impl Iterator<Item = Result<(K, V), S::Error>> + '_, S::Error> {
         self.store.all()
     }
 
@@ -1162,14 +1182,14 @@ mod tests {
         };
         res.print_messages();
 
-        let alice_now: Vec<_> = res.alice.all().unwrap().collect();
+        let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
         assert_eq!(
             expected_set_alice.into_iter().collect::<Vec<_>>(),
             alice_now,
             "alice"
         );
 
-        let bob_now: Vec<_> = res.bob.all().unwrap().collect();
+        let bob_now: Vec<_> = res.bob.all().unwrap().collect::<Result<_, _>>().unwrap();
         assert_eq!(
             expected_set_bob.into_iter().collect::<Vec<_>>(),
             bob_now,
@@ -1227,29 +1247,41 @@ mod tests {
             store.put(*k, *v).unwrap();
         }
 
-        let all: Vec<_> = store.get_range(Range::new("", ""), None).unwrap().collect();
+        let all: Vec<_> = store
+            .get_range(Range::new("", ""), None)
+            .unwrap()
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
         assert_eq!(&all, &set[..]);
 
         let regular: Vec<_> = store
             .get_range(("bee", "eel").into(), None)
             .unwrap()
-            .collect();
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
         assert_eq!(&regular, &set[..3]);
 
         // empty start
-        let regular: Vec<_> = store.get_range(("", "eel").into(), None).unwrap().collect();
+        let regular: Vec<_> = store
+            .get_range(("", "eel").into(), None)
+            .unwrap()
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
         assert_eq!(&regular, &set[..3]);
 
         let regular: Vec<_> = store
             .get_range(("cat", "hog").into(), None)
             .unwrap()
-            .collect();
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
+
         assert_eq!(&regular, &set[1..5]);
 
         let excluded: Vec<_> = store
             .get_range(("fox", "bee").into(), None)
             .unwrap()
-            .collect();
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
 
         assert_eq!(excluded[0].0, "fox");
         assert_eq!(excluded[1].0, "hog");
@@ -1258,7 +1290,8 @@ mod tests {
         let excluded: Vec<_> = store
             .get_range(("fox", "doe").into(), None)
             .unwrap()
-            .collect();
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
 
         assert_eq!(excluded.len(), 4);
         assert_eq!(excluded[0].0, "bee");
@@ -1270,7 +1303,8 @@ mod tests {
         let all: Vec<_> = store
             .get_range(("", "").into(), Some(("bee", "doe").into()))
             .unwrap()
-            .collect();
+            .collect::<Result<_, Infallible>>()
+            .unwrap();
         assert_eq!(&all, &set[..2]);
     }
 
