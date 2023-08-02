@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::{fmt, io, result};
 
 use anyhow::Context;
+use bao_tree::blake3;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;

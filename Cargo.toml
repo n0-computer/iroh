@@ -13,7 +13,3 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
-
-[patch.crates-io]
-bao-tree = { path = "../bao-tree" }
-blake3 = { git = "https://github.com/rklaehn/BLAKE3.git", branch = "more-guts" }
