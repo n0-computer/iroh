@@ -377,7 +377,7 @@ async fn handle_command(
             log_filter.modify(|layer| *layer = next_filter)?;
         }
         Cmd::Stats => get_stats(),
-        Cmd::Fs(cmd) => handle_fs_command(cmd, &store, doc).await?,
+        Cmd::Fs(cmd) => handle_fs_command(cmd, store, doc).await?,
         Cmd::Hammer {
             prefix,
             threads,
@@ -839,7 +839,7 @@ fn fmt_entry(entry: &SignedEntry) -> String {
     format!("@{author}: {key} = {hash} ({len})",)
 }
 
-async fn fmt_content_simple(doc: &Doc, entry: &SignedEntry) -> String {
+async fn fmt_content_simple(_doc: &Doc, entry: &SignedEntry) -> String {
     let len = entry.entry().record().content_len();
     format!("<{}>", HumanBytes(len))
 }

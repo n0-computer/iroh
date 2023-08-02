@@ -296,8 +296,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 
     pub fn id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
         let inner = self.inner.read();
-        let id = RecordIdentifier::new(key, inner.namespace.id(), author.id());
-        id
+        RecordIdentifier::new(key, inner.namespace.id(), author.id())
     }
 
     pub fn insert_remote_entry(&self, entry: SignedEntry) -> anyhow::Result<()> {

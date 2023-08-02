@@ -524,10 +524,7 @@ where
                 .get_range(range.clone(), self.limit.clone())?
                 .collect::<Result<_, _>>()?;
             if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
-                let values = local_values
-                    .into_iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
+                let values = local_values.into_iter().map(|(k, v)| (k, v)).collect();
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
                     values,
@@ -585,8 +582,8 @@ where
                             .into_iter()
                             .map(|el| match el {
                                 Ok((k, v)) => {
-                                    let k: K = k.clone();
-                                    let v: V = v.clone();
+                                    let k: K = k;
+                                    let v: V = v;
                                     Ok((k, v))
                                 }
                                 Err(err) => Err(err),

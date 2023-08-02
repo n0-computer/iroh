@@ -532,7 +532,7 @@ impl Iterator for RangeLatestIterator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.with_mut(|fields| {
-            while let Some(next) = fields.records.next() {
+            for next in fields.records.by_ref() {
                 let next = match next {
                     Ok(next) => next,
                     Err(err) => return Some(Err(err.into())),
@@ -543,7 +543,7 @@ impl Iterator for RangeLatestIterator<'_> {
                     Ok(id) => id,
                     Err(err) => return Some(Err(err)),
                 };
-                if fields.filter.matches(&id) && matches(&fields.limit, &id) {
+                if fields.filter.matches(&id) && matches(fields.limit, &id) {
                     let last = next.1.last();
                     let value = match last? {
                         Ok(value) => value,
@@ -607,7 +607,7 @@ impl std::fmt::Debug for RangeAllIterator<'_> {
 
 /// Advance the internal iterator to the next set of multimap values
 fn next_iter(fields: &mut BorrowedMutFields) -> Result<()> {
-    while let Some(next_iter) = fields.records.0.next() {
+    for next_iter in fields.records.0.by_ref() {
         let (id_guard, values_guard) = next_iter?;
         let (namespace, author, key) = id_guard.value();
         let id = RecordIdentifier::from_parts(key, namespace, author)?;
@@ -739,6 +739,12 @@ mod tests {
             let res = wrapper.get(&id)?;
             assert!(res.is_none());
         }
+
+        // get latest
+        let entries = store
+            .get_latest(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(entries.len(), 0);
 
         Ok(())
     }

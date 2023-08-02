@@ -21,9 +21,11 @@ pub struct Store {
     replicas: Arc<RwLock<HashMap<NamespaceId, Replica<ReplicaStoreInstance>>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
     /// Stores records by namespace -> identifier + timestamp
-    replica_records:
-        Arc<RwLock<HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>>>,
+    replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
 }
+
+type ReplicaRecordsOwned =
+    HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>;
 
 impl super::Store for Store {
     type Instance = ReplicaStoreInstance;
@@ -205,10 +207,7 @@ impl GetFilter {
 
 #[derive(Debug)]
 pub struct GetLatestIter<'a> {
-    records: RwLockReadGuard<
-        'a,
-        HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
-    >,
+    records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
     index: usize,
@@ -263,10 +262,7 @@ impl<'a> Iterator for GetLatestIter<'a> {
 
 #[derive(Debug)]
 pub struct GetAllIter<'a> {
-    records: RwLockReadGuard<
-        'a,
-        HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
-    >,
+    records: ReplicaRecords<'a>,
     filter: GetFilter,
     /// Current iteration index.
     index: usize,
@@ -360,13 +356,15 @@ impl ReplicaStoreInstance {
     }
 }
 
+type ReplicaRecords<'a> = RwLockReadGuard<
+    'a,
+    HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
+>;
+
 #[derive(Debug)]
 struct RecordsIter<'a> {
     namespace: NamespaceId,
-    replica_records: RwLockReadGuard<
-        'a,
-        HashMap<NamespaceId, BTreeMap<RecordIdentifier, BTreeMap<u64, SignedEntry>>>,
-    >,
+    replica_records: ReplicaRecords<'a>,
     i: usize,
 }
 

@@ -735,7 +735,7 @@ mod test {
         // now we recv with a spoofed id and expect no event to be emitted
         let content: Bytes = b"hello2".to_vec().into();
         let message = Message::Gossip(Gossip {
-            content: content.clone(),
+            content,
             round: Round(1),
             id: MessageId::from_content(b"foo"),
         });

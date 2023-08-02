@@ -40,7 +40,6 @@ pub struct DocStore {
     replicas: store::fs::Store,
     blobs: BlobStore,
     local_author: Arc<Author>,
-    storage_path: PathBuf,
 }
 
 const REPLICA_DB_NAME: &str = "replica.db";
@@ -52,7 +51,6 @@ impl DocStore {
         Ok(Self {
             replicas,
             local_author: Arc::new(author),
-            storage_path,
             blobs,
         })
     }
