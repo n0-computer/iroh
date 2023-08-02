@@ -324,8 +324,16 @@ async fn handle_command(
         Cmd::Set { key, value } => {
             doc.insert_bytes(&key, value.into_bytes().into()).await?;
         }
-        Cmd::Get { key, print_content } => {
-            let entries = store.get_all_by_key(doc.replica().namespace(), key.as_bytes())?;
+        Cmd::Get {
+            key,
+            print_content,
+            prefix,
+        } => {
+            let entries = if prefix {
+                store.get_all_by_prefix(doc.replica().namespace(), key.as_bytes())?
+            } else {
+                store.get_all_by_key(doc.replica().namespace(), key.as_bytes())?
+            };
             for entry in entries {
                 let (_id, entry) = entry?;
                 println!("{}", fmt_entry(&entry));
@@ -497,8 +505,8 @@ async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> a
                 store.get_latest_by_prefix(doc.replica().namespace(), key_prefix.as_bytes())?;
             let mut checked_dirs = HashSet::new();
             for entry in entries {
-                let entry = entry?;
-                let key = entry.entry().id().key();
+                let (id, entry) = entry?;
+                let key = id.key();
                 let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                 let len = entry.entry().record().content_len();
                 if let Some(mut reader) = doc.get_content_reader(&entry).await {
@@ -525,7 +533,7 @@ async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> a
                 .get_latest_by_key(doc.replica().namespace(), &key)?
                 .next();
             if let Some(entry) = entry {
-                let entry = entry?;
+                let (_, entry) = entry?;
                 println!("> exporting {key} to {path:?}");
                 let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
                 tokio::fs::create_dir_all(&parent).await?;
@@ -562,6 +570,9 @@ pub enum Cmd {
         /// Print the value (but only if it is valid UTF-8 and smaller than 1MB)
         #[clap(short = 'c', long)]
         print_content: bool,
+        /// Match the key as prefix, not an exact match.
+        #[clap(short = 'p', long)]
+        prefix: bool,
     },
     /// List entries.
     Ls {

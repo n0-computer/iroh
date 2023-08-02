@@ -532,16 +532,20 @@ impl Iterator for RangeLatestIterator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.with_mut(|fields| {
-            let mut next = fields.records.next()?.ok()?;
+            while let Some(next) = fields.records.next() {
+                let next = match next {
+                    Ok(next) => next,
+                    Err(err) => return Some(Err(err.into())),
+                };
 
-            loop {
                 let (namespace, author, key) = next.0.value();
                 let id = match RecordIdentifier::from_parts(key, namespace, author) {
                     Ok(id) => id,
                     Err(err) => return Some(Err(err)),
                 };
                 if fields.filter.matches(&id) && matches(&fields.limit, &id) {
-                    let value = match next.1.last()? {
+                    let last = next.1.last();
+                    let value = match last? {
                         Ok(value) => value,
                         Err(err) => return Some(Err(err.into())),
                     };
@@ -553,12 +557,8 @@ impl Iterator for RangeLatestIterator<'_> {
 
                     return Some(Ok((id, signed_entry)));
                 }
-
-                next = match fields.records.next()? {
-                    Ok(next) => next,
-                    Err(err) => return Some(Err(err.into())),
-                };
             }
+            None
         })
     }
 }
@@ -703,6 +703,28 @@ mod tests {
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
             wrapper.put(id, entry)?;
         }
+
+        // get all
+        let entries = store.get_all(namespace.id())?.collect::<Result<Vec<_>>>()?;
+        assert_eq!(entries.len(), 10);
+
+        // get all prefix
+        let entries = store
+            .get_all_by_prefix(namespace.id(), "hello-")?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(entries.len(), 10);
+
+        // get latest
+        let entries = store
+            .get_latest(namespace.id())?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(entries.len(), 5);
+
+        // get latest by prefix
+        let entries = store
+            .get_latest_by_prefix(namespace.id(), "hello-")?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(entries.len(), 5);
 
         // delete and get
         for i in 0..5 {
