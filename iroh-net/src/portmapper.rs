@@ -601,7 +601,7 @@ impl Service {
                     mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
                 Some(tokio::spawn(task.instrument(info_span!("pmp"))).into())
             } else if upnp || self.config.enable_upnp {
-                // next upnp is available or enabled
+                // next upnp if available or enabled
                 let external_port = external_addr.map(|(_addr, port)| port);
                 let gateway = self
                     .full_probe
