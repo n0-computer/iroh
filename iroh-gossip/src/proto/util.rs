@@ -402,12 +402,17 @@ mod test {
         let x = set.shuffled_without_and_capped(&[&1], 2, &mut rng);
         assert_eq!(x, vec![4, 3]);
 
+        // recreate the rng - otherwise we get failures on some architectures when cross-compiling,
+        // likely due to usize differences pulling different amounts of randomness.
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let x = set.pick_random(&mut rng);
         assert_eq!(x, Some(&4));
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let x = set.pick_random_without(&[&4], &mut rng);
         assert_eq!(x, Some(&3));
 
         let mut set = set;
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         set.remove_random(&mut rng);
         assert_eq!(set, IndexSet::from_iter([1, 2, 4]));
     }
