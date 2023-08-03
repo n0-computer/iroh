@@ -397,7 +397,7 @@ impl MagicSock {
                     last_endpoints: Vec::new(),
                     last_endpoints_time: None,
                     on_endpoint_refreshed: HashMap::new(),
-                    periodic_re_stun_timer: new_re_stun_timer(),
+                    periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     disco_info: HashMap::new(),
                     peer_map: Default::default(),
@@ -1329,7 +1329,7 @@ impl Actor {
                     .expect("sender not go away");
                 return;
             }
-            self.periodic_re_stun_timer = new_re_stun_timer();
+            self.periodic_re_stun_timer = new_re_stun_timer(true);
         }
 
         self.endpoints_update_state
@@ -2323,13 +2323,17 @@ fn get_disco_info<'a>(
     disco_info.get_mut(k).unwrap()
 }
 
-fn new_re_stun_timer() -> time::Interval {
+fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
     // Pick a random duration between 20 and 26 seconds (just under 30s,
     // a common UDP NAT timeout on Linux,etc)
     let mut rng = rand::thread_rng();
     let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
     debug!("scheduling periodic_stun to run in {}s", d.as_secs());
-    time::interval_at(time::Instant::now() + d, d)
+    if initial_delay {
+        time::interval_at(time::Instant::now() + d, d)
+    } else {
+        time::interval(d)
+    }
 }
 
 /// Initial connection setup.
