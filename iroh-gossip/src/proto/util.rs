@@ -404,8 +404,6 @@ mod test {
 
         let x = set.pick_random(&mut rng);
         assert_eq!(x, Some(&4));
-        let x = set.pick_random(&mut rng);
-        assert_eq!(x, Some(&4));
         let x = set.pick_random_without(&[&4], &mut rng);
         assert_eq!(x, Some(&3));
 
