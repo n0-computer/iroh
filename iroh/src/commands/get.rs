@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
+use bao_tree::blake3;
 use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
 use console::style;
 use indicatif::{
@@ -87,7 +88,7 @@ impl GetInteractive {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .open(&data_path_2)
+                .open(data_path_2)
         })
         .await?;
         tracing::debug!("piping data to {:?} and {:?}", data_path, outboard_path);
@@ -99,7 +100,7 @@ impl GetInteractive {
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(&outboard_path)
+                    .open(outboard_path)
             })
             .await?;
             Some(outboard_file)
@@ -219,7 +220,7 @@ impl GetInteractive {
                     std::fs::OpenOptions::new()
                         .write(true)
                         .create(true)
-                        .open(&data_path_2)
+                        .open(data_path_2)
                 })
                 .await?;
                 tracing::debug!("piping data to {data_path:?} and {outboard_path:?}");
@@ -231,7 +232,7 @@ impl GetInteractive {
                         std::fs::OpenOptions::new()
                             .write(true)
                             .create(true)
-                            .open(&outboard_path)
+                            .open(outboard_path)
                     })
                     .await?;
                     Some(outboard_file)
