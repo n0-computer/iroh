@@ -32,7 +32,7 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 
 use crate::{
     config::{self, DERP_MAGIC_IP},
-    derp::{self, DerpMap, DerpRegion},
+    derp::{DerpMap, DerpRegion},
     disco, key,
     net::ip::LocalAddresses,
     netcheck, netmap, portmapper, stun,
@@ -121,6 +121,9 @@ pub struct Options {
     /// Private key for this node.
     pub private_key: key::node::SecretKey,
 
+    /// The [`DerpMap`] to use.
+    pub derp_map: Option<DerpMap>,
+
     /// Callbacks to emit on various socket events
     pub callbacks: Callbacks,
 }
@@ -147,6 +150,7 @@ impl Default for Options {
         Options {
             port: 0,
             private_key: key::node::SecretKey::generate(),
+            derp_map: None,
             callbacks: Default::default(),
         }
     }
@@ -208,9 +212,8 @@ pub(self) struct Inner {
     /// If the last netcheck report, reports IPv6 to be available.
     pub(self) ipv6_reported: Arc<AtomicBool>,
 
-    // Sigh, a lock it is..
     /// None (or zero regions/nodes) means DERP is disabled.
-    pub(self) derp_map: tokio::sync::RwLock<Option<DerpMap>>,
+    pub(self) derp_map: Option<DerpMap>,
     /// Nearest DERP region ID; 0 means none/unknown.
     my_derp: AtomicU16,
 }
@@ -232,14 +235,14 @@ impl Inner {
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
     pub(self) async fn has_derp_region(&self, region: u16) -> bool {
-        match &*self.derp_map.read().await {
+        match &self.derp_map {
             None => false,
             Some(ref derp_map) => derp_map.contains_region(region),
         }
     }
 
     pub(self) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
-        match &*self.derp_map.read().await {
+        match &self.derp_map {
             None => None,
             Some(ref derp_map) => derp_map.get_region(region).cloned(),
         }
@@ -301,6 +304,7 @@ impl MagicSock {
         let Options {
             port,
             private_key,
+            derp_map,
             callbacks:
                 Callbacks {
                     on_endpoints,
@@ -345,7 +349,7 @@ impl MagicSock {
             actor_sender: actor_sender.clone(),
             network_sender,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
-            derp_map: Default::default(),
+            derp_map,
             my_derp: AtomicU16::new(0),
         });
 
@@ -524,18 +528,6 @@ impl MagicSock {
             .await
             .unwrap();
         r.await.unwrap();
-    }
-
-    /// Controls which (if any) DERP servers are used. A `None` value means to disable DERP; it's disabled by default.
-    #[instrument(skip_all, fields(self.name = %self.inner.name))]
-    pub async fn set_derp_map(&self, dm: Option<derp::DerpMap>) -> Result<()> {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::SetDerpMap(dm, s))
-            .await?;
-        r.await?;
-        Ok(())
     }
 
     /// Returns the DERP region with the best latency.
@@ -820,7 +812,6 @@ impl Drop for WgGuard {
 
 #[derive(Debug)]
 pub(self) enum ActorMessage {
-    SetDerpMap(Option<DerpMap>, sync::oneshot::Sender<()>),
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
     GetMappingAddr(
@@ -974,10 +965,6 @@ impl Actor {
     /// Returns `true` if it was a shutdown.
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
-            ActorMessage::SetDerpMap(dm, s) => {
-                self.set_derp_map(dm);
-                let _ = s.send(());
-            }
             ActorMessage::TrackedEndpoints(s) => {
                 let eps: Vec<_> = self.peer_map.endpoints().map(|(_, ep)| ep.info()).collect();
                 let _ = s.send(eps);
@@ -1546,13 +1533,13 @@ impl Actor {
 
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self) -> Result<Arc<netcheck::Report>> {
-        let derp_map = self.inner.derp_map.read().await.clone();
+        let derp_map = self.inner.derp_map.as_ref();
         if derp_map.is_none() {
             debug!("skipping netcheck, no Derp Map");
             return Ok(Default::default());
         }
 
-        let derp_map = derp_map.unwrap();
+        let derp_map = derp_map.cloned().unwrap();
         let net_checker = &mut self.net_checker;
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
@@ -1610,7 +1597,7 @@ impl Actor {
 
     async fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
         {
-            let derp_map = self.inner.derp_map.read().await;
+            let derp_map = &self.inner.derp_map;
             if derp_map.is_none() {
                 self.inner.set_my_derp(0);
                 return false;
@@ -1657,7 +1644,7 @@ impl Actor {
     /// If no [`DerpMap`] exists, returns `0`.
     async fn pick_derp_fallback(&self) -> u16 {
         let ids = {
-            let derp_map = self.inner.derp_map.read().await;
+            let derp_map = &self.inner.derp_map;
             if derp_map.is_none() {
                 return 0;
             }
@@ -2175,10 +2162,6 @@ impl Actor {
         if let Err(err) = self.send_disco_message(ip_dst, dst_key, pong).await {
             warn!("disco: failed to send message to {ip_dst}: {err:?}");
         }
-    }
-
-    fn set_derp_map(&self, dm: Option<DerpMap>) {
-        self.send_derp_actor(DerpActorMessage::SetDerpMap(dm));
     }
 
     #[instrument(skip_all)]
