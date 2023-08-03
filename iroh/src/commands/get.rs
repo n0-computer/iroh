@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -14,6 +15,7 @@ use iroh::{
     rpc_protocol::ShareRequest,
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
+use iroh_bytes::provider::ShareProgress;
 use iroh_bytes::{
     get::{
         self,
@@ -328,7 +330,10 @@ impl GetInteractive {
         if tokio::fs::try_exists(&temp_dir).await? {
             let temp_dir_meta = tokio::fs::metadata(&temp_dir).await?;
             if !temp_dir_meta.is_dir() {
-                anyhow::bail!("temp dir: {} exists, but is not a directory", temp_dir.display());
+                anyhow::bail!(
+                    "temp dir: {} exists, but is not a directory",
+                    temp_dir.display()
+                );
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
@@ -344,6 +349,9 @@ impl GetInteractive {
             .to_str()
             .context("out_dir is not valid utf8")?
             .to_owned();
+        let hash = self.hash;
+        write(format!("Fetching: {}", hash));
+        write(format!("{} Connecting ...", style("[1/3]").bold().dim()));
         let mut stream = provider
             .controller()
             .server_streaming(ShareRequest {
@@ -358,9 +366,59 @@ impl GetInteractive {
                 out: Some(out),
             })
             .await?;
+        let pb = make_download_pb();
+        let mut sizes = BTreeMap::new();
         while let Some(x) = stream.next().await {
-            let x = x?;
-            println!("{:?}", x);
+            match x? {
+                ShareProgress::Connected => {
+                    write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+                }
+                ShareProgress::FoundCollection {
+                    total_blobs_size,
+                    num_blobs,
+                    ..
+                } => {
+                    init_download_progress(
+                        &pb,
+                        num_blobs.unwrap_or_default(),
+                        total_blobs_size.unwrap_or_default(),
+                    )?;
+                }
+                ShareProgress::Found { id, size, .. } => {
+                    sizes.insert(id, (size, 0));
+                }
+                ShareProgress::Progress { id, offset } => {
+                    if let Some((_, current)) = sizes.get_mut(&id) {
+                        *current = offset;
+                        let total = sizes.values().map(|(_, current)| current).sum::<u64>();
+                        pb.set_position(total);
+                    }
+                }
+                ShareProgress::Done { id } => {
+                    if let Some((size, current)) = sizes.get_mut(&id) {
+                        *current = *size;
+                        let total = sizes.values().map(|(_, current)| current).sum::<u64>();
+                        pb.set_position(total);
+                    }
+                }
+                ShareProgress::NetworkDone {
+                    bytes_read,
+                    elapsed,
+                    ..
+                } => {
+                    pb.finish_and_clear();
+                    write(format!(
+                        "Transferred {} in {}, {}/s",
+                        HumanBytes(bytes_read),
+                        HumanDuration(elapsed),
+                        HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
+                    ));
+                }
+                ShareProgress::AllDone => {
+                    break;
+                }
+                _ => {}
+            }
         }
         tokio::fs::remove_dir_all(temp_dir).await?;
         Ok(())

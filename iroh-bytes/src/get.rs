@@ -29,7 +29,7 @@ use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
 /// Stats about the transfer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Stats {
     /// The number of bytes written
     pub bytes_written: u64,

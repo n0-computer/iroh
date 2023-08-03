@@ -570,7 +570,11 @@ impl Database {
                 Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
             })?;
             progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-            (hash, CompleteEntry::new_external(size, path.clone()), outboard)
+            (
+                hash,
+                CompleteEntry::new_external(size, path.clone()),
+                outboard,
+            )
         } else {
             let uuid = rand::thread_rng().gen::<[u8; 16]>();
             let temp_data_path = self

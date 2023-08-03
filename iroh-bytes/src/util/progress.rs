@@ -95,6 +95,7 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Send a message and wait if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
+    #[must_use]
     fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_>;
 
     /// Try to send a message and drop it if the receiver is full.

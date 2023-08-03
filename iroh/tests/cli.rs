@@ -498,8 +498,7 @@ fn test_provide_get_loop_single(
             assert_eq!(expect_content, get_output.stdout);
         }
         Some(out) => {
-            let path = out.join(hash_str);
-            let content = std::fs::read(path)?;
+            let content = std::fs::read(out)?;
             assert_eq!(expect_content, content);
         }
     };

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
@@ -272,6 +273,8 @@ pub enum ProvideProgress {
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShareProgress {
+    /// A new connection was established
+    Connected,
     /// An item was found with hash `hash`, from now on referred to via `id`
     Found {
         /// a new unique id for this entry
@@ -280,6 +283,15 @@ pub enum ShareProgress {
         hash: Hash,
         /// the size of the entry in bytes
         size: u64,
+    },
+    /// An item was found with hash `hash`, from now on referred to via `id`
+    FoundCollection {
+        /// the name of the entry
+        hash: Hash,
+        /// number of children in the collection, if known
+        num_blobs: Option<u64>,
+        /// the size of the entry in bytes, if known
+        total_blobs_size: Option<u64>,
     },
     /// We got progress ingesting item `id`
     Progress {
@@ -292,6 +304,15 @@ pub enum ShareProgress {
     Done {
         /// the unique id of the entry
         id: u64,
+    },
+    /// We are done with the network part - all data is local
+    NetworkDone {
+        /// The number of bytes written
+        bytes_written: u64,
+        /// The number of bytes read
+        bytes_read: u64,
+        /// The time it took to transfer the data
+        elapsed: Duration,
     },
     /// We are done with the whole operation
     AllDone,

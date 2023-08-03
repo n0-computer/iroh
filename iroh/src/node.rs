@@ -31,8 +31,8 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
-use iroh_bytes::get;
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
+use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ShareProgress};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
@@ -754,7 +754,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         hash: Hash,
         recursive: bool,
         sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Stats> {
         let res = if recursive {
             self.get_collection(conn, &hash, sender).await
         } else {
@@ -959,7 +959,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         hash: &Hash,
         progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Stats> {
         let db = &self.inner.db;
         let end = if let Some(entry) = db.get_partial(hash) {
             trace!("got partial data for {}", hash,);
@@ -1005,8 +1005,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             anyhow::bail!("expected Closing");
         };
         // this closes the bidi stream. Do something with the stats?
-        let _stats = end.next().await?;
-        anyhow::Ok(())
+        let stats = end.next().await?;
+        anyhow::Ok(stats)
     }
 
     /// Given a collection of hashes, figure out what is missing
@@ -1047,14 +1047,21 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         conn: quinn::Connection,
         root_hash: &Hash,
         sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Stats> {
         use tracing::info as log;
         let db = &self.inner.db;
         let finishing = if let Some(entry) = db.get(root_hash) {
             log!("already got collection - doing partial download");
             // got the collection
             let reader = entry.data_reader().await?;
-            let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
+            let (mut collection, stats) = self.collection_parser.parse(0, reader).await?;
+            sender
+                .send(ShareProgress::FoundCollection {
+                    hash: *root_hash,
+                    num_blobs: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
+                })
+                .await?;
             let mut children: Vec<Hash> = vec![];
             while let Some(hash) = collection.next().await? {
                 children.push(hash);
@@ -1062,7 +1069,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             let missing_info = self.get_missing_ranges_collection(&children).await?;
             if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
                 log!("nothing to do");
-                return Ok(());
+                return Ok(Stats::default());
             }
             let missing_iter = std::iter::once(RangeSet2::empty())
                 .chain(missing_info.iter().map(|x| x.missing_chunks()))
@@ -1127,7 +1134,14 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // read the collection fully for now
             let entry = db.get(root_hash).context("just downloaded")?;
             let reader = entry.data_reader().await?;
-            let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
+            let (mut collection, stats) = self.collection_parser.parse(0, reader).await?;
+            sender
+                .send(ShareProgress::FoundCollection {
+                    hash: *root_hash,
+                    num_blobs: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
+                })
+                .await?;
             let mut children = vec![];
             while let Some(hash) = collection.next().await? {
                 children.push(hash);
@@ -1151,8 +1165,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             }
         };
         // this closes the bidi stream. Do something with the stats?
-        let _stats = finishing.next().await?;
-        anyhow::Ok(())
+        let stats = finishing.next().await?;
+        anyhow::Ok(stats)
     }
 
     async fn share0(
@@ -1173,23 +1187,32 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 &msg.addrs,
             )
             .await?;
+        progress.send(ShareProgress::Connected).await?;
         let progress2 = progress.clone();
         let progress3 = progress.clone();
         let this = self.clone();
         let download =
             local.spawn_pinned(move || self.get(conn, msg.hash, msg.recursive, progress2));
-        if let Some(out) = msg.out {
-            let _export = local.spawn_pinned(move || async move {
-                download.await.unwrap()?;
+        let _export = local.spawn_pinned(move || async move {
+            let stats = download.await.unwrap()?;
+            progress
+                .send(ShareProgress::NetworkDone {
+                    bytes_written: stats.bytes_written,
+                    bytes_read: stats.bytes_read,
+                    elapsed: stats.elapsed,
+                })
+                .await?;
+            if let Some(out) = msg.out {
                 if let Err(cause) = this
                     .export(out, hash, msg.recursive, msg.in_place, progress3)
                     .await
                 {
                     progress.send(ShareProgress::Abort(cause.into())).await?;
                 }
-                anyhow::Ok(())
-            });
-        }
+            }
+            progress.send(ShareProgress::AllDone).await?;
+            anyhow::Ok(())
+        });
         Ok(())
     }
 
