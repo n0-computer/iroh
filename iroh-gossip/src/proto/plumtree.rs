@@ -9,7 +9,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -17,7 +17,10 @@ use derive_more::{Add, From, Sub};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{util::idbytes_impls, PeerIdentity, IO};
+use super::{
+    util::{idbytes_impls, TimeBoundCache},
+    PeerIdentity, IO,
+};
 
 /// A message identifier, which is the message content's blake3 hash.
 #[derive(Serialize, Deserialize, Clone, Hash, Copy, PartialEq, Eq)]
@@ -70,6 +73,8 @@ pub enum Timer {
     SendGraft(MessageId),
     /// Dispatch the [`Message::IHave`] in our lazy push queue.
     DispatchLazyPush,
+    /// Evict the message cache
+    EvictCache,
 }
 
 /// Event emitted by the [`State`] to the application.
@@ -193,6 +198,24 @@ pub struct Config {
     /// parameter is the number of hops that the lazy peers must be closer to the origin than our
     /// eager peers to be promoted to become an eager peer.
     pub optimization_threshold: Round,
+
+    /// Duration for which to keep gossip messages in the internal message cache.
+    ///
+    /// Messages broadcast from this node or received from other nodes are kept in an internal
+    /// cache for this duration before being evicted. If this is too low, other nodes will not be
+    /// able to retrieve messages once they need them. If this is high, the cache will grow.
+    ///
+    /// Should be at least around several round trip times to peers.
+    pub message_cache_retention: Duration,
+
+    /// Duration for which to keep the [`MessageId`]s for received messages.
+    ///
+    /// Should be at least as long as [`Self::message_cache_retention`], usually will be longer to
+    /// not accidentally receive messages multiple times.
+    pub message_id_retention: Duration,
+
+    /// How often the internal caches will be checked for expired items.
+    pub cache_evict_interval: Duration,
 }
 
 impl Default for Config {
@@ -227,6 +250,11 @@ impl Default for Config {
 
             // This number comes from experiment settings the plumtree paper (p. 12)
             optimization_threshold: Round(7),
+
+            // This is a certainly-high-enough value for usual operation.
+            message_cache_retention: Duration::from_secs(30),
+            message_id_retention: Duration::from_secs(90),
+            cache_evict_interval: Duration::from_secs(1),
         }
     }
 }
@@ -266,14 +294,17 @@ pub struct State<PI> {
     /// message.
     missing_messages: HashMap<MessageId, VecDeque<(PI, Round)>>,
     /// Messages for which the full payload has been seen.
-    received_messages: HashSet<MessageId>,
+    received_messages: TimeBoundCache<MessageId, ()>,
     /// Payloads of received messages.
-    cache: HashMap<MessageId, Gossip>,
+    cache: TimeBoundCache<MessageId, Gossip>,
 
     /// Message ids for which a [`Timer::SendGraft`] has been scheduled.
     graft_timer_scheduled: HashSet<MessageId>,
     /// Whether a [`Timer::DispatchLazyPush`] has been scheduled.
     dispatch_timer_scheduled: bool,
+
+    /// Set to false after the first message is received. Used for initial timer scheduling.
+    init: bool,
 
     /// [`Stats`] of this plumtree.
     pub(crate) stats: Stats,
@@ -291,17 +322,22 @@ impl<PI: PeerIdentity> State<PI> {
             missing_messages: Default::default(),
             received_messages: Default::default(),
             graft_timer_scheduled: Default::default(),
-            cache: Default::default(),
             dispatch_timer_scheduled: false,
+            cache: Default::default(),
+            init: false,
             stats: Default::default(),
         }
     }
 
     /// Handle an [`InEvent`].
-    pub fn handle(&mut self, event: InEvent<PI>, io: &mut impl IO<PI>) {
+    pub fn handle(&mut self, event: InEvent<PI>, now: Instant, io: &mut impl IO<PI>) {
+        if !self.init {
+            self.init = true;
+            self.on_evict_cache_timer(now, io)
+        }
         match event {
-            InEvent::RecvMessage(from, message) => self.handle_message(from, message, io),
-            InEvent::Broadcast(data) => self.do_broadcast(data, io),
+            InEvent::RecvMessage(from, message) => self.handle_message(from, message, now, io),
+            InEvent::Broadcast(data) => self.do_broadcast(data, now, io),
             InEvent::NeighborUp(peer) => self.on_neighbor_up(peer),
             InEvent::NeighborDown(peer) => self.on_neighbor_down(peer),
             InEvent::TimerExpired(timer) => match timer {
@@ -309,6 +345,7 @@ impl<PI: PeerIdentity> State<PI> {
                 Timer::SendGraft(id) => {
                     self.on_send_graft_timer(id, io);
                 }
+                Timer::EvictCache => self.on_evict_cache_timer(now, io),
             },
         }
     }
@@ -319,14 +356,14 @@ impl<PI: PeerIdentity> State<PI> {
     }
 
     /// Handle receiving a [`Message`].
-    fn handle_message(&mut self, sender: PI, message: Message, io: &mut impl IO<PI>) {
+    fn handle_message(&mut self, sender: PI, message: Message, now: Instant, io: &mut impl IO<PI>) {
         if matches!(message, Message::Gossip(_)) {
             self.stats.payload_messages_received += 1;
         } else {
             self.stats.control_messages_received += 1;
         }
         match message {
-            Message::Gossip(details) => self.on_gossip(sender, details, io),
+            Message::Gossip(details) => self.on_gossip(sender, details, now, io),
             Message::Prune => self.on_prune(sender),
             Message::IHave(details) => self.on_ihave(sender, details, io),
             Message::Graft(details) => self.on_graft(sender, details, io),
@@ -346,22 +383,27 @@ impl<PI: PeerIdentity> State<PI> {
     ///
     /// Will be pushed in full to eager peers.
     /// Pushing the message id to the lazy peers is delayed by a timer.
-    fn do_broadcast(&mut self, data: Bytes, io: &mut impl IO<PI>) {
+    fn do_broadcast(&mut self, data: Bytes, now: Instant, io: &mut impl IO<PI>) {
         let id = MessageId::from_content(&data);
         let message = Gossip {
             id,
             round: Round(0),
             content: data,
         };
-        self.received_messages.insert(id);
-        self.cache.insert(id, message.clone());
+        self.received_messages
+            .insert(id, (), now + self.config.message_id_retention);
+        self.cache.insert(
+            id,
+            message.clone(),
+            now + self.config.message_cache_retention,
+        );
         let me = self.me;
         self.eager_push(message.clone(), &me, io);
         self.lazy_push(message, &me, io);
     }
 
     /// Handle receiving a [`Message::Gossip`].
-    fn on_gossip(&mut self, sender: PI, message: Gossip, io: &mut impl IO<PI>) {
+    fn on_gossip(&mut self, sender: PI, message: Gossip, now: Instant, io: &mut impl IO<PI>) {
         // Validate that the message id is the blake3 hash of the message content.
         if !message.validate() {
             // TODO: Do we want to take any measures against the sender if we received a message
@@ -375,20 +417,25 @@ impl<PI: PeerIdentity> State<PI> {
 
         // if we already received this message: move peer to lazy set
         // and notify peer about this.
-        if self.received_messages.contains(&message.id) {
+        if self.received_messages.contains_key(&message.id) {
             self.add_lazy(sender);
             io.push(OutEvent::SendMessage(sender, Message::Prune));
         // otherwise store the message, emit to application and forward to peers
         } else {
             // insert the message in the list of received messages
-            self.received_messages.insert(message.id);
+            self.received_messages
+                .insert(message.id, (), now + self.config.message_id_retention);
 
             // increase the round for forwarding the message, and add to cache
             // to reply to Graft messages later
             // TODO: use an LRU cache for self.cache
             // TODO: add callback/event to application to get missing messages that were received before?
             let message = message.next_round();
-            self.cache.insert(message.id, message.clone());
+            self.cache.insert(
+                message.id,
+                message.clone(),
+                now + self.config.message_cache_retention,
+            );
 
             // push the message to our peers
             self.eager_push(message.clone(), &sender, io);
@@ -463,7 +510,7 @@ impl<PI: PeerIdentity> State<PI> {
     /// parameter that should be statically configured at deployment time. (p8)
     fn on_ihave(&mut self, sender: PI, ihaves: Vec<IHave>, io: &mut impl IO<PI>) {
         for ihave in ihaves {
-            if !self.received_messages.contains(&ihave.id) {
+            if !self.received_messages.contains_key(&ihave.id) {
                 self.missing_messages
                     .entry(ihave.id)
                     .or_default()
@@ -484,7 +531,7 @@ impl<PI: PeerIdentity> State<PI> {
     fn on_send_graft_timer(&mut self, id: MessageId, io: &mut impl IO<PI>) {
         // if the message was received before the timer ran out, there is no need to request it
         // again
-        if self.received_messages.contains(&id) {
+        if self.received_messages.contains_key(&id) {
             return;
         }
         // get the first peer that advertised this message
@@ -542,6 +589,14 @@ impl<PI: PeerIdentity> State<PI> {
         self.lazy_push_peers.remove(&peer);
     }
 
+    fn on_evict_cache_timer(&mut self, now: Instant, io: &mut impl IO<PI>) {
+        self.cache.expire_until(now);
+        io.push(OutEvent::ScheduleTimer(
+            self.config.cache_evict_interval,
+            Timer::EvictCache,
+        ));
+    }
+
     /// Moves peer into eager set.
     fn add_eager(&mut self, peer: PI) {
         self.lazy_push_peers.remove(&peer);
@@ -595,6 +650,7 @@ mod test {
         let mut io = VecDeque::new();
         let config: Config = Default::default();
         let mut state = State::new(1, config.clone());
+        let now = Instant::now();
 
         // we receive an IHave message from peer 2
         // it has `round: 2` which means that the the peer that sent us the IHave was
@@ -608,7 +664,7 @@ mod test {
                 round: Round(2),
             }]),
         );
-        state.handle(event, &mut io);
+        state.handle(event, now, &mut io);
         io.clear();
         // we then receive a `Gossip` message with the same `MessageId` from peer 3
         // the message has `round: 6`, which means it travelled 6 hops until it reached us
@@ -622,7 +678,7 @@ mod test {
                 content: content.clone(),
             }),
         );
-        state.handle(event, &mut io);
+        state.handle(event, now, &mut io);
         let expected = {
             // we expect a dispatch timer schedule and receive event, but no Graft or Prune
             // messages
@@ -650,7 +706,7 @@ mod test {
                 round: Round(2),
             }]),
         );
-        state.handle(event, &mut io);
+        state.handle(event, now, &mut io);
         io.clear();
 
         let event = InEvent::RecvMessage(
@@ -661,7 +717,7 @@ mod test {
                 content: content.clone(),
             }),
         );
-        state.handle(event, &mut io);
+        state.handle(event, now, &mut io);
         let expected = {
             // this time we expect the Graft and Prune messages to be sent, performing the
             // optimization step
@@ -684,6 +740,7 @@ mod test {
     fn spoofed_messages_are_ignored() {
         let config: Config = Default::default();
         let mut state = State::new(1, config.clone());
+        let now = Instant::now();
 
         // we recv a correct gossip message and expect the Received event to be emitted
         let content: Bytes = b"hello1".to_vec().into();
@@ -693,9 +750,13 @@ mod test {
             id: MessageId::from_content(&content),
         });
         let mut io = VecDeque::new();
-        state.handle(InEvent::RecvMessage(2, message), &mut io);
+        state.handle(InEvent::RecvMessage(2, message), now, &mut io);
         let expected = {
             let mut io = VecDeque::new();
+            io.push(OutEvent::ScheduleTimer(
+                config.cache_evict_interval,
+                Timer::EvictCache,
+            ));
             io.push(OutEvent::ScheduleTimer(
                 config.dispatch_timeout,
                 Timer::DispatchLazyPush,
@@ -713,8 +774,32 @@ mod test {
             id: MessageId::from_content(b"foo"),
         });
         let mut io = VecDeque::new();
-        state.handle(InEvent::RecvMessage(2, message), &mut io);
+        state.handle(InEvent::RecvMessage(2, message), now, &mut io);
         let expected = VecDeque::new();
         assert_eq!(io, expected);
+    }
+
+    #[test]
+    fn cache_is_evicted() {
+        let config: Config = Default::default();
+        let mut state = State::new(1, config.clone());
+        let now = Instant::now();
+        let content: Bytes = b"hello1".to_vec().into();
+        let message = Message::Gossip(Gossip {
+            content: content.clone(),
+            round: Round(1),
+            id: MessageId::from_content(&content),
+        });
+        let mut io = VecDeque::new();
+        state.handle(InEvent::RecvMessage(2, message), now, &mut io);
+        assert_eq!(state.cache.len(), 1);
+
+        let now = now + Duration::from_secs(1);
+        state.handle(InEvent::TimerExpired(Timer::EvictCache), now, &mut io);
+        assert_eq!(state.cache.len(), 1);
+
+        let now = now + config.message_cache_retention;
+        state.handle(InEvent::TimerExpired(Timer::EvictCache), now, &mut io);
+        assert_eq!(state.cache.len(), 0);
     }
 }

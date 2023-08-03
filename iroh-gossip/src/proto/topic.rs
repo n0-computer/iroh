@@ -232,7 +232,7 @@ impl<PI: PeerIdentity, R: Rng> State<PI, R> {
                         self.swarm.handle(SwarmIn::RequestJoin(peer), now, io);
                     }
                 }
-                Command::Broadcast(data) => self.gossip.handle(GossipIn::Broadcast(data), io),
+                Command::Broadcast(data) => self.gossip.handle(GossipIn::Broadcast(data), now, io),
                 Command::Quit => self.swarm.handle(SwarmIn::Quit, now, io),
             },
             InEvent::RecvMessage(from, message) => {
@@ -243,17 +243,18 @@ impl<PI: PeerIdentity, R: Rng> State<PI, R> {
                             .handle(SwarmIn::RecvMessage(from, message), now, io)
                     }
                     Message::Gossip(message) => {
-                        self.gossip.handle(GossipIn::RecvMessage(from, message), io)
+                        self.gossip
+                            .handle(GossipIn::RecvMessage(from, message), now, io)
                     }
                 }
             }
             InEvent::TimerExpired(timer) => match timer {
                 Timer::Swarm(timer) => self.swarm.handle(SwarmIn::TimerExpired(timer), now, io),
-                Timer::Gossip(timer) => self.gossip.handle(GossipIn::TimerExpired(timer), io),
+                Timer::Gossip(timer) => self.gossip.handle(GossipIn::TimerExpired(timer), now, io),
             },
             InEvent::PeerDisconnected(peer) => {
                 self.swarm.handle(SwarmIn::PeerDisconnected(peer), now, io);
-                self.gossip.handle(GossipIn::NeighborDown(peer), io);
+                self.gossip.handle(GossipIn::NeighborDown(peer), now, io);
             }
             InEvent::UpdatePeerData(data) => {
                 self.swarm.handle(SwarmIn::UpdatePeerData(data), now, io)
@@ -265,10 +266,12 @@ impl<PI: PeerIdentity, R: Rng> State<PI, R> {
         for event in self.outbox.iter() {
             match event {
                 OutEvent::EmitEvent(Event::NeighborUp(peer)) => {
-                    self.gossip.handle(GossipIn::NeighborUp(*peer), &mut io)
+                    self.gossip
+                        .handle(GossipIn::NeighborUp(*peer), now, &mut io)
                 }
                 OutEvent::EmitEvent(Event::NeighborDown(peer)) => {
-                    self.gossip.handle(GossipIn::NeighborDown(*peer), &mut io)
+                    self.gossip
+                        .handle(GossipIn::NeighborDown(*peer), now, &mut io)
                 }
                 _ => {}
             }

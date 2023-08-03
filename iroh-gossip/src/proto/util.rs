@@ -5,7 +5,7 @@ use rand::{
     Rng,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     hash::Hash,
     time::{Duration, Instant},
 };
@@ -256,17 +256,17 @@ impl<T> Default for TimerMap<T> {
 }
 
 impl<T> TimerMap<T> {
-    /// Create a new, empty TimerMap
+    /// Create a new, empty TimerMap.
     pub fn new() -> Self {
         Self(Default::default())
     }
-    /// Insert a new entry at the specified instant
+    /// Insert a new entry at the specified instant.
     pub fn insert(&mut self, instant: Instant, item: T) {
         let entry = self.0.entry(instant).or_default();
         entry.push(item);
     }
 
-    /// Remove and return all entries before and equal to `from`
+    /// Remove and return all entries before and equal to `from`.
     pub fn drain_until(&mut self, from: &Instant) -> impl Iterator<Item = (Instant, T)> {
         let split_point = *from + Duration::from_nanos(1);
         let later_half = self.0.split_off(&split_point);
@@ -276,7 +276,7 @@ impl<T> TimerMap<T> {
             .flat_map(|(t, v)| v.into_iter().map(move |v| (t, v)))
     }
 
-    /// Get a reference to the earliest entry in the TimerMap
+    /// Get a reference to the earliest entry in the TimerMap.
     pub fn first(&self) -> Option<(&Instant, &Vec<T>)> {
         self.0.iter().next()
     }
@@ -289,6 +289,88 @@ impl<T> TimerMap<T> {
     }
 }
 
+impl<T: PartialEq> TimerMap<T> {
+    /// Remove an entry from the specified instant.
+    pub fn remove(&mut self, instant: &Instant, item: &T) {
+        if let Some(items) = self.0.get_mut(instant) {
+            items.retain(|x| x != item)
+        }
+    }
+}
+
+/// A hash map where entries expire after a time
+#[derive(Debug)]
+pub struct TimeBoundCache<K, V> {
+    map: HashMap<K, (Instant, V)>,
+    expiry: TimerMap<K>,
+}
+
+impl<K, V> Default for TimeBoundCache<K, V> {
+    fn default() -> Self {
+        Self {
+            map: Default::default(),
+            expiry: Default::default(),
+        }
+    }
+}
+
+impl<K: Hash + Eq + Clone, V> TimeBoundCache<K, V> {
+    /// Insert an item into the cache, marked with an expiration time.
+    pub fn insert(&mut self, key: K, value: V, expires: Instant) {
+        self.remove(&key);
+        self.map.insert(key.clone(), (expires, value));
+        self.expiry.insert(expires, key);
+    }
+
+    /// Returns `true` if the map contains a value for the specified key.
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.map.contains_key(key)
+    }
+
+    /// Remove an item from the cache.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        if let Some((expires, value)) = self.map.remove(key) {
+            self.expiry.remove(&expires, &key);
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// Get the number of entries in the cache.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Get an item from the cache.
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.map.get(key).map(|(_expires, value)| value)
+    }
+
+    /// Get the expiration time for an item.
+    pub fn expires(&self, key: &K) -> Option<&Instant> {
+        self.map.get(key).map(|(expires, _value)| expires)
+    }
+
+    /// Get an item from the cache.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V, &Instant)> {
+        self.map.iter().map(|(k, (expires, v))| (k, v, expires))
+    }
+
+    /// Remove all entries with an expiry instant lower or equal to `instant`.
+    ///
+    /// Returns the number of items that were removed.
+    pub fn expire_until(&mut self, instant: Instant) -> usize {
+        let drain = self.expiry.drain_until(&instant);
+        let mut count = 0;
+        for (_instant, key) in drain {
+            count += 1;
+            let _value = self.map.remove(&key);
+        }
+        count
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{
@@ -298,7 +380,7 @@ mod test {
 
     use rand_core::SeedableRng;
 
-    use super::{IndexSet, TimerMap};
+    use super::{IndexSet, TimeBoundCache, TimerMap};
 
     #[test]
     fn indexset() {
@@ -383,5 +465,36 @@ mod test {
         );
         assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib…)");
         assert_eq!(id.as_bytes(), &[1u8; 32]);
+    }
+
+    #[test]
+    fn time_bound_cache() {
+        let mut cache = TimeBoundCache::default();
+
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_secs(1);
+        let t2 = t0 + Duration::from_secs(2);
+
+        cache.insert(1, 10, t0);
+        cache.insert(2, 20, t1);
+        cache.insert(3, 30, t1);
+        cache.insert(4, 40, t2);
+
+        assert_eq!(cache.get(&2), Some(&20));
+        assert_eq!(cache.len(), 4);
+        let removed = cache.expire_until(t1);
+        assert_eq!(removed, 3);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(&2), None);
+        assert_eq!(cache.get(&4), Some(&40));
+
+        let t3 = t2 + Duration::from_secs(1);
+        cache.insert(5, 50, t2);
+        assert_eq!(cache.expires(&5), Some(&t2));
+        cache.insert(5, 50, t3);
+        assert_eq!(cache.expires(&5), Some(&t3));
+        cache.expire_until(t2);
+        assert_eq!(cache.get(&4), None);
+        assert_eq!(cache.get(&5), Some(&50));
     }
 }
