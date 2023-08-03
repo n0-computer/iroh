@@ -191,7 +191,7 @@ pub struct State<PA, R> {
 
 impl<PA: PeerAddress> State<PA, rand::rngs::StdRng> {
     /// Initialize the local state with the default random number generator.
-    pub fn new(me: PA, me_data: PeerData, config: Config) -> Self {
+    pub fn new(me: PA, me_data: Option<PeerData>, config: Config) -> Self {
         Self::with_rng(me, me_data, config, rand::rngs::StdRng::from_entropy())
     }
 }
@@ -205,7 +205,7 @@ impl<PA, R> State<PA, R> {
 
 impl<PA: PeerAddress, R: Rng> State<PA, R> {
     /// Initialize the local state with a custom random number generator.
-    pub fn with_rng(me: PA, me_data: PeerData, config: Config, rng: R) -> Self {
+    pub fn with_rng(me: PA, me_data: Option<PeerData>, config: Config, rng: R) -> Self {
         Self {
             swarm: hyparview::State::new(me, me_data, config.membership, rng),
             gossip: plumtree::State::new(me, config.broadcast),

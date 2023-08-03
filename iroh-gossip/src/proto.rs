@@ -85,11 +85,11 @@ pub type PeerData = bytes::Bytes;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct PeerInfo<PA> {
     pub id: PA,
-    pub data: PeerData,
+    pub data: Option<PeerData>,
 }
 
-impl<PA> From<(PA, PeerData)> for PeerInfo<PA> {
-    fn from((id, data): (PA, PeerData)) -> Self {
+impl<PA> From<(PA, Option<PeerData>)> for PeerInfo<PA> {
+    fn from((id, data): (PA, Option<PeerData>)) -> Self {
         Self { id, data }
     }
 }

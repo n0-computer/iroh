@@ -221,7 +221,7 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
                     if let hash_map::Entry::Vacant(e) = self.states.entry(topic) {
                         e.insert(topic::State::with_rng(
                             self.me,
-                            self.me_data.clone(),
+                            Some(self.me_data.clone()),
                             self.config.clone(),
                             self.rng.clone(),
                         ));
