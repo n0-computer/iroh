@@ -8,9 +8,12 @@ use std::{
     sync::Arc,
 };
 
-use bao_tree::io::{
-    outboard::{PreOrderMemOutboard, PreOrderOutboard},
-    sync::Outboard,
+use bao_tree::{
+    blake3,
+    io::{
+        outboard::{PreOrderMemOutboard, PreOrderOutboard},
+        sync::Outboard,
+    },
 };
 use bytes::{Bytes, BytesMut};
 use futures::{

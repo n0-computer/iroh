@@ -4,6 +4,7 @@ use range_collections::RangeSet2;
 use std::{io::Write, path::PathBuf, result};
 use thiserror::Error;
 
+use bao_tree::blake3;
 use bao_tree::io::sync::encode_ranges_validated;
 use bao_tree::io::{
     sync::{ReadAt, Size},

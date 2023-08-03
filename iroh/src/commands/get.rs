@@ -1,10 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use bao_tree::{
-    io::outboard::{PreOrderMemOutboard, PreOrderOutboard},
-    ByteNum, ChunkNum,
-};
+use bao_tree::blake3;
+use bao_tree::io::outboard::PreOrderOutboard;
+use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
 use console::style;
 use futures::StreamExt;
 use indicatif::{
@@ -12,7 +11,8 @@ use indicatif::{
 };
 use iroh::{
     collection::{Collection, IrohCollectionParser},
-    util::{io::pathbuf_from_name, progress::ProgressSliceWriter}, rpc_protocol::ShareRequest,
+    rpc_protocol::ShareRequest,
+    util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
 use iroh_bytes::{
     get::{
@@ -321,7 +321,10 @@ impl GetInteractive {
         }
         let parent = out_dir.parent().context("out_dir should have parent")?;
         let temp_dir = parent.join(".iroh-tmp");
-        tracing::info!("using temp dir: {} for storing resume data", temp_dir.display());
+        tracing::info!(
+            "using temp dir: {} for storing resume data",
+            temp_dir.display()
+        );
         if tokio::fs::try_exists(&temp_dir).await? {
             let temp_dir_meta = tokio::fs::metadata(&temp_dir).await?;
             if !temp_dir_meta.is_dir() {
@@ -329,26 +332,32 @@ impl GetInteractive {
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
-        let db: iroh::database::flat::Database = iroh::database::flat::Database::load(temp_dir.clone(), temp_dir.clone()).await?;
+        let db: iroh::database::flat::Database =
+            iroh::database::flat::Database::load(temp_dir.clone(), temp_dir.clone()).await?;
         // spin up temp node and ask it to download the data for us
-        let provider =
-            iroh::node::Node::builder(db)
-                .collection_parser(IrohCollectionParser)
-                .runtime(&iroh_bytes::util::runtime::Handle::from_currrent(1)?)
-                .spawn()
-                .await?;
-        let out = out_dir.to_str().context("out_dir is not valid utf8")?.to_owned();
-        let mut stream = provider.controller().server_streaming(ShareRequest {
-            hash: self.hash,
-            recursive: !self.single,
-            peer: self.opts.peer_id,
-            addrs: self.opts.addrs,
-            force: false,
-            derp_region: self.opts.derp_region,
-            token: self.token,
-            in_place: true,
-            out: Some(out),
-        }).await?;
+        let provider = iroh::node::Node::builder(db)
+            .collection_parser(IrohCollectionParser)
+            .runtime(&iroh_bytes::util::runtime::Handle::from_currrent(1)?)
+            .spawn()
+            .await?;
+        let out = out_dir
+            .to_str()
+            .context("out_dir is not valid utf8")?
+            .to_owned();
+        let mut stream = provider
+            .controller()
+            .server_streaming(ShareRequest {
+                hash: self.hash,
+                recursive: !self.single,
+                peer: self.opts.peer_id,
+                addrs: self.opts.addrs,
+                force: false,
+                derp_region: self.opts.derp_region,
+                token: self.token,
+                in_place: true,
+                out: Some(out),
+            })
+            .await?;
         while let Some(x) = stream.next().await {
             let x = x?;
             println!("{:?}", x);

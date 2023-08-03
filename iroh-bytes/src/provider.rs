@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
+use bao_tree::blake3;
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bao_tree::ChunkNum;
 use bytes::{Bytes, BytesMut};
