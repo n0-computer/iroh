@@ -198,9 +198,14 @@ mod test {
         let broadcast_ticks = 12;
         let join_ticks = 12;
         // build a network with 6 nodes
-            let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+        let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         for i in 0..6 {
-            network.push(State::new(i, Default::default(), config.clone(), rng.clone()));
+            network.push(State::new(
+                i,
+                Default::default(),
+                config.clone(),
+                rng.clone(),
+            ));
         }
 
         let t = [0u8; 32].into();

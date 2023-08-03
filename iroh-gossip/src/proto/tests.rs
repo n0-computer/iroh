@@ -278,7 +278,7 @@ impl Simulator {
     }
     pub fn init(&mut self) {
         for i in 0..self.simulator_config.peers_count {
-        let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
+            let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
             self.network.push(State::new(
                 i,
                 Default::default(),
