@@ -61,7 +61,7 @@ mod tests;
 pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
 pub use topic::{Command, Config, Event, IO};
 
-/// A peer's identifier or address
+/// The identifier for a peer.
 ///
 /// The protocol implementation is generic over this trait. When implementing the protocol,
 /// a concrete type must be chosen that will then be used throughout the implementation to identify
@@ -72,8 +72,8 @@ pub use topic::{Command, Config, Event, IO};
 ///
 /// TODO: Rename to `PeerId`? It does not necessarily refer to a peer's address, as long as the
 /// networking layer can translate the value of its concrete type into an address.
-pub trait PeerAddress: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
-impl<T> PeerAddress for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
+pub trait PeerIdentity: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
+impl<T> PeerIdentity for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + DeserializeOwned {}
 
 /// Opaque binary data that is transmitted on messages that introduce new peers.
 ///
@@ -83,13 +83,13 @@ pub type PeerData = bytes::Bytes;
 
 /// PeerInfo contains a peer's identifier and the opaque peer data as provided by the implementer.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-struct PeerInfo<PA> {
-    pub id: PA,
+struct PeerInfo<PI> {
+    pub id: PI,
     pub data: Option<PeerData>,
 }
 
-impl<PA> From<(PA, Option<PeerData>)> for PeerInfo<PA> {
-    fn from((id, data): (PA, Option<PeerData>)) -> Self {
+impl<PI> From<(PI, Option<PeerData>)> for PeerInfo<PI> {
+    fn from((id, data): (PI, Option<PeerData>)) -> Self {
         Self { id, data }
     }
 }

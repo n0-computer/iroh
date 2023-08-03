@@ -17,7 +17,7 @@ use derive_more::{Add, From, Sub};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{util::idbytes_impls, PeerAddress, IO};
+use super::{util::idbytes_impls, PeerIdentity, IO};
 
 /// A message identifier, which is the message content's blake3 hash.
 #[derive(Serialize, Deserialize, Clone, Hash, Copy, PartialEq, Eq)]
@@ -35,28 +35,28 @@ impl MessageId {
 
 /// Events Plumtree is informed of from the peer sampling service and IO layer.
 #[derive(Debug)]
-pub enum InEvent<PA> {
+pub enum InEvent<PI> {
     /// A [`Message`] was received from the peer.
-    RecvMessage(PA, Message),
+    RecvMessage(PI, Message),
     /// Broadcast the contained payload.
     Broadcast(Bytes),
     /// A timer has expired.
     TimerExpired(Timer),
-    /// New member `PA` has joined the topic.
-    NeighborUp(PA),
-    /// Peer `PA` has disconnected from the topic.
-    NeighborDown(PA),
+    /// New member `PI` has joined the topic.
+    NeighborUp(PI),
+    /// Peer `PI` has disconnected from the topic.
+    NeighborDown(PI),
 }
 
 /// Events Plumtree emits.
 #[derive(Debug, PartialEq, Eq)]
-pub enum OutEvent<PA> {
-    /// Ask the IO layer to send a [`Message`] to peer `PA`.
-    SendMessage(PA, Message),
+pub enum OutEvent<PI> {
+    /// Ask the IO layer to send a [`Message`] to peer `PI`.
+    SendMessage(PI, Message),
     /// Schedule a [`Timer`].
     ScheduleTimer(Duration, Timer),
     /// Emit an [`Event`] to the application.
-    EmitEvent(Event<PA>),
+    EmitEvent(Event<PI>),
 }
 
 /// Kinds of timers Plumtree needs to schedule.
@@ -74,14 +74,14 @@ pub enum Timer {
 
 /// Event emitted by the [`State`] to the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event<PA> {
+pub enum Event<PI> {
     /// A new gossip message was received.
     Received(
         /// The content of the gossip message.
         Bytes,
         /// The peer that we received the gossip message from. Note that this is not the peer that
         /// originally broadcasted the message, but the peer before us in the gossiping path.
-        PA,
+        PI,
     ),
 }
 
@@ -248,23 +248,23 @@ pub struct Stats {
 
 /// State of the plumtree.
 #[derive(Debug)]
-pub struct State<PA> {
+pub struct State<PI> {
     /// Our address.
-    me: PA,
+    me: PI,
     /// Configuration for this plumtree.
     config: Config,
 
     /// Set of peers used for payload exchange.
-    pub(crate) eager_push_peers: HashSet<PA>,
+    pub(crate) eager_push_peers: HashSet<PI>,
     /// Set of peers used for control message exchange.
-    pub(crate) lazy_push_peers: HashSet<PA>,
+    pub(crate) lazy_push_peers: HashSet<PI>,
 
-    lazy_push_queue: HashMap<PA, Vec<IHave>>,
+    lazy_push_queue: HashMap<PI, Vec<IHave>>,
 
     /// Messages for which a [`MessageId`] has been seen via a [`Message::IHave`] but we have not
     /// yet received the full payload. For each, we store the peers that have claimed to have this
     /// message.
-    missing_messages: HashMap<MessageId, VecDeque<(PA, Round)>>,
+    missing_messages: HashMap<MessageId, VecDeque<(PI, Round)>>,
     /// Messages for which the full payload has been seen.
     received_messages: HashSet<MessageId>,
     /// Payloads of received messages.
@@ -279,9 +279,9 @@ pub struct State<PA> {
     pub(crate) stats: Stats,
 }
 
-impl<PA: PeerAddress> State<PA> {
+impl<PI: PeerIdentity> State<PI> {
     /// Initialize the [`State`] of a plumtree.
-    pub fn new(me: PA, config: Config) -> Self {
+    pub fn new(me: PI, config: Config) -> Self {
         Self {
             me,
             eager_push_peers: Default::default(),
@@ -298,7 +298,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle an [`InEvent`].
-    pub fn handle(&mut self, event: InEvent<PA>, io: &mut impl IO<PA>) {
+    pub fn handle(&mut self, event: InEvent<PI>, io: &mut impl IO<PI>) {
         match event {
             InEvent::RecvMessage(from, message) => self.handle_message(from, message, io),
             InEvent::Broadcast(data) => self.do_broadcast(data, io),
@@ -319,7 +319,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle receiving a [`Message`].
-    fn handle_message(&mut self, sender: PA, message: Message, io: &mut impl IO<PA>) {
+    fn handle_message(&mut self, sender: PI, message: Message, io: &mut impl IO<PI>) {
         if matches!(message, Message::Gossip(_)) {
             self.stats.payload_messages_received += 1;
         } else {
@@ -334,7 +334,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Dispatches messages from lazy queue over to lazy peers.
-    fn on_dispatch_timer(&mut self, io: &mut impl IO<PA>) {
+    fn on_dispatch_timer(&mut self, io: &mut impl IO<PI>) {
         for (peer, list) in self.lazy_push_queue.drain() {
             io.push(OutEvent::SendMessage(peer, Message::IHave(list)));
         }
@@ -346,7 +346,7 @@ impl<PA: PeerAddress> State<PA> {
     ///
     /// Will be pushed in full to eager peers.
     /// Pushing the message id to the lazy peers is delayed by a timer.
-    fn do_broadcast(&mut self, data: Bytes, io: &mut impl IO<PA>) {
+    fn do_broadcast(&mut self, data: Bytes, io: &mut impl IO<PI>) {
         let id = MessageId::from_content(&data);
         let message = Gossip {
             id,
@@ -361,7 +361,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle receiving a [`Message::Gossip`].
-    fn on_gossip(&mut self, sender: PA, message: Gossip, io: &mut impl IO<PA>) {
+    fn on_gossip(&mut self, sender: PI, message: Gossip, io: &mut impl IO<PI>) {
         // Validate that the message id is the blake3 hash of the message content.
         if !message.validate() {
             // TODO: Do we want to take any measures against the sender if we received a message
@@ -420,10 +420,10 @@ impl<PA: PeerAddress> State<PA> {
     /// See [Config::optimization_threshold].
     fn optimize_tree(
         &mut self,
-        gossip_sender: &PA,
+        gossip_sender: &PI,
         message: &Gossip,
-        previous_ihaves: VecDeque<(PA, Round)>,
-        io: &mut impl IO<PA>,
+        previous_ihaves: VecDeque<(PI, Round)>,
+        io: &mut impl IO<PI>,
     ) {
         let round = message.round;
         let best_ihave = previous_ihaves
@@ -449,7 +449,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle receiving a [`Message::Prune`].
-    fn on_prune(&mut self, sender: PA) {
+    fn on_prune(&mut self, sender: PI) {
         self.add_lazy(sender);
     }
 
@@ -461,7 +461,7 @@ impl<PA: PeerAddress> State<PA> {
     /// protocol parameter that should be configured considering the diameter of the overlay and a
     /// target maximum recovery latency, defined by the application requirements. This is a
     /// parameter that should be statically configured at deployment time. (p8)
-    fn on_ihave(&mut self, sender: PA, ihaves: Vec<IHave>, io: &mut impl IO<PA>) {
+    fn on_ihave(&mut self, sender: PI, ihaves: Vec<IHave>, io: &mut impl IO<PI>) {
         for ihave in ihaves {
             if !self.received_messages.contains(&ihave.id) {
                 self.missing_messages
@@ -481,7 +481,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// A scheduled [`Timer::SendGraft`] has reached it's deadline.
-    fn on_send_graft_timer(&mut self, id: MessageId, io: &mut impl IO<PA>) {
+    fn on_send_graft_timer(&mut self, id: MessageId, io: &mut impl IO<PI>) {
         // if the message was received before the timer ran out, there is no need to request it
         // again
         if self.received_messages.contains(&id) {
@@ -512,7 +512,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle receiving a [`Message::Graft`].
-    fn on_graft(&mut self, sender: PA, details: Graft, io: &mut impl IO<PA>) {
+    fn on_graft(&mut self, sender: PI, details: Graft, io: &mut impl IO<PI>) {
         self.add_eager(sender);
         if let Some(id) = details.id {
             if let Some(message) = self.cache.get(&id) {
@@ -525,7 +525,7 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Handle a [`InEvent::NeighborUp`] when a peer joins the topic.
-    fn on_neighbor_up(&mut self, peer: PA) {
+    fn on_neighbor_up(&mut self, peer: PI) {
         self.add_eager(peer);
     }
 
@@ -533,7 +533,7 @@ impl<PA: PeerAddress> State<PA> {
     /// > When a neighbor is detected to leave the overlay, it is simple removed from the
     /// membership. Furthermore, the record of IHAVE messages sent from failed members is deleted
     /// from the missing history. (p9)
-    fn on_neighbor_down(&mut self, peer: PA) {
+    fn on_neighbor_down(&mut self, peer: PI) {
         self.missing_messages.retain(|_message_id, ihaves| {
             ihaves.retain(|(ihave_peer, _round)| *ihave_peer != peer);
             !ihaves.is_empty()
@@ -543,19 +543,19 @@ impl<PA: PeerAddress> State<PA> {
     }
 
     /// Moves peer into eager set.
-    fn add_eager(&mut self, peer: PA) {
+    fn add_eager(&mut self, peer: PI) {
         self.lazy_push_peers.remove(&peer);
         self.eager_push_peers.insert(peer);
     }
 
     /// Moves peer into lazy set.
-    fn add_lazy(&mut self, peer: PA) {
+    fn add_lazy(&mut self, peer: PI) {
         self.eager_push_peers.remove(&peer);
         self.lazy_push_peers.insert(peer);
     }
 
     /// Immediatelly sends message to eager peers.
-    fn eager_push(&mut self, gossip: Gossip, sender: &PA, io: &mut impl IO<PA>) {
+    fn eager_push(&mut self, gossip: Gossip, sender: &PI, io: &mut impl IO<PI>) {
         for peer in self
             .eager_push_peers
             .iter()
@@ -570,7 +570,7 @@ impl<PA: PeerAddress> State<PA> {
 
     /// Queue lazy message announcements into the queue that will be sent out as batched
     /// [`Message::IHave`] messages once the [`Timer::DispatchLazyPush`] timer is triggered.
-    fn lazy_push(&mut self, gossip: Gossip, sender: &PA, io: &mut impl IO<PA>) {
+    fn lazy_push(&mut self, gossip: Gossip, sender: &PI, io: &mut impl IO<PI>) {
         for peer in self.lazy_push_peers.iter().filter(|x| *x != sender) {
             self.lazy_push_queue.entry(*peer).or_default().push(IHave {
                 id: gossip.id,

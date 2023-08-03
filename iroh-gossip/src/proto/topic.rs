@@ -16,41 +16,41 @@ use super::{
     hyparview::{self, InEvent as SwarmIn},
     state::MessageKind,
 };
-use super::{PeerAddress, PeerData};
+use super::{PeerData, PeerIdentity};
 
 /// Input event to the topic state handler.
 #[derive(Clone, Debug)]
-pub enum InEvent<PA> {
+pub enum InEvent<PI> {
     /// Message received from the network.
-    RecvMessage(PA, Message<PA>),
+    RecvMessage(PI, Message<PI>),
     /// Execute a command from the application.
-    Command(Command<PA>),
+    Command(Command<PI>),
     /// Trigger a previously scheduled timer.
-    TimerExpired(Timer<PA>),
+    TimerExpired(Timer<PI>),
     /// Peer disconnected on the network level.
-    PeerDisconnected(PA),
+    PeerDisconnected(PI),
     /// Update the opaque peer data about yourself.
     UpdatePeerData(PeerData),
 }
 
 /// An output event from the state handler.
 #[derive(Debug, PartialEq, Eq)]
-pub enum OutEvent<PA> {
+pub enum OutEvent<PI> {
     /// Send a message on the network
-    SendMessage(PA, Message<PA>),
+    SendMessage(PI, Message<PI>),
     /// Emit an event to the application.
-    EmitEvent(Event<PA>),
+    EmitEvent(Event<PI>),
     /// Schedule a timer. The runtime is responsible for sending an [InEvent::TimerExpired]
     /// after the duration.
-    ScheduleTimer(Duration, Timer<PA>),
+    ScheduleTimer(Duration, Timer<PI>),
     /// Close the connection to a peer on the network level.
-    DisconnectPeer(PA),
+    DisconnectPeer(PI),
     /// Emitted when new [`PeerData`] was received for a peer.
-    PeerData(PA, PeerData),
+    PeerData(PI, PeerData),
 }
 
-impl<PA> From<hyparview::OutEvent<PA>> for OutEvent<PA> {
-    fn from(event: hyparview::OutEvent<PA>) -> Self {
+impl<PI> From<hyparview::OutEvent<PI>> for OutEvent<PI> {
+    fn from(event: hyparview::OutEvent<PI>) -> Self {
         use hyparview::OutEvent::*;
         match event {
             SendMessage(to, message) => Self::SendMessage(to, message.into()),
@@ -62,8 +62,8 @@ impl<PA> From<hyparview::OutEvent<PA>> for OutEvent<PA> {
     }
 }
 
-impl<PA> From<plumtree::OutEvent<PA>> for OutEvent<PA> {
-    fn from(event: plumtree::OutEvent<PA>) -> Self {
+impl<PI> From<plumtree::OutEvent<PI>> for OutEvent<PI> {
+    fn from(event: plumtree::OutEvent<PI>) -> Self {
         use plumtree::OutEvent::*;
         match event {
             SendMessage(to, message) => Self::SendMessage(to, message.into()),
@@ -77,12 +77,12 @@ impl<PA> From<plumtree::OutEvent<PA>> for OutEvent<PA> {
 ///
 /// The implementation is generic over this trait, which allows the upper layer to supply a
 /// container of their choice for `OutEvent`s emitted from the protocol state.
-pub trait IO<PA: Clone> {
+pub trait IO<PI: Clone> {
     /// Push an event in the IO container
-    fn push(&mut self, event: impl Into<OutEvent<PA>>);
+    fn push(&mut self, event: impl Into<OutEvent<PI>>);
 
     /// Push all events from an iterator into the IO container
-    fn push_from_iter(&mut self, iter: impl IntoIterator<Item = impl Into<OutEvent<PA>>>) {
+    fn push_from_iter(&mut self, iter: impl IntoIterator<Item = impl Into<OutEvent<PI>>>) {
         for event in iter.into_iter() {
             self.push(event);
         }
@@ -91,14 +91,14 @@ pub trait IO<PA: Clone> {
 
 /// A protocol message for a particular topic
 #[derive(From, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub enum Message<PA> {
+pub enum Message<PI> {
     /// A message of the swarm membership layer
-    Swarm(hyparview::Message<PA>),
+    Swarm(hyparview::Message<PI>),
     /// A message of the gossip broadcast layer
     Gossip(plumtree::Message),
 }
 
-impl<PA> Message<PA> {
+impl<PI> Message<PI> {
     /// Get the kind of this message
     pub fn kind(&self) -> MessageKind {
         match self {
@@ -113,17 +113,17 @@ impl<PA> Message<PA> {
 
 /// An event to be emitted to the application for a particular topic.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Debug)]
-pub enum Event<PA> {
+pub enum Event<PI> {
     /// We have a new, direct neighbor in the swarm membership layer for this topic
-    NeighborUp(PA),
+    NeighborUp(PI),
     /// We dropped direct neighbor in the swarm membership layer for this topic
-    NeighborDown(PA),
+    NeighborDown(PI),
     /// A gossip message was received for this topic
-    Received(#[debug("<{}b>", _0.len())] Bytes, PA),
+    Received(#[debug("<{}b>", _0.len())] Bytes, PI),
 }
 
-impl<PA> From<hyparview::Event<PA>> for Event<PA> {
-    fn from(value: hyparview::Event<PA>) -> Self {
+impl<PI> From<hyparview::Event<PI>> for Event<PI> {
+    fn from(value: hyparview::Event<PI>) -> Self {
         match value {
             hyparview::Event::NeighborUp(peer) => Self::NeighborUp(peer),
             hyparview::Event::NeighborDown(peer) => Self::NeighborDown(peer),
@@ -131,8 +131,8 @@ impl<PA> From<hyparview::Event<PA>> for Event<PA> {
     }
 }
 
-impl<PA> From<plumtree::Event<PA>> for Event<PA> {
-    fn from(value: plumtree::Event<PA>) -> Self {
+impl<PI> From<plumtree::Event<PI>> for Event<PI> {
+    fn from(value: plumtree::Event<PI>) -> Self {
         match value {
             plumtree::Event::Received(message, prev_peer) => Self::Received(message, prev_peer),
         }
@@ -144,29 +144,29 @@ impl<PA> From<plumtree::Event<PA>> for Event<PA> {
 /// This should be treated as an opaque value by the implementer and, once emitted, simply returned
 /// to the protocol through [`InEvent::TimerExpired`].
 #[derive(Clone, From, Debug, PartialEq, Eq)]
-pub enum Timer<PA> {
+pub enum Timer<PI> {
     /// A timer for the swarm layer
-    Swarm(hyparview::Timer<PA>),
+    Swarm(hyparview::Timer<PI>),
     /// A timer for the gossip layer
     Gossip(plumtree::Timer),
 }
 
 /// A command to the protocol state for a particular topic.
 #[derive(Clone, derive_more::Debug)]
-pub enum Command<PA> {
+pub enum Command<PI> {
     /// Join this topic and connect to peers.
     ///
     /// If the list of peers is empty, will prepare the state and accept incoming join requests,
     /// but only become operational after the first join request by another peer.
-    Join(Vec<PA>),
+    Join(Vec<PI>),
     /// Broadcast a message for this topic.
     Broadcast(#[debug("<{}b>", _0.len())] Bytes),
     /// Leave this topic and drop all state.
     Quit,
 }
 
-impl<PA: Clone> IO<PA> for VecDeque<OutEvent<PA>> {
-    fn push(&mut self, event: impl Into<OutEvent<PA>>) {
+impl<PI: Clone> IO<PI> for VecDeque<OutEvent<PI>> {
+    fn push(&mut self, event: impl Into<OutEvent<PI>>) {
         self.push_back(event.into())
     }
 }
@@ -181,31 +181,31 @@ pub struct Config {
 
 /// The topic state maintains the swarm membership and broadcast tree for a particular topic.
 #[derive(Debug)]
-pub struct State<PA, R> {
-    me: PA,
-    pub(crate) swarm: hyparview::State<PA, R>,
-    pub(crate) gossip: plumtree::State<PA>,
-    outbox: VecDeque<OutEvent<PA>>,
+pub struct State<PI, R> {
+    me: PI,
+    pub(crate) swarm: hyparview::State<PI, R>,
+    pub(crate) gossip: plumtree::State<PI>,
+    outbox: VecDeque<OutEvent<PI>>,
     stats: Stats,
 }
 
-impl<PA: PeerAddress> State<PA, rand::rngs::StdRng> {
+impl<PI: PeerIdentity> State<PI, rand::rngs::StdRng> {
     /// Initialize the local state with the default random number generator.
-    pub fn new(me: PA, me_data: Option<PeerData>, config: Config) -> Self {
+    pub fn new(me: PI, me_data: Option<PeerData>, config: Config) -> Self {
         Self::with_rng(me, me_data, config, rand::rngs::StdRng::from_entropy())
     }
 }
 
-impl<PA, R> State<PA, R> {
+impl<PI, R> State<PI, R> {
     /// The address of your local endpoint.
-    pub fn endpoint(&self) -> &PA {
+    pub fn endpoint(&self) -> &PI {
         &self.me
     }
 }
 
-impl<PA: PeerAddress, R: Rng> State<PA, R> {
+impl<PI: PeerIdentity, R: Rng> State<PI, R> {
     /// Initialize the local state with a custom random number generator.
-    pub fn with_rng(me: PA, me_data: Option<PeerData>, config: Config, rng: R) -> Self {
+    pub fn with_rng(me: PI, me_data: Option<PeerData>, config: Config, rng: R) -> Self {
         Self {
             swarm: hyparview::State::new(me, me_data, config.membership, rng),
             gossip: plumtree::State::new(me, config.broadcast),
@@ -220,9 +220,9 @@ impl<PA: PeerAddress, R: Rng> State<PA, R> {
     /// Returns an iterator of outgoing events that must be processed by the application.
     pub fn handle(
         &mut self,
-        event: InEvent<PA>,
+        event: InEvent<PI>,
         now: Instant,
-    ) -> impl Iterator<Item = OutEvent<PA>> + '_ {
+    ) -> impl Iterator<Item = OutEvent<PI>> + '_ {
         let io = &mut self.outbox;
         // Process the event, store out events in outbox.
         match event {

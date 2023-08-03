@@ -11,7 +11,7 @@ use rand_core::SeedableRng;
 use tracing::{debug, warn};
 
 use super::{
-    util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerAddress, State, Timer, TopicId,
+    util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId,
 };
 
 const TICK_DURATION: Duration = Duration::from_millis(10);
@@ -24,20 +24,20 @@ const DEFAULT_LATENCY: Duration = TICK_DURATION.saturating_mul(3);
 /// each tick.
 ///
 /// Note: Panics when sending to an unknown peer.
-pub struct Network<PA, R> {
+pub struct Network<PI, R> {
     start: Instant,
     time: Instant,
     tick_duration: Duration,
-    inqueues: Vec<VecDeque<InEvent<PA>>>,
-    pub(crate) peers: Vec<State<PA, R>>,
-    peers_by_address: HashMap<PA, usize>,
-    conns: HashSet<ConnId<PA>>,
-    events: VecDeque<(PA, TopicId, Event<PA>)>,
-    timers: TimerMap<(usize, Timer<PA>)>,
-    transport: TimerMap<(usize, InEvent<PA>)>,
-    latencies: HashMap<ConnId<PA>, Duration>,
+    inqueues: Vec<VecDeque<InEvent<PI>>>,
+    pub(crate) peers: Vec<State<PI, R>>,
+    peers_by_address: HashMap<PI, usize>,
+    conns: HashSet<ConnId<PI>>,
+    events: VecDeque<(PI, TopicId, Event<PI>)>,
+    timers: TimerMap<(usize, Timer<PI>)>,
+    transport: TimerMap<(usize, InEvent<PI>)>,
+    latencies: HashMap<ConnId<PI>, Duration>,
 }
-impl<PA, R> Network<PA, R> {
+impl<PI, R> Network<PI, R> {
     pub fn new(time: Instant) -> Self {
         Self {
             start: time,
@@ -55,35 +55,35 @@ impl<PA, R> Network<PA, R> {
     }
 }
 
-fn push_back<PA: Eq + std::hash::Hash>(
-    inqueues: &mut [VecDeque<InEvent<PA>>],
+fn push_back<PI: Eq + std::hash::Hash>(
+    inqueues: &mut [VecDeque<InEvent<PI>>],
     peer_pos: usize,
-    event: InEvent<PA>,
+    event: InEvent<PI>,
 ) {
     inqueues.get_mut(peer_pos).unwrap().push_back(event);
 }
 
-impl<PA: PeerAddress + Ord, R: Rng + Clone> Network<PA, R> {
-    pub fn push(&mut self, peer: State<PA, R>) {
+impl<PI: PeerIdentity + Ord, R: Rng + Clone> Network<PI, R> {
+    pub fn push(&mut self, peer: State<PI, R>) {
         let idx = self.inqueues.len();
         self.inqueues.push(VecDeque::new());
         self.peers_by_address.insert(*peer.me(), idx);
         self.peers.push(peer);
     }
 
-    pub fn events(&mut self) -> impl Iterator<Item = (PA, TopicId, Event<PA>)> + '_ {
+    pub fn events(&mut self) -> impl Iterator<Item = (PI, TopicId, Event<PI>)> + '_ {
         self.events.drain(..)
     }
 
-    pub fn events_sorted(&mut self) -> Vec<(PA, TopicId, Event<PA>)> {
+    pub fn events_sorted(&mut self) -> Vec<(PI, TopicId, Event<PI>)> {
         sort(self.events().collect())
     }
 
-    pub fn conns(&self) -> Vec<(PA, PA)> {
+    pub fn conns(&self) -> Vec<(PI, PI)> {
         sort(self.conns.iter().cloned().map(Into::into).collect())
     }
 
-    pub fn command(&mut self, peer: PA, topic: TopicId, command: Command<PA>) {
+    pub fn command(&mut self, peer: PI, topic: TopicId, command: Command<PI>) {
         debug!(?peer, "~~ COMMAND {command:?}");
         let idx = *self.peers_by_address.get(&peer).unwrap();
         push_back(&mut self.inqueues, idx, InEvent::Command(topic, command));
@@ -163,14 +163,14 @@ impl<PA: PeerAddress + Ord, R: Rng + Clone> Network<PA, R> {
         );
     }
 
-    pub fn peer(&self, peer: &PA) -> Option<&State<PA, R>> {
+    pub fn peer(&self, peer: &PI) -> Option<&State<PI, R>> {
         self.peers_by_address
             .get(peer)
             .cloned()
             .and_then(|idx| self.peers.get(idx))
     }
 
-    pub fn get_active(&self, peer: &PA, topic: &TopicId) -> Option<Option<Vec<PA>>> {
+    pub fn get_active(&self, peer: &PI, topic: &TopicId) -> Option<Option<Vec<PI>>> {
         let peer = self.peer(peer)?;
         match peer.state(topic) {
             Some(state) => Some(Some(
@@ -180,16 +180,16 @@ impl<PA: PeerAddress + Ord, R: Rng + Clone> Network<PA, R> {
         }
     }
 }
-fn latency_between<PA: PeerAddress>(
-    _latencies: &mut HashMap<ConnId<PA>, Duration>,
-    _a: &PA,
-    _b: &PA,
+fn latency_between<PI: PeerIdentity>(
+    _latencies: &mut HashMap<ConnId<PI>, Duration>,
+    _a: &PI,
+    _b: &PI,
 ) -> Duration {
     DEFAULT_LATENCY
 }
 
-pub fn assert_synchronous_active<PA: PeerAddress, R: Rng + Clone>(
-    network: &Network<PA, R>,
+pub fn assert_synchronous_active<PI: PeerIdentity, R: Rng + Clone>(
+    network: &Network<PI, R>,
 ) -> bool {
     for state in network.peers.iter() {
         let peer = *state.me();
@@ -409,21 +409,21 @@ impl Simulator {
 
 /// Helper struct for active connections. A sorted tuple.
 #[derive(Debug, Clone, PartialOrd, Ord, Eq, PartialEq, Hash)]
-pub struct ConnId<PA>([PA; 2]);
-impl<PA: Ord> ConnId<PA> {
-    pub fn new(a: PA, b: PA) -> Self {
+pub struct ConnId<PI>([PI; 2]);
+impl<PI: Ord> ConnId<PI> {
+    pub fn new(a: PI, b: PI) -> Self {
         let mut conn = [a, b];
         conn.sort();
         Self(conn)
     }
 }
-impl<PA: Ord> From<(PA, PA)> for ConnId<PA> {
-    fn from((a, b): (PA, PA)) -> Self {
+impl<PI: Ord> From<(PI, PI)> for ConnId<PI> {
+    fn from((a, b): (PI, PI)) -> Self {
         Self::new(a, b)
     }
 }
-impl<PA: Copy> From<ConnId<PA>> for (PA, PA) {
-    fn from(conn: ConnId<PA>) -> (PA, PA) {
+impl<PI: Copy> From<ConnId<PI>> for (PI, PI) {
+    fn from(conn: ConnId<PI>) -> (PI, PI) {
         (conn.0[0], conn.0[1])
     }
 }
@@ -434,7 +434,7 @@ pub fn sort<T: Ord + Clone>(items: Vec<T>) -> Vec<T> {
     sorted
 }
 
-pub fn report_round_distribution<PA: PeerAddress, R: Rng + Clone>(network: &Network<PA, R>) {
+pub fn report_round_distribution<PI: PeerIdentity, R: Rng + Clone>(network: &Network<PI, R>) {
     let mut eager_distrib: BTreeMap<usize, usize> = BTreeMap::new();
     let mut lazy_distrib: BTreeMap<usize, usize> = BTreeMap::new();
     let mut active_distrib: BTreeMap<usize, usize> = BTreeMap::new();
@@ -468,7 +468,7 @@ pub fn report_round_distribution<PA: PeerAddress, R: Rng + Clone>(network: &Netw
     eprintln!("passive_distrib {passive_distrib:?}");
 }
 
-// pub fn report_active<PA: PeerAddress, R: Rng + Clone>(network: &Network<PA, R>, topic: &TopicId) {
+// pub fn report_active<PI: PeerAddress, R: Rng + Clone>(network: &Network<PI, R>, topic: &TopicId) {
 //     for state in &network.peers {
 //         let me = state.me();
 //         match state.state(topic) {

@@ -15,7 +15,7 @@ use crate::{
     proto::{
         topic::{self, Command},
         util::idbytes_impls,
-        Config, PeerAddress, PeerData,
+        Config, PeerData, PeerIdentity,
     },
 };
 
@@ -28,12 +28,12 @@ idbytes_impls!(TopicId, "TopicId");
 ///
 /// This is the wire frame of the `iroh-gossip` protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Message<PA> {
+pub struct Message<PI> {
     topic: TopicId,
-    message: topic::Message<PA>,
+    message: topic::Message<PI>,
 }
 
-impl<PA> Message<PA> {
+impl<PI> Message<PI> {
     /// Get the kind of this message
     pub fn kind(&self) -> MessageKind {
         self.message.kind()
@@ -49,7 +49,7 @@ pub enum MessageKind {
     Control,
 }
 
-impl<PA: Serialize> Message<PA> {
+impl<PI: Serialize> Message<PI> {
     /// Get the encoded size of this message
     pub fn size(&self) -> postcard::Result<usize> {
         postcard::experimental::serialized_size(&self)
@@ -63,52 +63,52 @@ impl<PA: Serialize> Message<PA> {
 /// [`OutEvent`]s. The implementer must register the timer in its runtime to be emitted on the specified [`Instant`],
 /// and once triggered inject an [`InEvent::TimerExpired`] into the protocol state.
 #[derive(Clone, Debug)]
-pub struct Timer<PA> {
+pub struct Timer<PI> {
     topic: TopicId,
-    timer: topic::Timer<PA>,
+    timer: topic::Timer<PI>,
 }
 
 /// Input event to the protocol state.
 #[derive(Clone, Debug)]
-pub enum InEvent<PA> {
+pub enum InEvent<PI> {
     /// Message received from the network.
-    RecvMessage(PA, Message<PA>),
+    RecvMessage(PI, Message<PI>),
     /// Execute a command from the application.
-    Command(TopicId, Command<PA>),
+    Command(TopicId, Command<PI>),
     /// Trigger a previously scheduled timer.
-    TimerExpired(Timer<PA>),
+    TimerExpired(Timer<PI>),
     /// Peer disconnected on the network level.
-    PeerDisconnected(PA),
+    PeerDisconnected(PI),
     /// Update the opaque peer data about yourself.
     UpdatePeerData(PeerData),
 }
 
 /// Output event from the protocol state.
 #[derive(Debug, Clone)]
-pub enum OutEvent<PA> {
+pub enum OutEvent<PI> {
     /// Send a message on the network
-    SendMessage(PA, Message<PA>),
+    SendMessage(PI, Message<PI>),
     /// Emit an event to the application.
-    EmitEvent(TopicId, topic::Event<PA>),
+    EmitEvent(TopicId, topic::Event<PI>),
     /// Schedule a timer. The runtime is responsible for sending an [InEvent::TimerExpired]
     /// after the duration.
-    ScheduleTimer(Duration, Timer<PA>),
+    ScheduleTimer(Duration, Timer<PI>),
     /// Close the connection to a peer on the network level.
-    DisconnectPeer(PA),
+    DisconnectPeer(PI),
     /// Updated peer data
-    PeerData(PA, PeerData),
+    PeerData(PI, PeerData),
 }
 
-type ConnsMap<PA> = HashMap<PA, HashSet<TopicId>>;
-type Outbox<PA> = Vec<OutEvent<PA>>;
+type ConnsMap<PI> = HashMap<PI, HashSet<TopicId>>;
+type Outbox<PI> = Vec<OutEvent<PI>>;
 
-enum InEventMapped<PA> {
-    All(topic::InEvent<PA>),
-    TopicEvent(TopicId, topic::InEvent<PA>),
+enum InEventMapped<PI> {
+    All(topic::InEvent<PI>),
+    TopicEvent(TopicId, topic::InEvent<PI>),
 }
 
-impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
-    fn from(event: InEvent<PA>) -> InEventMapped<PA> {
+impl<PI> From<InEvent<PI>> for InEventMapped<PI> {
+    fn from(event: InEvent<PI>) -> InEventMapped<PI> {
         match event {
             InEvent::RecvMessage(from, Message { topic, message }) => {
                 Self::TopicEvent(topic, topic::InEvent::RecvMessage(from, message))
@@ -134,24 +134,24 @@ impl<PA> From<InEvent<PA>> for InEventMapped<PA> {
 /// a forwarder of [`InEvent`]s to matching topic state. Each topic's state is completely
 /// independent; thus the actual protocol logic lives with [`topic::State`].
 #[derive(Debug)]
-pub struct State<PA, R> {
-    me: PA,
+pub struct State<PI, R> {
+    me: PI,
     me_data: PeerData,
     config: Config,
     rng: R,
-    states: HashMap<TopicId, topic::State<PA, R>>,
-    outbox: Outbox<PA>,
-    peer_topics: ConnsMap<PA>,
+    states: HashMap<TopicId, topic::State<PI, R>>,
+    outbox: Outbox<PI>,
+    peer_topics: ConnsMap<PI>,
 }
 
-impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
+impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
     /// Create a new protocol state instance.
     ///
     /// `me` is the [`PeerAddress`] of the local node, `peer_data` is the initial [`PeerData`]
     /// (which can be updated over time).
     /// For the protocol to perform as recommended in the papers, the [`Config`] should be
     /// identical for all nodes in the network.
-    pub fn new(me: PA, me_data: PeerData, config: Config, rng: R) -> Self {
+    pub fn new(me: PI, me_data: PeerData, config: Config, rng: R) -> Self {
         Self {
             me,
             me_data,
@@ -164,18 +164,18 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
     }
 
     /// Get a reference to the node's [`PeerAddress`]
-    pub fn me(&self) -> &PA {
+    pub fn me(&self) -> &PI {
         &self.me
     }
 
     /// Get a reference to the protocol state for a topic.
-    pub fn state(&self, topic: &TopicId) -> Option<&topic::State<PA, R>> {
+    pub fn state(&self, topic: &TopicId) -> Option<&topic::State<PI, R>> {
         self.states.get(topic)
     }
 
     /// Get a reference to the protocol state for a topic.
     #[cfg(test)]
-    pub fn state_mut(&mut self, topic: &TopicId) -> Option<&mut topic::State<PA, R>> {
+    pub fn state_mut(&mut self, topic: &TopicId) -> Option<&mut topic::State<PI, R>> {
         self.states.get_mut(topic)
     }
 
@@ -185,7 +185,7 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
     }
 
     /// Get an iterator for the states of all joined topics.
-    pub fn states(&self) -> impl Iterator<Item = (&TopicId, &topic::State<PA, R>)> {
+    pub fn states(&self) -> impl Iterator<Item = (&TopicId, &topic::State<PI, R>)> {
         self.states.iter()
     }
 
@@ -201,13 +201,13 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
     /// This returns an iterator of [`OutEvent`]s that must be processed.
     pub fn handle(
         &mut self,
-        event: InEvent<PA>,
+        event: InEvent<PI>,
         now: Instant,
-    ) -> impl Iterator<Item = OutEvent<PA>> + '_ {
+    ) -> impl Iterator<Item = OutEvent<PI>> + '_ {
         trace!("gossp event: {event:?}");
         track_in_event(&event);
 
-        let event: InEventMapped<PA> = event.into();
+        let event: InEventMapped<PI> = event.into();
 
         match event {
             InEventMapped::TopicEvent(topic, event) => {
@@ -265,11 +265,11 @@ impl<PA: PeerAddress, R: Rng + Clone> State<PA, R> {
     }
 }
 
-fn handle_out_event<PA: PeerAddress>(
+fn handle_out_event<PI: PeerIdentity>(
     topic: TopicId,
-    event: topic::OutEvent<PA>,
-    conns: &mut ConnsMap<PA>,
-    outbox: &mut Outbox<PA>,
+    event: topic::OutEvent<PI>,
+    conns: &mut ConnsMap<PI>,
+    outbox: &mut Outbox<PI>,
 ) {
     match event {
         topic::OutEvent::SendMessage(to, message) => {
@@ -293,7 +293,7 @@ fn handle_out_event<PA: PeerAddress>(
     }
 }
 
-fn track_out_events<PA: Serialize>(events: &[OutEvent<PA>]) {
+fn track_out_events<PI: Serialize>(events: &[OutEvent<PI>]) {
     for event in events {
         match event {
             OutEvent::SendMessage(_to, message) => match message.kind() {
@@ -324,7 +324,7 @@ fn track_out_events<PA: Serialize>(events: &[OutEvent<PA>]) {
     }
 }
 
-fn track_in_event<PA: Serialize>(event: &InEvent<PA>) {
+fn track_in_event<PI: Serialize>(event: &InEvent<PI>) {
     if let InEvent::RecvMessage(_from, message) = event {
         match message.kind() {
             MessageKind::Data => {
