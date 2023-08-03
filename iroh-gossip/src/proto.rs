@@ -78,7 +78,7 @@ impl<T> PeerIdentity for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + 
 /// Opaque binary data that is transmitted on messages that introduce new peers.
 ///
 /// Implementations may use these bytes to supply addresses or other information needed to connect
-/// to a peer that is not included in the peer's [`PeerAddress`].
+/// to a peer that is not included in the peer's [`PeerIdentity`].
 pub type PeerData = bytes::Bytes;
 
 /// PeerInfo contains a peer's identifier and the opaque peer data as provided by the implementer.

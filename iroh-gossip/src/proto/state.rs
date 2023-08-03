@@ -147,7 +147,7 @@ pub struct State<PI, R> {
 impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
     /// Create a new protocol state instance.
     ///
-    /// `me` is the [`PeerAddress`] of the local node, `peer_data` is the initial [`PeerData`]
+    /// `me` is the [`PeerIdentity`] of the local node, `peer_data` is the initial [`PeerData`]
     /// (which can be updated over time).
     /// For the protocol to perform as recommended in the papers, the [`Config`] should be
     /// identical for all nodes in the network.
@@ -163,7 +163,7 @@ impl<PI: PeerIdentity, R: Rng + Clone> State<PI, R> {
         }
     }
 
-    /// Get a reference to the node's [`PeerAddress`]
+    /// Get a reference to the node's [`PeerIdentity`]
     pub fn me(&self) -> &PI {
         &self.me
     }

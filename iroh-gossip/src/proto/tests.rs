@@ -468,7 +468,7 @@ pub fn report_round_distribution<PI: PeerIdentity, R: Rng + Clone>(network: &Net
     eprintln!("passive_distrib {passive_distrib:?}");
 }
 
-// pub fn report_active<PI: PeerAddress, R: Rng + Clone>(network: &Network<PI, R>, topic: &TopicId) {
+// pub fn report_active<PI: PeerIdentity, R: Rng + Clone>(network: &Network<PI, R>, topic: &TopicId) {
 //     for state in &network.peers {
 //         let me = state.me();
 //         match state.state(topic) {
