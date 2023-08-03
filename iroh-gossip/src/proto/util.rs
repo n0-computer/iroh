@@ -107,9 +107,8 @@ pub(crate) use idbytes_impls;
 /// A hash set where the iteration order of the values is independent of their
 /// hash values.
 ///
-/// This is wrapper around [indexmap::IndexSet] that limits the removal API to
-/// always do shift_remove (preserving the order of other elements) and adds a
-/// couple of utility methods to randomly select elements from the set.
+/// This is wrapper around [indexmap::IndexSet] which couple of utility methods
+/// to randomly select elements from the set.
 #[derive(Default, Debug, Clone, derive_more::Deref)]
 pub(crate) struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
@@ -152,14 +151,20 @@ impl<T: Hash + Eq + PartialEq> IndexSet<T> {
         }
     }
 
-    /// Remove an element from the set, while keeping the order of the other elements.
+    /// Remove an element from the set.
+    ///
+    /// NOTE: the value is removed by swapping it with the last element of the set and popping it off.
+    /// **This modifies the order of element by moving the last element**
     pub fn remove(&mut self, value: &T) -> Option<T> {
-        self.inner.shift_remove_full(value).map(|(_i, v)| v)
+        self.inner.swap_remove_full(value).map(|(_i, v)| v)
     }
 
     /// Remove an element from the set by its index.
+    ///
+    /// NOTE: the value is removed by swapping it with the last element of the set and popping it off.
+    /// **This modifies the order of element by moving the last element**
     pub fn remove_index(&mut self, index: usize) -> Option<T> {
-        self.inner.shift_remove_index(index)
+        self.inner.swap_remove_index(index)
     }
 
     /// Create an iterator over the set in the order of insertion, while skipping the element in
