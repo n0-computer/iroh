@@ -305,7 +305,6 @@ async fn handle_command(
         Cmd::Add { description } => task.new_task(description).await?,
         Cmd::Done { index } => task.mark_done(index).await?,
         Cmd::Delete { index } => task.delete(index).await?,
-        Cmd::Archive => task.clear().await?,
         Cmd::Ls => task.list().await,
         Cmd::Ticket => {
             println!("Ticket: {ticket}");
@@ -435,7 +434,7 @@ impl Tasks {
                                 }
 
                                 let table = fmt_tasks(&inner.tasks);
-                                println!("{table}");
+                                println!("\n{table}");
                             },
                             None => {
                                 let _ = sender.send(UpdateError::NoMoreUpdates);
@@ -501,18 +500,6 @@ impl Tasks {
         self.update_task(id.key(), task).await
     }
 
-    async fn clear(&mut self) -> anyhow::Result<()> {
-        let tasks = {
-            let inner = self.inner.lock().await;
-            inner.get_done_tasks()
-        };
-        for (id, mut task) in tasks {
-            task.archived = true;
-            self.update_task(id.key(), task).await?;
-        }
-        Ok(())
-    }
-
     async fn list(&self) {
         let inner = self.inner.lock().await;
         let table = fmt_tasks(&inner.tasks);
@@ -522,11 +509,11 @@ impl Tasks {
 
 impl InnerTasks {
     fn insert_task(&mut self, id: RecordIdentifier, task: Task) -> anyhow::Result<()> {
-        if let Some(index) = self.tasks.iter().position(|(tid, _)| &id == tid) {
+        if let Some(index) = self.tasks.iter().position(|(tid, _)| id.key() == tid.key()) {
             if task.archived {
                 self.tasks.remove(index);
             } else {
-                self.tasks.insert(index, (id, task));
+                let _ = std::mem::replace(&mut self.tasks[index], (id, task));
             }
         } else {
             if !task.archived {
@@ -545,14 +532,6 @@ impl InnerTasks {
         }
     }
 
-    fn get_done_tasks(&self) -> Vec<(RecordIdentifier, Task)> {
-        self.tasks
-            .iter()
-            .filter(|(_, t)| t.done)
-            .map(|(id, task)| (id.to_owned(), task.clone()))
-            .collect()
-    }
-
     async fn save(&self, store: &DocStore) -> anyhow::Result<()> {
         store.save(&self.doc).await
     }
@@ -562,8 +541,10 @@ fn fmt_tasks(tasks: &Vec<(RecordIdentifier, Task)>) -> String {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
-        .set_width(1024)
-        .set_header(vec!["Num", "Done", "Task"]);
+        .set_width(100)
+        .set_header(vec!["Index", "Done", "Task"])
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
+
     for (num, (_, task)) in tasks.iter().enumerate() {
         let num = num.to_string();
         let done = if task.done { "✓" } else { "" };
@@ -578,26 +559,23 @@ fn fmt_tasks(tasks: &Vec<(RecordIdentifier, Task)>) -> String {
 
 #[derive(Parser, Debug)]
 pub enum Cmd {
-    /// Add a task
+    /// Add a task. The task description must be in quotes.
     Add {
         /// the content of the actual task
         description: String,
     },
-    /// Mark a task as finished
+    /// Mark a task as finished. `done <INDEX>`
     Done {
         /// The index of the task
         index: usize,
     },
-    /// Remove a task
+    /// Remove a task. `delete <INDEX>`
     Delete {
         /// The index of the task
         index: usize,
     },
-    /// Archives finished tasks
-    Archive,
-    /// List entries.
+    /// Print all the tasks.
     Ls,
-
     /// Print the ticket with which other peers can join our document.
     Ticket,
     /// Change the log level
