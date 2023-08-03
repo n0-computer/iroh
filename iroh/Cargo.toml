@@ -26,7 +26,7 @@ iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-sync = { path = "../iroh-sync"  }
+iroh-sync = { path = "../iroh-sync" }
 iroh-gossip = { path = "../iroh-gossip" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
@@ -62,7 +62,7 @@ rustyline = { version = "12.0.0", optional = true }
 
 [features]
 default = ["cli", "metrics", "sync"]
-sync = ["metrics", "flat-db"]
+sync = ["metrics", "flat-db", "iroh-sync/fs-store"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tempfile", "tokio/rt-multi-thread", "tracing-subscriber"]
 metrics = ["iroh-metrics", "flat-db", "mem-db", "iroh-collection"]
 flat-db = []

@@ -16,7 +16,10 @@ use anyhow::{anyhow, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use ed25519_dalek::SigningKey;
 use indicatif::HumanBytes;
-use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
+use iroh::sync::{
+    BlobStore, Doc as SyncDoc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN,
+};
+use iroh_bytes::util::runtime;
 use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
@@ -32,7 +35,10 @@ use iroh_net::{
     tls::Keypair,
     MagicEndpoint,
 };
-use iroh_sync::sync::{Author, Namespace, SignedEntry};
+use iroh_sync::{
+    store::{self, Store as _},
+    sync::{Author, Namespace, SignedEntry},
+};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -47,6 +53,8 @@ use url::Url;
 use iroh_bytes_handlers::IrohBytesHandlers;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 1024 * 1024;
+
+type Doc = SyncDoc<store::fs::Store>;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -219,10 +227,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     // create a doc store for the iroh-sync docs
     let author = Author::from(keypair.secret().clone());
-    let docs = DocStore::new(blobs.clone(), author, storage_path.join("docs"));
+    let docs_path = storage_path.join("docs");
+    tokio::fs::create_dir_all(&docs_path).await?;
+    let docs = DocStore::new(blobs.clone(), author, docs_path)?;
 
     // create the live syncer
-    let live_sync = LiveSync::spawn(endpoint.clone(), gossip.clone());
+    let live_sync = LiveSync::<store::fs::Store>::spawn(endpoint.clone(), gossip.clone());
 
     // construct the state that is passed to the endpoint loop and from there cloned
     // into to the connection handler task for incoming connections.
@@ -233,12 +243,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     });
 
     // spawn our endpoint loop that forwards incoming connections
-    tokio::spawn(endpoint_loop(endpoint.clone(), state));
+    rt.main().spawn(endpoint_loop(endpoint.clone(), state));
 
     // open our document and add to the live syncer
     let namespace = Namespace::from_bytes(topic.as_bytes());
     println!("> opening doc {}", fmt_hash(namespace.id().as_bytes()));
-    let doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
+    let doc: Doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
     live_sync.add(doc.replica().clone(), peers.clone()).await?;
 
     // spawn an repl thread that reads stdin and parses each line as a `Cmd` command
@@ -278,7 +288,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 println!("> aborted");
             }
-            res = handle_command(cmd, &doc, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
+            res = handle_command(cmd, &rt, docs.store(), &doc, &our_ticket, &log_filter, &current_watch) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -292,7 +302,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
     println!("> persisting document and blob database at {storage_path:?}");
     blobs.save().await?;
-    docs.save(&doc).await?;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
@@ -304,6 +313,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
 async fn handle_command(
     cmd: Cmd,
+    rt: &runtime::Handle,
+    store: &store::fs::Store,
     doc: &Doc,
     ticket: &Ticket,
     log_filter: &LogLevelReload,
@@ -313,9 +324,18 @@ async fn handle_command(
         Cmd::Set { key, value } => {
             doc.insert_bytes(&key, value.into_bytes().into()).await?;
         }
-        Cmd::Get { key, print_content } => {
-            let entries = doc.replica().all_for_key(key.as_bytes());
-            for (_id, entry) in entries {
+        Cmd::Get {
+            key,
+            print_content,
+            prefix,
+        } => {
+            let entries = if prefix {
+                store.get_all_by_prefix(doc.replica().namespace(), key.as_bytes())?
+            } else {
+                store.get_all_by_key(doc.replica().namespace(), key.as_bytes())?
+            };
+            for entry in entries {
+                let (_id, entry) = entry?;
                 println!("{}", fmt_entry(&entry));
                 if print_content {
                     println!("{}", fmt_content(doc, &entry).await);
@@ -336,13 +356,18 @@ async fn handle_command(
         },
         Cmd::Ls { prefix } => {
             let entries = match prefix {
-                None => doc.replica().all(),
-                Some(prefix) => doc.replica().all_with_key_prefix(prefix.as_bytes()),
+                None => store.get_all(doc.replica().namespace())?,
+                Some(prefix) => {
+                    store.get_all_by_prefix(doc.replica().namespace(), prefix.as_bytes())?
+                }
             };
-            println!("> {} entries", entries.len());
-            for (_id, entry) in entries {
+            let mut count = 0;
+            for entry in entries {
+                let (_id, entry) = entry?;
+                count += 1;
                 println!("{}", fmt_entry(&entry),);
             }
+            println!("> {} entries", count);
         }
         Cmd::Ticket => {
             println!("Ticket: {ticket}");
@@ -352,7 +377,7 @@ async fn handle_command(
             log_filter.modify(|layer| *layer = next_filter)?;
         }
         Cmd::Stats => get_stats(),
-        Cmd::Fs(cmd) => handle_fs_command(cmd, doc).await?,
+        Cmd::Fs(cmd) => handle_fs_command(cmd, store, doc).await?,
         Cmd::Hammer {
             prefix,
             threads,
@@ -376,7 +401,7 @@ async fn handle_command(
                         let prefix = prefix.clone();
                         let doc = doc.clone();
                         let bytes = bytes.clone();
-                        let handle = tokio::spawn(async move {
+                        let handle = rt.main().spawn(async move {
                             for i in 0..count {
                                 let value = String::from_utf8(bytes.clone()).unwrap();
                                 let key = format!("{}/{}/{}", prefix, t, i);
@@ -391,13 +416,16 @@ async fn handle_command(
                     for t in 0..threads {
                         let prefix = prefix.clone();
                         let doc = doc.clone();
-                        let handle = tokio::spawn(async move {
+                        let store = store.clone();
+                        let handle = rt.main().spawn(async move {
                             let mut read = 0;
                             for i in 0..count {
                                 let key = format!("{}/{}/{}", prefix, t, i);
-                                let entries = doc.replica().all_for_key(key.as_bytes());
-                                for (_id, entry) in entries {
-                                    let _content = fmt_content(&doc, &entry).await;
+                                let entries = store
+                                    .get_all_by_key(doc.replica().namespace(), key.as_bytes())?;
+                                for entry in entries {
+                                    let (_id, entry) = entry?;
+                                    let _content = fmt_content_simple(&doc, &entry);
                                     read += 1;
                                 }
                             }
@@ -425,7 +453,7 @@ async fn handle_command(
     Ok(())
 }
 
-async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
+async fn handle_fs_command(cmd: FsCmd, store: &store::fs::Store, doc: &Doc) -> anyhow::Result<()> {
     match cmd {
         FsCmd::ImportFile { file_path, key } => {
             let file_path = canonicalize_path(&file_path)?.canonicalize()?;
@@ -473,10 +501,12 @@ async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
             }
             let root = canonicalize_path(&dir_path)?;
             println!("> exporting {key_prefix} to {root:?}");
-            let entries = doc.replica().get_latest_by_prefix(key_prefix.as_bytes());
+            let entries =
+                store.get_latest_by_prefix(doc.replica().namespace(), key_prefix.as_bytes())?;
             let mut checked_dirs = HashSet::new();
             for entry in entries {
-                let key = entry.entry().id().key();
+                let (id, entry) = entry?;
+                let key = id.key();
                 let relative = String::from_utf8(key[key_prefix.len()..].to_vec())?;
                 let len = entry.entry().record().content_len();
                 if let Some(mut reader) = doc.get_content_reader(&entry).await {
@@ -499,8 +529,11 @@ async fn handle_fs_command(cmd: FsCmd, doc: &Doc) -> anyhow::Result<()> {
         FsCmd::ExportFile { key, file_path } => {
             let path = canonicalize_path(&file_path)?;
             // TODO: Fix
-            let entry = doc.replica().get_latest_by_key(&key).next();
+            let entry = store
+                .get_latest_by_key(doc.replica().namespace(), &key)?
+                .next();
             if let Some(entry) = entry {
+                let (_, entry) = entry?;
                 println!("> exporting {key} to {path:?}");
                 let parent = path.parent().ok_or_else(|| anyhow!("Invalid path"))?;
                 tokio::fs::create_dir_all(&parent).await?;
@@ -537,6 +570,9 @@ pub enum Cmd {
         /// Print the value (but only if it is valid UTF-8 and smaller than 1MB)
         #[clap(short = 'c', long)]
         print_content: bool,
+        /// Match the key as prefix, not an exact match.
+        #[clap(short = 'p', long)]
+        prefix: bool,
     },
     /// List entries.
     Ls {
@@ -802,6 +838,12 @@ fn fmt_entry(entry: &SignedEntry) -> String {
     let len = HumanBytes(entry.entry().record().content_len());
     format!("@{author}: {key} = {hash} ({len})",)
 }
+
+async fn fmt_content_simple(_doc: &Doc, entry: &SignedEntry) -> String {
+    let len = entry.entry().record().content_len();
+    format!("<{}>", HumanBytes(len))
+}
+
 async fn fmt_content(doc: &Doc, entry: &SignedEntry) -> String {
     let len = entry.entry().record().content_len();
     if len > MAX_DISPLAY_CONTENT_LEN {
