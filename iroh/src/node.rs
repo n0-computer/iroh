@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use crate::collection::{Blob, Collection};
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
@@ -24,7 +23,6 @@ use crate::rpc_protocol::{
     ProviderService, ShareRequest, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::util::io::pathbuf_from_name;
 use crate::util::progress::ProgressSliceWriter2;
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::OutboardMut;
@@ -48,7 +46,6 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_io::AsyncSliceReader;
-use iroh_io::AsyncSliceReaderExt;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -780,25 +777,33 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
         if recursive {
-            tracing::trace!("exporting collection {} to {}", hash, path.display());
-            tokio::fs::create_dir_all(&path).await?;
-            let collection = db.get(&hash).context("collection not there")?;
-            let mut reader = collection.data_reader().await?;
-            let bytes: Bytes = reader.read_to_end().await?;
-            let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
-            for Blob { hash, name } in collection.blobs() {
-                let path = path.join(pathbuf_from_name(name));
-                if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
+            #[cfg(feature = "iroh-collection")]
+            {
+                use crate::collection::{Blob, Collection};
+                use crate::util::io::pathbuf_from_name;
+                use iroh_io::AsyncSliceReaderExt;
+                tracing::trace!("exporting collection {} to {}", hash, path.display());
+                tokio::fs::create_dir_all(&path).await?;
+                let collection = db.get(&hash).context("collection not there")?;
+                let mut reader = collection.data_reader().await?;
+                let bytes: Bytes = reader.read_to_end().await?;
+                let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+                for Blob { hash, name } in collection.blobs() {
+                    let path = path.join(pathbuf_from_name(name));
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tracing::trace!("exporting blob {} to {}", hash, path.display());
+                    let id = progress.new_id();
+                    let progress1 = progress.clone();
+                    db.export(*hash, path, stable, move |offset| {
+                        Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+                    })
+                    .await?;
                 }
-                tracing::trace!("exporting blob {} to {}", hash, path.display());
-                let id = progress.new_id();
-                let progress1 = progress.clone();
-                db.export(*hash, path, stable, move |offset| {
-                    Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
-                })
-                .await?;
             }
+            #[cfg(not(feature = "iroh-collection"))]
+            anyhow::bail!("recursive export not supported without iroh-collection feature");
         } else if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
             let id = progress.new_id();
@@ -975,7 +980,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            
+
             Self::get_blob_inner_partial(db, header, entry, progress).await?
         } else {
             // full request
@@ -1209,10 +1214,10 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         msg: ProvideRequest,
         progress: tokio::sync::mpsc::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
+        use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use std::{collections::BTreeMap, sync::Mutex};
-
         use iroh_bytes::provider::ImportProgress;
+        use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = TokioProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));

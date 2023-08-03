@@ -468,9 +468,7 @@ impl BaoMap for Database {
 impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
-        let items = inner
-            .complete.keys().copied()
-            .collect::<Vec<_>>();
+        let items = inner.complete.keys().copied().collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
 

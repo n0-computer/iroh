@@ -33,12 +33,12 @@ impl DataSource {
     /// Returns blob name for this data source.
     ///
     /// If no name was provided when created it is derived from the path name.
-    pub(crate) fn name(&self) -> Cow<'_, str> {
+    pub fn name(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.name)
     }
 
     /// Returns the path of this data source.
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 }
