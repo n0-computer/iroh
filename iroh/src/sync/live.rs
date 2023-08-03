@@ -13,7 +13,10 @@ use iroh_gossip::{
 };
 use iroh_metrics::inc;
 use iroh_net::{tls::PeerId, MagicEndpoint};
-use iroh_sync::sync::{InsertOrigin, Replica, SignedEntry};
+use iroh_sync::{
+    store,
+    sync::{InsertOrigin, Replica, SignedEntry},
+};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, task::JoinError};
 use tracing::{debug, error};
@@ -45,9 +48,9 @@ enum SyncState {
 }
 
 #[derive(Debug)]
-pub enum ToActor {
+pub enum ToActor<S: store::Store> {
     SyncDoc {
-        doc: Replica,
+        doc: Replica<S::Instance>,
         initial_peers: Vec<PeerSource>,
     },
     Shutdown,
@@ -55,12 +58,12 @@ pub enum ToActor {
 
 /// Handle to a running live sync actor
 #[derive(Debug, Clone)]
-pub struct LiveSync {
-    to_actor_tx: mpsc::Sender<ToActor>,
+pub struct LiveSync<S: store::Store> {
+    to_actor_tx: mpsc::Sender<ToActor<S>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
-impl LiveSync {
+impl<S: store::Store> LiveSync<S> {
     pub fn spawn(endpoint: MagicEndpoint, gossip: GossipHandle) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
         let mut actor = Actor::new(endpoint, gossip, to_actor_rx);
@@ -78,14 +81,18 @@ impl LiveSync {
 
     /// Cancel the live sync.
     pub async fn cancel(&self) -> Result<()> {
-        self.to_actor_tx.send(ToActor::Shutdown).await?;
+        self.to_actor_tx.send(ToActor::<S>::Shutdown).await?;
         self.task.clone().await?;
         Ok(())
     }
 
-    pub async fn add(&self, doc: Replica, initial_peers: Vec<PeerSource>) -> Result<()> {
+    pub async fn add(
+        &self,
+        doc: Replica<S::Instance>,
+        initial_peers: Vec<PeerSource>,
+    ) -> Result<()> {
         self.to_actor_tx
-            .send(ToActor::SyncDoc { doc, initial_peers })
+            .send(ToActor::<S>::SyncDoc { doc, initial_peers })
             .await?;
         Ok(())
     }
@@ -93,15 +100,15 @@ impl LiveSync {
 
 // TODO: Also add `handle_connection` to the replica and track incoming sync requests here too.
 // Currently peers might double-sync in both directions.
-struct Actor {
+struct Actor<S: store::Store> {
     endpoint: MagicEndpoint,
     gossip: GossipHandle,
 
-    docs: HashMap<TopicId, Replica>,
+    docs: HashMap<TopicId, Replica<S::Instance>>,
     subscription: BoxStream<'static, Result<(TopicId, Event)>>,
     sync_state: HashMap<(TopicId, PeerId), SyncState>,
 
-    to_actor_rx: mpsc::Receiver<ToActor>,
+    to_actor_rx: mpsc::Receiver<ToActor<S>>,
     insert_entry_tx: flume::Sender<(TopicId, SignedEntry)>,
     insert_entry_rx: flume::Receiver<(TopicId, SignedEntry)>,
 
@@ -109,11 +116,11 @@ struct Actor {
     pending_joins: FuturesUnordered<BoxFuture<'static, (TopicId, Result<()>)>>,
 }
 
-impl Actor {
+impl<S: store::Store> Actor<S> {
     pub fn new(
         endpoint: MagicEndpoint,
         gossip: GossipHandle,
-        to_actor_rx: mpsc::Receiver<ToActor>,
+        to_actor_rx: mpsc::Receiver<ToActor<S>>,
     ) -> Self {
         let (insert_tx, insert_rx) = flume::bounded(64);
         let sub = gossip.clone().subscribe_all().boxed();
@@ -193,7 +200,7 @@ impl Actor {
             async move {
                 debug!("sync with {peer}");
                 // TODO: Make sure that the peer is dialable.
-                let res = connect_and_sync(&endpoint, &doc, peer, None, &[]).await;
+                let res = connect_and_sync::<S>(&endpoint, &doc, peer, None, &[]).await;
                 debug!("> synced with {peer}: {res:?}");
                 // collect metrics
                 match &res {
@@ -215,7 +222,11 @@ impl Actor {
         Ok(())
     }
 
-    async fn insert_doc(&mut self, doc: Replica, initial_peers: Vec<PeerSource>) -> Result<()> {
+    async fn insert_doc(
+        &mut self,
+        doc: Replica<S::Instance>,
+        initial_peers: Vec<PeerSource>,
+    ) -> Result<()> {
         let peer_ids: Vec<PeerId> = initial_peers.iter().map(|p| p.peer_id).collect();
 
         // add addresses of initial peers to our endpoint address book
