@@ -387,33 +387,32 @@ mod test {
 
     use super::{IndexSet, TimeBoundCache, TimerMap};
 
+    fn test_rng() -> rand_chacha::ChaCha12Rng {
+        rand_chacha::ChaCha12Rng::seed_from_u64(42)
+    }
+
     #[test]
     fn indexset() {
         let elems = [1, 2, 3, 4];
         let set = IndexSet::from_iter(elems);
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
-
-        let x = set.shuffled(&mut rng);
-        assert_eq!(x, vec![2, 1, 3, 4]);
-        let x = set.shuffled_and_capped(2, &mut rng);
-        assert_eq!(x, vec![2, 1]);
-        let x = set.shuffled_without(&[&1], &mut rng);
-        assert_eq!(x, vec![3, 2, 4]);
-        let x = set.shuffled_without_and_capped(&[&1], 2, &mut rng);
+        let x = set.shuffled(&mut test_rng());
+        assert_eq!(x, vec![4, 2, 1, 3]);
+        let x = set.shuffled_and_capped(2, &mut test_rng());
+        assert_eq!(x, vec![4, 2]);
+        let x = set.shuffled_without(&[&1], &mut test_rng());
+        assert_eq!(x, vec![4, 3, 2]);
+        let x = set.shuffled_without_and_capped(&[&1], 2, &mut test_rng());
         assert_eq!(x, vec![4, 3]);
 
         // recreate the rng - otherwise we get failures on some architectures when cross-compiling,
         // likely due to usize differences pulling different amounts of randomness.
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
-        let x = set.pick_random(&mut rng);
-        assert_eq!(x, Some(&4));
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
-        let x = set.pick_random_without(&[&4], &mut rng);
+        let x = set.pick_random(&mut test_rng());
         assert_eq!(x, Some(&3));
+        let x = set.pick_random_without(&[&3], &mut test_rng());
+        assert_eq!(x, Some(&4));
 
         let mut set = set;
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
-        set.remove_random(&mut rng);
+        set.remove_random(&mut test_rng());
         assert_eq!(set, IndexSet::from_iter([1, 2, 4]));
     }
 
