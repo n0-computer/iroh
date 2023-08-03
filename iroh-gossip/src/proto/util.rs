@@ -285,7 +285,7 @@ impl<T> TimerMap<T> {
     pub fn iter(&self) -> impl Iterator<Item = (&Instant, &T)> {
         self.0
             .iter()
-            .flat_map(|(t, v)| v.into_iter().map(move |v| (t, v)))
+            .flat_map(|(t, v)| v.iter().map(move |v| (t, v)))
     }
 }
 
@@ -330,7 +330,7 @@ impl<K: Hash + Eq + Clone, V> TimeBoundCache<K, V> {
     /// Remove an item from the cache.
     pub fn remove(&mut self, key: &K) -> Option<V> {
         if let Some((expires, value)) = self.map.remove(key) {
-            self.expiry.remove(&expires, &key);
+            self.expiry.remove(&expires, key);
             Some(value)
         } else {
             None
@@ -340,6 +340,11 @@ impl<K: Hash + Eq + Clone, V> TimeBoundCache<K, V> {
     /// Get the number of entries in the cache.
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    /// Returns `true` if the map contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Get an item from the cache.

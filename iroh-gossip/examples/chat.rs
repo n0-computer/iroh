@@ -331,7 +331,7 @@ impl PeerAddr {
 /// Serializes to base32.
 impl fmt::Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
+        write!(f, "{}", base32::fmt(self.to_bytes()))
     }
 }
 
@@ -339,7 +339,7 @@ impl fmt::Display for Ticket {
 impl FromStr for Ticket {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_bytes(&base32::parse_vec(&s)?)?)
+        Self::from_bytes(&base32::parse_vec(s)?)
     }
 }
 
@@ -349,7 +349,7 @@ fn fmt_peer_id(input: &PeerId) -> String {
     base32::fmt_short(input.as_bytes())
 }
 fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
-    let bytes = base32::parse_array(&secret)?;
+    let bytes = base32::parse_array(secret)?;
     let key = SigningKey::from_bytes(&bytes);
     Ok(key.into())
 }
