@@ -412,7 +412,7 @@ impl Actor {
         // function of whether this is our initial full probe or an
         // incremental one. For incremental ones, wait for the
         // duration of the slowest region. For initial ones, double that.
-        let enough_regions = std::cmp::min(self.derp_map.regions.len(), ENOUGH_REGIONS);
+        let enough_regions = std::cmp::min(self.derp_map.len(), ENOUGH_REGIONS);
         if self.report.region_latency.len() == enough_regions {
             let mut timeout = self.report.region_latency.max_latency();
             if !self.incremental {
@@ -865,21 +865,20 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
     let preferred_derp = if preferred_derp.is_none()
-        || dm.regions.get(&preferred_derp.unwrap()).is_none()
+        || dm.get_region(preferred_derp.unwrap()).is_none()
         || (preferred_derp.is_some()
             && dm
-                .regions
-                .get(&preferred_derp.unwrap())
+                .get_region(preferred_derp.unwrap())
                 .unwrap()
                 .nodes
                 .is_empty())
     {
-        let mut rids = Vec::with_capacity(dm.regions.len());
-        for (id, reg) in dm.regions.iter() {
+        let mut rids = Vec::with_capacity(dm.len());
+        for reg in dm.regions() {
             if reg.avoid || reg.nodes.is_empty() {
                 continue;
             }
-            rids.push(id);
+            rids.push(reg.region_id);
         }
 
         if rids.is_empty() {
@@ -889,13 +888,13 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
         let i = (0..rids.len())
             .choose(&mut rand::thread_rng())
             .unwrap_or_default();
-        *rids[i]
+        rids[i]
     } else {
         preferred_derp.unwrap()
     };
 
     // Has a node, as we filtered out regions without nodes above.
-    let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
+    let node = &dm.get_region(preferred_derp).unwrap().nodes[0];
 
     if node
         .url
