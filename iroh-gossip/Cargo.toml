@@ -37,6 +37,7 @@ genawaiter = { version = "0.99.1", default-features = false, features = ["future
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 url = "2.4.0"
+rand_chacha = "0.3.1"
 
 [features]
 default = ["net"]

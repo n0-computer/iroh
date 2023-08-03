@@ -235,7 +235,7 @@ pub type PeerId = usize;
 pub struct Simulator {
     simulator_config: SimulatorConfig,
     protocol_config: Config,
-    network: Network<PeerId, rand::rngs::StdRng>,
+    network: Network<PeerId, rand_chacha::ChaCha12Rng>,
     round_stats: Vec<RoundStats>,
 }
 pub struct SimulatorConfig {
@@ -278,7 +278,7 @@ impl Simulator {
     }
     pub fn init(&mut self) {
         for i in 0..self.simulator_config.peers_count {
-            let rng = rand::rngs::StdRng::seed_from_u64(i as u64);
+        let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
             self.network.push(State::new(
                 i,
                 Default::default(),

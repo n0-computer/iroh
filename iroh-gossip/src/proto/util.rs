@@ -391,7 +391,7 @@ mod test {
     fn indexset() {
         let elems = [1, 2, 3, 4];
         let set = IndexSet::from_iter(elems);
-        let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
 
         let x = set.shuffled(&mut rng);
         assert_eq!(x, vec![2, 1, 3, 4]);

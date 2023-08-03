@@ -97,6 +97,7 @@ impl<PI> From<(PI, Option<PeerData>)> for PeerInfo<PI> {
 #[cfg(test)]
 mod test {
 
+    use rand::SeedableRng;
     use std::{collections::HashSet, env, time::Instant};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -123,12 +124,13 @@ mod test {
         let mut config = Config::default();
         config.membership.active_view_capacity = 2;
         let mut network = Network::new(Instant::now());
+        let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         for i in 0..4 {
             network.push(State::new(
                 i,
                 Default::default(),
                 config.clone(),
-                rand::rngs::OsRng {},
+                rng.clone(),
             ));
         }
 
@@ -196,13 +198,9 @@ mod test {
         let broadcast_ticks = 12;
         let join_ticks = 12;
         // build a network with 6 nodes
+            let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         for i in 0..6 {
-            network.push(State::new(
-                i,
-                Default::default(),
-                config.clone(),
-                rand::rngs::OsRng {},
-            ));
+            network.push(State::new(i, Default::default(), config.clone(), rng.clone()));
         }
 
         let t = [0u8; 32].into();
@@ -295,12 +293,13 @@ mod test {
         config.membership.active_view_capacity = 2;
         let mut network = Network::new(Instant::now());
         let num = 4;
+        let rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         for i in 0..num {
             network.push(State::new(
                 i,
                 Default::default(),
                 config.clone(),
-                rand::rngs::OsRng {},
+                rng.clone(),
             ));
         }
 
