@@ -27,7 +27,7 @@ impl DerpMap {
         ids
     }
 
-    /// Returns an `Iteratore` over all known regions.
+    /// Returns an `Iterator` over all known regions.
     pub fn regions(&self) -> impl Iterator<Item = &DerpRegion> {
         self.regions.values()
     }
