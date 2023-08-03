@@ -72,7 +72,7 @@ macro_rules! idbytes_impls {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(
                     f,
-                    "{}({}…)",
+                    "{}({})",
                     $name,
                     $crate::proto::util::base32::fmt_short(&self.0)
                 )
@@ -280,13 +280,25 @@ impl<T> TimerMap<T> {
     pub fn first(&self) -> Option<(&Instant, &Vec<T>)> {
         self.0.iter().next()
     }
+
+    /// Iterate over all items in the timer map.
+    pub fn iter(&self) -> impl Iterator<Item = (&Instant, &T)> {
+        self.0
+            .iter()
+            .flat_map(|(t, v)| v.into_iter().map(move |v| (t, v)))
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use std::{
+        str::FromStr,
+        time::{Duration, Instant},
+    };
+
     use rand_core::SeedableRng;
 
-    use super::IndexSet;
+    use super::{IndexSet, TimerMap};
 
     #[test]
     fn indexset() {
@@ -313,5 +325,63 @@ mod test {
         let mut set = set;
         set.remove_random(&mut rng);
         assert_eq!(set, IndexSet::from_iter([1, 2, 4]));
+    }
+
+    #[test]
+    fn timer_map() {
+        let mut map = TimerMap::new();
+        let now = Instant::now();
+
+        let times = [
+            now - Duration::from_secs(1),
+            now,
+            now + Duration::from_secs(1),
+            now + Duration::from_secs(2),
+        ];
+        map.insert(times[0], -1);
+        map.insert(times[0], -2);
+        map.insert(times[1], 0);
+        map.insert(times[2], 1);
+        map.insert(times[3], 2);
+        map.insert(times[3], 3);
+
+        assert_eq!(
+            map.iter().collect::<Vec<_>>(),
+            vec![
+                (&times[0], &-1),
+                (&times[0], &-2),
+                (&times[1], &0),
+                (&times[2], &1),
+                (&times[3], &2),
+                (&times[3], &3)
+            ]
+        );
+
+        assert_eq!(map.first(), Some((&times[0], &vec![-1, -2])));
+
+        let drain = map.drain_until(&now);
+        assert_eq!(
+            drain.collect::<Vec<_>>(),
+            vec![(times[0], -1), (times[0], -2), (times[1], 0),]
+        );
+        assert_eq!(
+            map.iter().collect::<Vec<_>>(),
+            vec![(&times[2], &1), (&times[3], &2), (&times[3], &3)]
+        );
+    }
+
+    #[test]
+    fn base32() {
+        #[derive(Eq, PartialEq)]
+        struct Id([u8; 32]);
+        idbytes_impls!(Id, "Id");
+        let id: Id = [1u8; 32].into();
+        assert_eq!(id, Id::from_str(&format!("{id}")).unwrap());
+        assert_eq!(
+            &format!("{id}"),
+            "aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaq"
+        );
+        assert_eq!(&format!("{id:?}"), "Id(aeaqcaibaeaqcaib…)");
+        assert_eq!(id.as_bytes(), &[1u8; 32]);
     }
 }
