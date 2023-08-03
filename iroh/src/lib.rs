@@ -21,3 +21,5 @@ pub mod util;
 /// Expose metrics module
 #[cfg(feature = "metrics")]
 pub mod metrics;
+
+pub mod config;

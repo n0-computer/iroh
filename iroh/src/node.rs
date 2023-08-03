@@ -133,7 +133,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
 
 impl<D: BaoMap> Builder<D> {
     /// Creates a new builder for [`Node`] using the given database.
-    fn with_db(db: D) -> Self {
+    pub fn with_db(db: D) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
