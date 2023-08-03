@@ -201,12 +201,14 @@ impl DerpActor {
             // Reconnect any DERP region that changed definitions.
             if let Some(old) = old {
                 let derp_map = derp_map.as_ref().unwrap();
-                for (rid, old_def) in old.regions {
-                    if let Some(new_def) = derp_map.regions.get(&rid) {
-                        if &old_def == new_def {
+                for old_def in old.regions() {
+                    let rid = old_def.region_id;
+                    if let Some(new_def) = derp_map.get_region(rid) {
+                        if old_def == new_def {
                             continue;
                         }
                     }
+                    // Clear home derp if this is unknown now
                     if rid == self.conn.my_derp() {
                         self.conn.set_my_derp(0);
                     }
@@ -250,7 +252,7 @@ impl DerpActor {
                 warn!("DERP is disabled");
                 return;
             }
-            if !derp_map.as_ref().unwrap().regions.contains_key(&region_id) {
+            if !derp_map.as_ref().unwrap().contains_region(region_id) {
                 warn!("unknown region id {}", region_id);
                 return;
             }

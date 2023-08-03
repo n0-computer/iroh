@@ -232,13 +232,16 @@ impl Inner {
 
     /// Returns `true` if we have DERP configuration for the given DERP `region`.
     pub(self) async fn has_derp_region(&self, region: u16) -> bool {
-        self.get_derp_region(region).await.is_some()
+        match &*self.derp_map.read().await {
+            None => false,
+            Some(ref derp_map) => derp_map.contains_region(region),
+        }
     }
 
     pub(self) async fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
         match &*self.derp_map.read().await {
             None => None,
-            Some(ref derp_map) => derp_map.regions.get(&region).cloned(),
+            Some(ref derp_map) => derp_map.get_region(region).cloned(),
         }
     }
 
@@ -1627,8 +1630,7 @@ impl Actor {
             match derp_map
                 .as_ref()
                 .expect("already checked")
-                .regions
-                .get(&derp_num)
+                .get_region(derp_num)
             {
                 Some(dr) => {
                     info!("home is now derp-{} ({})", derp_num, dr.region_code);

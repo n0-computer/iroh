@@ -898,30 +898,27 @@ mod tests {
 
         let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
 
-        let mut dm = DerpMap::default();
         let region_id = 1;
-        dm.regions.insert(
+        let dm: DerpMap = [DerpRegion {
             region_id,
-            DerpRegion {
-                region_id,
-                nodes: stun_servers
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (host_name, stun_port))| DerpNode {
-                        name: format!("default-{}", i),
-                        region_id,
-                        url: host_name.parse().unwrap(),
-                        stun_only: true,
-                        stun_port,
-                        ipv4: UseIpv4::TryDns,
-                        ipv6: UseIpv6::TryDns,
-                        stun_test_ip: None,
-                    })
-                    .collect(),
-                avoid: false,
-                region_code: "default".into(),
-            },
-        );
+            nodes: stun_servers
+                .into_iter()
+                .enumerate()
+                .map(|(i, (host_name, stun_port))| DerpNode {
+                    name: format!("default-{}", i),
+                    region_id,
+                    url: host_name.parse().unwrap(),
+                    stun_only: true,
+                    stun_port,
+                    ipv4: UseIpv4::TryDns,
+                    ipv6: UseIpv6::TryDns,
+                    stun_test_ip: None,
+                })
+                .collect(),
+            avoid: false,
+            region_code: "default".into(),
+        }]
+        .into();
         dbg!(&dm);
 
         let r = client
@@ -960,7 +957,7 @@ mod tests {
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
-        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
+        dm.get_region_mut(1).unwrap().nodes[0].stun_only = true;
 
         let mut client = Client::new(None).await?;
 

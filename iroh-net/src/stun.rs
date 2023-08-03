@@ -175,40 +175,35 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        let mut m = DerpMap::default();
+        stun.enumerate()
+            .map(|(i, addr)| {
+                let region_id = (i + 1) as u16;
+                let host = addr.ip();
+                let port = addr.port();
 
-        for (i, addr) in stun.enumerate() {
-            let region_id = (i + 1) as u16;
-            let host = addr.ip();
-            let port = addr.port();
+                let (ipv4, ipv6) = match host {
+                    IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
+                    IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
+                };
 
-            let (ipv4, ipv6) = match host {
-                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
-                IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
-            };
-
-            let node = DerpNode {
-                name: format!("{region_id}a"),
-                region_id,
-                url: format!("http://{region_id}.invalid").parse().unwrap(),
-                ipv4,
-                ipv6,
-                stun_port: port,
-                stun_only: true,
-                stun_test_ip: None,
-            };
-            m.regions.insert(
-                region_id,
+                let node = DerpNode {
+                    name: format!("{region_id}a"),
+                    region_id,
+                    url: format!("http://{region_id}.invalid").parse().unwrap(),
+                    ipv4,
+                    ipv6,
+                    stun_port: port,
+                    stun_only: true,
+                    stun_test_ip: None,
+                };
                 DerpRegion {
                     region_id,
                     region_code: "".to_string(),
                     avoid: false,
                     nodes: vec![node],
-                },
-            );
-        }
-
-        m
+                }
+            })
+            .into()
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

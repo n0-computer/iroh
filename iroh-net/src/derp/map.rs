@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use crate::defaults::DEFAULT_DERP_STUN_PORT;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     /// A map of the different region IDs to the [`DerpRegion`] information
-    pub regions: HashMap<u16, DerpRegion>,
+    regions: Arc<HashMap<u16, DerpRegion>>,
 }
 
 impl DerpMap {
@@ -24,6 +25,37 @@ impl DerpMap {
         let mut ids: Vec<_> = self.regions.keys().copied().collect();
         ids.sort();
         ids
+    }
+
+    /// Returns an `Iteratore` over all known regions.
+    pub fn regions(&self) -> impl Iterator<Item = &DerpRegion> {
+        self.regions.values()
+    }
+
+    /// Is this a known region?
+    pub fn contains_region(&self, region_id: u16) -> bool {
+        self.regions.contains_key(&region_id)
+    }
+
+    /// Get the given region.
+    pub fn get_region(&self, region_id: u16) -> Option<&DerpRegion> {
+        self.regions.get(&region_id)
+    }
+
+    /// Get the given region mutable.
+    #[cfg(test)]
+    pub fn get_region_mut(&mut self, region_id: u16) -> Option<&mut DerpRegion> {
+        Arc::get_mut(&mut self.regions).and_then(|r| r.get_mut(&region_id))
+    }
+
+    /// How many regions are known?
+    pub fn len(&self) -> usize {
+        self.regions.len()
+    }
+
+    /// Are there any regions in this map?
+    pub fn is_empty(&self) -> bool {
+        self.regions.is_empty()
     }
 
     /// Creates a new [`DerpMap`] with a single Derp server configured.
@@ -37,11 +69,8 @@ impl DerpMap {
         derp_ipv6: UseIpv6,
         region_id: u16,
     ) -> Self {
-        let mut dm = DerpMap {
-            regions: HashMap::new(),
-        };
-
-        dm.regions.insert(
+        let mut regions = HashMap::with_capacity(1);
+        regions.insert(
             region_id,
             DerpRegion {
                 region_id,
@@ -60,7 +89,9 @@ impl DerpMap {
             },
         );
 
-        dm
+        DerpMap {
+            regions: Arc::new(regions),
+        }
     }
 
     /// Returns the [`DerpNode`] by name.
@@ -83,6 +114,14 @@ impl DerpMap {
             UseIpv6::TryDns,
             region_id,
         )
+    }
+}
+
+impl<T: IntoIterator<Item = DerpRegion>> From<T> for DerpMap {
+    fn from(value: T) -> Self {
+        DerpMap {
+            regions: Arc::new(value.into_iter().map(|r| (r.region_id, r)).collect()),
+        }
     }
 }
 

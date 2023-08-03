@@ -34,7 +34,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
-            derp_regions: vec![default_na_derp_region(), default_eu_derp_region()],
+            derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
         }
     }
 }
@@ -94,12 +94,8 @@ impl Config {
             return None;
         }
 
-        let mut regions = HashMap::new();
-        for region in &self.derp_regions {
-            regions.insert(region.region_id, region.clone());
-        }
-
-        Some(DerpMap { regions })
+        let dm: DerpMap = self.derp_regions.iter().cloned().into();
+        Some(dm)
     }
 }
 
