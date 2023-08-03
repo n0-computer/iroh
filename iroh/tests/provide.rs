@@ -29,6 +29,7 @@ use testdir::testdir;
 use tokio::{fs, io::AsyncWriteExt, sync::mpsc};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+use bao_tree::blake3;
 use iroh_bytes::{
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},

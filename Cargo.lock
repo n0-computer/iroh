@@ -243,13 +243,13 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300ecc0fc879f191300741b6e7de87d3303e843f2d6e1ff9f33f2eadd3f857ec"
+checksum = "56ca1e4d36dce793d56ed016f22662a337d31f6407996e9ad2ec3c7bdc79a45c"
 dependencies = [
- "blake3",
  "bytes",
  "futures",
+ "iroh-blake3",
  "iroh-io",
  "positioned-io",
  "range-collections",
@@ -329,20 +329,6 @@ name = "bitflags"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
-
-[[package]]
-name = "blake3"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199c42ab6972d92c9f8995f086273d25c42fc0f7b2a1fcefba465c1352d25ba5"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
- "digest",
-]
 
 [[package]]
 name = "block-buffer"
@@ -1638,7 +1624,6 @@ version = "0.5.1"
 dependencies = [
  "anyhow",
  "bao-tree",
- "blake3",
  "bytes",
  "clap",
  "config",
@@ -1681,12 +1666,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-blake3"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9446c3ff33feef14809b17e90178caa73bf184ed5054337485a0b002bc7197e"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "iroh-bytes"
 version = "0.5.0"
 dependencies = [
  "anyhow",
  "bao-tree",
- "blake3",
  "bytes",
  "data-encoding",
  "derive_more",
@@ -1718,9 +1715,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d7af75c35274d15ec2347363e268fcebc2a5d1a975bc9d87384c5232b5cace"
+checksum = "e9c47e66a8ee652d554f00e085a0a6559b6c029036aab918a412aad1541b3fea"
 dependencies = [
  "bytes",
  "futures",
@@ -2933,9 +2930,9 @@ dependencies = [
 
 [[package]]
 name = "range-collections"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2151d0cda6f7cee2de547749cccca65dffbe1a292a1176fd914083acd21190ff"
+checksum = "9242e3fdeb51584ea4295232d89c29cfc919f5b70660d02ee32edacb075c2469"
 dependencies = [
  "binary-merge",
  "inplace-vec-builder",
