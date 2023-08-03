@@ -1,16 +1,16 @@
 use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
-    proto::{Event, TopicId},
+    proto::{util::base32, Event, TopicId},
 };
 use iroh_net::{
-    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
-    derp::{DerpMap, UseIpv4, UseIpv6},
+    defaults::default_derp_map,
+    derp::DerpMap,
     magic_endpoint::accept_conn,
     tls::{Keypair, PeerId},
     MagicEndpoint,
@@ -92,12 +92,15 @@ async fn main() -> anyhow::Result<()> {
         None => Keypair::generate(),
         Some(key) => parse_keypair(&key)?,
     };
-    println!("> our private key: {}", fmt_secret(&keypair));
+    println!(
+        "> our private key: {}",
+        base32::fmt(keypair.secret().to_bytes())
+    );
 
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
         (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(derp_map_from_url(url)?),
+        (false, Some(url)) => Some(DerpMap::from_url(url, 0)),
         (true, None) => None,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
@@ -137,6 +140,9 @@ async fn main() -> anyhow::Result<()> {
 
     // wait for a first endpoint update so that we know about our endpoint addresses
     notify.notified().await;
+    // forward our initial endpoints to the gossip protocol
+    gossip.update_endpoints(&endpoint.local_endpoints().await?)?;
+
     // print a ticket that includes our own peer id and endpoint addresses
     let ticket = {
         let me = PeerAddr::from_endpoint(&endpoint).await?;
@@ -325,40 +331,25 @@ impl PeerAddr {
 /// Serializes to base32.
 impl fmt::Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = self.to_bytes();
-        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
-        text.make_ascii_lowercase();
-        write!(f, "{text}")
+        write!(f, "{}", base32::fmt(&self.to_bytes()))
     }
 }
 
 /// Deserializes from base32.
 impl FromStr for Ticket {
     type Err = anyhow::Error;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let slf = Self::from_bytes(&bytes)?;
-        Ok(slf)
+        Ok(Self::from_bytes(&base32::parse_vec(&s)?)?)
     }
 }
 
 // helpers
 
 fn fmt_peer_id(input: &PeerId) -> String {
-    let text = format!("{}", input);
-    format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
-}
-fn fmt_secret(keypair: &Keypair) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
-    text.make_ascii_lowercase();
-    text
+    base32::fmt_short(input.as_bytes())
 }
 fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
-    let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
-        .decode(secret.to_ascii_uppercase().as_bytes())?
-        .try_into()
-        .map_err(|_| anyhow!("Invalid secret"))?;
+    let bytes = base32::parse_array(&secret)?;
     let key = SigningKey::from_bytes(&bytes);
     Ok(key.into())
 }
@@ -372,13 +363,4 @@ fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     }
-}
-fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
-    Ok(DerpMap::default_from_node(
-        url,
-        DEFAULT_DERP_STUN_PORT,
-        UseIpv4::TryDns,
-        UseIpv6::TryDns,
-        0,
-    ))
 }

@@ -10,6 +10,100 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Utilities for working with byte array identifiers
+pub mod base32 {
+    /// Convert to a base32 string
+    pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
+        let mut text = data_encoding::BASE32_NOPAD.encode(bytes.as_ref());
+        text.make_ascii_lowercase();
+        text
+    }
+    /// Convert to a base32 string limited to the first 10 bytes
+    pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
+        let len = bytes.as_ref().len().min(10);
+        let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
+        text.make_ascii_lowercase();
+        text.push('…');
+        text
+    }
+    /// Parse from a base32 string into a byte array
+    pub fn parse_array<const N: usize>(input: &str) -> anyhow::Result<[u8; N]> {
+        data_encoding::BASE32_NOPAD
+            .decode(input.to_ascii_uppercase().as_bytes())?
+            .try_into()
+            .map_err(|_| ::anyhow::anyhow!("Failed to parse: invalid byte length"))
+    }
+    /// Decode form a base32 string to a vector of bytes
+    pub fn parse_vec(input: &str) -> anyhow::Result<Vec<u8>> {
+        data_encoding::BASE32_NOPAD
+            .decode(input.to_ascii_uppercase().as_bytes())
+            .map_err(Into::into)
+    }
+}
+
+/// Implement methods, display, debug and conversion traits for 32 byte identifiers.
+macro_rules! idbytes_impls {
+    ($ty:ty, $name:expr) => {
+        impl $ty {
+            /// Create from a byte array.
+            pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+                Self(bytes)
+            }
+
+            /// Get as byte slice.
+            pub fn as_bytes(&self) -> &[u8; 32] {
+                &self.0
+            }
+        }
+
+        impl<T: Into<[u8; 32]>> From<T> for $ty {
+            fn from(value: T) -> Self {
+                Self::from_bytes(value.into())
+            }
+        }
+
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "{}", $crate::proto::util::base32::fmt(&self.0))
+            }
+        }
+
+        impl std::fmt::Debug for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(
+                    f,
+                    "{}({}…)",
+                    $name,
+                    $crate::proto::util::base32::fmt_short(&self.0)
+                )
+            }
+        }
+
+        impl std::str::FromStr for $ty {
+            type Err = ::anyhow::Error;
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Ok(Self::from_bytes($crate::proto::util::base32::parse_array(
+                    s,
+                )?))
+            }
+        }
+
+        impl AsRef<[u8]> for $ty {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+
+        impl AsRef<[u8; 32]> for $ty {
+            fn as_ref(&self) -> &[u8; 32] {
+                &self.0
+            }
+        }
+    };
+}
+
+pub(crate) use idbytes_impls;
+
 /// A hash set where the iteration order of the values is independent of their
 /// hash values.
 ///
@@ -133,6 +227,12 @@ impl<T> IntoIterator for IndexSet<T> {
 #[derive(Debug)]
 pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
 
+impl<T> Default for TimerMap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> TimerMap<T> {
     /// Create a new, empty TimerMap
     pub fn new() -> Self {
@@ -157,11 +257,5 @@ impl<T> TimerMap<T> {
     /// Get a reference to the earliest entry in the TimerMap
     pub fn first(&self) -> Option<(&Instant, &Vec<T>)> {
         self.0.iter().next()
-    }
-}
-
-impl<T> Default for TimerMap<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }

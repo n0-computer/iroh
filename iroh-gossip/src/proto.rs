@@ -81,6 +81,7 @@ impl<T> PeerAddress for T where T: Hash + Eq + Copy + fmt::Debug + Serialize + D
 /// to a peer that is not included in the peer's [`PeerAddress`].
 pub type PeerData = bytes::Bytes;
 
+/// PeerInfo contains a peer's identifier and the opaque peer data as provided by the implementer.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct PeerInfo<PA> {
     pub id: PA,

@@ -2,74 +2,27 @@
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    fmt,
-    str::FromStr,
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
+use iroh_metrics::{inc, inc_by};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
-use crate::proto::{
-    topic::{self, Command},
-    Config, PeerAddress,
+use crate::{
+    metrics::Metrics,
+    proto::{
+        topic::{self, Command},
+        util::idbytes_impls,
+        Config, PeerAddress, PeerData,
+    },
 };
-use iroh_metrics::{inc, inc_by};
-
-use super::PeerData;
-use crate::metrics::Metrics;
 
 /// The identifier for a topic
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Serialize, Ord, PartialOrd, Deserialize)]
 pub struct TopicId([u8; 32]);
-
-impl TopicId {
-    /// Create a new `TopicId` from a byte array.
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-}
-
-impl TopicId {
-    /// Returns a byte slice of this [`TopicId`].
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-impl<T: Into<[u8; 32]>> From<T> for TopicId {
-    fn from(value: T) -> Self {
-        Self(value.into())
-    }
-}
-
-impl fmt::Display for TopicId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
-        text.make_ascii_lowercase();
-        write!(f, "{}", text)
-    }
-}
-impl fmt::Debug for TopicId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
-        text.make_ascii_lowercase();
-        write!(f, "{}…{}", &text[..5], &text[(text.len() - 2)..])
-    }
-}
-
-impl FromStr for TopicId {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD
-            .decode(s.to_ascii_uppercase().as_bytes())?
-            .try_into()
-            .map_err(|_| anyhow!("Failed to parse topic: must be 32 bytes "))?;
-        Ok(TopicId::from_bytes(bytes))
-    }
-}
+idbytes_impls!(TopicId, "TopicId");
 
 /// Protocol wire message
 ///

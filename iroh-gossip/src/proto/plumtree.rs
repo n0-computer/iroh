@@ -8,7 +8,6 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    fmt,
     hash::Hash,
     time::Duration,
 };
@@ -18,7 +17,21 @@ use derive_more::{Add, From, Sub};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{PeerAddress, IO};
+use super::{util::idbytes_impls, PeerAddress, IO};
+
+/// A message identifier, which is the message content's blake3 hash.
+#[derive(Serialize, Deserialize, Clone, Hash, Copy, PartialEq, Eq)]
+pub struct MessageId([u8; 32]);
+idbytes_impls!(MessageId, "MessageId");
+
+impl MessageId {
+    /// Create a `[MessageId]` by hashing the message content.
+    ///
+    /// This hashes the input with [`blake3::hash`].
+    pub fn from_content(message: &[u8]) -> Self {
+        Self::from(blake3::hash(message))
+    }
+}
 
 /// Events Plumtree is informed of from the peer sampling service and IO layer.
 #[derive(Debug)]
@@ -70,52 +83,6 @@ pub enum Event<PA> {
         /// originally broadcasted the message, but the peer before us in the gossiping path.
         PA,
     ),
-}
-
-/// A message identifier, which is the message content's blake3 hash.
-#[derive(Serialize, Deserialize, Clone, Copy, Eq)]
-pub struct MessageId([u8; 32]);
-
-impl MessageId {
-    /// Create a `[MessageId]` by hashing the message content.
-    ///
-    /// This hashes the input with [`blake3::hash`].
-    pub fn from_content(message: &[u8]) -> Self {
-        Self::from(blake3::hash(message))
-    }
-}
-
-impl From<blake3::Hash> for MessageId {
-    fn from(hash: blake3::Hash) -> Self {
-        Self(hash.into())
-    }
-}
-
-impl std::hash::Hash for MessageId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write(&self.0);
-    }
-}
-
-impl PartialEq for MessageId {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl fmt::Display for MessageId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
-        text.make_ascii_lowercase();
-        write!(f, "{}", text)
-    }
-}
-impl fmt::Debug for MessageId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut text = data_encoding::BASE32_NOPAD.encode(&self.0);
-        text.make_ascii_lowercase();
-        write!(f, "{}…{}", &text[..5], &text[(text.len() - 2)..])
-    }
 }
 
 /// Number of delivery hops a message has taken.
