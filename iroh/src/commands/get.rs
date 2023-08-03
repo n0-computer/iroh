@@ -328,7 +328,7 @@ impl GetInteractive {
         if tokio::fs::try_exists(&temp_dir).await? {
             let temp_dir_meta = tokio::fs::metadata(&temp_dir).await?;
             if !temp_dir_meta.is_dir() {
-                anyhow::bail!("temp dir: {}  is not a directory", temp_dir.display());
+                anyhow::bail!("temp dir: {} exists, but is not a directory", temp_dir.display());
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;

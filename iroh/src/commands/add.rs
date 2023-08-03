@@ -31,6 +31,7 @@ pub async fn run(path: PathBuf, in_place: bool, rpc_port: u16) -> Result<()> {
 pub struct ProvideResponseEntry {
     pub name: String,
     pub size: u64,
+    pub hash: Hash,
 }
 
 pub async fn aggregate_add_response<S, E>(
@@ -93,8 +94,8 @@ where
     let entries = collections
         .into_iter()
         .map(|(_, (name, size, hash))| {
-            let _hash = hash.context(format!("Missing hash for {name}"))?;
-            Ok(ProvideResponseEntry { name, size })
+            let hash = hash.context(format!("Missing hash for {name}"))?;
+            Ok(ProvideResponseEntry { name, size, hash })
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((hash, entries))
@@ -102,9 +103,9 @@ where
 
 pub fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
     let mut total_size = 0;
-    for ProvideResponseEntry { name, size, .. } in entries {
+    for ProvideResponseEntry { name, size, hash } in entries {
         total_size += size;
-        println!("- {}: {}", name, HumanBytes(size));
+        println!("- {}: {} {:#}", name, HumanBytes(size), hash);
     }
     println!("Total: {}", HumanBytes(total_size));
     println!();
