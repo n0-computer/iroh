@@ -197,7 +197,7 @@ pub struct Entry {
 
 impl BaoMapEntry<Database> for Entry {
     fn hash(&self) -> blake3::Hash {
-        self.hash.into()
+        self.hash
     }
 
     fn available(
@@ -229,7 +229,7 @@ pub struct PartialEntry {
 
 impl BaoMapEntry<Database> for PartialEntry {
     fn hash(&self) -> blake3::Hash {
-        self.hash.into()
+        self.hash
     }
 
     fn available(
@@ -264,7 +264,7 @@ impl BaoMap for Database {
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let state = self.state.read().unwrap();
         // look up the ids
-        if let Some((data, outboard)) = state.complete.get(&hash) {
+        if let Some((data, outboard)) = state.complete.get(hash) {
             Some(Entry {
                 hash: (*hash).into(),
                 outboard: PreOrderOutboard {
@@ -274,7 +274,7 @@ impl BaoMap for Database {
                 },
                 data: data.clone().into(),
             })
-        } else if let Some((data, outboard)) = state.partial.get(&hash) {
+        } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
                 hash: (*hash).into(),
                 outboard: PreOrderOutboard {
@@ -322,7 +322,7 @@ impl BaoPartialMap for Database {
 
     fn get_partial(&self, hash: &Hash) -> Option<PartialEntry> {
         let state = self.state.read().unwrap();
-        let (data, outboard) = state.partial.get(&hash)?;
+        let (data, outboard) = state.partial.get(hash)?;
         Some(PartialEntry {
             hash: (*hash).into(),
             outboard: outboard.clone(),

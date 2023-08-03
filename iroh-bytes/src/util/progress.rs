@@ -310,8 +310,8 @@ impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
         futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
 
     fn send(&self, msg: T) -> Self::SendFuture<'_> {
-        let t: T = msg.into();
-        TokioProgressSender::send(&self, t).boxed()
+        let t: T = msg;
+        TokioProgressSender::send(self, t).boxed()
     }
 
     fn try_send(&self, msg: T) -> std::result::Result<(), ProgressSendError> {

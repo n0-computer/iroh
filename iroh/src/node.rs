@@ -787,7 +787,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             let bytes: Bytes = reader.read_to_end().await?;
             let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
             for Blob { hash, name } in collection.blobs() {
-                let path = (&path).join(pathbuf_from_name(name));
+                let path = path.join(pathbuf_from_name(name));
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
@@ -799,25 +799,23 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 })
                 .await?;
             }
-        } else {
-            if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-                let id = progress.new_id();
-                let entry = db.get(&hash).context("entry not there")?;
-                progress
-                    .send(ShareProgress::Export {
-                        id,
-                        hash,
-                        target: out,
-                        size: entry.size(),
-                    })
-                    .await?;
-                let progress1 = progress.clone();
-                db.export(hash, path, stable, move |offset| {
-                    Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+        } else if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+            let id = progress.new_id();
+            let entry = db.get(&hash).context("entry not there")?;
+            progress
+                .send(ShareProgress::Export {
+                    id,
+                    hash,
+                    target: out,
+                    size: entry.size(),
                 })
                 .await?;
-            }
+            let progress1 = progress.clone();
+            db.export(hash, path, stable, move |offset| {
+                Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+            })
+            .await?;
         }
         anyhow::Ok(())
     }
@@ -958,13 +956,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
-        let end = if let Some(entry) = db.get_partial(&hash) {
+        let end = if let Some(entry) = db.get_partial(hash) {
             trace!("got partial data for {}", hash,);
 
             let required_ranges = Self::get_missing_ranges_blob(&entry)
                 .await
                 .ok()
-                .unwrap_or_else(|| RangeSet2::all());
+                .unwrap_or_else(RangeSet2::all);
             let request = GetRequest::new(*hash, RangeSpecSeq::new([required_ranges]));
             // full request
             let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
@@ -977,8 +975,8 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            let end = Self::get_blob_inner_partial(&db, header, entry, progress).await?;
-            end
+            
+            Self::get_blob_inner_partial(db, header, entry, progress).await?
         } else {
             // full request
             let request = get::fsm::start(
@@ -994,7 +992,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            Self::get_blob_inner(&db, header, progress).await?
+            Self::get_blob_inner(db, header, progress).await?
         };
 
         // we have requested a single hash, so we must be at closing
@@ -1013,18 +1011,18 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> io::Result<Vec<BlobInfo<D>>> {
         let db = &self.inner.db;
         let items = collection.iter().map(|hash| async move {
-            io::Result::Ok(if let Some(entry) = db.get_partial(&hash) {
+            io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
                 // first look for partial
                 trace!("got partial data for {}", hash,);
                 let missing_chunks = Self::get_missing_ranges_blob(&entry)
                     .await
                     .ok()
-                    .unwrap_or_else(|| RangeSet2::all());
+                    .unwrap_or_else(RangeSet2::all);
                 BlobInfo::Partial {
                     entry,
                     missing_chunks,
                 }
-            } else if db.get(&hash).is_some() {
+            } else if db.get(hash).is_some() {
                 // then look for complete
                 BlobInfo::Complete
             } else {
@@ -1047,7 +1045,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> anyhow::Result<()> {
         use tracing::info as log;
         let db = &self.inner.db;
-        let finishing = if let Some(entry) = db.get(&root_hash) {
+        let finishing = if let Some(entry) = db.get(root_hash) {
             log!("already got collection - doing partial download");
             // got the collection
             let reader = entry.data_reader().await?;
@@ -1095,9 +1093,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 );
                 let header = start.next(child_hash);
                 let end_blob = match info {
-                    BlobInfo::Missing => Self::get_blob_inner(&db, header, sender.clone()).await?,
+                    BlobInfo::Missing => Self::get_blob_inner(db, header, sender.clone()).await?,
                     BlobInfo::Partial { entry, .. } => {
-                        Self::get_blob_inner_partial(&db, header, entry.clone(), sender.clone())
+                        Self::get_blob_inner_partial(db, header, entry.clone(), sender.clone())
                             .await?
                     }
                     BlobInfo::Complete => anyhow::bail!("got data we have not requested"),
@@ -1120,9 +1118,9 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
-            let end_root = Self::get_blob_inner(&db, header, sender.clone()).await?;
+            let end_root = Self::get_blob_inner(db, header, sender.clone()).await?;
             // read the collection fully for now
-            let entry = db.get(&root_hash).context("just downloaded")?;
+            let entry = db.get(root_hash).context("just downloaded")?;
             let reader = entry.data_reader().await?;
             let (mut collection, _stats) = self.collection_parser.parse(0, reader).await?;
             let mut children = vec![];
@@ -1143,7 +1141,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     None => break start.finish(),
                 };
                 let header = start.next(child_hash);
-                let end_blob = Self::get_blob_inner(&db, header, sender.clone()).await?;
+                let end_blob = Self::get_blob_inner(db, header, sender.clone()).await?;
                 next = end_blob.next();
             }
         };

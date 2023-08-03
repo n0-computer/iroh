@@ -469,9 +469,7 @@ impl BaoReadonlyDb for Database {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
         let items = inner
-            .complete
-            .iter()
-            .map(|(hash, _)| *hash)
+            .complete.keys().copied()
             .collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
@@ -598,7 +596,7 @@ impl Database {
         };
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
-            std::fs::write(outboard_path, &outboard)?;
+            std::fs::write(outboard_path, outboard)?;
         }
         let size = new.size;
         let mut state = self.0.state.write().unwrap();
@@ -871,11 +869,11 @@ impl Database {
                 entries.iter().filter_map(|(uuid, (data_path, outboard_path))| {
                 let data_path = data_path.as_ref()?;
                 let outboard_path = outboard_path.as_ref()?;
-                let Ok(data_meta) = std::fs::metadata(&data_path) else {
+                let Ok(data_meta) = std::fs::metadata(data_path) else {
                     tracing::warn!("unable to open partial data file {}", data_path.display());
                     return None
                 };
-                let Ok(outboard_file) = std::fs::File::open(&outboard_path) else {
+                let Ok(outboard_file) = std::fs::File::open(outboard_path) else {
                     tracing::warn!("unable to open partial outboard file {}", outboard_path.display());
                     return None
                 };

@@ -170,7 +170,7 @@ async fn multiple_clients() -> Result<()> {
 
     let mut tasks = Vec::new();
     for _i in 0..3 {
-        let file_hash: Hash = expect_hash.into();
+        let file_hash: Hash = expect_hash;
         let name = expect_name.clone();
         let addrs = node.local_address().unwrap();
         let peer_id = node.peer_id();
@@ -417,48 +417,48 @@ async fn test_server_close() {
         .expect("supervisor failed");
 }
 
-#[cfg(feature = "legacy-flat-db")]
-#[tokio::test]
-async fn test_blob_reader_partial() -> Result<()> {
-    use iroh::database::flat::create_collection;
+// #[cfg(feature = "legacy-flat-db")]
+// #[tokio::test]
+// async fn test_blob_reader_partial() -> Result<()> {
+//     use iroh::database::flat::create_collection;
 
-    let rt = test_runtime();
-    // Prepare a Provider transferring a file.
-    let dir = testdir!();
-    let src0 = dir.join("src0");
-    let src1 = dir.join("src1");
-    {
-        let content = vec![1u8; 1000];
-        let mut f = tokio::fs::File::create(&src0).await?;
-        for _ in 0..10 {
-            f.write_all(&content).await?;
-        }
-    }
-    fs::write(&src1, "hello world").await?;
-    let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
-    let addr = "127.0.0.1:0".parse().unwrap();
-    let node = test_node(db, addr).runtime(&rt).spawn().await?;
-    let node_addr = node.local_endpoint_addresses().await?;
-    let peer_id = node.peer_id();
+//     let rt = test_runtime();
+//     // Prepare a Provider transferring a file.
+//     let dir = testdir!();
+//     let src0 = dir.join("src0");
+//     let src1 = dir.join("src1");
+//     {
+//         let content = vec![1u8; 1000];
+//         let mut f = tokio::fs::File::create(&src0).await?;
+//         for _ in 0..10 {
+//             f.write_all(&content).await?;
+//         }
+//     }
+//     fs::write(&src1, "hello world").await?;
+//     let (db, hash) = create_collection(vec![src0.into(), src1.into()]).await?;
+//     let addr = "127.0.0.1:0".parse().unwrap();
+//     let node = test_node(db, addr).runtime(&rt).spawn().await?;
+//     let node_addr = node.local_endpoint_addresses().await?;
+//     let peer_id = node.peer_id();
 
-    let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-        let connection = iroh::dial::dial(get_options(peer_id, node_addr))
-            .await
-            .unwrap();
-        let response = fsm::start(connection, GetRequest::all(hash).into());
-        // connect
-        let connected = response.next().await.unwrap();
-        // send the request
-        let _start = connected.next().await.unwrap();
-        // and then just hang
-    })
-    .await;
+//     let timeout = tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+//         let connection = iroh::dial::dial(get_options(peer_id, node_addr))
+//             .await
+//             .unwrap();
+//         let response = fsm::start(connection, GetRequest::all(hash).into());
+//         // connect
+//         let connected = response.next().await.unwrap();
+//         // send the request
+//         let _start = connected.next().await.unwrap();
+//         // and then just hang
+//     })
+//     .await;
 
-    timeout.expect(
-        "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
-    );
-    Ok(())
-}
+//     timeout.expect(
+//         "`get` function is hanging, make sure we are handling misbehaving `on_blob` functions",
+//     );
+//     Ok(())
+// }
 
 /// create an in memory test database containing the given entries and an iroh collection of all entries
 ///

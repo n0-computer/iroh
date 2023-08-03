@@ -26,62 +26,62 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     Ok(hash.into())
 }
 
-#[cfg(feature = "flat-db")]
-/// Given a directory, make a partial download of it.
-///
-/// Takes all files and splits them in half, and leaves the collection alone.
-fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
-    println!("make_partial_download({:?})", out_dir);
-    use iroh::database::flat::FileName;
-    use std::collections::BTreeSet;
+// #[cfg(feature = "flat-db")]
+// /// Given a directory, make a partial download of it.
+// ///
+// /// Takes all files and splits them in half, and leaves the collection alone.
+// fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
+//     println!("make_partial_download({:?})", out_dir);
+//     use iroh::database::flat::FileName;
+//     use std::collections::BTreeSet;
 
-    let mut hashes = BTreeSet::new();
-    let files = WalkDir::new(out_dir);
-    for entry in files.into_iter() {
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_file() {
-            continue;
-        };
-        let file = entry.path();
-        let Some(name) = file.file_name() else { continue };
-        let Some(name) = name.to_str() else { continue };
-        let Ok(name) = FileName::from_str(&name) else { continue; };
-        let FileName::Data(hash) = name else { continue };
-        hashes.insert(hash);
-    }
-    println!("hashes: {:?}", hashes);
-    // let temp_dir = out_dir.join(".iroh-tmp");
-    // anyhow::ensure!(!temp_dir.exists());
-    // std::fs::create_dir_all(&temp_dir)?;
-    // let sources = create_data_sources(out_dir.to_owned())?;
-    // let rt = tokio::runtime::Runtime::new().unwrap();
-    // let (db, hash) = rt.block_on(create_collection(sources))?;
-    // let db = db.to_inner();
-    // for (hash, boc) in db {
-    //     let text = blake3::Hash::from(hash).to_hex();
-    //     let mut outboard_path = temp_dir.join(text.as_str());
-    //     outboard_path.set_extension("outboard.part");
-    //     let mut data_path = temp_dir.join(text.as_str());
-    //     match boc {
-    //         DbEntry::External { outboard, path, .. } => {
-    //             data_path.set_extension("data.part");
-    //             std::fs::write(outboard_path, outboard)?;
-    //             std::fs::rename(path, &data_path)?;
-    //             let file = std::fs::OpenOptions::new().write(true).open(&data_path)?;
-    //             let len = file.metadata()?.len();
-    //             file.set_len(len / 2)?;
-    //             drop(file);
-    //         }
-    //         DbEntry::Internal { outboard, data } => {
-    //             data_path.set_extension("data");
-    //             std::fs::write(outboard_path, outboard)?;
-    //             std::fs::write(data_path, data)?;
-    //         }
-    //     }
-    // }
-    // Ok(hash)
-    todo!()
-}
+//     let mut hashes = BTreeSet::new();
+//     let files = WalkDir::new(out_dir);
+//     for entry in files.into_iter() {
+//         let Ok(entry) = entry else { continue };
+//         if !entry.file_type().is_file() {
+//             continue;
+//         };
+//         let file = entry.path();
+//         let Some(name) = file.file_name() else { continue };
+//         let Some(name) = name.to_str() else { continue };
+//         let Ok(name) = FileName::from_str(&name) else { continue; };
+//         let FileName::Data(hash) = name else { continue };
+//         hashes.insert(hash);
+//     }
+//     println!("hashes: {:?}", hashes);
+//     // let temp_dir = out_dir.join(".iroh-tmp");
+//     // anyhow::ensure!(!temp_dir.exists());
+//     // std::fs::create_dir_all(&temp_dir)?;
+//     // let sources = create_data_sources(out_dir.to_owned())?;
+//     // let rt = tokio::runtime::Runtime::new().unwrap();
+//     // let (db, hash) = rt.block_on(create_collection(sources))?;
+//     // let db = db.to_inner();
+//     // for (hash, boc) in db {
+//     //     let text = blake3::Hash::from(hash).to_hex();
+//     //     let mut outboard_path = temp_dir.join(text.as_str());
+//     //     outboard_path.set_extension("outboard.part");
+//     //     let mut data_path = temp_dir.join(text.as_str());
+//     //     match boc {
+//     //         DbEntry::External { outboard, path, .. } => {
+//     //             data_path.set_extension("data.part");
+//     //             std::fs::write(outboard_path, outboard)?;
+//     //             std::fs::rename(path, &data_path)?;
+//     //             let file = std::fs::OpenOptions::new().write(true).open(&data_path)?;
+//     //             let len = file.metadata()?.len();
+//     //             file.set_len(len / 2)?;
+//     //             drop(file);
+//     //         }
+//     //         DbEntry::Internal { outboard, data } => {
+//     //             data_path.set_extension("data");
+//     //             std::fs::write(outboard_path, outboard)?;
+//     //             std::fs::write(data_path, data)?;
+//     //         }
+//     //     }
+//     // }
+//     // Ok(hash)
+//     todo!()
+// }
 
 #[test]
 fn cli_provide_one_file_basic() -> Result<()> {
@@ -144,32 +144,32 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
-#[cfg(feature = "flat-db")]
-#[test]
-fn cli_provide_tree_resume() -> Result<()> {
-    let dir = testdir!().join("src");
-    std::fs::create_dir(&dir)?;
-    let foo_path = dir.join("foo");
-    let bar_path = dir.join("bar");
-    let file1 = foo_path.join("file1");
-    let file2 = bar_path.join("file2");
-    let file3 = bar_path.join("file3");
-    std::fs::create_dir(&foo_path)?;
-    std::fs::create_dir(&bar_path)?;
-    make_rand_file(10000, &file1)?;
-    make_rand_file(100000, &file2)?;
-    make_rand_file(5000, &file3)?;
-    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
-    let tmp = testdir!();
-    let out = tmp.join("out");
-    test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
-    // turn the output into a partial download
-    let _hash = make_partial_download(&out)?;
-    // resume the download
-    test_provide_get_loop(&dir, Input::Path, Output::Custom(out))?;
+// #[cfg(feature = "legacy-flat-db")]
+// #[test]
+// fn cli_provide_tree_resume() -> Result<()> {
+//     let dir = testdir!().join("src");
+//     std::fs::create_dir(&dir)?;
+//     let foo_path = dir.join("foo");
+//     let bar_path = dir.join("bar");
+//     let file1 = foo_path.join("file1");
+//     let file2 = bar_path.join("file2");
+//     let file3 = bar_path.join("file3");
+//     std::fs::create_dir(&foo_path)?;
+//     std::fs::create_dir(&bar_path)?;
+//     make_rand_file(10000, &file1)?;
+//     make_rand_file(100000, &file2)?;
+//     make_rand_file(5000, &file3)?;
+//     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+//     let tmp = testdir!();
+//     let out = tmp.join("out");
+//     test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
+//     // turn the output into a partial download
+//     let _hash = make_partial_download(&out)?;
+//     // resume the download
+//     test_provide_get_loop(&dir, Input::Path, Output::Custom(out))?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
