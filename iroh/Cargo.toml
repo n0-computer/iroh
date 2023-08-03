@@ -62,6 +62,8 @@ shell-words = { version = "1.1.0", optional = true }
 shellexpand = { version = "3.1.0", optional = true }
 rustyline = { version = "12.0.0", optional = true }
 itertools = "0.11.0"
+comfy-table = { version = "7.0.1", optional = true }
+nanoid = { version = "0.4.0", optional = true }
 
 [features]
 default = ["cli", "metrics"]
@@ -72,6 +74,8 @@ flat-db = []
 iroh-collection = []
 test = []
 example-sync = ["cli", "ed25519-dalek", "shell-words", "shellexpand", "rustyline"]
+tasks = ["cli", "ed25519-dalek", "once_cell", "shell-words", "shellexpand",
+"sync", "rustyline", "comfy-table", "nanoid"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -105,3 +109,7 @@ required-features = ["mem-db"]
 [[example]]
 name = "sync"
 required-features = ["example-sync"]
+
+[[example]]
+name = "tasks"
+required-features = ["tasks"]
