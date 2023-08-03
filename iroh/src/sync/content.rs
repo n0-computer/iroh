@@ -6,6 +6,7 @@ use std::{
     time::Instant,
 };
 
+use anyhow::Result;
 use bytes::Bytes;
 use futures::{
     future::{BoxFuture, LocalBoxFuture, Shared},
@@ -17,9 +18,9 @@ use iroh_gossip::net::util::Dialer;
 use iroh_io::{AsyncSliceReader, AsyncSliceReaderExt};
 use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
-use iroh_sync::sync::{
-    Author, InsertOrigin, Namespace, NamespaceId, OnInsertCallback, Replica, ReplicaStore,
-    SignedEntry,
+use iroh_sync::{
+    store::{self, Store as _},
+    sync::{Author, InsertOrigin, Namespace, OnInsertCallback, Replica, SignedEntry},
 };
 use tokio::{io::AsyncRead, sync::oneshot};
 use tokio_stream::StreamExt;
@@ -36,33 +37,32 @@ pub enum DownloadMode {
 
 #[derive(Debug, Clone)]
 pub struct DocStore {
-    replicas: ReplicaStore,
+    replicas: store::fs::Store,
     blobs: BlobStore,
     local_author: Arc<Author>,
-    storage_path: PathBuf,
 }
 
+const REPLICA_DB_NAME: &str = "replica.db";
+
 impl DocStore {
-    pub fn new(blobs: BlobStore, author: Author, storage_path: PathBuf) -> Self {
-        Self {
-            replicas: ReplicaStore::default(),
+    pub fn new(blobs: BlobStore, author: Author, storage_path: PathBuf) -> Result<Self> {
+        let replicas = store::fs::Store::new(storage_path.join(REPLICA_DB_NAME))?;
+
+        Ok(Self {
+            replicas,
             local_author: Arc::new(author),
-            storage_path,
             blobs,
-        }
+        })
     }
 
     pub async fn create_or_open(
         &self,
         namespace: Namespace,
         download_mode: DownloadMode,
-    ) -> anyhow::Result<Doc> {
-        let path = self.replica_path(namespace.id());
-        let replica = if path.exists() {
-            let bytes = tokio::fs::read(path).await?;
-            self.replicas.open_replica(&bytes)?
-        } else {
-            self.replicas.new_replica(namespace)
+    ) -> Result<Doc<store::fs::Store>> {
+        let replica = match self.replicas.get_replica(&namespace.id())? {
+            Some(replica) => replica,
+            None => self.replicas.new_replica(namespace)?,
         };
 
         let doc = Doc::new(
@@ -74,20 +74,12 @@ impl DocStore {
         Ok(doc)
     }
 
-    pub async fn save(&self, doc: &Doc) -> anyhow::Result<()> {
-        let replica_path = self.replica_path(&doc.replica().namespace());
-        tokio::fs::create_dir_all(replica_path.parent().unwrap()).await?;
-        let bytes = doc.replica().to_bytes()?;
-        tokio::fs::write(replica_path, bytes).await?;
-        Ok(())
-    }
-
-    fn replica_path(&self, namespace: &NamespaceId) -> PathBuf {
-        self.storage_path.join(hex::encode(namespace.as_bytes()))
-    }
-
     pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
         crate::sync::handle_connection(conn, self.replicas.clone()).await
+    }
+
+    pub fn store(&self) -> &store::fs::Store {
+        &self.replicas
     }
 }
 
@@ -99,15 +91,15 @@ impl DocStore {
 /// We want to try other peers if the author is offline (or always).
 /// We'll need some heuristics which peers to try.
 #[derive(Clone, Debug)]
-pub struct Doc {
-    replica: Replica,
+pub struct Doc<S: store::Store> {
+    replica: Replica<S::Instance>,
     blobs: BlobStore,
     local_author: Arc<Author>,
 }
 
-impl Doc {
+impl<S: store::Store> Doc<S> {
     pub fn new(
-        replica: Replica,
+        replica: Replica<S::Instance>,
         blobs: BlobStore,
         local_author: Arc<Author>,
         download_mode: DownloadMode,
@@ -151,7 +143,7 @@ impl Doc {
         self.replica.on_insert(callback);
     }
 
-    pub fn replica(&self) -> &Replica {
+    pub fn replica(&self) -> &Replica<S::Instance> {
         &self.replica
     }
 
@@ -165,7 +157,9 @@ impl Doc {
         content: Bytes,
     ) -> anyhow::Result<(Hash, u64)> {
         let (hash, len) = self.blobs.put_bytes(content).await?;
-        self.replica.insert(key, &self.local_author, hash, len);
+        self.replica
+            .insert(key, &self.local_author, hash, len)
+            .map_err(Into::into)?;
         Ok((hash, len))
     }
 
@@ -175,7 +169,9 @@ impl Doc {
         content: impl AsyncRead + Unpin,
     ) -> anyhow::Result<(Hash, u64)> {
         let (hash, len) = self.blobs.put_reader(content).await?;
-        self.replica.insert(key, &self.local_author, hash, len);
+        self.replica
+            .insert(key, &self.local_author, hash, len)
+            .map_err(Into::into)?;
         Ok((hash, len))
     }
 
