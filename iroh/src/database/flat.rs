@@ -4,12 +4,11 @@
 //! It is used by the iroh binary.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io::{self, BufReader, SeekFrom, Seek};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
-use anyhow::Context;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkNum};
@@ -993,26 +992,20 @@ fn compute_outboard(
 ) -> io::Result<(Hash, Option<Vec<u8>>)> {
     let span = trace_span!("outboard.compute", path = %path.display());
     let _guard = span.enter();
-    let mut file = std::fs::File::open(path)?;
-    println!("{} {}", size, file.seek(SeekFrom::End(0))?);
+    let file = std::fs::File::open(path)?;
     // compute outboard size so we can pre-allocate the buffer.
     let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
     let mut outboard = Vec::with_capacity(outboard_size);
-
-    let data = std::fs::read(&path)?;
 
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader2::new(file, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
-    let mut reader = std::io::Cursor::new(&data);
 
     let hash =
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let hash0 = bao_tree::blake3::hash(&data);
-    assert_eq!(hash0, hash);
     let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
     tracing::trace!(%hash, "done");
     let ob = ob.into_inner();

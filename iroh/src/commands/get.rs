@@ -393,8 +393,8 @@ impl GetInteractive {
         let connected = response.next().await?;
         write(format!("{} Requesting ...", style("[2/3]").bold().dim()));
         let ConnectedNext::StartRoot(curr) = connected.next().await? else {
-        anyhow::bail!("expected root to be present");
-    };
+            anyhow::bail!("expected root to be present");
+        };
         let stats = if self.single {
             get_to_stdout_single(curr).await?
         } else {
