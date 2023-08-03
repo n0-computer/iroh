@@ -6,12 +6,13 @@ use bao_tree::{
     ByteNum, ChunkNum,
 };
 use console::style;
+use futures::StreamExt;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
 use iroh::{
-    collection::Collection,
-    util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
+    collection::{Collection, IrohCollectionParser},
+    util::{io::pathbuf_from_name, progress::ProgressSliceWriter}, rpc_protocol::ShareRequest,
 };
 use iroh_bytes::{
     get::{
@@ -314,13 +315,46 @@ impl GetInteractive {
     }
 
     /// Get into a file or directory
-    async fn get_to_dir(self, out_dir: PathBuf) -> Result<()> {
-        let temp_dir = out_dir.join(".iroh-tmp");
-        if self.single {
-            self.get_to_file_single(out_dir, temp_dir).await
-        } else {
-            self.get_to_dir_multi(out_dir, temp_dir).await
+    async fn get_to_dir(self, mut out_dir: PathBuf) -> Result<()> {
+        if !out_dir.is_absolute() {
+            out_dir = std::env::current_dir()?.join(out_dir);
         }
+        let parent = out_dir.parent().context("out_dir should have parent")?;
+        let temp_dir = parent.join(".iroh-tmp");
+        tracing::info!("using temp dir: {} for storing resume data", temp_dir.display());
+        if tokio::fs::try_exists(&temp_dir).await? {
+            let temp_dir_meta = tokio::fs::metadata(&temp_dir).await?;
+            if !temp_dir_meta.is_dir() {
+                anyhow::bail!("temp dir: {}  is not a directory", temp_dir.display());
+            }
+        }
+        tokio::fs::create_dir_all(&temp_dir).await?;
+        let db: iroh::database::flat::Database = iroh::database::flat::Database::load(temp_dir.clone(), temp_dir.clone()).await?;
+        // spin up temp node and ask it to download the data for us
+        let provider =
+            iroh::node::Node::builder(db)
+                .collection_parser(IrohCollectionParser)
+                .runtime(&iroh_bytes::util::runtime::Handle::from_currrent(1)?)
+                .spawn()
+                .await?;
+        let out = out_dir.to_str().context("out_dir is not valid utf8")?.to_owned();
+        let mut stream = provider.controller().server_streaming(ShareRequest {
+            hash: self.hash,
+            recursive: !self.single,
+            peer: self.opts.peer_id,
+            addrs: self.opts.addrs,
+            force: false,
+            derp_region: self.opts.derp_region,
+            token: self.token,
+            in_place: true,
+            out: Some(out),
+        }).await?;
+        while let Some(x) = stream.next().await {
+            let x = x?;
+            println!("{:?}", x);
+        }
+        tokio::fs::remove_dir_all(temp_dir).await?;
+        Ok(())
     }
 
     pub async fn get_interactive(self, out_dir: Option<PathBuf>) -> Result<()> {
