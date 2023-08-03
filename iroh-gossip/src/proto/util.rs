@@ -114,6 +114,12 @@ pub(crate) struct IndexSet<T> {
     inner: indexmap::IndexSet<T>,
 }
 
+impl<T: Hash + Eq> PartialEq for IndexSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
 impl<T: Hash + Eq + PartialEq> IndexSet<T> {
     pub fn new() -> Self {
         Self {
@@ -228,6 +234,17 @@ impl<T> IntoIterator for IndexSet<T> {
     }
 }
 
+impl<T> FromIterator<T> for IndexSet<T>
+where
+    T: Hash + Eq,
+{
+    fn from_iter<I: IntoIterator<Item = T>>(iterable: I) -> Self {
+        IndexSet {
+            inner: indexmap::IndexSet::from_iter(iterable),
+        }
+    }
+}
+
 /// A [`BTreeMap`] with [`Instant`] as key. Allows to process expired items.
 #[derive(Debug)]
 pub struct TimerMap<T>(BTreeMap<Instant, Vec<T>>);
@@ -262,5 +279,39 @@ impl<T> TimerMap<T> {
     /// Get a reference to the earliest entry in the TimerMap
     pub fn first(&self) -> Option<(&Instant, &Vec<T>)> {
         self.0.iter().next()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use rand_core::SeedableRng;
+
+    use super::IndexSet;
+
+    #[test]
+    fn indexset() {
+        let elems = [1, 2, 3, 4];
+        let set = IndexSet::from_iter(elems);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+
+        let x = set.shuffled(&mut rng);
+        assert_eq!(x, vec![2, 1, 3, 4]);
+        let x = set.shuffled_and_capped(2, &mut rng);
+        assert_eq!(x, vec![2, 1]);
+        let x = set.shuffled_without(&[&1], &mut rng);
+        assert_eq!(x, vec![3, 2, 4]);
+        let x = set.shuffled_without_and_capped(&[&1], 2, &mut rng);
+        assert_eq!(x, vec![4, 3]);
+
+        let x = set.pick_random(&mut rng);
+        assert_eq!(x, Some(&4));
+        let x = set.pick_random(&mut rng);
+        assert_eq!(x, Some(&4));
+        let x = set.pick_random_without(&[&4], &mut rng);
+        assert_eq!(x, Some(&3));
+
+        let mut set = set;
+        set.remove_random(&mut rng);
+        assert_eq!(set, IndexSet::from_iter([1, 2, 4]));
     }
 }
