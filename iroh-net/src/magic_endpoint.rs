@@ -264,8 +264,10 @@ impl MagicEndpoint {
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, derp_region, known_addrs)
-            .await?;
+        if derp_region.is_some() || !known_addrs.is_empty() {
+            self.add_known_addrs(peer_id, derp_region, known_addrs)
+                .await?;
+        }
 
         let node_key: key::node::PublicKey = peer_id.into();
         let addr = self

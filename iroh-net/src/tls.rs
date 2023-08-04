@@ -98,8 +98,15 @@ impl From<SecretKey> for Keypair {
 ///
 /// The [`PeerId`] implements both `Display` and `FromStr` which can be used to
 /// (de)serialise to human-readable and relatively safely transferrable strings.
-#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize, Hash)]
 pub struct PeerId(PublicKey);
+
+impl PeerId {
+    /// Get this peer id as a byte array.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
+}
 
 impl From<PublicKey> for PeerId {
     fn from(key: PublicKey) -> Self {
