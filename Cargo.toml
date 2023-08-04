@@ -3,6 +3,7 @@ members = [
   "iroh",
   "iroh-net",
   "iroh-bytes",
+  "iroh-gossip",
   "iroh-metrics",
 ]
 
