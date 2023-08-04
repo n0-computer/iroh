@@ -207,7 +207,7 @@ impl BaoPartialMap for Database {
         })
     }
 
-    fn insert_complete_entry(&self, entry: Entry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, entry: Entry) -> BoxFuture<'_, io::Result<()>> {
         let hash = entry.hash.into();
         let Either::Right((temp_data_path, size)) = entry.entry.data else {
             todo!()
@@ -303,7 +303,7 @@ impl BaoMapEntry<Database> for Entry {
         }
     }
 
-    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 

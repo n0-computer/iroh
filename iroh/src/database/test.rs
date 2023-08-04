@@ -156,7 +156,7 @@ impl BaoMapEntry<Database> for Entry {
         self.data.len() as u64
     }
 
-    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 
@@ -201,7 +201,7 @@ impl BaoPartialMap for Database {
         None
     }
 
-    fn insert_complete_entry(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         unreachable!()
     }
 }
@@ -228,7 +228,7 @@ impl BaoMapEntry<Database> for PartialEntry {
         unreachable!()
     }
 
-    fn available(
+    fn available_ranges(
         &self,
     ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
         unreachable!()

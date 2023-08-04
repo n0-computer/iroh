@@ -869,7 +869,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         if let Some(mut of) = ofo {
             of.sync().await?;
         }
-        db.insert_complete_entry(entry).await?;
+        db.insert_complete(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)
@@ -922,7 +922,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         }
         // actually store the data. it is up to the db to decide if it wants to
         // rename the files or not.
-        db.insert_complete_entry(entry).await?;
+        db.insert_complete(entry).await?;
         // notify that we are done
         sender.send(ShareProgress::Done { id }).await?;
         Ok(end)

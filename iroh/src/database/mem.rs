@@ -201,7 +201,7 @@ impl BaoMapEntry<Database> for Entry {
         self.hash
     }
 
-    fn available(
+    fn available_ranges(
         &self,
     ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
@@ -233,7 +233,7 @@ impl BaoMapEntry<Database> for PartialEntry {
         self.hash
     }
 
-    fn available(
+    fn available_ranges(
         &self,
     ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
@@ -360,7 +360,7 @@ impl BaoPartialMap for Database {
         })
     }
 
-    fn insert_complete_entry(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         tracing::info!("insert_complete_entry {:#}", entry.hash());
         async move {
             let hash = entry.hash.into();

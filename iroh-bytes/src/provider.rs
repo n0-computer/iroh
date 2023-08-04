@@ -45,7 +45,7 @@ pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>>;
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>>;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
@@ -102,7 +102,7 @@ pub trait BaoPartialMap: BaoMap {
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
 
     /// Upgrade a partial entry to a complete entry
-    fn insert_complete_entry(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls
