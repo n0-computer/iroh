@@ -1,17 +1,18 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 #![cfg(feature = "cli")]
-use std::env;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::{env, io};
 
 use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
 use iroh::dial::Ticket;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -26,63 +27,6 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
     std::fs::write(path, content)?;
     Ok(hash.into())
 }
-
-// #[cfg(feature = "flat-db")]
-// /// Given a directory, make a partial download of it.
-// ///
-// /// Takes all files and splits them in half, and leaves the collection alone.
-// fn make_partial_download(out_dir: &Path) -> anyhow::Result<Hash> {
-//     println!("make_partial_download({:?})", out_dir);
-//     use iroh::database::flat::FileName;
-//     use std::collections::BTreeSet;
-
-//     let mut hashes = BTreeSet::new();
-//     let files = WalkDir::new(out_dir);
-//     for entry in files.into_iter() {
-//         let Ok(entry) = entry else { continue };
-//         if !entry.file_type().is_file() {
-//             continue;
-//         };
-//         let file = entry.path();
-//         let Some(name) = file.file_name() else { continue };
-//         let Some(name) = name.to_str() else { continue };
-//         let Ok(name) = FileName::from_str(&name) else { continue; };
-//         let FileName::Data(hash) = name else { continue };
-//         hashes.insert(hash);
-//     }
-//     println!("hashes: {:?}", hashes);
-//     // let temp_dir = out_dir.join(".iroh-tmp");
-//     // anyhow::ensure!(!temp_dir.exists());
-//     // std::fs::create_dir_all(&temp_dir)?;
-//     // let sources = create_data_sources(out_dir.to_owned())?;
-//     // let rt = tokio::runtime::Runtime::new().unwrap();
-//     // let (db, hash) = rt.block_on(create_collection(sources))?;
-//     // let db = db.to_inner();
-//     // for (hash, boc) in db {
-//     //     let text = blake3::Hash::from(hash).to_hex();
-//     //     let mut outboard_path = temp_dir.join(text.as_str());
-//     //     outboard_path.set_extension("outboard.part");
-//     //     let mut data_path = temp_dir.join(text.as_str());
-//     //     match boc {
-//     //         DbEntry::External { outboard, path, .. } => {
-//     //             data_path.set_extension("data.part");
-//     //             std::fs::write(outboard_path, outboard)?;
-//     //             std::fs::rename(path, &data_path)?;
-//     //             let file = std::fs::OpenOptions::new().write(true).open(&data_path)?;
-//     //             let len = file.metadata()?.len();
-//     //             file.set_len(len / 2)?;
-//     //             drop(file);
-//     //         }
-//     //         DbEntry::Internal { outboard, data } => {
-//     //             data_path.set_extension("data");
-//     //             std::fs::write(outboard_path, outboard)?;
-//     //             std::fs::write(data_path, data)?;
-//     //         }
-//     //     }
-//     // }
-//     // Ok(hash)
-//     todo!()
-// }
 
 #[test]
 fn cli_provide_one_file_basic() -> Result<()> {
@@ -145,32 +89,188 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(&dir, Input::Path, Output::Path)
 }
 
-// #[cfg(feature = "legacy-flat-db")]
-// #[test]
-// fn cli_provide_tree_resume() -> Result<()> {
-//     let dir = testdir!().join("src");
-//     std::fs::create_dir(&dir)?;
-//     let foo_path = dir.join("foo");
-//     let bar_path = dir.join("bar");
-//     let file1 = foo_path.join("file1");
-//     let file2 = bar_path.join("file2");
-//     let file3 = bar_path.join("file3");
-//     std::fs::create_dir(&foo_path)?;
-//     std::fs::create_dir(&bar_path)?;
-//     make_rand_file(10000, &file1)?;
-//     make_rand_file(100000, &file2)?;
-//     make_rand_file(5000, &file3)?;
-//     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
-//     let tmp = testdir!();
-//     let out = tmp.join("out");
-//     test_provide_get_loop(&dir, Input::Path, Output::Custom(out.clone()))?;
-//     // turn the output into a partial download
-//     let _hash = make_partial_download(&out)?;
-//     // resume the download
-//     test_provide_get_loop(&dir, Input::Path, Output::Custom(out))?;
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    std::fs::create_dir_all(&dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            let to = dst.as_ref().join(entry.file_name());
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
+}
 
-//     Ok(())
-// }
+#[cfg(feature = "flat-db")]
+/// What do to with a file pair when making partial files
+enum MakePartialResult {
+    /// leave the file as is
+    Retain,
+    /// remove it entirely
+    Remove,
+    /// truncate the data file to the given size
+    Truncate(u64),
+}
+
+/// take an iroh_data_dir containing a flat file database and convert some of the files to partial files
+///
+/// Note that this assumes that both complete and partial files are in the same directory
+#[cfg(feature = "flat-db")]
+fn make_partial(
+    dir: impl AsRef<Path>,
+    op: impl Fn(Hash, u64) -> MakePartialResult,
+) -> io::Result<()> {
+    use iroh::database::flat::FileName;
+    let dir = dir.as_ref();
+    let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Ok(name) = iroh::database::flat::FileName::from_str(name) else { continue };
+        match name {
+            iroh::database::flat::FileName::Data(hash) => {
+                let data = files.entry(hash).or_default();
+                data.0 = Some(entry.metadata()?.len());
+            }
+            iroh::database::flat::FileName::Outboard(hash) => {
+                let data = files.entry(hash).or_default();
+                data.1 = true;
+            }
+            _ => continue,
+        }
+    }
+    files.retain(|_hash, (size, _ob)| size.is_some());
+    for (hash, (size, ob)) in files {
+        match op(hash, size.unwrap()) {
+            MakePartialResult::Retain => {}
+            MakePartialResult::Remove => {
+                let src = dir.join(FileName::Data(hash).to_string());
+                std::fs::remove_file(src)?;
+                if ob {
+                    let src = dir.join(FileName::Outboard(hash).to_string());
+                    std::fs::remove_file(src)?;
+                }
+            }
+            MakePartialResult::Truncate(truncated_size) => {
+                let uuid = rand::thread_rng().gen();
+                let src = dir.join(FileName::Data(hash).to_string());
+                let tgt = dir.join(FileName::PartialData(hash, uuid).to_string());
+                std::fs::rename(src, &tgt)?;
+                let file = std::fs::OpenOptions::new().write(true).open(tgt)?;
+                file.set_len(truncated_size)?;
+                drop(file);
+                if ob {
+                    let src = dir.join(FileName::Outboard(hash).to_string());
+                    let tgt = dir.join(FileName::PartialOutboard(hash, uuid).to_string());
+                    std::fs::rename(src, tgt)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "flat-db")]
+#[test]
+fn cli_provide_tree_resume() -> Result<()> {
+    /// Get all matches for match group 1 (an explicitly defined match group)
+    fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
+        matches
+            .iter()
+            .filter_map(|(_, m)| m.get(1).cloned())
+            .collect::<Vec<_>>()
+    }
+
+    let tmp = testdir!();
+    let src = tmp.join("src");
+    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    let tgt = tmp.join("tgt");
+    let tgt_work_dir = tmp.join(".iroh-tmp");
+    std::fs::create_dir(&src)?;
+    let foo_path = src.join("foo");
+    let bar_path = src.join("bar");
+    let file1 = foo_path.join("file1");
+    let file2 = bar_path.join("file2");
+    let file3 = bar_path.join("file3");
+    std::fs::create_dir(&foo_path)?;
+    std::fs::create_dir(&bar_path)?;
+    make_rand_file(10000, &file1)?;
+    make_rand_file(100000, &file2)?;
+    make_rand_file(5000, &file3)?;
+    // leave the provider running for the entire test
+    let provider = make_provider_in(&src_iroh_data_dir, &src, Input::Path, None, None)?;
+    let count = count_input_files(&src);
+    let ticket = match_provide_output(&provider, count)?;
+    // first test - empty work dir
+    {
+        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["112.84 KiB"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
+
+    // second test - full work dir
+    {
+        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["0B"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
+
+    // third test - partial work dir - remove some large files
+    {
+        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        make_partial(&tgt_work_dir, |_hash, size| {
+            if size == 100000 {
+                MakePartialResult::Remove
+            } else {
+                MakePartialResult::Retain
+            }
+        })?;
+        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["98.04 KiB"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
+
+    // fourth test - partial work dir - truncate some large files
+    {
+        copy_dir_all(&src_iroh_data_dir, &tgt_work_dir)?;
+        make_partial(tgt_work_dir, |_hash, size| {
+            if size == 100000 {
+                MakePartialResult::Truncate(1024 * 32)
+            } else {
+                MakePartialResult::Retain
+            }
+        })?;
+        let get = make_get_cmd(&ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["65.98 KiB"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
+    drop(provider);
+    Ok(())
+}
 
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
@@ -257,11 +357,10 @@ fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
     make_rand_file(1000, &path)?;
-    let input = Input::Path;
 
-    let mut provider = make_provider(&path, &input, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
+    let mut provider = spawn_provider(&path, Input::Path, Some("127.0.0.1:4333"), Some(RPC_PORT))?;
     // wait for the provider to start
-    let _all_in_one = match_provide_output(&mut provider, 1)?;
+    let _ticket = match_provide_output(&mut provider, 1)?;
 
     // test output
     let get_output = cmd(iroh_bin(), ["addresses", "--rpc-port", RPC_PORT])
@@ -316,15 +415,15 @@ fn iroh_bin() -> &'static str {
     env!("CARGO_BIN_EXE_iroh")
 }
 
-/// Makes a provider process with it's home directory in `testdir!()`.
-fn make_provider(
+/// Makes a provider process with it's home directory in `iroh_data_dir`.
+fn make_provider_in(
+    iroh_data_dir: &Path,
     path: &Path,
-    input: &Input,
+    input: Input,
     addr: Option<&str>,
     rpc_port: Option<&str>,
 ) -> Result<ReaderHandle> {
     // spawn a provider & optionally provide from stdin
-    let home = testdir!();
     let res = cmd(
         iroh_bin(),
         [
@@ -339,7 +438,7 @@ fn make_provider(
     .stderr_null()
     // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
     .env("RUST_LOG", "debug")
-    .env("IROH_DATA_DIR", home.join("iroh_data_dir"));
+    .env("IROH_DATA_DIR", &iroh_data_dir);
 
     let provider = match input {
         Input::Stdin => res.stdin_path(path),
@@ -349,6 +448,59 @@ fn make_provider(
 
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
     Ok(provider)
+}
+
+/// Makes a provider process with it's home directory in `testdir!()`.
+fn spawn_provider(
+    path: &Path,
+    input: Input,
+    addr: Option<&str>,
+    rpc_port: Option<&str>,
+) -> Result<ReaderHandle> {
+    let home = testdir!();
+    let iroh_data_dir = home.join("iroh_data_dir");
+    make_provider_in(&iroh_data_dir, path, input, addr, rpc_port)
+}
+
+/// Count the number of files in the given path, for matching the output text in
+/// [match_provide_output]
+fn count_input_files(path: impl AsRef<Path>) -> usize {
+    let path = path.as_ref();
+    if path.is_dir() {
+        WalkDir::new(path)
+            .into_iter()
+            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
+            .count()
+    } else {
+        1
+    }
+}
+
+/// Translate output into an optional out path
+fn to_out_dir(output: Output) -> Option<PathBuf> {
+    match output {
+        Output::Path => {
+            let dir = testdir!();
+            Some(dir.join("out"))
+        }
+        Output::Custom(out) => Some(out),
+        Output::Stdout => None,
+    }
+}
+
+/// Create a get command given a ticket and an output mode
+fn make_get_cmd(ticket: &str, out: Option<PathBuf>) -> duct::Expression {
+    // create a `get-ticket` cmd & optionally provide out path
+    if let Some(ref out) = out {
+        cmd(
+            iroh_bin(),
+            ["get", "--ticket", ticket, "--out", out.to_str().unwrap()],
+        )
+    } else {
+        cmd(iroh_bin(), ["get", "--ticket", ticket])
+    }
+    .stdout_capture()
+    .stderr_capture()
 }
 
 /// Test the provide and get loop for success, stderr output, and file contents.
@@ -361,58 +513,24 @@ fn make_provider(
 /// regex output. Finally, test the content fetched from the "get" process is the same as
 /// the "provided" content.
 fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
-    let out = match output {
-        Output::Stdout => None,
-        Output::Path => {
-            let dir = testdir!();
-            Some(dir.join("out"))
-        }
-        Output::Custom(out) => Some(out),
-    };
+    let num_blobs = count_input_files(path);
+    let mut provider = spawn_provider(path, input, None, None)?;
 
-    let num_blobs = if path.is_dir() {
-        WalkDir::new(path)
-            .into_iter()
-            .filter_map(|x| x.ok().filter(|x| x.file_type().is_file()))
-            .count()
-    } else {
-        1
-    };
-
-    let mut provider = make_provider(path, &input, None, None)?;
-
-    // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(&mut provider, num_blobs)?;
-
-    // create a `get-ticket` cmd & optionally provide out path
-    let cmd = if let Some(ref out) = out {
-        cmd(
-            iroh_bin(),
-            [
-                "get",
-                "--ticket",
-                &all_in_one,
-                "--out",
-                out.to_str().unwrap(),
-            ],
-        )
-    } else {
-        cmd(iroh_bin(), ["get", "--ticket", &all_in_one])
-    }
-    .stdout_capture()
-    .stderr_capture();
+    // test provide output & scrape the ticket from stderr
+    let ticket = match_provide_output(&mut provider, num_blobs)?;
+    let out_dir = to_out_dir(output);
+    let get_cmd = make_get_cmd(&ticket, out_dir.clone());
 
     // test get stderr output
-    let get_output = cmd.unchecked().run()?;
+    let get_output = get_cmd.unchecked().run()?;
     drop(provider);
 
     // checking the output first, so you can still view any logging
-    assert!(!get_output.stderr.is_empty());
     match_get_stderr(get_output.stderr)?;
     assert!(get_output.status.success());
 
     // test output
-    match out {
+    match out_dir {
         None => {
             assert!(!get_output.stdout.is_empty());
             let expect_content = std::fs::read(path)?;
@@ -454,10 +572,10 @@ fn test_provide_get_loop_single(
         1
     };
 
-    let mut provider = make_provider(path, &input, None, None)?;
+    let mut provider = spawn_provider(path, input, None, None)?;
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_output(&mut provider, num_blobs)?;
-    let ticket = Ticket::from_str(&all_in_one).unwrap();
+    let ticket = match_provide_output(&mut provider, num_blobs)?;
+    let ticket = Ticket::from_str(&ticket).unwrap();
     let addrs = ticket
         .addrs()
         .iter()
@@ -502,9 +620,6 @@ fn test_provide_get_loop_single(
             assert_eq!(expect_content, content);
         }
     };
-
-    // assert!(!get_output.stderr.is_empty());
-    // match_get_stderr(get_output.stderr)
     Ok(())
 }
 
@@ -540,27 +655,25 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 /// Looks for regex matches on stderr output for the getter.
 ///
 /// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
-fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
-    println!("get stderr\n{}", String::from_utf8_lossy(&stderr[..]));
-    let stderr = std::io::BufReader::new(&stderr[..]);
-    assert_matches_line(
-        stderr,
+fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
+    let captures = assert_matches_line(
+        std::io::Cursor::new(stderr),
         [
             (r"Fetching: [\da-z]{59}", 1),
             (r"\[1/3\] Connecting ...", 1),
             (r"\[2/3\] Requesting ...", 1),
             (r"\[3/3\] Downloading ...", 1),
             (
-                r"\d* file\(s\) with total transfer size [\d.]* ?(B|KiB|MiB|GiB|TiB)",
+                r"\d* file\(s\) with total transfer size [\d.]* ?(?:B|KiB|MiB|GiB|TiB)",
                 1,
             ),
             (
-                r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d* ?(B|KiB|MiB|GiB|TiB)/s",
+                r"Transferred (\d*.?\d*? ?[BKMGT]i?B?) in \d* seconds?, \d*.?\d* ?(?:B|KiB|MiB|GiB|TiB)/s",
                 1,
             ),
         ],
     );
-    Ok(())
+    Ok(captures)
 }
 
 /// Asserts provider output, returning the all-in-one ticket.
@@ -591,7 +704,9 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
     );
 
     // return the capture of the all in one ticket, should be the last capture
-    caps.pop().context("Expected at least one capture.")
+    let (_, mut last) = caps.pop().context("Expected at least one capture.")?;
+    let ticket = last.pop().context("expected ticket")?;
+    Ok(ticket)
 }
 
 /// Ensures each line of the first expression matches the regex of each following expression. Each
@@ -613,14 +728,14 @@ fn match_provide_output<T: Read>(reader: T, num_blobs: usize) -> Result<String> 
 ///         (r"\d{2}/\d{2}/\d{4}", 3),
 ///     ]);
 /// ```
-fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<String>
+fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<(usize, Vec<String>)>
 where
     I: IntoIterator<Item = (&'static str, i64)>,
 {
     let mut lines = reader.lines().peekable();
     let mut caps = Vec::new();
 
-    for (regex_str, num_matches) in expressions {
+    for (ei, (regex_str, num_matches)) in expressions.into_iter().enumerate() {
         let rx = Regex::new(regex_str).expect("invalid regex");
         let mut matches = 0;
 
@@ -633,10 +748,11 @@ where
                 Some(Ok(line)) => {
                     println!("|{}", line);
 
+                    let mut line_caps = Vec::new();
                     if let Some(cap) = rx.captures(line) {
                         for i in 0..cap.len() {
                             if let Some(capture_group) = cap.get(i) {
-                                caps.push(capture_group.as_str().to_string());
+                                line_caps.push(capture_group.as_str().to_string());
                             }
                         }
 
@@ -644,6 +760,7 @@ where
                     } else {
                         break;
                     }
+                    caps.push((ei, line_caps));
                 }
                 Some(Err(err)) => {
                     panic!("Error from reader: {err:#}");
