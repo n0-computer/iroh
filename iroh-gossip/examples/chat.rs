@@ -357,8 +357,7 @@ fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {
         None => "None".to_string(),
         Some(map) => map
-            .regions
-            .values()
+            .regions()
             .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
             .collect::<Vec<_>>()
             .join(", "),
