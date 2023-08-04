@@ -13,8 +13,9 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{baomap::Store, protocol::RequestToken, util::runtime};
+use iroh_bytes::{baomap::Store as BaoStore, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
+use iroh_sync::store::Store as DocStore;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
@@ -25,6 +26,10 @@ use super::{
     add::{aggregate_add_response, print_add_response},
     MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
 };
+
+/// File name inside `IROH_DATA_DIR` where docs stored.
+/// TODO: Move some other place
+pub const DOCS_PATH: &str = "docs";
 
 #[derive(Debug)]
 pub struct ProvideOptions {
@@ -62,9 +67,12 @@ pub async fn run(
                 iroh_data_root.display()
             )
         })?;
+
+    let store = iroh_sync::store::fs::Store::new(iroh_data_root.join(DOCS_PATH))?;
+
     let key = Some(iroh_data_root.join("keypair"));
     let token = opts.request_token.clone();
-    let provider = provide(db.clone(), rt, key, opts).await?;
+    let provider = provide(db.clone(), store, rt, key, opts).await?;
     let controller = provider.controller();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -131,15 +139,16 @@ pub async fn run(
     Ok(())
 }
 
-async fn provide<D: Store>(
-    db: D,
+async fn provide<B: BaoStore, D: DocStore>(
+    bao_store: B,
+    doc_store: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<D>> {
+) -> Result<Node<B, D>> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = Node::builder(db)
+    let mut builder = Node::builder(bao_store, doc_store)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);

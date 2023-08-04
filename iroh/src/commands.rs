@@ -12,7 +12,6 @@ use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
 use iroh_net::tls::{Keypair, PeerId};
 use quic_rpc::transport::quinn::QuinnConnection;
-use quic_rpc::RpcClient;
 
 use crate::config::Config;
 
@@ -28,7 +27,12 @@ pub mod doctor;
 pub mod get;
 pub mod list;
 pub mod provide;
+pub mod sync;
 pub mod validate;
+
+/// RPC client to an iroh node.
+pub type RpcClient =
+    quic_rpc::RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// Send data.
 ///
@@ -216,6 +220,10 @@ impl Cli {
                 Ok(())
             }
             Commands::Doctor { command } => self::doctor::run(command, config).await,
+            Commands::Sync { command, rpc_port } => {
+                let client = make_rpc_client(rpc_port).await?;
+                command.run(client).await
+            }
         }
     }
 }
@@ -390,18 +398,22 @@ pub enum Commands {
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
     },
+    Sync {
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
+        #[clap(subcommand)]
+        command: sync::Commands,
+    },
 }
 
-async fn make_rpc_client(
-    rpc_port: u16,
-) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
-{
+async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
     let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
-    let client = RpcClient::<ProviderService, _>::new(connection);
+    let client = RpcClient::new(connection);
     // Do a version request to check if the server is running.
     let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
         .await

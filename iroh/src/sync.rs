@@ -19,6 +19,7 @@ pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 mod engine;
 mod live;
 pub mod metrics;
+pub mod rpc;
 
 pub use engine::*;
 pub use live::*;
