@@ -8,6 +8,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -28,12 +29,15 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
+use iroh_gossip::net::{GossipHandle, GOSSIP_ALPN};
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
     tls::{self, Keypair, PeerId},
     MagicEndpoint,
 };
+use iroh_sync::store::Store;
+use once_cell::sync::OnceCell;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -45,11 +49,13 @@ use tracing::{debug, trace};
 
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    AddrsRequest, AddrsResponse, AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest,
+    AuthorListResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
+    ProviderResponse, ProviderService, RpcResult, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
+use crate::sync::{node::SyncNode, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -72,9 +78,14 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
-where
+pub struct Builder<
+    D,
+    S = iroh_sync::store::memory::Store,
+    E = DummyServerEndpoint,
+    C = NoCollectionParser,
+> where
     D: BaoMap,
+    S: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -88,9 +99,10 @@ where
     derp_map: Option<DerpMap>,
     collection_parser: C,
     rt: Option<runtime::Handle>,
+    docs: (S, Option<PathBuf>),
 }
 
-const PROTOCOLS: [&[u8]; 1] = [&iroh_bytes::protocol::ALPN];
+const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
 /// A noop authorization handler that does not do any authorization.
 ///
@@ -131,9 +143,9 @@ impl CustomGetHandler for NoopCustomGetHandler {
     }
 }
 
-impl<D: BaoMap> Builder<D> {
+impl<D: BaoMap, S: Store> Builder<D, S> {
     /// Creates a new builder for [`Node`] using the given database.
-    fn with_db(db: D) -> Self {
+    fn with_db_and_store(db: D, store: S, blobs_path: PathBuf) -> Self {
         Self {
             bind_addr: DEFAULT_BIND_ADDR.into(),
             keypair: Keypair::generate(),
@@ -145,13 +157,15 @@ impl<D: BaoMap> Builder<D> {
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
             rt: None,
+            docs: (store, Some(blobs_path)),
         }
     }
 }
 
-impl<D, E, C> Builder<D, E, C>
+impl<D, S, E, C> Builder<D, S, E, C>
 where
     D: BaoReadonlyDb,
+    S: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -159,7 +173,7 @@ where
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
         self,
         value: E2,
-    ) -> Builder<D, E2, C> {
+    ) -> Builder<D, S, E2, C> {
         // we can't use ..self here because the return type is different
         Builder {
             bind_addr: self.bind_addr,
@@ -172,6 +186,7 @@ where
             derp_map: self.derp_map,
             collection_parser: self.collection_parser,
             rt: self.rt,
+            docs: self.docs,
         }
     }
 
@@ -179,7 +194,7 @@ where
     pub fn collection_parser<C2: CollectionParser>(
         self,
         collection_parser: C2,
-    ) -> Builder<D, E, C2> {
+    ) -> Builder<D, S, E, C2> {
         // we can't use ..self here because the return type is different
         Builder {
             collection_parser,
@@ -192,6 +207,7 @@ where
             rpc_endpoint: self.rpc_endpoint,
             derp_map: self.derp_map,
             rt: self.rt,
+            docs: self.docs,
         }
     }
 
@@ -254,7 +270,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node<D>> {
+    pub async fn spawn(self) -> Result<Node<D, S>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
 
@@ -263,6 +279,10 @@ where
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
+
+        // init a cell that will hold our gossip handle to be used in endpoint callbacks
+        let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+        let gossip_cell2 = gossip_cell.clone();
 
         let endpoint = MagicEndpoint::builder()
             .keypair(self.keypair.clone())
@@ -275,6 +295,11 @@ where
                 if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
                     endpoints_update_s.send(()).ok();
                 }
+
+                // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                if let Some(gossip) = gossip_cell2.get() {
+                    gossip.update_endpoints(eps).ok();
+                }
             }))
             .bind(self.bind_addr.port())
             .await?;
@@ -285,6 +310,15 @@ where
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+
+        // initialize the gossip protocol
+        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+        // insert into the gossip cell to be used in the endpoint callbacks above
+        gossip_cell.set(gossip.clone()).unwrap();
+
+        // spawn the sync engine
+        // let blobs = BlobStore::new(rt.clone(), blobs_path, endpoint.clone());
+        let sync = SyncNode::spawn(rt.clone(), self.docs.0, endpoint.clone(), gossip.clone());
 
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
@@ -299,6 +333,7 @@ where
             callbacks: callbacks.clone(),
             cb_sender,
             rt,
+            sync,
         });
         let task = {
             let handler = RpcHandler {
@@ -317,6 +352,7 @@ where
                     self.auth_handler,
                     self.collection_parser,
                     rt3,
+                    gossip,
                 )
                 .await
             })
@@ -342,13 +378,14 @@ where
         server: MagicEndpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
-        handler: RpcHandler<D, C>,
+        handler: RpcHandler<D, S, C>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         custom_get_handler: Arc<dyn CustomGetHandler>,
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
         collection_parser: C,
         rt: runtime::Handle,
+        gossip: GossipHandle,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -360,6 +397,11 @@ where
             );
         }
         let cancel_token = handler.inner.cancel_token.clone();
+
+        // forward our initial endpoints to the gossip protocol
+        if let Ok(local_endpoints) = server.local_endpoints().await {
+            gossip.update_endpoints(&local_endpoints).ok();
+        }
 
         loop {
             tokio::select! {
@@ -485,13 +527,13 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoMap> {
-    inner: Arc<NodeInner<D>>,
+pub struct Node<D: BaoMap, S: Store> {
+    inner: Arc<NodeInner<D, S>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
 
 #[derive(derive_more::Debug)]
-struct NodeInner<D> {
+struct NodeInner<D, S: Store> {
     db: D,
     endpoint: MagicEndpoint,
     keypair: Keypair,
@@ -502,6 +544,7 @@ struct NodeInner<D> {
     #[allow(dead_code)]
     callbacks: Callbacks,
     rt: runtime::Handle,
+    sync: SyncNode<S>,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -511,12 +554,12 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoReadonlyDb> Node<D> {
+impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder(db: D) -> Builder<D> {
-        Builder::with_db(db)
+    pub fn builder(db: D, store: S, blobs_path: PathBuf) -> Builder<D, S> {
+        Builder::with_db_and_store(db, store, blobs_path)
     }
 
     /// The address on which the node socket is bound.
@@ -594,7 +637,7 @@ impl<D: BaoReadonlyDb> Node<D> {
     }
 }
 
-impl<D: BaoMap> NodeInner<D> {
+impl<D: BaoMap, S: Store> NodeInner<D, S> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -615,7 +658,7 @@ impl<D: BaoMap> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoMap> Future for Node<D> {
+impl<D: BaoMap, S: Store> Future for Node<D, S> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -624,12 +667,12 @@ impl<D: BaoMap> Future for Node<D> {
 }
 
 #[derive(Debug, Clone)]
-struct RpcHandler<D, C> {
-    inner: Arc<NodeInner<D>>,
+struct RpcHandler<D, S: Store, C> {
+    inner: Arc<NodeInner<D, S>>,
     collection_parser: C,
 }
 
-impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
+impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -803,16 +846,30 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
             ))
         })
     }
+
+    pub fn author_create(self, req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
+        let res = self.inner.sync.author_create(req)?;
+        Ok(res)
+    }
+
+    /// todo
+    pub fn author_list(
+        self,
+        req: AuthorListRequest,
+    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
+        self.inner.sync.author_list(req)
+    }
 }
 
 fn handle_rpc_request<
     D: BaoReadonlyDb,
+    S: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 >(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
-    handler: &RpcHandler<D, C>,
+    handler: &RpcHandler<D, S, C>,
     rt: &runtime::Handle,
 ) {
     let handler = handler.clone();
@@ -840,6 +897,28 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::validate)
                     .await
             }
+            PeerAdd(_msg) => todo!(),
+            PeerList(_msg) => todo!(),
+            AuthorList(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::author_list)
+                    .await
+            }
+            AuthorCreate(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.author_create(req)
+                })
+                .await
+            }
+            AuthorImport(_msg) => todo!(),
+            AuthorShare(_msg) => todo!(),
+            DocsList(_msg) => todo!(),
+            DocsCreate(_msg) => todo!(),
+            DocsImport(_msg) => todo!(),
+            DocSet(_msg) => todo!(),
+            DocGet(_msg) => todo!(),
+            DocList(_msg) => todo!(),
+            DocJoin(_msg) => todo!(),
+            DocShare(_msg) => todo!(),
         }
     });
 }

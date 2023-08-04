@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
 //! RPC using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
@@ -13,13 +15,20 @@ use derive_more::{From, TryInto};
 use iroh_bytes::Hash;
 use iroh_net::tls::PeerId;
 
+use iroh_sync::sync::{Author, AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+pub use iroh_bytes::{
+    provider::{ProvideProgress, ValidateProgress},
+    util::RpcResult,
+};
+
+/// A 32-byte key or token
+pub type KeyBytes = [u8; 32];
 
 /// A request to the node to provide the data at the given path
 ///
@@ -187,6 +196,269 @@ pub struct VersionResponse {
     pub version: String,
 }
 
+// peer
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PeerAddRequest {
+    pub peer_id: PeerId,
+    pub addrs: Vec<SocketAddr>,
+    pub region: Option<u16>,
+}
+
+impl RpcMsg<ProviderService> for PeerAddRequest {
+    type Response = PeerAddResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PeerAddResponse {}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PeerListRequest {}
+
+impl Msg<ProviderService> for PeerListRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for PeerListRequest {
+    type Response = PeerListResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PeerListResponse {
+    pub peer_id: PeerId,
+}
+
+// author
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorListRequest {}
+
+impl Msg<ProviderService> for AuthorListRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for AuthorListRequest {
+    type Response = RpcResult<AuthorListResponse>;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorListResponse {
+    pub author_id: AuthorId,
+    pub writable: bool,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorCreateRequest;
+
+impl RpcMsg<ProviderService> for AuthorCreateRequest {
+    type Response = RpcResult<AuthorCreateResponse>;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorCreateResponse {
+    pub author_id: AuthorId,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorImportRequest {
+    // either a public or private key
+    pub key: KeyBytes,
+}
+
+impl RpcMsg<ProviderService> for AuthorImportRequest {
+    type Response = AuthorImportResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorImportResponse {
+    pub author_id: AuthorId,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorShareRequest {
+    pub author: AuthorId,
+    pub mode: ShareMode,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
+pub enum ShareMode {
+    /// Read-only access
+    Read,
+    /// Write access
+    Write,
+}
+
+impl RpcMsg<ProviderService> for AuthorShareRequest {
+    type Response = AuthorShareResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorShareResponse {
+    pub key: KeyBytes,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsListRequest {}
+
+impl Msg<ProviderService> for DocsListRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocsListRequest {
+    type Response = DocsListResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsListResponse {
+    pub id: NamespaceId,
+    pub writable: bool,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsCreateRequest {}
+
+impl RpcMsg<ProviderService> for DocsCreateRequest {
+    type Response = DocsCreateResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsCreateResponse {
+    pub id: NamespaceId,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsImportRequest {
+    // either a public or private key
+    pub key: KeyBytes,
+    pub peers: Vec<PeerId>,
+}
+
+impl RpcMsg<ProviderService> for DocsImportRequest {
+    type Response = DocsImportResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocsImportResponse {
+    pub id: NamespaceId,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocShareRequest {
+    pub doc: NamespaceId,
+    pub mode: ShareMode,
+}
+
+impl RpcMsg<ProviderService> for DocShareRequest {
+    type Response = DocShareResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocShareResponse {
+    pub key: KeyBytes,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocJoinRequest {
+    pub doc: NamespaceId,
+    pub peer: PeerId,
+}
+
+impl RpcMsg<ProviderService> for DocJoinRequest {
+    type Response = DocJoinResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocJoinResponse {}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetRequest {
+    pub doc: NamespaceId,
+    pub author: AuthorId,
+    pub key: Vec<u8>,
+    // todo: different forms to supply value
+    pub value: Vec<u8>,
+}
+
+impl RpcMsg<ProviderService> for DocSetRequest {
+    type Response = DocSetResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocSetResponse {
+    pub entry: SignedEntry,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetRequest {
+    pub doc: NamespaceId,
+    pub author: Option<AuthorId>,
+    pub key: Vec<u8>,
+    pub prefix: bool,
+}
+
+impl Msg<ProviderService> for DocGetRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocGetRequest {
+    type Response = DocGetResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetResponse {
+    pub entry: SignedEntry,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocListRequest {
+    pub doc: NamespaceId,
+    pub author: Option<Author>,
+    pub prefix: Option<String>,
+    pub latest: bool,
+}
+
+impl Msg<ProviderService> for DocListRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocListRequest {
+    type Response = DocListResponse;
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocListResponse {
+    pub entry: SignedEntry,
+}
+
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
 pub struct ProviderService;
@@ -204,6 +476,24 @@ pub enum ProviderRequest {
     Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
     Validate(ValidateRequest),
+
+    PeerAdd(PeerAddRequest),
+    PeerList(PeerListRequest),
+
+    AuthorList(AuthorListRequest),
+    AuthorCreate(AuthorCreateRequest),
+    AuthorImport(AuthorImportRequest),
+    AuthorShare(AuthorShareRequest),
+
+    DocsList(DocsListRequest),
+    DocsCreate(DocsCreateRequest),
+    DocsImport(DocsImportRequest),
+
+    DocSet(DocSetRequest),
+    DocGet(DocGetRequest),
+    DocList(DocListRequest),
+    DocJoin(DocJoinRequest),   // DocGetContent(DocGetContentRequest),
+    DocShare(DocShareRequest), // DocGetContent(DocGetContentRequest),
 }
 
 /// The response enum, listing all possible responses.
@@ -219,6 +509,27 @@ pub enum ProviderResponse {
     Addrs(AddrsResponse),
     Validate(ValidateProgress),
     Shutdown(()),
+
+    // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
+    // with the subject in front if there's many commands
+    PeerAdd(PeerAddResponse),
+    PeerList(PeerListResponse),
+
+    AuthorList(RpcResult<AuthorListResponse>),
+    AuthorCreate(RpcResult<AuthorCreateResponse>),
+    AuthorImport(AuthorImportResponse),
+    AuthorShare(AuthorShareResponse),
+
+    DocsList(DocsListResponse),
+    DocsCreate(DocsCreateResponse),
+    DocsImport(DocsImportResponse),
+
+    DocSet(DocSetResponse),
+    DocGet(DocGetResponse),
+    DocList(DocListResponse),
+    DocJoin(DocJoinResponse),
+    DocShare(DocShareResponse),
+    // DocGetContent(DocGetContentResponse),
 }
 
 impl Service for ProviderService {

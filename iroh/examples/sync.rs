@@ -229,7 +229,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let docs = DocStore::new(blobs.clone(), author, docs_path)?;
 
     // create the live syncer
-    let live_sync = LiveSync::<store::fs::Store>::spawn(endpoint.clone(), gossip.clone());
+    let live_sync =
+        LiveSync::<store::fs::Store>::spawn(rt.clone(), endpoint.clone(), gossip.clone());
 
     // construct the state that is passed to the endpoint loop and from there cloned
     // into to the connection handler task for incoming connections.

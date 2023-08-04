@@ -19,6 +19,7 @@ bytes = "1"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"
 futures = "0.3.25"
+genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
 iroh-io = { version = "0.2.1" }
 iroh-net = { version = "0.5.1", path = "../iroh-net" }
@@ -28,6 +29,7 @@ num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 iroh-sync = { version = "0.5.1", path = "../iroh-sync" }
 iroh-gossip = { version = "0.5.1", path = "../iroh-gossip" }
+once_cell = "1.18.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
@@ -54,7 +56,6 @@ data-encoding = "2.4.0"
 url = { version = "2.4", features = ["serde"] }
 
 # Examples
-once_cell = { version = "1.18.0", optional = true }
 ed25519-dalek = { version = "=2.0.0-rc.3", features = ["serde", "rand_core"], optional = true }
 shell-words = { version = "1.1.0", optional = true }
 shellexpand = { version = "3.1.0", optional = true }
@@ -69,7 +70,7 @@ flat-db = []
 mem-db = []
 iroh-collection = []
 test = []
-example-sync = ["cli", "ed25519-dalek", "once_cell", "shell-words", "shellexpand", "sync", "rustyline"]
+example-sync = ["cli", "ed25519-dalek", "shell-words", "shellexpand", "sync", "rustyline"]
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

@@ -7,6 +7,7 @@ use futures::{
     stream::{BoxStream, FuturesUnordered, StreamExt},
     FutureExt, TryFutureExt,
 };
+use iroh_bytes::util::runtime::Handle;
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -64,10 +65,10 @@ pub struct LiveSync<S: store::Store> {
 }
 
 impl<S: store::Store> LiveSync<S> {
-    pub fn spawn(endpoint: MagicEndpoint, gossip: Gossip) -> Self {
+    pub fn spawn(rt: Handle, endpoint: MagicEndpoint, gossip: Gossip) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
         let mut actor = Actor::new(endpoint, gossip, to_actor_rx);
-        let task = tokio::spawn(async move {
+        let task = rt.main().spawn(async move {
             if let Err(err) = actor.run().await {
                 error!("live sync failed: {err:?}");
             }

@@ -25,6 +25,9 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>>;
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>>;
     fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author>;
+
+    // TODO: return iterator
+    fn list_authors(&self) -> Result<Vec<Author>>;
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>>;
 
     /// Gets all entries matching this key and author.

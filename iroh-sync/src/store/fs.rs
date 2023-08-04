@@ -128,6 +128,21 @@ impl super::Store for Store {
         Ok(author)
     }
 
+    /// Generates a new author, using the passed in randomness.
+    fn list_authors(&self) -> Result<Vec<Author>> {
+        let read_tx = self.db.begin_read()?;
+        let author_table = read_tx.open_table(AUTHORS_TABLE)?;
+
+        let mut authors = vec![];
+        let iter = author_table.iter()?;
+        for entry in iter {
+            let (_key, value) = entry?;
+            let author = Author::from_bytes(value.value());
+            authors.push(author);
+        }
+        Ok(authors)
+    }
+
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<Self::Instance>> {
         let id = namespace.id();
         self.insert_namespace(namespace.clone())?;

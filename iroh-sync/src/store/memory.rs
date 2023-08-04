@@ -48,6 +48,10 @@ impl super::Store for Store {
         Ok(author)
     }
 
+    fn list_authors(&self) -> Result<Vec<Author>> {
+        Ok(self.authors.read().values().cloned().collect())
+    }
+
     fn new_replica(&self, namespace: Namespace) -> Result<Replica<ReplicaStoreInstance>> {
         let id = namespace.id();
         let replica = Replica::new(namespace, ReplicaStoreInstance::new(id, self.clone()));

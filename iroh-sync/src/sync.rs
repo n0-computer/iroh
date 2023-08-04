@@ -130,6 +130,18 @@ impl FromStr for Author {
     }
 }
 
+impl FromStr for AuthorId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pub_key: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
+        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
+        Ok(AuthorId(pub_key))
+    }
+}
+
 impl From<SigningKey> for Author {
     fn from(priv_key: SigningKey) -> Self {
         Self { priv_key }
