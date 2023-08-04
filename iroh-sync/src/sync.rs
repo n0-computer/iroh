@@ -142,6 +142,18 @@ impl FromStr for AuthorId {
     }
 }
 
+impl FromStr for NamespaceId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pub_key: [u8; 32] = hex::decode(s)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("failed to parse: invalid key length"))?;
+        let pub_key = VerifyingKey::from_bytes(&pub_key)?;
+        Ok(NamespaceId(pub_key))
+    }
+}
+
 impl From<SigningKey> for Author {
     fn from(priv_key: SigningKey) -> Self {
         Self { priv_key }
@@ -358,6 +370,10 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
 
     pub fn namespace(&self) -> NamespaceId {
         self.inner.read().namespace.id()
+    }
+
+    pub fn secret_key(&self) -> [u8; 32]{
+        self.inner.read().namespace.to_bytes()
     }
 }
 

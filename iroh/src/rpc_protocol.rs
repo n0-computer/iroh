@@ -27,6 +27,8 @@ pub use iroh_bytes::{
     util::RpcResult,
 };
 
+use crate::sync::PeerSource;
+
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
 
@@ -207,7 +209,7 @@ pub struct PeerAddRequest {
 }
 
 impl RpcMsg<ProviderService> for PeerAddRequest {
-    type Response = PeerAddResponse;
+    type Response = RpcResult<PeerAddResponse>;
 }
 
 /// todo
@@ -223,7 +225,7 @@ impl Msg<ProviderService> for PeerListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for PeerListRequest {
-    type Response = PeerListResponse;
+    type Response = RpcResult<PeerListResponse>;
 }
 
 /// todo
@@ -275,7 +277,7 @@ pub struct AuthorImportRequest {
 }
 
 impl RpcMsg<ProviderService> for AuthorImportRequest {
-    type Response = AuthorImportResponse;
+    type Response = RpcResult<AuthorImportResponse>;
 }
 
 /// todo
@@ -301,7 +303,7 @@ pub enum ShareMode {
 }
 
 impl RpcMsg<ProviderService> for AuthorShareRequest {
-    type Response = AuthorShareResponse;
+    type Response = RpcResult<AuthorShareResponse>;
 }
 
 /// todo
@@ -319,7 +321,7 @@ impl Msg<ProviderService> for DocsListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for DocsListRequest {
-    type Response = DocsListResponse;
+    type Response = RpcResult<DocsListResponse>;
 }
 
 /// todo
@@ -334,7 +336,7 @@ pub struct DocsListResponse {
 pub struct DocsCreateRequest {}
 
 impl RpcMsg<ProviderService> for DocsCreateRequest {
-    type Response = DocsCreateResponse;
+    type Response = RpcResult<DocsCreateResponse>;
 }
 
 /// todo
@@ -348,45 +350,46 @@ pub struct DocsCreateResponse {
 pub struct DocsImportRequest {
     // either a public or private key
     pub key: KeyBytes,
-    pub peers: Vec<PeerId>,
+    pub peers: Vec<PeerSource>,
 }
 
 impl RpcMsg<ProviderService> for DocsImportRequest {
-    type Response = DocsImportResponse;
+    type Response = RpcResult<DocsImportResponse>;
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsImportResponse {
-    pub id: NamespaceId,
+    pub doc_id: NamespaceId,
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareRequest {
-    pub doc: NamespaceId,
+    pub doc_id: NamespaceId,
     pub mode: ShareMode,
 }
 
 impl RpcMsg<ProviderService> for DocShareRequest {
-    type Response = DocShareResponse;
+    type Response = RpcResult<DocShareResponse>;
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareResponse {
     pub key: KeyBytes,
+    pub me: PeerSource,
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocJoinRequest {
-    pub doc: NamespaceId,
-    pub peer: PeerId,
+    pub doc_id: NamespaceId,
+    pub peers: Vec<PeerSource>,
 }
 
 impl RpcMsg<ProviderService> for DocJoinRequest {
-    type Response = DocJoinResponse;
+    type Response = RpcResult<DocJoinResponse>;
 }
 
 /// todo
@@ -396,7 +399,7 @@ pub struct DocJoinResponse {}
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetRequest {
-    pub doc: NamespaceId,
+    pub doc_id: NamespaceId,
     pub author: AuthorId,
     pub key: Vec<u8>,
     // todo: different forms to supply value
@@ -404,7 +407,7 @@ pub struct DocSetRequest {
 }
 
 impl RpcMsg<ProviderService> for DocSetRequest {
-    type Response = DocSetResponse;
+    type Response = RpcResult<DocSetResponse>;
 }
 
 /// todo
@@ -416,19 +419,22 @@ pub struct DocSetResponse {
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetRequest {
-    pub doc: NamespaceId,
+    pub doc_id: NamespaceId,
     pub author: Option<AuthorId>,
     pub key: Vec<u8>,
     pub prefix: bool,
 }
 
-impl Msg<ProviderService> for DocGetRequest {
-    type Pattern = ServerStreaming;
+impl RpcMsg<ProviderService> for DocGetRequest {
+    type Response = RpcResult<DocGetResponse>;
 }
-
-impl ServerStreamingMsg<ProviderService> for DocGetRequest {
-    type Response = DocGetResponse;
-}
+// impl Msg<ProviderService> for DocGetRequest {
+//     type Pattern = ServerStreaming;
+// }
+//
+// impl ServerStreamingMsg<ProviderService> for DocGetRequest {
+//     type Response = RpcResult<DocGetResponse>;
+// }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
@@ -439,7 +445,7 @@ pub struct DocGetResponse {
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocListRequest {
-    pub doc: NamespaceId,
+    pub doc_id: NamespaceId,
     pub author: Option<Author>,
     pub prefix: Option<String>,
     pub latest: bool,
@@ -450,7 +456,7 @@ impl Msg<ProviderService> for DocListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for DocListRequest {
-    type Response = DocListResponse;
+    type Response = RpcResult<DocListResponse>;
 }
 
 /// todo
@@ -512,23 +518,23 @@ pub enum ProviderResponse {
 
     // TODO: I see I changed naming convention here but at least to me it becomes easier to parse
     // with the subject in front if there's many commands
-    PeerAdd(PeerAddResponse),
-    PeerList(PeerListResponse),
+    PeerAdd(RpcResult<PeerAddResponse>),
+    PeerList(RpcResult<PeerListResponse>),
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
-    AuthorImport(AuthorImportResponse),
-    AuthorShare(AuthorShareResponse),
+    AuthorImport(RpcResult<AuthorImportResponse>),
+    AuthorShare(RpcResult<AuthorShareResponse>),
 
-    DocsList(DocsListResponse),
-    DocsCreate(DocsCreateResponse),
-    DocsImport(DocsImportResponse),
+    DocsList(RpcResult<DocsListResponse>),
+    DocsCreate(RpcResult<DocsCreateResponse>),
+    DocsImport(RpcResult<DocsImportResponse>),
 
-    DocSet(DocSetResponse),
-    DocGet(DocGetResponse),
-    DocList(DocListResponse),
-    DocJoin(DocJoinResponse),
-    DocShare(DocShareResponse),
+    DocSet(RpcResult<DocSetResponse>),
+    DocGet(RpcResult<DocGetResponse>),
+    DocList(RpcResult<DocListResponse>),
+    DocJoin(RpcResult<DocJoinResponse>),
+    DocShare(RpcResult<DocShareResponse>),
     // DocGetContent(DocGetContentResponse),
 }
 

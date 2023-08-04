@@ -1,6 +1,14 @@
+use anyhow::anyhow;
 use clap::Parser;
 use futures::StreamExt;
-use iroh::rpc_protocol::{AuthorCreateRequest, AuthorListRequest};
+use iroh::{
+    rpc_protocol::{
+        AuthorCreateRequest, AuthorListRequest, DocGetRequest, DocJoinRequest, DocSetRequest,
+        DocShareRequest, DocsImportRequest, ShareMode,
+    },
+    sync::PeerSource,
+};
+use iroh_sync::sync::{NamespaceId, AuthorId};
 
 use super::RpcClient;
 
@@ -10,12 +18,18 @@ pub enum Commands {
         #[clap(subcommand)]
         command: Author,
     },
+    Doc {
+        id: NamespaceId,
+        #[clap(subcommand)]
+        command: Doc,
+    },
 }
 
 impl Commands {
     pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
         match self {
             Commands::Author { command } => command.run(client).await,
+            Commands::Doc { command, id } => command.run(client, id).await,
         }
     }
 }
@@ -24,13 +38,6 @@ impl Commands {
 pub enum Author {
     List,
     Create,
-    // Import {
-    //     key: String,
-    // },
-    // Share {
-    //     mode: ShareMode,
-    //     author_id: AuthorId,
-    // },
 }
 
 impl Author {
@@ -46,8 +53,77 @@ impl Author {
                 let author = client.rpc(AuthorCreateRequest).await??;
                 println!("{}", author.author_id);
             }
-            // Commands::AuthorImport { key } => todo!(),
-            // Commands::AuthorShare { mode, author_id } => todo!(),
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+pub enum Doc {
+    Join {
+        peers: Vec<PeerSource>,
+    },
+    Import {
+        key: String,
+        peers: Vec<PeerSource>,
+    },
+    Share {
+        mode: ShareMode,
+    },
+    Set {
+        author: AuthorId,
+        key: String,
+        value: String,
+    },
+    Get {
+        key: String,
+
+        #[clap(short, long)]
+        prefix: bool,
+    },
+}
+
+impl Doc {
+    pub async fn run(self, client: RpcClient, doc_id: NamespaceId) -> anyhow::Result<()> {
+        match self {
+            Doc::Join { peers } => {
+                // let peers = peers.map(|peer| PeerSource::try_from)?;
+                let res = client.rpc(DocJoinRequest { doc_id, peers }).await??;
+                println!("{:?}", res);
+            }
+            Doc::Import { key, peers } => {
+                let key = hex::decode(key)?
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid length"))?;
+                let res = client.rpc(DocsImportRequest { key, peers }).await??;
+                println!("{:?}", res);
+            }
+            Doc::Share { mode } => {
+                let res = client.rpc(DocShareRequest { doc_id, mode }).await??;
+                println!("{:?}", res);
+            }
+            Doc::Set { author, key, value } => {
+                let res = client
+                    .rpc(DocSetRequest {
+                        author,
+                        key: key.as_bytes().to_vec(),
+                        value: value.as_bytes().to_vec(),
+                        doc_id,
+                    })
+                    .await??;
+                println!("{:?}", res);
+            }
+            Doc::Get { key, prefix } => {
+                let res = client
+                    .rpc(DocGetRequest {
+                        key: key.as_bytes().to_vec(),
+                        doc_id,
+                        author: None,
+                        prefix,
+                    })
+                    .await??;
+                println!("{:?}", res);
+            }
         }
         Ok(())
     }

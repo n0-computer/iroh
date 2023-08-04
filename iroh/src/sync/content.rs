@@ -83,6 +83,8 @@ impl DocStore {
 /// TODO: Currently content is only downloaded from the author of a entry.
 /// We want to try other peers if the author is offline (or always).
 /// We'll need some heuristics which peers to try.
+///
+/// TODO: remove
 #[derive(Clone, Debug)]
 pub struct Doc<S: store::Store> {
     replica: Replica<S::Instance>,

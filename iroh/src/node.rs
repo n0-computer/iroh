@@ -55,7 +55,7 @@ use crate::rpc_protocol::{
     ProviderResponse, ProviderService, RpcResult, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::sync::{node::SyncNode, SYNC_ALPN};
+use crate::sync::{node::SyncNode, SYNC_ALPN, BlobStore};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -99,7 +99,7 @@ pub struct Builder<
     derp_map: Option<DerpMap>,
     collection_parser: C,
     rt: Option<runtime::Handle>,
-    docs: (S, Option<PathBuf>),
+    docs: (S, PathBuf),
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -157,7 +157,7 @@ impl<D: BaoMap, S: Store> Builder<D, S> {
             auth_handler: Arc::new(NoopRequestAuthorizationHandler),
             collection_parser: NoCollectionParser,
             rt: None,
-            docs: (store, Some(blobs_path)),
+            docs: (store, blobs_path),
         }
     }
 }
@@ -317,8 +317,8 @@ where
         gossip_cell.set(gossip.clone()).unwrap();
 
         // spawn the sync engine
-        // let blobs = BlobStore::new(rt.clone(), blobs_path, endpoint.clone());
-        let sync = SyncNode::spawn(rt.clone(), self.docs.0, endpoint.clone(), gossip.clone());
+        let blobs = BlobStore::new(rt.clone(), self.docs.1, endpoint.clone()).await?;
+        let sync = SyncNode::spawn(rt.clone(), self.docs.0, endpoint.clone(), gossip.clone(), blobs);
 
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();

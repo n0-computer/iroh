@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, str::FromStr};
 
 use crate::sync::connect_and_sync;
 use anyhow::{anyhow, Result};
@@ -34,6 +34,38 @@ pub struct PeerSource {
     pub peer_id: PeerId,
     pub addrs: Vec<SocketAddr>,
     pub derp_region: Option<u16>,
+}
+
+impl PeerSource {
+    /// Deserializes from bytes.
+    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        postcard::from_bytes(bytes).map_err(Into::into)
+    }
+    /// Serializes to bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
+    }
+}
+
+/// Serializes to base32.
+impl fmt::Display for PeerSource {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let encoded = self.to_bytes();
+        let mut text = data_encoding::BASE32_NOPAD.encode(&encoded);
+        text.make_ascii_lowercase();
+        write!(f, "{text}")
+    }
+}
+
+/// Deserializes from base32.
+impl FromStr for PeerSource {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
+        let slf = Self::from_bytes(&bytes)?;
+        Ok(slf)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
