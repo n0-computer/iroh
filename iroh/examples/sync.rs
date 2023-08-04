@@ -229,14 +229,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let docs = iroh_sync::store::fs::Store::new(&docs_path)?;
 
     // create the live syncer
-    let db = WritableFileDatabase::new(storage_path.join("blobs")).await?;
     let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
     let live_sync = SyncEngine::spawn(
         rt.clone(),
         endpoint.clone(),
         gossip.clone(),
         docs.clone(),
-        db.clone(),
         downloader,
     );
 

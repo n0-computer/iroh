@@ -214,6 +214,12 @@ impl From<anyhow::Error> for RpcError {
     }
 }
 
+impl From<std::io::Error> for RpcError {
+    fn from(e: std::io::Error) -> Self {
+        RpcError(serde_error::Error::new(&e))
+    }
+}
+
 /// A serializable result type for use in RPC responses.
 #[allow(dead_code)]
 pub type RpcResult<T> = result::Result<T, RpcError>;

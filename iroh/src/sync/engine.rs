@@ -10,7 +10,7 @@ use iroh_sync::{
 };
 use parking_lot::RwLock;
 
-use crate::{database::flat::writable::WritableFileDatabase, download::Downloader};
+use crate::download::Downloader;
 
 use super::{LiveSync, PeerSource};
 
@@ -22,7 +22,6 @@ use super::{LiveSync, PeerSource};
 pub struct SyncEngine<S: Store> {
     pub(crate) rt: Handle,
     pub(crate) store: S,
-    pub(crate) db: WritableFileDatabase,
     pub(crate) endpoint: MagicEndpoint,
     downloader: Downloader,
     live: LiveSync<S>,
@@ -35,7 +34,6 @@ impl<S: Store> SyncEngine<S> {
         endpoint: MagicEndpoint,
         gossip: Gossip,
         store: S,
-        db: WritableFileDatabase,
         downloader: Downloader,
     ) -> Self {
         let live = LiveSync::spawn(rt.clone(), endpoint.clone(), gossip);
@@ -43,7 +41,6 @@ impl<S: Store> SyncEngine<S> {
             live,
             downloader,
             store,
-            db,
             rt,
             endpoint,
             active: Default::default(),

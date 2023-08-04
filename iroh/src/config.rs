@@ -32,6 +32,8 @@ pub enum IrohPaths {
     BaoFlatStoreComplete,
     /// Path to the node's [flat-file store](iroh::baomap::flat) for partial blobs.
     BaoFlatStorePartial,
+    /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
+    DocsDatabase,
 }
 impl From<&IrohPaths> for &'static str {
     fn from(value: &IrohPaths) -> Self {
@@ -39,6 +41,7 @@ impl From<&IrohPaths> for &'static str {
             IrohPaths::Keypair => "keypair",
             IrohPaths::BaoFlatStoreComplete => "blobs.v0",
             IrohPaths::BaoFlatStorePartial => "blobs-partial.v0",
+            IrohPaths::DocsDatabase => "docs.redb",
         }
     }
 }
@@ -49,6 +52,7 @@ impl FromStr for IrohPaths {
             "keypair" => Self::Keypair,
             "blobs.v0" => Self::BaoFlatStoreComplete,
             "blobs-partial.v0" => Self::BaoFlatStorePartial,
+            "docs.redb" => Self::DocsDatabase,
             _ => bail!("unknown file or directory"),
         })
     }
@@ -262,6 +266,7 @@ mod tests {
             IrohPaths::BaoFlatStoreComplete,
             IrohPaths::BaoFlatStorePartial,
             IrohPaths::Keypair,
+            IrohPaths::DocsDatabase,
         ];
         for iroh_path in &kinds {
             let root = PathBuf::from("/tmp");

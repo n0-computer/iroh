@@ -11,7 +11,10 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt,
 };
-use iroh_bytes::util::Hash;
+use iroh_bytes::{
+    baomap::{MapEntry, Store as BaoStore},
+    util::Hash,
+};
 use iroh_gossip::net::util::Dialer;
 use iroh_metrics::{inc, inc_by};
 use iroh_net::{tls::PeerId, MagicEndpoint};
@@ -21,9 +24,6 @@ use tracing::{debug, error, warn};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-// TODO: Will be replaced by proper persistent DB once
-// https://github.com/n0-computer/iroh/pull/1320 is merged
-use crate::database::flat::writable::WritableFileDatabase;
 
 /// Future for the completion of a download request
 pub type DownloadFuture = Shared<BoxFuture<'static, Option<(Hash, u64)>>>;
@@ -45,10 +45,10 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new downloader
-    pub fn new(
+    pub fn new<B: BaoStore>(
         rt: iroh_bytes::util::runtime::Handle,
         endpoint: MagicEndpoint,
-        db: WritableFileDatabase,
+        db: B,
     ) -> Self {
         let (tx, rx) = flume::bounded(64);
         // spawn the actor on a local pool
@@ -118,21 +118,17 @@ struct DownloadRequest {
 }
 
 #[derive(Debug)]
-struct DownloadActor {
+struct DownloadActor<B> {
     dialer: Dialer,
-    db: WritableFileDatabase,
+    db: B,
     conns: HashMap<PeerId, quinn::Connection>,
     replies: HashMap<Hash, VecDeque<DownloadReply>>,
     pending_download_futs: PendingDownloadsFutures,
     queue: DownloadQueue,
     rx: flume::Receiver<DownloadRequest>,
 }
-impl DownloadActor {
-    fn new(
-        endpoint: MagicEndpoint,
-        db: WritableFileDatabase,
-        rx: flume::Receiver<DownloadRequest>,
-    ) -> Self {
+impl<B: BaoStore> DownloadActor<B> {
+    fn new(endpoint: MagicEndpoint, db: B, rx: flume::Receiver<DownloadRequest>) -> Self {
         Self {
             rx,
             db,
@@ -205,11 +201,11 @@ impl DownloadActor {
 
     fn start_download_unchecked(&mut self, peer: PeerId, hash: Hash) {
         let conn = self.conns.get(&peer).unwrap().clone();
-        let blobs = self.db.clone();
+        let db = self.db.clone();
         let fut = async move {
             #[cfg(feature = "metrics")]
             let start = Instant::now();
-            let res = blobs.download_single(conn, hash).await;
+            let res = download_single(db, conn, hash).await;
             // record metrics
             #[cfg(feature = "metrics")]
             {
@@ -231,8 +227,8 @@ impl DownloadActor {
 
     async fn on_download_request(&mut self, req: DownloadRequest) {
         let DownloadRequest { peers, hash, reply } = req;
-        if self.db.has(&hash) {
-            let size = self.db.get_size(&hash).await.unwrap();
+        if let Some(entry) = self.db.get(&hash) {
+            let size = entry.size();
             reply.send(Some((hash, size))).ok();
             return;
         }
@@ -245,6 +241,15 @@ impl DownloadActor {
             }
         }
     }
+}
+
+// TODO: reimplement downloads
+async fn download_single<B: BaoStore>(
+    _store: B,
+    _conn: quinn::Connection,
+    _hash: Hash,
+) -> anyhow::Result<Option<(Hash, u64)>> {
+    todo!("Downloads not implemented")
 }
 
 #[derive(Debug, Default)]
