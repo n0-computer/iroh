@@ -338,7 +338,10 @@ pub enum Commands {
         #[clap(long, default_value_t = false)]
         single: bool,
     },
-    /// Fetch the data identified by HASH from a provider
+    /// Download data to the running provider's database and provide it.
+    ///
+    /// In addition to downloading the data, you can also specify an optional output directory
+    /// where the data will be exported to after it has been downloaded.
     Share {
         /// Hash to get, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]

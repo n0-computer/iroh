@@ -1074,9 +1074,10 @@ impl FileName {
     }
 }
 
-// todo: use "obao4" instead to indicate that it is pre order bao like in the spec,
-// but with a chunk group size of 2^4?
-const OUTBOARD_EXT: &str = "outboard";
+/// The extension for outboard files. We use obao4 to indicate that this is an outboard
+/// in the standard pre order format (obao like in the bao crate), but with a chunk group
+/// size of 4, unlike the bao crate which uses 0.
+const OUTBOARD_EXT: &str = "obao4";
 
 impl fmt::Display for FileName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
