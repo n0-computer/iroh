@@ -357,7 +357,7 @@ impl<K: Hash + Eq + Clone, V> TimeBoundCache<K, V> {
         self.map.get(key).map(|(expires, _value)| expires)
     }
 
-    /// Get an item from the cache.
+    /// Iterate over all items in the cache.
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V, &Instant)> {
         self.map.iter().map(|(k, (expires, v))| (k, v, expires))
     }

@@ -338,11 +338,6 @@ impl Simulator {
             for peer in received.iter() {
                 expected.remove(peer);
             }
-            // eprintln!(
-            //     "tick {tick:3} received {:5} remaining {:5} ",
-            //     received.len(),
-            //     expected.len(),
-            // );
         }
 
         assert!(expected.is_empty(), "all nodes received the broadcast");
@@ -467,18 +462,3 @@ pub fn report_round_distribution<PI: PeerIdentity, R: Rng + Clone>(network: &Net
     eprintln!("active_distrib {active_distrib:?}");
     eprintln!("passive_distrib {passive_distrib:?}");
 }
-
-// pub fn report_active<PI: PeerIdentity, R: Rng + Clone>(network: &Network<PI, R>, topic: &TopicId) {
-//     for state in &network.peers {
-//         let me = state.me();
-//         match state.state(topic) {
-//             Some(state) => {
-//                 let peers = state.swarm.active_view.iter().collect::<Vec<_>>();
-//                 eprintln!("{me:?}: {:?}", peers);
-//             }
-//             None => {
-//                 eprintln!("{me:?}: QUIT");
-//             }
-//         }
-//     }
-// }
