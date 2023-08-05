@@ -7,6 +7,7 @@
 //! `cargo run --bin derper -- --dev`
 //! and then set the `-d http://localhost:3340` flag on this example.
 
+use std::collections::HashMap;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::bail;
@@ -14,7 +15,9 @@ use bytes::Bytes;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use comfy_table::{presets::UTF8_FULL, Cell, CellAlignment, Table};
 use ed25519_dalek::SigningKey;
-use iroh::sync::{BlobStore, Doc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN};
+use iroh::sync::{
+    BlobStore, Doc as SyncDoc, DocStore, DownloadMode, LiveSync, PeerSource, SYNC_ALPN,
+};
 use iroh_gossip::{
     net::{GossipHandle, GOSSIP_ALPN},
     proto::TopicId,
@@ -30,7 +33,10 @@ use iroh_net::{
     tls::Keypair,
     MagicEndpoint,
 };
-use iroh_sync::sync::{Author, Namespace, RecordIdentifier, SignedEntry};
+use iroh_sync::{
+    store::{self, Store as _},
+    sync::{Author, Namespace, OnInsertCallback, SignedEntry},
+};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -39,8 +45,10 @@ use url::Url;
 
 use iroh_bytes_handlers::IrohBytesHandlers;
 
+type Doc = SyncDoc<store::fs::Store>;
+
 #[derive(Parser, Debug)]
-struct Args {
+pub struct Args {
     /// Private key to derive our peer id from
     #[clap(long)]
     private_key: Option<String>,
@@ -102,135 +110,18 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // setup logging
     let log_filter = init_logging();
 
-    let metrics_fut = init_metrics_collection(args.metrics_addr);
+    let (send, recv) = mpsc::channel(32);
+    let tasks = Tasks::new(
+        args,
+        Some(Box::new(move |_origin, _entry| {
+            println!("GOT ENTRY");
+            send.try_send(()).expect("receiver dropped");
+        })),
+    )
+    .await?;
+    println!("> ticket: {}", tasks.ticket());
 
-    // parse or generate our keypair
-    let keypair = match args.private_key {
-        None => Keypair::generate(),
-        Some(key) => parse_keypair(&key)?,
-    };
-    println!("> our private key: {}", fmt_secret(&keypair));
-
-    // configure our derp map
-    let derp_map = match (args.no_derp, args.derp) {
-        (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(derp_map_from_url(url)?),
-        (true, None) => None,
-        (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
-    };
-    println!("> using DERP servers: {}", fmt_derp_map(&derp_map));
-
-    // build our magic endpoint and the gossip protocol
-    let (endpoint, gossip, initial_endpoints) = {
-        // init a cell that will hold our gossip handle to be used in endpoint callbacks
-        let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
-        // init a channel that will emit once the initial endpoints of our local node are discovered
-        let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
-        // build the magic endpoint
-        let endpoint = MagicEndpoint::builder()
-            .keypair(keypair.clone())
-            .alpns(vec![
-                GOSSIP_ALPN.to_vec(),
-                SYNC_ALPN.to_vec(),
-                iroh_bytes::protocol::ALPN.to_vec(),
-            ])
-            .derp_map(derp_map)
-            .on_endpoints({
-                let gossip_cell = gossip_cell.clone();
-                Box::new(move |endpoints| {
-                    // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
-                    if let Some(gossip) = gossip_cell.get() {
-                        gossip.update_endpoints(endpoints).ok();
-                    }
-                    // trigger oneshot on the first endpoint update
-                    initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
-                })
-            })
-            .bind(args.bind_port)
-            .await?;
-
-        // initialize the gossip protocol
-        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
-        // insert into the gossip cell to be used in the endpoint callbacks above
-        gossip_cell.set(gossip.clone()).unwrap();
-
-        // wait for a first endpoint update so that we know about at least one of our addrs
-        let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
-        // pass our initial endpoints to the gossip protocol so that they can be announced to peers
-        gossip.update_endpoints(&initial_endpoints)?;
-        (endpoint, gossip, initial_endpoints)
-    };
-    println!("> our peer id: {}", endpoint.peer_id());
-
-    let (topic, peers) = match &args.command {
-        Command::Open { doc_name } => {
-            let topic: TopicId = blake3::hash(doc_name.as_bytes()).into();
-            println!(
-                "> opening document {doc_name} as namespace {} and waiting for peers to join us...",
-                fmt_hash(topic.as_bytes())
-            );
-            (topic, vec![])
-        }
-        Command::Join { ticket } => {
-            let Ticket { topic, peers } = Ticket::from_str(ticket)?;
-            println!("> joining topic {topic} and connecting to {peers:?}",);
-            (topic, peers)
-        }
-    };
-
-    let our_ticket = {
-        // add our local endpoints to the ticket and print it for others to join
-        let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
-        let mut peers = peers.clone();
-        peers.push(PeerSource {
-            peer_id: endpoint.peer_id(),
-            addrs,
-            derp_region: endpoint.my_derp().await,
-        });
-        Ticket { peers, topic }
-    };
-    println!("> ticket to join us: {our_ticket}");
-
-    // unwrap our storage path or default to temp
-    let storage_path = args.storage_path.unwrap_or_else(|| {
-        let name = format!("iroh-todo-{}", endpoint.peer_id());
-        let dir = std::env::temp_dir().join(name);
-        if !dir.exists() {
-            std::fs::create_dir(&dir).expect("failed to create temp dir");
-        }
-        dir
-    });
-    println!("> storage directory: {storage_path:?}");
-
-    // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
-    let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
-
-    // create a blob store (with a iroh-bytes database inside)
-    let blobs = BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
-
-    // create a doc store for the iroh-sync docs
-    let author = Author::from(keypair.secret().clone());
-    let docs = DocStore::new(blobs.clone(), author, storage_path.join("docs"));
-
-    // create the live syncer
-    let live_sync = LiveSync::spawn(endpoint.clone(), gossip.clone());
-
-    // construct the state that is passed to the endpoint loop and from there cloned
-    // into to the connection handler task for incoming connections.
-    let state = Arc::new(State {
-        gossip: gossip.clone(),
-        docs: docs.clone(),
-        bytes: IrohBytesHandlers::new(rt.clone(), blobs.db().clone()),
-    });
-
-    // spawn our endpoint loop that forwards incoming connections
-    tokio::spawn(endpoint_loop(endpoint.clone(), state));
-
-    // open our document and add to the live syncer
-    let namespace = Namespace::from_bytes(topic.as_bytes());
-    println!("> opening doc {}", fmt_hash(namespace.id().as_bytes()));
-    let doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
-    live_sync.add(doc.replica().clone(), peers.clone()).await?;
+    let (mut tasks_app, mut update_error) = TasksApp::new(tasks, recv).await?;
 
     // spawn an repl thread that reads stdin and parses each line as a `Cmd` command
     let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
@@ -238,13 +129,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // process commands in a loop
     println!("> ready to accept commands");
     println!("> type `help` for a list of commands");
-
-    let (send, recv) = mpsc::channel(32);
-    doc.on_insert(Box::new(move |_origin, entry| {
-        send.try_send((entry.entry().id().to_owned(), entry))
-            .expect("receiver dropped");
-    }));
-    let (mut tasks, mut update_errors) = Tasks::new(doc, recv).await?;
 
     loop {
         // wait for a command from the input repl thread
@@ -264,12 +148,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 println!("> aborted");
             }
 
-            _ = &mut update_errors => {
-                // TODO: when err is actual error print it
-                println!("> error updating tasks");
-                break;
+            err = &mut update_error => {
+                println!("> error updating task list: {err:?}");
             }
-            res = handle_command(cmd, &mut tasks, &our_ticket, &log_filter) => if let Err(err) = res {
+
+            res = handle_command(cmd, &mut tasks_app, &log_filter) => if let Err(err) = res {
                 println!("> error: {err}");
             },
         };
@@ -277,37 +160,22 @@ async fn run(args: Args) -> anyhow::Result<()> {
         to_repl_tx.send(ToRepl::Continue).ok();
     }
 
-    // exit: cancel the sync and store blob database and document
-    if let Err(err) = live_sync.cancel().await {
-        println!("> syncer closed with error: {err:?}");
-    }
-    println!("> persisting tasks {storage_path:?}");
-    blobs.save().await?;
-    tasks.save(&docs).await?;
-
-    if let Some(metrics_fut) = metrics_fut {
-        metrics_fut.abort();
-        drop(metrics_fut);
-    }
-
-    tasks.handle.abort();
-
-    Ok(())
+    tasks_app.shutdown().await
 }
 
 async fn handle_command(
     cmd: Cmd,
-    task: &mut Tasks,
-    ticket: &Ticket,
+    tasks_app: &mut TasksApp,
     log_filter: &LogLevelReload,
 ) -> anyhow::Result<()> {
     match cmd {
-        Cmd::Add { description } => task.new_task(description).await?,
-        Cmd::Done { index } => task.mark_done(index).await?,
-        Cmd::Delete { index } => task.delete(index).await?,
-        Cmd::Ls => task.list().await,
+        Cmd::Add { label } => tasks_app.add(label).await?,
+        Cmd::Done { index } => tasks_app.toggle_done(index).await?,
+        Cmd::Delete { index } => tasks_app.delete(index).await?,
+        Cmd::Ls => tasks_app.list().await?,
         Cmd::Ticket => {
-            println!("Ticket: {ticket}");
+            let ticket = tasks_app.ticket().await;
+            println!("ticket -> {ticket}");
         }
         Cmd::Log { directive } => {
             let next_filter = EnvFilter::from_str(&directive)?;
@@ -322,21 +190,23 @@ async fn handle_command(
 
 #[derive(Clone, Serialize, Deserialize)]
 /// Task in a list of tasks
-struct Task {
+pub struct Task {
     /// Description of the task
     /// Limited to 2000 characters
-    description: String,
+    label: String,
     /// Record creation timestamp. Counted as micros since the Unix epoch.
     created: u64,
     /// Whether or not the task has been completed. Done tasks will show up in the task list until
     /// they are archived.
     done: bool,
-    /// Archive indicates whether we should display the task
-    archived: bool,
+    /// Indicates whether or not the task is tombstoned
+    is_delete: bool,
+    /// String id
+    id: String,
 }
 
 const MAX_TASK_SIZE: usize = 2 * 1024;
-const MAX_DESCRIPTION_LEN: usize = 2 * 1000;
+const MAX_LABEL_LEN: usize = 2 * 1000;
 
 impl Task {
     fn from_bytes(bytes: Bytes) -> anyhow::Result<Self> {
@@ -350,57 +220,337 @@ impl Task {
         Ok(buf.freeze())
     }
 
-    fn missing_task() -> Self {
+    fn missing_task(id: String) -> Self {
         Self {
-            description: String::from("Missing Content"),
+            label: String::from("Missing Content"),
             created: 0,
             done: false,
-            archived: false,
+            is_delete: false,
+            id,
         }
     }
 }
 
 /// List of tasks, including completed tasks that have not been archived
-struct Tasks {
-    inner: Arc<Mutex<InnerTasks>>,
-    handle: tokio::task::JoinHandle<()>,
-}
-
-struct InnerTasks {
-    tasks: Vec<(RecordIdentifier, Task)>,
+pub struct Tasks {
     doc: Doc,
-}
-
-/// TODO: make actual error
-enum UpdateError {
-    NoMoreUpdates,
-    DeserializeTask,
-    AddingTask,
+    store: DocStore,
+    ticket: Ticket,
+    live_sync: LiveSync<store::fs::Store>,
+    blob_store: BlobStore,
+    metrics_fut: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Tasks {
-    async fn new(
-        doc: Doc,
-        mut updates: mpsc::Receiver<(RecordIdentifier, SignedEntry)>,
-    ) -> anyhow::Result<(Self, oneshot::Receiver<UpdateError>)> {
-        let entries = doc.replica().all();
-        let mut tasks = vec![];
-        for (id, entry) in entries.into_iter() {
-            match doc.get_content_bytes(&entry).await {
-                None => tasks.push((id, Task::missing_task())),
-                Some(content) => {
-                    let task = Task::from_bytes(content)?;
-                    if !task.archived {
-                        tasks.push((id, task))
-                    }
+    pub async fn new(args: Args, on_insert: Option<OnInsertCallback>) -> anyhow::Result<Self> {
+        let metrics_fut = init_metrics_collection(args.metrics_addr);
+
+        // parse or generate our keypair
+        let keypair = match args.private_key {
+            None => Keypair::generate(),
+            Some(key) => parse_keypair(&key)?,
+        };
+
+        // configure our derp map
+        let derp_map = match (args.no_derp, args.derp) {
+            (false, None) => Some(default_derp_map()),
+            (false, Some(url)) => Some(derp_map_from_url(url)?),
+            (true, None) => None,
+            (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
+        };
+
+        // build our magic endpoint and the gossip protocol
+        let (endpoint, gossip, initial_endpoints) = {
+            // init a cell that will hold our gossip handle to be used in endpoint callbacks
+            let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+            // init a channel that will emit once the initial endpoints of our local node are discovered
+            let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
+            // build the magic endpoint
+            let endpoint = MagicEndpoint::builder()
+                .keypair(keypair.clone())
+                .alpns(vec![
+                    GOSSIP_ALPN.to_vec(),
+                    SYNC_ALPN.to_vec(),
+                    iroh_bytes::protocol::ALPN.to_vec(),
+                ])
+                .derp_map(derp_map)
+                .on_endpoints({
+                    let gossip_cell = gossip_cell.clone();
+                    Box::new(move |endpoints| {
+                        // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
+                        if let Some(gossip) = gossip_cell.get() {
+                            gossip.update_endpoints(endpoints).ok();
+                        }
+                        // trigger oneshot on the first endpoint update
+                        initial_endpoints_tx.try_send(endpoints.to_vec()).ok();
+                    })
+                })
+                .bind(args.bind_port)
+                .await?;
+
+            // initialize the gossip protocol
+            let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+            // insert into the gossip cell to be used in the endpoint callbacks above
+            gossip_cell.set(gossip.clone()).unwrap();
+
+            // wait for a first endpoint update so that we know about at least one of our addrs
+            let initial_endpoints = initial_endpoints_rx.recv().await.unwrap();
+            // pass our initial endpoints to the gossip protocol so that they can be announced to peers
+            gossip.update_endpoints(&initial_endpoints)?;
+            (endpoint, gossip, initial_endpoints)
+        };
+
+        let (topic, peers) = match &args.command {
+            Command::Open { doc_name } => {
+                let topic: TopicId = blake3::hash(doc_name.as_bytes()).into();
+                println!(
+                    "> opening document {doc_name} as namespace {} and waiting for peers to join us...",
+                    fmt_hash(topic.as_bytes())
+                );
+                (topic, vec![])
+            }
+            Command::Join { ticket } => {
+                let Ticket { topic, peers } = Ticket::from_str(ticket)?;
+                println!("> joining topic {topic} and connecting to {peers:?}",);
+                (topic, peers)
+            }
+        };
+
+        let our_ticket = {
+            // add our local endpoints to the ticket and print it for others to join
+            let addrs = initial_endpoints.iter().map(|ep| ep.addr).collect();
+            let mut peers = peers.clone();
+            peers.push(PeerSource {
+                peer_id: endpoint.peer_id(),
+                addrs,
+                derp_region: endpoint.my_derp().await,
+            });
+            Ticket { peers, topic }
+        };
+
+        // unwrap our storage path or default to temp
+        let storage_path = args.storage_path.unwrap_or_else(|| {
+            let name = format!("iroh-todo-{}", endpoint.peer_id());
+            let dir = std::env::temp_dir().join(name);
+            if !dir.exists() {
+                std::fs::create_dir(&dir).expect("failed to create temp dir");
+            }
+            dir
+        });
+
+        // create a runtime that can spawn tasks on a local-thread executors (to support !Send futures)
+        let rt = iroh_bytes::util::runtime::Handle::from_currrent(num_cpus::get())?;
+
+        // create a blob store (with a iroh-bytes database inside)
+        let blobs =
+            BlobStore::new(rt.clone(), storage_path.join("blobs"), endpoint.clone()).await?;
+
+        // create a doc store for the iroh-sync docs
+        let author = Author::from(keypair.secret().clone());
+        let docs_path = storage_path.join("docs");
+        tokio::fs::create_dir_all(&docs_path).await?;
+        let docs = DocStore::new(blobs.clone(), author, docs_path)?;
+
+        // create the live syncer
+        let live_sync = LiveSync::<store::fs::Store>::spawn(endpoint.clone(), gossip.clone());
+
+        // construct the state that is passed to the endpoint loop and from there cloned
+        // into to the connection handler task for incoming connections.
+        let state = Arc::new(State {
+            gossip: gossip.clone(),
+            docs: docs.clone(),
+            bytes: IrohBytesHandlers::new(rt.clone(), blobs.db().clone()),
+        });
+
+        // spawn our endpoint loop that forwards incoming connections
+        tokio::spawn(endpoint_loop(endpoint.clone(), state));
+
+        // open our document and add to the live syncer
+        let namespace = Namespace::from_bytes(topic.as_bytes());
+        let doc = docs.create_or_open(namespace, DownloadMode::Always).await?;
+        live_sync.add(doc.replica().clone(), peers.clone()).await?;
+
+        if let Some(on_insert) = on_insert {
+            doc.on_insert(on_insert);
+        }
+        Ok(Tasks {
+            doc,
+            store: docs,
+            ticket: our_ticket,
+            live_sync,
+            blob_store: blobs,
+            metrics_fut,
+        })
+    }
+
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        // exit: cancel the sync and store blob database and document
+        self.live_sync.cancel().await?;
+        self.blob_store.save().await?;
+
+        if let Some(metrics_fut) = &self.metrics_fut {
+            metrics_fut.abort();
+            drop(metrics_fut);
+        }
+        Ok(())
+    }
+
+    pub fn ticket(&self) -> String {
+        self.ticket.to_string()
+    }
+
+    pub async fn add(&mut self, id: String, label: String) -> anyhow::Result<()> {
+        if label.len() > MAX_LABEL_LEN {
+            bail!("label is too long, max size is {MAX_LABEL_LEN} characters");
+        }
+        let created = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .expect("time drift")
+            .as_secs();
+        let task = Task {
+            label,
+            created,
+            done: false,
+            is_delete: false,
+            id: id.clone(),
+        };
+        self.insert_bytes(id.as_bytes(), task.as_bytes()?).await
+    }
+    pub async fn toggle_done(&mut self, id: String) -> anyhow::Result<()> {
+        let mut task = self.get_task(id.clone()).await?;
+        task.done = !task.done;
+        self.update_task(id.as_bytes(), task).await
+    }
+
+    pub async fn delete(&mut self, id: String) -> anyhow::Result<()> {
+        println!("delete {id}");
+        let mut task = self.get_task(id.clone()).await?;
+        task.is_delete = true;
+        self.update_task(id.as_bytes(), task).await
+    }
+
+    pub async fn get_tasks(&self) -> anyhow::Result<Vec<Task>> {
+        let entries = self
+            .store
+            .store()
+            .get_latest(self.doc.replica().namespace())?;
+        let mut hash_entries: HashMap<Vec<u8>, SignedEntry> = HashMap::new();
+
+        // only get most recent entry for the key
+        // wish this had an easier api -> get_latest_for_each_key?
+        for entry in entries {
+            let (id, entry) = entry?;
+            if let Some(other_entry) = hash_entries.get(id.key()) {
+                let other_timestamp = other_entry.entry().record().timestamp();
+                let this_timestamp = entry.entry().record().timestamp();
+                if this_timestamp > other_timestamp {
+                    hash_entries.insert(id.key().to_owned(), entry);
                 }
+            } else {
+                hash_entries.insert(id.key().to_owned(), entry);
             }
         }
-        tasks.sort_by_key(|(_, task)| task.created);
-        let inner = Arc::new(Mutex::new(InnerTasks { doc, tasks }));
-        let inner_clone = Arc::clone(&inner);
-        let (sender, receiver) = oneshot::channel();
-        let handle = tokio::spawn(async move {
+        let entries: Vec<_> = hash_entries.values().collect();
+        let mut tasks = Vec::new();
+        for entry in entries {
+            let task = self.task_from_entry(entry).await?;
+            if !task.is_delete {
+                tasks.push(task);
+            }
+        }
+        tasks.sort_by_key(|t| t.created);
+        Ok(tasks)
+    }
+
+    async fn insert_bytes(&self, key: impl AsRef<[u8]>, content: Bytes) -> anyhow::Result<()> {
+        self.doc.insert_bytes(key, content).await?;
+        Ok(())
+    }
+
+    async fn update_task(&mut self, key: impl AsRef<[u8]>, task: Task) -> anyhow::Result<()> {
+        let content = task.as_bytes()?;
+        self.insert_bytes(key, content).await
+    }
+
+    async fn get_task(&self, id: String) -> anyhow::Result<Task> {
+        match self
+            .store
+            .store()
+            .get_latest_by_key(self.doc.replica().namespace(), id.as_bytes())?
+            .next()
+        {
+            Some(entry) => {
+                let (_, entry) = entry?;
+                self.task_from_entry(&entry).await
+            }
+            None => {
+                bail!("key not found")
+            }
+        }
+    }
+
+    async fn task_from_entry(&self, entry: &SignedEntry) -> anyhow::Result<Task> {
+        let id = String::from_utf8(entry.entry().id().key().to_owned())?;
+        match self.doc.get_content_bytes(entry).await {
+            Some(b) => Task::from_bytes(b),
+            None => Ok(Task::missing_task(id.clone())),
+        }
+    }
+}
+
+fn fmt_tasks(tasks: &Vec<Task>) -> String {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_width(100)
+        .set_header(vec!["Index", "Done", "Task", "ID"])
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
+
+    for (num, task) in tasks.iter().enumerate() {
+        let num = num.to_string();
+        let done = if task.done { "✓" } else { "" };
+        table.add_row(vec![
+            Cell::new(num).set_alignment(CellAlignment::Center),
+            Cell::new(done).set_alignment(CellAlignment::Center),
+            Cell::new(task.label.clone()).set_alignment(CellAlignment::Left),
+            Cell::new(task.id.clone()).set_alignment(CellAlignment::Left),
+        ]);
+    }
+    table.to_string()
+}
+
+/// TODO: make actual error
+#[derive(Debug)]
+pub enum UpdateError {
+    NoMoreUpdates,
+    GetTasksError,
+}
+
+/// Allows the user to interact with the tasks using the "indexes"
+/// that are printed to the screen
+struct TasksApp {
+    tasks: Arc<Mutex<Tasks>>,
+    order: Arc<Mutex<Vec<String>>>,
+    update_handle: tokio::task::JoinHandle<()>,
+}
+
+impl TasksApp {
+    async fn new(
+        tasks: Tasks,
+        mut updates: mpsc::Receiver<()>,
+    ) -> anyhow::Result<(Self, oneshot::Receiver<UpdateError>)> {
+        let order: Vec<String> = tasks
+            .get_tasks()
+            .await?
+            .iter()
+            .map(|t| t.id.to_string())
+            .collect();
+        let order = Arc::new(Mutex::new(order));
+        let tasks = Arc::new(Mutex::new(tasks));
+        let (sender, recv) = oneshot::channel();
+        let updates_tasks = Arc::clone(&tasks);
+        let updates_order = Arc::clone(&order);
+        let update_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     biased;
@@ -409,31 +559,18 @@ impl Tasks {
                     }
                     res = updates.recv() => {
                         match res {
-                            Some((id, entry)) => {
-                                let mut inner = inner_clone.lock().await;
-                                let doc = &inner.doc;
-                                let content = doc.get_content_bytes(&entry).await;
-                                let task = match content {
-                                    Some(content) => {
-                                        match Task::from_bytes(content) {
-                                            Ok(task) => task,
-                                            Err(_) => {
-                                                    let _ = sender.send(UpdateError::DeserializeTask);
-                                                    return;
-                                            }
-                                        }
-                                    },
-                                    None => Task::missing_task(),
-                                };
-                                match inner.insert_task(id, task) {
-                                    Ok(_) => {},
+                            Some(()) => {
+                                let t = updates_tasks.lock().await;
+                                let tasks = match t.get_tasks().await {
+                                    Ok(tasks) => tasks,
                                     Err(_) => {
-                                        let _ = sender.send(UpdateError::AddingTask);
+                                        let _ = sender.send(UpdateError::GetTasksError);
                                         return;
                                     }
-                                }
-
-                                let table = fmt_tasks(&inner.tasks);
+                                };
+                                let mut order = updates_order.lock().await;
+                                *order = tasks.iter().map(|t| t.id.clone()).collect();
+                                let table = fmt_tasks(&tasks);
                                 println!("\n{table}");
                             },
                             None => {
@@ -445,124 +582,69 @@ impl Tasks {
                 }
             }
         });
-        Ok((Self { inner, handle }, receiver))
+        Ok((
+            TasksApp {
+                tasks,
+                order,
+                update_handle,
+            },
+            recv,
+        ))
     }
 
-    async fn save(&self, store: &DocStore) -> anyhow::Result<()> {
-        let inner = self.inner.lock().await;
-        inner.save(store).await
+    async fn ticket(&self) -> String {
+        let tasks = self.tasks.lock().await;
+        tasks.ticket()
     }
 
-    async fn new_task(&mut self, description: String) -> anyhow::Result<()> {
-        if description.len() > MAX_DESCRIPTION_LEN {
-            bail!("The task description must be under {MAX_DESCRIPTION_LEN} characters");
-        }
-        let id = nanoid::nanoid!();
-        let created = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .expect("time drift")
-            .as_secs();
-        let task = Task {
-            description,
-            created,
-            done: false,
-            archived: false,
-        };
-        self.insert_bytes(id.as_bytes(), task.as_bytes()?).await
-    }
-
-    async fn insert_bytes(&self, key: impl AsRef<[u8]>, content: Bytes) -> anyhow::Result<()> {
-        let inner = self.inner.lock().await;
-        inner.doc.insert_bytes(key, content).await?;
+    async fn shutdown(self) -> anyhow::Result<()> {
+        let tasks = self.tasks.lock().await;
+        tasks.shutdown().await?;
+        self.update_handle.abort();
         Ok(())
     }
 
-    async fn update_task(&mut self, key: impl AsRef<[u8]>, task: Task) -> anyhow::Result<()> {
-        let content = task.as_bytes()?;
-        self.insert_bytes(key, content).await
+    async fn add(&mut self, label: String) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.lock().await;
+        let id = uuid::Uuid::new_v4();
+        tasks.add(id.to_string(), label).await
     }
 
-    async fn mark_done(&mut self, index: usize) -> anyhow::Result<()> {
-        let (id, mut task) = {
-            let inner = self.inner.lock().await;
-            inner.get_task(index)?
-        };
-        task.done = true;
-        self.update_task(id.key(), task).await
+    async fn toggle_done(&mut self, index: usize) -> anyhow::Result<()> {
+        let id = self.get_id(index).await?;
+        let mut tasks = self.tasks.lock().await;
+        tasks.toggle_done(id).await
     }
 
     async fn delete(&mut self, index: usize) -> anyhow::Result<()> {
-        let (id, mut task) = {
-            let inner = self.inner.lock().await;
-            inner.get_task(index)?
-        };
-        task.archived = true;
-        self.update_task(id.key(), task).await
+        let id = self.get_id(index).await?;
+        let mut tasks = self.tasks.lock().await;
+        tasks.delete(id).await
     }
 
-    async fn list(&self) {
-        let inner = self.inner.lock().await;
-        let table = fmt_tasks(&inner.tasks);
-        println!("{table}");
-    }
-}
-
-impl InnerTasks {
-    fn insert_task(&mut self, id: RecordIdentifier, task: Task) -> anyhow::Result<()> {
-        if let Some(index) = self.tasks.iter().position(|(tid, _)| id.key() == tid.key()) {
-            if task.archived {
-                self.tasks.remove(index);
-            } else {
-                let _ = std::mem::replace(&mut self.tasks[index], (id, task));
-            }
-        } else {
-            if !task.archived {
-                self.tasks.push((id, task));
-            }
+    async fn get_id(&self, index: usize) -> anyhow::Result<String> {
+        let order = self.order.lock().await;
+        match order.get(index) {
+            Some(id) => Ok(id.to_string()),
+            None => bail!("No task with index {index} exists"),
         }
+    }
 
-        self.tasks.sort_by_key(|(_, task)| task.created);
+    async fn list(&self) -> anyhow::Result<()> {
+        let t = self.tasks.lock().await;
+        let tasks = t.get_tasks().await?;
+        let table = fmt_tasks(&tasks);
+        println!("\n{table}");
         Ok(())
     }
-
-    fn get_task(&self, index: usize) -> anyhow::Result<(RecordIdentifier, Task)> {
-        match self.tasks.get(index) {
-            Some((id, task)) => Ok((id.to_owned(), task.clone())),
-            None => bail!("No task exists at index {index}"),
-        }
-    }
-
-    async fn save(&self, store: &DocStore) -> anyhow::Result<()> {
-        store.save(&self.doc).await
-    }
-}
-
-fn fmt_tasks(tasks: &Vec<(RecordIdentifier, Task)>) -> String {
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_width(100)
-        .set_header(vec!["Index", "Done", "Task"])
-        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
-
-    for (num, (_, task)) in tasks.iter().enumerate() {
-        let num = num.to_string();
-        let done = if task.done { "✓" } else { "" };
-        table.add_row(vec![
-            Cell::new(num).set_alignment(CellAlignment::Center),
-            Cell::new(done).set_alignment(CellAlignment::Center),
-            Cell::new(task.description.clone()).set_alignment(CellAlignment::Left),
-        ]);
-    }
-    table.to_string()
 }
 
 #[derive(Parser, Debug)]
 pub enum Cmd {
-    /// Add a task. The task description must be in quotes.
+    /// Add a task. The task label must be in quotes.
     Add {
         /// the content of the actual task
-        description: String,
+        label: String,
     },
     /// Mark a task as finished. `done <INDEX>`
     Done {
@@ -761,11 +843,6 @@ fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
     text.make_ascii_lowercase();
     format!("{}…{}", &text[..5], &text[(text.len() - 2)..])
 }
-fn fmt_secret(keypair: &Keypair) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(&keypair.secret().to_bytes());
-    text.make_ascii_lowercase();
-    text
-}
 fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
     let bytes: [u8; 32] = data_encoding::BASE32_NOPAD
         .decode(secret.to_ascii_uppercase().as_bytes())?
@@ -773,18 +850,6 @@ fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
         .map_err(|_| anyhow::anyhow!("Invalid secret"))?;
     let key = SigningKey::from_bytes(&bytes);
     Ok(key.into())
-}
-fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
-    match derp_map {
-        None => "None".to_string(),
-        Some(map) => {
-            let regions = map.regions.iter().map(|(id, region)| {
-                let nodes = region.nodes.iter().map(|node| node.url.to_string());
-                (*id, nodes.collect::<Vec<_>>())
-            });
-            format!("{:?}", regions.collect::<Vec<_>>())
-        }
-    }
 }
 fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
     Ok(DerpMap::default_from_node(
