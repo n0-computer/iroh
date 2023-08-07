@@ -56,7 +56,7 @@ macro_rules! idbytes_impls {
             }
         }
 
-        impl<T: Into<[u8; 32]>> From<T> for $ty {
+        impl<T: Into<[u8; 32]>> std::convert::From<T> for $ty {
             fn from(value: T) -> Self {
                 Self::from_bytes(value.into())
             }

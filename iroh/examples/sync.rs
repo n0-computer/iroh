@@ -21,7 +21,7 @@ use iroh::sync::{
 };
 use iroh_bytes::util::runtime;
 use iroh_gossip::{
-    net::{GossipHandle, GOSSIP_ALPN},
+    net::{Gossip, GOSSIP_ALPN},
     proto::TopicId,
 };
 use iroh_metrics::{
@@ -29,8 +29,8 @@ use iroh_metrics::{
     struct_iterable::Iterable,
 };
 use iroh_net::{
-    defaults::{default_derp_map, DEFAULT_DERP_STUN_PORT},
-    derp::{DerpMap, UseIpv4, UseIpv6},
+    defaults::{default_derp_map},
+    derp::{DerpMap},
     magic_endpoint::get_alpn,
     tls::Keypair,
     MagicEndpoint,
@@ -131,7 +131,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // configure our derp map
     let derp_map = match (args.no_derp, args.derp) {
         (false, None) => Some(default_derp_map()),
-        (false, Some(url)) => Some(derp_map_from_url(url)?),
+        (false, Some(url)) => Some(DerpMap::from_url(url, 0)),
         (true, None) => None,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
@@ -140,7 +140,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // build our magic endpoint and the gossip protocol
     let (endpoint, gossip, initial_endpoints) = {
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
-        let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+        let gossip_cell: OnceCell<Gossip> = OnceCell::new();
         // init a channel that will emit once the initial endpoints of our local node are discovered
         let (initial_endpoints_tx, mut initial_endpoints_rx) = mpsc::channel(1);
         // build the magic endpoint
@@ -167,7 +167,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             .await?;
 
         // initialize the gossip protocol
-        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
         // insert into the gossip cell to be used in the endpoint callbacks above
         gossip_cell.set(gossip.clone()).unwrap();
 
@@ -181,7 +181,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let (topic, peers) = match &args.command {
         Command::Open { doc_name } => {
-            let topic: TopicId = blake3::hash(doc_name.as_bytes()).into();
+            let topic: TopicId = iroh_bytes::Hash::new(doc_name.as_bytes()).into();
             println!(
                 "> opening document {doc_name} as namespace {} and waiting for peers to join us...",
                 fmt_hash(topic.as_bytes())
@@ -685,7 +685,7 @@ impl FromStr for Cmd {
 
 #[derive(Debug)]
 struct State {
-    gossip: GossipHandle,
+    gossip: Gossip,
     docs: DocStore,
     bytes: IrohBytesHandlers,
 }
@@ -879,25 +879,13 @@ fn parse_keypair(secret: &str) -> anyhow::Result<Keypair> {
 fn fmt_derp_map(derp_map: &Option<DerpMap>) -> String {
     match derp_map {
         None => "None".to_string(),
-        Some(map) => {
-            let regions = map.regions.iter().map(|(id, region)| {
-                let nodes = region.nodes.iter().map(|node| node.url.to_string());
-                (*id, nodes.collect::<Vec<_>>())
-            });
-            format!("{:?}", regions.collect::<Vec<_>>())
-        }
+        Some(map) => map
+            .regions()
+            .flat_map(|region| region.nodes.iter().map(|node| node.url.to_string()))
+            .collect::<Vec<_>>()
+            .join(", "),
     }
 }
-fn derp_map_from_url(url: Url) -> anyhow::Result<DerpMap> {
-    Ok(DerpMap::default_from_node(
-        url,
-        DEFAULT_DERP_STUN_PORT,
-        UseIpv4::TryDns,
-        UseIpv6::TryDns,
-        0,
-    ))
-}
-
 fn canonicalize_path(path: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(shellexpand::tilde(&path).to_string());
     Ok(path)

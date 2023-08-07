@@ -1,6 +1,6 @@
 [package]
 name = "iroh-sync"
-version = "0.1.0"
+version = "0.5.1"
 edition = "2021"
 readme = "README.md"
 description = "Iroh sync"
@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 
 [dependencies]
 anyhow = "1.0.71"
-blake3 = "1.3.3"
+blake3 = { package = "iroh-blake3", version = "1.4.3"}
 crossbeam = "0.8.2"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 ed25519-dalek = { version = "2.0.0-rc.2", features = ["serde", "rand_core"] }
