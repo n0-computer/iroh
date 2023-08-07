@@ -29,10 +29,7 @@ use iroh_metrics::{
     struct_iterable::Iterable,
 };
 use iroh_net::{
-    defaults::{default_derp_map},
-    derp::{DerpMap},
-    magic_endpoint::get_alpn,
-    tls::Keypair,
+    defaults::default_derp_map, derp::DerpMap, magic_endpoint::get_alpn, tls::Keypair,
     MagicEndpoint,
 };
 use iroh_sync::{
