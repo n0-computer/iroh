@@ -8,6 +8,7 @@ pub mod baomap;
 #[cfg(feature = "iroh-collection")]
 pub mod collection;
 pub mod dial;
+pub mod download;
 pub mod node;
 pub mod rpc_protocol;
 #[allow(missing_docs)]
