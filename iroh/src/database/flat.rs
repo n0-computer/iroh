@@ -722,6 +722,11 @@ impl Database {
 
     /// scan a directory for data
     pub(crate) fn load_sync(complete_path: PathBuf, partial_path: PathBuf) -> anyhow::Result<Self> {
+        tracing::info!(
+            "loading database from {} {}",
+            complete_path.display(),
+            partial_path.display()
+        );
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index =
