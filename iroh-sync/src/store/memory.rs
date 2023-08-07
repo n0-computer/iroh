@@ -37,6 +37,10 @@ impl super::Store for Store {
         Ok(replicas.get(namespace).cloned())
     }
 
+    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
+        Ok(self.replicas.read().keys().cloned().collect())
+    }
+
     fn get_author(&self, author: &AuthorId) -> Result<Option<Author>> {
         let authors = &*self.authors.read();
         Ok(authors.get(author).cloned())

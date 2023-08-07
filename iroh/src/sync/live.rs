@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, sync::Arc, str::FromStr};
+use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::Arc};
 
 use crate::sync::connect_and_sync;
 use anyhow::{anyhow, Result};

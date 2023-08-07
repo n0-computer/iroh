@@ -205,7 +205,7 @@ pub struct NamespaceId(VerifyingKey);
 
 impl Display for NamespaceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NamespaceId({})", hex::encode(self.0.as_bytes()))
+        write!(f, "{}", hex::encode(self.0.as_bytes()))
     }
 }
 
@@ -372,7 +372,7 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         self.inner.read().namespace.id()
     }
 
-    pub fn secret_key(&self) -> [u8; 32]{
+    pub fn secret_key(&self) -> [u8; 32] {
         self.inner.read().namespace.to_bytes()
     }
 }

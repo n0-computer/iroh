@@ -110,6 +110,17 @@ impl super::Store for Store {
         Ok(Some(replica))
     }
 
+    // TODO: return iterator
+    fn list_replicas(&self) -> Result<Vec<NamespaceId>> {
+        let read_tx = self.db.begin_read()?;
+        let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
+        let namespaces = namespace_table
+            .iter()?
+            .filter_map(|entry| entry.ok())
+            .map(|(_key, value)| Namespace::from_bytes(value.value()).id());
+        Ok(namespaces.collect())
+    }
+
     fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
         let read_tx = self.db.begin_read()?;
         let author_table = read_tx.open_table(AUTHORS_TABLE)?;

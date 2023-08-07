@@ -15,7 +15,7 @@ use derive_more::{From, TryInto};
 use iroh_bytes::Hash;
 use iroh_net::tls::PeerId;
 
-use iroh_sync::sync::{Author, AuthorId, NamespaceId, SignedEntry};
+use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
@@ -328,7 +328,7 @@ impl ServerStreamingMsg<ProviderService> for DocsListRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocsListResponse {
     pub id: NamespaceId,
-    pub writable: bool,
+    // pub writable: bool,
 }
 
 /// todo
@@ -400,7 +400,7 @@ pub struct DocJoinResponse {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSetRequest {
     pub doc_id: NamespaceId,
-    pub author: AuthorId,
+    pub author_id: AuthorId,
     pub key: Vec<u8>,
     // todo: different forms to supply value
     pub value: Vec<u8>,
@@ -420,21 +420,19 @@ pub struct DocSetResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetRequest {
     pub doc_id: NamespaceId,
-    pub author: Option<AuthorId>,
+    pub author_id: Option<AuthorId>,
     pub key: Vec<u8>,
     pub prefix: bool,
+    pub latest: bool,
 }
 
-impl RpcMsg<ProviderService> for DocGetRequest {
+impl Msg<ProviderService> for DocGetRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for DocGetRequest {
     type Response = RpcResult<DocGetResponse>;
 }
-// impl Msg<ProviderService> for DocGetRequest {
-//     type Pattern = ServerStreaming;
-// }
-//
-// impl ServerStreamingMsg<ProviderService> for DocGetRequest {
-//     type Response = RpcResult<DocGetResponse>;
-// }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
@@ -446,9 +444,9 @@ pub struct DocGetResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocListRequest {
     pub doc_id: NamespaceId,
-    pub author: Option<Author>,
-    pub prefix: Option<String>,
     pub latest: bool,
+    // pub author: Option<Author>,
+    // pub prefix: Option<String>,
 }
 
 impl Msg<ProviderService> for DocListRequest {

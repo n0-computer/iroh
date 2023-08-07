@@ -25,7 +25,7 @@ use crate::proto::{self, TopicId};
 pub mod util;
 
 /// ALPN protocol name
-pub const GOSSIP_ALPN: &[u8] = b"n0/iroh-gossip/0";
+pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
 /// Maximum message size is limited to 1024 bytes.
 pub const MAX_MESSAGE_SIZE: usize = 1024;
 

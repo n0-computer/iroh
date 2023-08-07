@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
@@ -30,6 +30,7 @@ use iroh_bytes::{
     util::Hash,
 };
 use iroh_gossip::net::{GossipHandle, GOSSIP_ALPN};
+use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -49,13 +50,12 @@ use tracing::{debug, trace};
 
 use crate::dial::Ticket;
 use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest,
-    AuthorListResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, RpcResult, ShutdownRequest, ValidateRequest, VersionRequest,
+    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::sync::{node::SyncNode, SYNC_ALPN, BlobStore};
+use crate::sync::{node::SyncNode, BlobStore, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -318,7 +318,13 @@ where
 
         // spawn the sync engine
         let blobs = BlobStore::new(rt.clone(), self.docs.1, endpoint.clone()).await?;
-        let sync = SyncNode::spawn(rt.clone(), self.docs.0, endpoint.clone(), gossip.clone(), blobs);
+        let sync = SyncNode::spawn(
+            rt.clone(),
+            self.docs.0,
+            endpoint.clone(),
+            gossip.clone(),
+            blobs,
+        );
 
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
@@ -433,7 +439,6 @@ where
                 },
                 // handle incoming p2p connections
                 Some(mut connecting) = server.accept() => {
-
                     let alpn = match get_alpn(&mut connecting).await {
                         Ok(alpn) => alpn,
                         Err(err) => {
@@ -441,19 +446,8 @@ where
                             continue;
                         }
                     };
-                    if alpn.as_bytes() == iroh_bytes::protocol::ALPN.as_ref() {
-                        let db = handler.inner.db.clone();
-                        let custom_get_handler = custom_get_handler.clone();
-                        let auth_handler = auth_handler.clone();
-                        let collection_parser = collection_parser.clone();
-                        let rt2 = rt.clone();
-                        let callbacks = callbacks.clone();
-                        rt.main().spawn(iroh_bytes::provider::handle_connection(connecting, db, callbacks, collection_parser, custom_get_handler, auth_handler, rt2));
-                    } else {
-                        tracing::error!("unknown protocol: {}", alpn);
-                        continue;
-                    }
-                }
+                    rt.main().spawn(handle_connection(connecting, alpn, handler.inner.clone(), gossip.clone(), collection_parser.clone(), custom_get_handler.clone(), auth_handler.clone()));
+                },
                 // Handle new callbacks
                 Some(cb) = cb_receiver.recv() => {
                     callbacks.push(cb).await;
@@ -474,15 +468,33 @@ where
     }
 }
 
-async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
-    let data = connecting.handshake_data().await?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-        Ok(data) => match data.protocol {
-            Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
-            None => anyhow::bail!("no ALPN protocol available"),
-        },
-        Err(_) => anyhow::bail!("unknown handshake type"),
+async fn handle_connection<D: BaoReadonlyDb, S: Store, C: CollectionParser>(
+    connecting: quinn::Connecting,
+    alpn: String,
+    node: Arc<NodeInner<D, S>>,
+    gossip: GossipHandle,
+    collection_parser: C,
+    custom_get_handler: Arc<dyn CustomGetHandler>,
+    auth_handler: Arc<dyn RequestAuthorizationHandler>,
+) -> Result<()> {
+    match alpn.as_bytes() {
+        GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
+        SYNC_ALPN => crate::sync::handle_connection(connecting, node.sync.store.clone()).await?,
+        alpn if alpn == iroh_bytes::protocol::ALPN => {
+            iroh_bytes::provider::handle_connection(
+                connecting,
+                node.db.clone(),
+                node.callbacks.clone(),
+                collection_parser,
+                custom_get_handler,
+                auth_handler,
+                node.rt.clone(),
+            )
+            .await
+        }
+        _ => bail!("ignoring connection: unsupported ALPN protocol"),
     }
+    Ok(())
 }
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
@@ -544,7 +556,7 @@ struct NodeInner<D, S: Store> {
     #[allow(dead_code)]
     callbacks: Callbacks,
     rt: runtime::Handle,
-    sync: SyncNode<S>,
+    pub(crate) sync: SyncNode<S>,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -846,19 +858,6 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
             ))
         })
     }
-
-    pub fn author_create(self, req: AuthorCreateRequest) -> RpcResult<AuthorCreateResponse> {
-        let res = self.inner.sync.author_create(req)?;
-        Ok(res)
-    }
-
-    /// todo
-    pub fn author_list(
-        self,
-        req: AuthorListRequest,
-    ) -> impl Stream<Item = RpcResult<AuthorListResponse>> {
-        self.inner.sync.author_list(req)
-    }
 }
 
 fn handle_rpc_request<
@@ -900,25 +899,67 @@ fn handle_rpc_request<
             PeerAdd(_msg) => todo!(),
             PeerList(_msg) => todo!(),
             AuthorList(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::author_list)
-                    .await
-            }
-            AuthorCreate(msg) => {
-                chan.rpc(msg, handler, |handler, req| async move {
-                    handler.author_create(req)
+                chan.server_streaming(msg, handler, |handler, req| {
+                    handler.inner.sync.author_list(req)
                 })
                 .await
             }
-            AuthorImport(_msg) => todo!(),
+            AuthorCreate(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.author_create(req)
+                })
+                .await
+            }
+            AuthorImport(_msg) => {
+                todo!()
+            }
             AuthorShare(_msg) => todo!(),
-            DocsList(_msg) => todo!(),
-            DocsCreate(_msg) => todo!(),
-            DocsImport(_msg) => todo!(),
-            DocSet(_msg) => todo!(),
-            DocGet(_msg) => todo!(),
-            DocList(_msg) => todo!(),
-            DocJoin(_msg) => todo!(),
-            DocShare(_msg) => todo!(),
+            DocsList(msg) => {
+                chan.server_streaming(msg, handler, |handler, req| {
+                    handler.inner.sync.docs_list(req)
+                })
+                .await
+            }
+            DocsCreate(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.docs_create(req)
+                })
+                .await
+            }
+            DocsImport(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.docs_import(req).await
+                })
+                .await
+            }
+            DocSet(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_set(req).await
+                })
+                .await
+            }
+            DocGet(msg) => {
+                chan.server_streaming(msg, handler, |handler, req| handler.inner.sync.doc_get(req))
+                    .await
+            }
+            DocList(msg) => {
+                chan.server_streaming(msg, handler, |handler, req| {
+                    handler.inner.sync.doc_list(req)
+                })
+                .await
+            }
+            DocJoin(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_join(req).await
+                })
+                .await
+            }
+            DocShare(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.doc_share(req).await
+                })
+                .await
+            }
         }
     });
 }

@@ -1,14 +1,16 @@
 use anyhow::anyhow;
 use clap::Parser;
 use futures::StreamExt;
+use indicatif::HumanBytes;
 use iroh::{
     rpc_protocol::{
-        AuthorCreateRequest, AuthorListRequest, DocGetRequest, DocJoinRequest, DocSetRequest,
-        DocShareRequest, DocsImportRequest, ShareMode,
+        AuthorCreateRequest, AuthorListRequest, DocGetRequest, DocGetResponse, DocJoinRequest,
+        DocListRequest, DocListResponse, DocSetRequest, DocShareRequest, DocShareResponse,
+        DocsCreateRequest, DocsImportRequest, DocsListRequest, ShareMode,
     },
     sync::PeerSource,
 };
-use iroh_sync::sync::{NamespaceId, AuthorId};
+use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
 
 use super::RpcClient;
 
@@ -17,6 +19,10 @@ pub enum Commands {
     Author {
         #[clap(subcommand)]
         command: Author,
+    },
+    Docs {
+        #[clap(subcommand)]
+        command: Docs,
     },
     Doc {
         id: NamespaceId,
@@ -29,6 +35,7 @@ impl Commands {
     pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
         match self {
             Commands::Author { command } => command.run(client).await,
+            Commands::Docs { command } => command.run(client).await,
             Commands::Doc { command, id } => command.run(client, id).await,
         }
     }
@@ -59,12 +66,44 @@ impl Author {
 }
 
 #[derive(Debug, Clone, Parser)]
-pub enum Doc {
-    Join {
-        peers: Vec<PeerSource>,
-    },
+pub enum Docs {
+    List,
+    Create,
     Import {
         key: String,
+        #[clap(short, long)]
+        peers: Vec<PeerSource>,
+    },
+}
+
+impl Docs {
+    pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
+        match self {
+            Docs::Create => {
+                let res = client.rpc(DocsCreateRequest {}).await??;
+                println!("{}", res.id);
+            }
+            Docs::Import { key, peers } => {
+                let key = hex::decode(key)?
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid length"))?;
+                let res = client.rpc(DocsImportRequest { key, peers }).await??;
+                println!("{:?}", res);
+            }
+            Docs::List => {
+                let mut iter = client.server_streaming(DocsListRequest {}).await?;
+                while let Some(doc) = iter.next().await {
+                    println!("{}", doc??.id)
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Parser)]
+pub enum Doc {
+    Join {
         peers: Vec<PeerSource>,
     },
     Share {
@@ -80,6 +119,16 @@ pub enum Doc {
 
         #[clap(short, long)]
         prefix: bool,
+        #[clap(short, long)]
+        author: Option<AuthorId>,
+        /// Include old entries for keys.
+        #[clap(short, long)]
+        old: bool,
+    },
+    List {
+        /// Include old entries for keys.
+        #[clap(short, long)]
+        old: bool,
     },
 }
 
@@ -91,40 +140,75 @@ impl Doc {
                 let res = client.rpc(DocJoinRequest { doc_id, peers }).await??;
                 println!("{:?}", res);
             }
-            Doc::Import { key, peers } => {
-                let key = hex::decode(key)?
-                    .try_into()
-                    .map_err(|_| anyhow!("invalid length"))?;
-                let res = client.rpc(DocsImportRequest { key, peers }).await??;
-                println!("{:?}", res);
-            }
             Doc::Share { mode } => {
-                let res = client.rpc(DocShareRequest { doc_id, mode }).await??;
-                println!("{:?}", res);
+                let DocShareResponse { key, me } =
+                    client.rpc(DocShareRequest { doc_id, mode }).await??;
+                println!("key: {}", hex::encode(key));
+                println!("me:  {}", me);
             }
             Doc::Set { author, key, value } => {
                 let res = client
                     .rpc(DocSetRequest {
-                        author,
+                        author_id: author,
                         key: key.as_bytes().to_vec(),
                         value: value.as_bytes().to_vec(),
                         doc_id,
                     })
                     .await??;
-                println!("{:?}", res);
+                println!("{}", fmt_entry(&res.entry));
             }
-            Doc::Get { key, prefix } => {
-                let res = client
-                    .rpc(DocGetRequest {
+            Doc::Get {
+                key,
+                prefix,
+                author,
+                old: all,
+            } => {
+                let mut stream = client
+                    .server_streaming(DocGetRequest {
                         key: key.as_bytes().to_vec(),
                         doc_id,
-                        author: None,
+                        author_id: author,
                         prefix,
+                        // todo: support option
+                        latest: !all,
                     })
-                    .await??;
-                println!("{:?}", res);
+                    .await?;
+                while let Some(res) = stream.next().await {
+                    let DocGetResponse { entry } = res??;
+                    println!("{}", fmt_entry(&entry));
+                }
+            }
+            Doc::List { old: all } => {
+                let mut stream = client
+                    // TODO: fields
+                    .server_streaming(DocListRequest {
+                        doc_id,
+                        latest: !all, // author: None,
+                                      // prefix: None,
+                    })
+                    .await?;
+                while let Some(res) = stream.next().await {
+                    let DocListResponse { entry } = res??;
+                    println!("{}", fmt_entry(&entry));
+                }
             }
         }
         Ok(())
     }
+}
+
+fn fmt_entry(entry: &SignedEntry) -> String {
+    let id = entry.entry().id();
+    let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>");
+    let author = fmt_hash(id.author().as_bytes());
+    let hash = entry.entry().record().content_hash();
+    let hash = fmt_hash(hash.as_bytes());
+    let len = HumanBytes(entry.entry().record().content_len());
+    format!("@{author}: {key} = {hash} ({len})",)
+}
+
+fn fmt_hash(hash: impl AsRef<[u8]>) -> String {
+    let mut text = data_encoding::BASE32_NOPAD.encode(&hash.as_ref()[..5]);
+    text.make_ascii_lowercase();
+    format!("{}…", &text)
 }
