@@ -9,10 +9,10 @@ pub mod baomap;
 pub mod collection;
 pub mod dial;
 pub mod get;
+pub mod download;
 pub mod node;
 pub mod rpc_protocol;
 #[allow(missing_docs)]
-#[cfg(feature = "sync")]
 pub mod sync;
 pub mod util;
 
