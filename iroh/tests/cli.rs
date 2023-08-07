@@ -126,7 +126,7 @@ fn make_partial(
     use iroh::database::flat::FileName;
     let dir = dir.as_ref();
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
-    for entry in std::fs::read_dir(&dir)? {
+    for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         if !entry.file_type()?.is_file() {
             continue;
@@ -438,7 +438,7 @@ fn make_provider_in(
     .stderr_null()
     // .stderr_file(std::io::stderr().as_raw_fd()) for debug output
     .env("RUST_LOG", "debug")
-    .env("IROH_DATA_DIR", &iroh_data_dir);
+    .env("IROH_DATA_DIR", iroh_data_dir);
 
     let provider = match input {
         Input::Stdin => res.stdin_path(path),
