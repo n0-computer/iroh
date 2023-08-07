@@ -26,8 +26,8 @@ iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.5.1", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-sync = { path = "../iroh-sync" }
-iroh-gossip = { path = "../iroh-gossip" }
+iroh-sync = { version = "0.5.1", path = "../iroh-sync" }
+iroh-gossip = { version = "0.5.1", path = "../iroh-gossip" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
