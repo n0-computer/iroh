@@ -16,13 +16,10 @@ pub(super) trait PortMapped: std::fmt::Debug + Unpin {
 #[derive(derive_more::Debug)]
 pub enum Mapping {
     /// A UPnP mapping.
-    #[debug(transparent)]
     Upnp(upnp::Mapping),
     /// A PCP mapping.
-    #[debug(transparent)]
     Pcp(pcp::Mapping),
     /// A NAT-PMP mapping.
-    #[debug(transparent)]
     NatPmp(nat_pmp::Mapping),
 }
 

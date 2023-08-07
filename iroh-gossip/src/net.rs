@@ -231,6 +231,7 @@ impl Gossip {
 /// could be contacted. Usually you will want to add a timeout yourself.
 ///
 /// TODO: Optionally resolve to an error once all connection attempts failed.
+#[derive(Debug)]
 pub struct JoinTopicFut(oneshot::Receiver<anyhow::Result<()>>);
 impl Future for JoinTopicFut {
     type Output = anyhow::Result<()>;
