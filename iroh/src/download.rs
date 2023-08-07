@@ -20,7 +20,7 @@ use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
 // TODO: Move metrics to iroh-bytes metrics
-use crate::sync::metrics::Metrics;
+use crate::metrics::Metrics;
 // TODO: Will be replaced by proper persistent DB once
 // https://github.com/n0-computer/iroh/pull/1320 is merged
 use crate::database::flat::writable::WritableFileDatabase;
