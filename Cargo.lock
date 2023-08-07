@@ -337,20 +337,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
 
 [[package]]
-name = "blake3"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199c42ab6972d92c9f8995f086273d25c42fc0f7b2a1fcefba465c1352d25ba5"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
- "digest",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1868,10 +1854,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.4.1"
+version = "0.5.1"
 dependencies = [
  "anyhow",
- "blake3",
  "bytes",
  "clap",
  "data-encoding",
@@ -1880,6 +1865,7 @@ dependencies = [
  "futures",
  "genawaiter",
  "indexmap 2.0.0",
+ "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
  "once_cell",
@@ -1998,15 +1984,15 @@ dependencies = [
 
 [[package]]
 name = "iroh-sync"
-version = "0.1.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
- "blake3",
  "bytes",
  "crossbeam",
  "derive_more",
  "ed25519-dalek",
  "hex",
+ "iroh-blake3",
  "iroh-bytes",
  "once_cell",
  "ouroboros",

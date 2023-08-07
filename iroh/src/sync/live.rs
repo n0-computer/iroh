@@ -8,7 +8,7 @@ use futures::{
     FutureExt, TryFutureExt,
 };
 use iroh_gossip::{
-    net::{Event, GossipHandle},
+    net::{Event, Gossip},
     proto::TopicId,
 };
 use iroh_metrics::inc;
@@ -64,7 +64,7 @@ pub struct LiveSync<S: store::Store> {
 }
 
 impl<S: store::Store> LiveSync<S> {
-    pub fn spawn(endpoint: MagicEndpoint, gossip: GossipHandle) -> Self {
+    pub fn spawn(endpoint: MagicEndpoint, gossip: Gossip) -> Self {
         let (to_actor_tx, to_actor_rx) = mpsc::channel(CHANNEL_CAP);
         let mut actor = Actor::new(endpoint, gossip, to_actor_rx);
         let task = tokio::spawn(async move {
@@ -102,7 +102,7 @@ impl<S: store::Store> LiveSync<S> {
 // Currently peers might double-sync in both directions.
 struct Actor<S: store::Store> {
     endpoint: MagicEndpoint,
-    gossip: GossipHandle,
+    gossip: Gossip,
 
     docs: HashMap<TopicId, Replica<S::Instance>>,
     subscription: BoxStream<'static, Result<(TopicId, Event)>>,
@@ -119,7 +119,7 @@ struct Actor<S: store::Store> {
 impl<S: store::Store> Actor<S> {
     pub fn new(
         endpoint: MagicEndpoint,
-        gossip: GossipHandle,
+        gossip: Gossip,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
     ) -> Self {
         let (insert_tx, insert_rx) = flume::bounded(64);
@@ -237,13 +237,15 @@ impl<S: store::Store> Actor<S> {
         }
 
         // join gossip for the topic to receive and send message
-        let topic: TopicId = doc.namespace().as_bytes().into();
+        let topic = TopicId::from_bytes(*doc.namespace().as_bytes());
         self.pending_joins.push({
             let peer_ids = peer_ids.clone();
             let gossip = self.gossip.clone();
             async move {
-                let res = gossip.join(topic, peer_ids).await;
-                (topic, res)
+                match gossip.join(topic, peer_ids).await {
+                    Err(err) => (topic, Err(err)),
+                    Ok(fut) => (topic, fut.await),
+                }
             }
             .boxed()
         });

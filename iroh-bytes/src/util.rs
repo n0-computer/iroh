@@ -82,6 +82,12 @@ impl From<[u8; 32]> for Hash {
     }
 }
 
+impl From<Hash> for [u8; 32]{
+    fn from(value: Hash) -> Self {
+        *value.as_bytes()
+    }
+}
+
 impl From<&[u8; 32]> for Hash {
     fn from(value: &[u8; 32]) -> Self {
         Hash(blake3::Hash::from(*value))
