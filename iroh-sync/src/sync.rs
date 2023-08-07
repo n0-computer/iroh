@@ -924,7 +924,7 @@ mod tests {
             rounds += 1;
             println!("round {}", rounds);
             if let Some(msg) = bob.sync_process_message(msg, None).map_err(Into::into)? {
-                next_to_bob = alice.sync_process_message(msg, None).map_err(Into::into);
+                next_to_bob = alice.sync_process_message(msg, None).map_err(Into::into)?;
             }
         }
 
