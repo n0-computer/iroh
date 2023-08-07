@@ -82,7 +82,7 @@ impl From<[u8; 32]> for Hash {
     }
 }
 
-impl From<Hash> for [u8; 32]{
+impl From<Hash> for [u8; 32] {
     fn from(value: Hash) -> Self {
         *value.as_bytes()
     }
