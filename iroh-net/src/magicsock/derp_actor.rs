@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    derp::{self, DerpMap, MAX_PACKET_SIZE},
+    derp::{self, MAX_PACKET_SIZE},
     key::{self, node::PUBLIC_KEY_LENGTH},
 };
 
@@ -41,7 +41,6 @@ pub(super) enum DerpActorMessage {
         reason: &'static str,
     },
     NotePreferred(u16),
-    SetDerpMap(Option<DerpMap>),
     MaybeCloseDerpsOnRebind(Vec<IpAddr>),
     Shutdown,
 }
@@ -112,9 +111,6 @@ impl DerpActor {
                         DerpActorMessage::NotePreferred(my_derp) => {
                             self.note_preferred(my_derp).await;
                         }
-                        DerpActorMessage::SetDerpMap(derp_map) => {
-                            self.set_derp_map(derp_map).await;
-                        }
                         DerpActorMessage::MaybeCloseDerpsOnRebind(ifs) => {
                             self.maybe_close_derps_on_rebind(&ifs).await;
                         }
@@ -176,59 +172,6 @@ impl DerpActor {
         (region, result, action)
     }
 
-    async fn set_derp_map(&mut self, dm: Option<DerpMap>) {
-        let mut to_close = Vec::new();
-        {
-            let mut derp_map = self.conn.derp_map.write().await;
-            if *derp_map == dm {
-                return;
-            }
-
-            debug!(?dm, "setting new derp map");
-
-            let old = if let Some(dm) = dm {
-                derp_map.replace(dm)
-            } else {
-                derp_map.take()
-            };
-
-            if derp_map.is_none() {
-                drop(derp_map); // ensure the lock is released
-                self.close_all_derp("derp-disabled").await;
-                return;
-            }
-
-            // Reconnect any DERP region that changed definitions.
-            if let Some(old) = old {
-                let derp_map = derp_map.as_ref().unwrap();
-                for (rid, old_def) in old.regions {
-                    if let Some(new_def) = derp_map.regions.get(&rid) {
-                        if &old_def == new_def {
-                            continue;
-                        }
-                    }
-                    if rid == self.conn.my_derp() {
-                        self.conn.set_my_derp(0);
-                    }
-                    to_close.push(rid);
-                }
-            }
-        }
-
-        if !to_close.is_empty() {
-            for rid in to_close {
-                self.close_derp(rid, "derp-region-redefined").await;
-            }
-            self.log_active_derp();
-        }
-
-        // TOOD: Maybe try_send?
-        self.msg_sender
-            .send(ActorMessage::ReStun("derp-map-update"))
-            .await
-            .ok();
-    }
-
     async fn note_preferred(&self, my_num: u16) {
         futures::future::join_all(self.active_derp.iter().map(|(i, ad)| async move {
             let b = *i == my_num;
@@ -245,12 +188,12 @@ impl DerpActor {
     ) {
         debug!(region_id, %peer, "sending derp");
         {
-            let derp_map = &*self.conn.derp_map.read().await;
+            let derp_map = &self.conn.derp_map;
             if derp_map.is_none() {
                 warn!("DERP is disabled");
                 return;
             }
-            if !derp_map.as_ref().unwrap().regions.contains_key(&region_id) {
+            if !derp_map.as_ref().unwrap().contains_region(region_id) {
                 warn!("unknown region id {}", region_id);
                 return;
             }

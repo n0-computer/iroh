@@ -184,17 +184,12 @@ impl MagicEndpoint {
     ) -> anyhow::Result<Self> {
         let msock = magicsock::MagicSock::new(magicsock::Options {
             port: bind_port,
+            derp_map: Some(derp_map.unwrap_or_default()),
             private_key: keypair.secret().clone().into(),
             callbacks: callbacks.unwrap_or_default(),
         })
         .await?;
         trace!("created magicsock");
-
-        let derp_map = derp_map.unwrap_or_default();
-        msock
-            .set_derp_map(Some(derp_map))
-            .await
-            .context("setting derp map")?;
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
@@ -269,8 +264,10 @@ impl MagicEndpoint {
         derp_region: Option<u16>,
         known_addrs: &[SocketAddr],
     ) -> anyhow::Result<quinn::Connection> {
-        self.add_known_addrs(peer_id, derp_region, known_addrs)
-            .await?;
+        if derp_region.is_some() || !known_addrs.is_empty() {
+            self.add_known_addrs(peer_id, derp_region, known_addrs)
+                .await?;
+        }
 
         let node_key: key::node::PublicKey = peer_id.into();
         let addr = self
