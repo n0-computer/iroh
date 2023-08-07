@@ -68,6 +68,7 @@ impl Keypair {
         }
     }
 
+    /// Sign a message with this keypair.
     pub fn sign(&self, msg: &[u8]) -> Signature {
         use ed25519_dalek::Signer;
 
