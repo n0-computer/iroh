@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
-use iroh_net::{tls::PeerId, MagicEndpoint};
+use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store,
     sync::{NamespaceId, Replica},
@@ -54,7 +54,7 @@ pub async fn connect_and_sync<S: store::Store>(
         .await
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
-    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc).await;
+    let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, Some(peer_id)).await;
     debug!("sync with peer {}: finish {:?}", peer_id, res);
     res
 }
@@ -64,7 +64,9 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
     writer: &mut W,
     reader: &mut R,
     alice: &Replica<S::Instance>,
+    peer: Option<PeerId>,
 ) -> Result<()> {
+    let peer = peer.map(|peer| peer.to_bytes());
     let mut buffer = BytesMut::with_capacity(1024);
 
     // Init message
@@ -86,7 +88,7 @@ pub async fn run_alice<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Un
                 bail!("unexpected message: init");
             }
             Message::Sync(msg) => {
-                if let Some(msg) = alice.sync_process_message(msg).map_err(Into::into)? {
+                if let Some(msg) = alice.sync_process_message(msg, peer).map_err(Into::into)? {
                     send_sync_message(writer, msg).await?;
                 } else {
                     break;
@@ -105,9 +107,16 @@ pub async fn handle_connection<S: store::Store>(
 ) -> Result<()> {
     let connection = connecting.await?;
     debug!("> connection established!");
+    let peer_id = get_peer_id(&connection).await?;
     let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
 
-    run_bob(&mut send_stream, &mut recv_stream, replica_store).await?;
+    run_bob(
+        &mut send_stream,
+        &mut recv_stream,
+        replica_store,
+        Some(peer_id),
+    )
+    .await?;
     send_stream.finish().await?;
 
     debug!("done");
@@ -120,7 +129,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
     writer: &mut W,
     reader: &mut R,
     replica_store: S,
+    peer: Option<PeerId>,
 ) -> Result<()> {
+    let peer = peer.map(|peer| peer.to_bytes());
     let mut buffer = BytesMut::with_capacity(1024);
 
     let mut replica = None;
@@ -135,7 +146,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                 match replica_store.get_replica(&namespace)? {
                     Some(r) => {
                         debug!("starting sync for {}", namespace);
-                        if let Some(msg) = r.sync_process_message(message).map_err(Into::into)? {
+                        if let Some(msg) =
+                            r.sync_process_message(message, peer).map_err(Into::into)?
+                        {
                             send_sync_message(writer, msg).await?;
                         } else {
                             break;
@@ -150,7 +163,10 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
             }
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
-                    if let Some(msg) = replica.sync_process_message(msg).map_err(Into::into)? {
+                    if let Some(msg) = replica
+                        .sync_process_message(msg, peer)
+                        .map_err(Into::into)?
+                    {
                         send_sync_message(writer, msg).await?;
                     } else {
                         break;
@@ -226,8 +242,13 @@ mod tests {
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
         let replica = alice_replica.clone();
         let alice_task = tokio::task::spawn(async move {
-            run_alice::<store::memory::Store, _, _>(&mut alice_writer, &mut alice_reader, &replica)
-                .await
+            run_alice::<store::memory::Store, _, _>(
+                &mut alice_writer,
+                &mut alice_reader,
+                &replica,
+                None,
+            )
+            .await
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
@@ -237,6 +258,7 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 bob_replica_store_task,
+                None,
             )
             .await
         });

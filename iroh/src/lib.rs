@@ -8,6 +8,7 @@ pub use iroh_net as net;
 pub mod collection;
 pub mod database;
 pub mod dial;
+pub mod download;
 pub mod node;
 pub mod rpc_protocol;
 #[allow(missing_docs)]

@@ -118,6 +118,11 @@ impl PeerId {
         let key = PublicKey::from_bytes(bytes)?;
         Ok(PeerId(key))
     }
+
+    /// Get the peer id as a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
 }
 
 impl From<PublicKey> for PeerId {
