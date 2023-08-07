@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
-use iroh_net::{tls::PeerId, MagicEndpoint, magic_endpoint::get_peer_id};
+use iroh_net::{magic_endpoint::get_peer_id, tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store,
     sync::{NamespaceId, Replica},
@@ -146,7 +146,9 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
                 match replica_store.get_replica(&namespace)? {
                     Some(r) => {
                         debug!("starting sync for {}", namespace);
-                        if let Some(msg) = r.sync_process_message(message, peer).map_err(Into::into)? {
+                        if let Some(msg) =
+                            r.sync_process_message(message, peer).map_err(Into::into)?
+                        {
                             send_sync_message(writer, msg).await?;
                         } else {
                             break;
@@ -161,7 +163,10 @@ pub async fn run_bob<S: store::Store, R: AsyncRead + Unpin, W: AsyncWrite + Unpi
             }
             Message::Sync(msg) => match replica {
                 Some(ref replica) => {
-                    if let Some(msg) = replica.sync_process_message(msg, peer).map_err(Into::into)? {
+                    if let Some(msg) = replica
+                        .sync_process_message(msg, peer)
+                        .map_err(Into::into)?
+                    {
                         send_sync_message(writer, msg).await?;
                     } else {
                         break;
@@ -237,8 +242,13 @@ mod tests {
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
         let replica = alice_replica.clone();
         let alice_task = tokio::task::spawn(async move {
-            run_alice::<store::memory::Store, _, _>(&mut alice_writer, &mut alice_reader, &replica, None)
-                .await
+            run_alice::<store::memory::Store, _, _>(
+                &mut alice_writer,
+                &mut alice_reader,
+                &replica,
+                None,
+            )
+            .await
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
@@ -248,7 +258,7 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 bob_replica_store_task,
-                None
+                None,
             )
             .await
         });
