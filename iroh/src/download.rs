@@ -207,22 +207,22 @@ impl DownloadActor {
         let conn = self.conns.get(&peer).unwrap().clone();
         let blobs = self.db.clone();
         let fut = async move {
-#[cfg(feature = "metrics")]
+            #[cfg(feature = "metrics")]
             let start = Instant::now();
             let res = blobs.download_single(conn, hash).await;
             // record metrics
-#[cfg(feature = "metrics")]
+            #[cfg(feature = "metrics")]
             {
-            let elapsed = start.elapsed().as_millis();
-            match &res {
-                Ok(Some((_hash, len))) => {
-                    inc!(Metrics, downloads_success);
-                    inc_by!(Metrics, download_bytes_total, *len);
-                    inc_by!(Metrics, download_time_total, elapsed as u64);
+                let elapsed = start.elapsed().as_millis();
+                match &res {
+                    Ok(Some((_hash, len))) => {
+                        inc!(Metrics, downloads_success);
+                        inc_by!(Metrics, download_bytes_total, *len);
+                        inc_by!(Metrics, download_time_total, elapsed as u64);
+                    }
+                    Ok(None) => inc!(Metrics, downloads_notfound),
+                    Err(_) => inc!(Metrics, downloads_error),
                 }
-                Ok(None) => inc!(Metrics, downloads_notfound),
-                Err(_) => inc!(Metrics, downloads_error),
-            }
             }
             (peer, hash, res)
         };
@@ -283,14 +283,14 @@ impl DownloadQueue {
                 peers.retain(|p| p != &peer);
             }
             self.ensure_no_empty(hash, peer);
-            return Some(hash);
+            Some(hash)
         } else {
             None
         }
     }
 
     pub fn has_no_candidates(&self, hash: &Hash) -> bool {
-        self.candidates_by_hash.get(hash).is_none() && self.running_by_hash.get(&hash).is_none()
+        self.candidates_by_hash.get(hash).is_none() && self.running_by_hash.get(hash).is_none()
     }
 
     pub fn on_success(&mut self, hash: Hash, peer: PeerId) -> Option<(PeerId, Hash)> {
@@ -316,7 +316,7 @@ impl DownloadQueue {
                 }
             }
         }
-        if let Some(hash) = self.running_by_peer.remove(&peer) {
+        if let Some(hash) = self.running_by_peer.remove(peer) {
             self.running_by_hash.remove(&hash);
             if self.candidates_by_hash.get(&hash).is_none() {
                 failed.push(hash);
