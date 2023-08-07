@@ -29,7 +29,7 @@ use iroh_bytes::{
     util::runtime,
     util::Hash,
 };
-use iroh_gossip::net::{GossipHandle, GOSSIP_ALPN};
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::{
     config::Endpoint,
@@ -281,7 +281,7 @@ where
             .max_concurrent_uni_streams(0u32.into());
 
         // init a cell that will hold our gossip handle to be used in endpoint callbacks
-        let gossip_cell: OnceCell<GossipHandle> = OnceCell::new();
+        let gossip_cell: OnceCell<Gossip> = OnceCell::new();
         let gossip_cell2 = gossip_cell.clone();
 
         let endpoint = MagicEndpoint::builder()
@@ -312,7 +312,7 @@ where
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
 
         // initialize the gossip protocol
-        let gossip = GossipHandle::from_endpoint(endpoint.clone(), Default::default());
+        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default());
         // insert into the gossip cell to be used in the endpoint callbacks above
         gossip_cell.set(gossip.clone()).unwrap();
 
@@ -391,7 +391,7 @@ where
         auth_handler: Arc<dyn RequestAuthorizationHandler>,
         collection_parser: C,
         rt: runtime::Handle,
-        gossip: GossipHandle,
+        gossip: Gossip,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -472,7 +472,7 @@ async fn handle_connection<D: BaoReadonlyDb, S: Store, C: CollectionParser>(
     connecting: quinn::Connecting,
     alpn: String,
     node: Arc<NodeInner<D, S>>,
-    gossip: GossipHandle,
+    gossip: Gossip,
     collection_parser: C,
     custom_get_handler: Arc<dyn CustomGetHandler>,
     auth_handler: Arc<dyn RequestAuthorizationHandler>,

@@ -234,7 +234,7 @@ impl BlobStore {
         endpoint: MagicEndpoint,
     ) -> anyhow::Result<Self> {
         let db = WritableFileDatabase::new(data_path).await?;
-        let downloader = Downloader::spawn(rt, endpoint, db.clone());
+        let downloader = Downloader::new(rt, endpoint, db.clone());
         Ok(Self { db, downloader })
     }
 

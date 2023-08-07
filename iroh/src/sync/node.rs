@@ -38,7 +38,7 @@ impl<S: Store> SyncNode<S> {
         rt: Handle,
         store: S,
         endpoint: MagicEndpoint,
-        gossip: iroh_gossip::net::GossipHandle,
+        gossip: iroh_gossip::net::Gossip,
         blobs: BlobStore,
     ) -> Self {
         let live = LiveSync::spawn(rt, endpoint.clone(), gossip);
@@ -114,11 +114,11 @@ impl<S: Store> SyncNode<S> {
             let replica = replica.clone();
             let blobs = self.blobs.clone();
             replica.on_insert(Box::new(move |origin, entry| {
-                if matches!(origin, InsertOrigin::Sync) {
+                if let InsertOrigin::Sync(Some(peer_id)) = origin {
                     let hash = *entry.entry().record().content_hash();
-                    let peer_id = PeerId::from_bytes(entry.entry().id().author().as_bytes())
+                    let author_peer_id = PeerId::from_bytes(entry.entry().id().author().as_bytes())
                         .expect("failed to convert author to peer id");
-                    blobs.start_download(hash, peer_id);
+                    blobs.start_download(hash, vec![PeerId::from_bytes(&peer_id).unwrap(), author_peer_id]);
                 }
             }));
         }
