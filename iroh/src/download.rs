@@ -19,7 +19,7 @@ use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
-// TODO: Move metrics to iroh-bytes metrics
+#[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 // TODO: Will be replaced by proper persistent DB once
 // https://github.com/n0-computer/iroh/pull/1320 is merged
@@ -207,9 +207,12 @@ impl DownloadActor {
         let conn = self.conns.get(&peer).unwrap().clone();
         let blobs = self.db.clone();
         let fut = async move {
+#[cfg(feature = "metrics")]
             let start = Instant::now();
             let res = blobs.download_single(conn, hash).await;
             // record metrics
+#[cfg(feature = "metrics")]
+            {
             let elapsed = start.elapsed().as_millis();
             match &res {
                 Ok(Some((_hash, len))) => {
@@ -219,6 +222,7 @@ impl DownloadActor {
                 }
                 Ok(None) => inc!(Metrics, downloads_notfound),
                 Err(_) => inc!(Metrics, downloads_error),
+            }
             }
             (peer, hash, res)
         };
