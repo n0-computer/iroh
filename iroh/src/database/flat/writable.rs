@@ -109,7 +109,7 @@ impl WritableFileDatabase {
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(&path)
+                    .open(path)
             })
             .await?;
 
