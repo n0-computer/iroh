@@ -59,4 +59,4 @@ cp "include/ios/$SWIFT_INTERFACE.swift" \
     "$SWIFT_INTERFACE/Sources/$SWIFT_INTERFACE/$SWIFT_INTERFACE.swift"
 
 rm -rf "$SWIFT_INTERFACE/artifacts/*"
-cp -R "$FRAMEWORK_NAME.xcframework" "$SWIFT_INTERFACE/artifacts"
+cp -R "$FRAMEWORK_NAME.xcframework" "$SWIFT_INTERFACE/artifacts/"
