@@ -20,6 +20,8 @@ use crate::{
     tls,
 };
 
+type PeerInfo = super::magicsock::EndpointInfo;
+
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
@@ -285,6 +287,15 @@ impl MagicEndpoint {
     /// Returns `None` if we are not connected to any DERP region.
     pub async fn my_derp(&self) -> Option<u16> {
         self.msock.my_derp().await
+    }
+
+    /// Get information on all the peers we have connection information about.
+    ///
+    /// Includes the peer's [`PublicKey`], potential DERP region, it's addresses with any known
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that peer over a `Direct` (UDP) or `Relay` (DERP) connection.
+    pub async fn peer_infos(&self) -> anyhow::Result<Vec<PeerInfo>> {
+        self.msock.tracked_endpoints().await
     }
 
     /// Connect to a remote endpoint.
