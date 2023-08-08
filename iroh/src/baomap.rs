@@ -4,7 +4,7 @@ pub mod flat;
 #[cfg(feature = "mem-db")]
 pub mod mem;
 
-pub mod test;
+pub mod readonly_mem;
 
 fn flatten_to_io<T>(
     e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,

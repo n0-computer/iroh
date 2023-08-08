@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{anyhow, ensure, Context, Result};
 use iroh::{
+    baomap::flat,
     collection::IrohCollectionParser,
-    database::flat,
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };

@@ -1545,7 +1545,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::database::test::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::baomap::readonly_mem::Database::new([("test", b"hello")]);
         let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1562,7 +1562,7 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::database::mem::Database::default();
+        let db = crate::baomap::mem::Database::default();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())

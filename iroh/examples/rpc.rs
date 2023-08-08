@@ -81,6 +81,6 @@ async fn main() -> anyhow::Result<()> {
     // let db = iroh::database::flat::Database::load(iroh_data_dir.clone(), iroh_data_dir).await?;
     // run(db).await
 
-    let db = iroh::database::mem::Database::default();
+    let db = iroh::baomap::mem::Database::default();
     run(db).await
 }
