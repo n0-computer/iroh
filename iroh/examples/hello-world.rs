@@ -21,7 +21,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new, empty in memory database
-    let mut db = iroh::baomap::readonly_mem::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
     // add some data and remember the hash

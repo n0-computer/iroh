@@ -1,6 +1,6 @@
 //! A full in memory database for iroh-bytes
 //!
-//! Main entry point is [Database].
+//! Main entry point is [Store].
 use std::collections::BTreeMap;
 use std::io;
 use std::num::TryFromIntError;
@@ -20,14 +20,14 @@ use bytes::BytesMut;
 use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use iroh_bytes::provider::BaoDb;
-use iroh_bytes::provider::BaoPartialMap;
-use iroh_bytes::provider::BaoPartialMapEntry;
-use iroh_bytes::provider::ExportMode;
-use iroh_bytes::provider::ImportMode;
-use iroh_bytes::provider::ImportProgress;
-use iroh_bytes::provider::ValidateProgress;
-use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
+use iroh_bytes::baomap;
+use iroh_bytes::baomap::ExportMode;
+use iroh_bytes::baomap::ImportMode;
+use iroh_bytes::baomap::ImportProgress;
+use iroh_bytes::baomap::PartialMap;
+use iroh_bytes::baomap::PartialMapEntry;
+use iroh_bytes::baomap::ValidateProgress;
+use iroh_bytes::baomap::{BaoMap, MapEntry, ReadonlyStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -180,7 +180,7 @@ impl AsyncSliceWriter for MemFile {
 
 #[derive(Debug, Clone, Default)]
 ///
-pub struct Database {
+pub struct Store {
     state: Arc<RwLock<State>>,
 }
 
@@ -190,7 +190,7 @@ struct State {
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
 }
 
-/// The [BaoMapEntry] implementation for [Database].
+/// The [BaoMapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     hash: blake3::Hash,
@@ -198,7 +198,7 @@ pub struct Entry {
     data: MemFile,
 }
 
-impl BaoMapEntry<Database> for Entry {
+impl MapEntry<Store> for Entry {
     fn hash(&self) -> blake3::Hash {
         self.hash
     }
@@ -222,7 +222,7 @@ impl BaoMapEntry<Database> for Entry {
     }
 }
 
-/// The [BaoMapEntry] implementation for [Database].
+/// The [BaoMapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct PartialEntry {
     hash: blake3::Hash,
@@ -230,7 +230,7 @@ pub struct PartialEntry {
     data: MutableMemFile,
 }
 
-impl BaoMapEntry<Database> for PartialEntry {
+impl MapEntry<Store> for PartialEntry {
     fn hash(&self) -> blake3::Hash {
         self.hash
     }
@@ -259,7 +259,7 @@ impl BaoMapEntry<Database> for PartialEntry {
     }
 }
 
-impl BaoMap for Database {
+impl BaoMap for Store {
     type Outboard = PreOrderOutboard<MemFile>;
     type DataReader = MemFile;
     type Entry = Entry;
@@ -293,7 +293,7 @@ impl BaoMap for Database {
     }
 }
 
-impl BaoReadonlyDb for Database {
+impl ReadonlyStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(
             self.state
@@ -314,9 +314,28 @@ impl BaoReadonlyDb for Database {
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
         todo!()
     }
+
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        let state = self.state.read().unwrap();
+        let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
+        Box::new(hashes.into_iter())
+    }
+
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
 }
 
-impl BaoPartialMap for Database {
+impl PartialMap for Store {
     type OutboardMut = PreOrderOutboard<MutableMemFile>;
 
     type DataWriter = MutableMemFile;
@@ -382,13 +401,7 @@ impl BaoPartialMap for Database {
     }
 }
 
-impl BaoDb for Database {
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let state = self.state.read().unwrap();
-        let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
-        Box::new(hashes.into_iter())
-    }
-
+impl baomap::Store for Store {
     fn import(
         &self,
         data: std::path::PathBuf,
@@ -406,19 +419,6 @@ impl BaoDb for Database {
         .boxed()
     }
 
-    fn export(
-        &self,
-        hash: Hash,
-        target: PathBuf,
-        mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .boxed()
-    }
-
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -430,7 +430,7 @@ impl BaoDb for Database {
     }
 }
 
-impl Database {
+impl Store {
     fn import_bytes_sync(&self, bytes: Bytes) -> Hash {
         let size = bytes.len() as u64;
         let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
@@ -482,7 +482,7 @@ impl Database {
     }
 }
 
-impl BaoPartialMapEntry<Database> for PartialEntry {
+impl PartialMapEntry<Store> for PartialEntry {
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }

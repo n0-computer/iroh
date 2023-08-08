@@ -1,6 +1,6 @@
 //! A readonly in memory database for iroh-bytes, usable for testing and sharing static data.
 //!
-//! Main entry point is [Database].
+//! Main entry point is [Store].
 use std::{
     collections::{BTreeMap, HashMap},
     io,
@@ -21,9 +21,9 @@ use futures::{
     FutureExt,
 };
 use iroh_bytes::{
-    provider::{
-        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ExportMode,
-        ImportMode, ImportProgress, ValidateProgress,
+    baomap::{
+        self, BaoMap, ExportMode, ImportMode, ImportProgress, MapEntry, PartialMap,
+        PartialMapEntry, ReadonlyStore, ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -40,9 +40,9 @@ use super::flatten_to_io;
 ///
 /// It is therefore useful mostly for testing and sharing static data.
 #[derive(Debug, Clone, Default)]
-pub struct Database(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
+pub struct Store(Arc<HashMap<Hash, (PreOrderMemOutboard, Bytes)>>);
 
-impl<K, V> FromIterator<(K, V)> for Database
+impl<K, V> FromIterator<(K, V)> for Store
 where
     K: Into<String>,
     V: AsRef<[u8]>,
@@ -53,8 +53,8 @@ where
     }
 }
 
-impl Database {
-    /// Create a new [Database] from a sequence of entries.
+impl Store {
+    /// Create a new [Store] from a sequence of entries.
     ///
     /// Returns the database and a map of names to computed blake3 hashes.
     /// In case of duplicate names, the last entry is used.
@@ -134,20 +134,20 @@ impl Database {
     }
 }
 
-/// The [BaoMapEntry] implementation for [Database].
+/// The [BaoMapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     outboard: PreOrderMemOutboard<Bytes>,
     data: Bytes,
 }
 
-/// The [BaoPartialMapEntry] implementation for [Database].
+/// The [BaoPartialMapEntry] implementation for [Store].
 ///
-/// This is an unoccupied type, since [Database] is does not allow creating partial entries.
+/// This is an unoccupied type, since [Store] is does not allow creating partial entries.
 #[derive(Debug, Clone)]
 pub enum PartialEntry {}
 
-impl BaoMapEntry<Database> for Entry {
+impl MapEntry<Store> for Entry {
     fn hash(&self) -> blake3::Hash {
         self.outboard.root()
     }
@@ -169,7 +169,7 @@ impl BaoMapEntry<Database> for Entry {
     }
 }
 
-impl BaoMap for Database {
+impl BaoMap for Store {
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Bytes;
     type Entry = Entry;
@@ -183,7 +183,7 @@ impl BaoMap for Database {
     }
 }
 
-impl BaoPartialMap for Database {
+impl PartialMap for Store {
     type OutboardMut = PreOrderOutboard<BytesMut>;
 
     type DataWriter = BytesMut;
@@ -206,7 +206,7 @@ impl BaoPartialMap for Database {
     }
 }
 
-impl BaoReadonlyDb for Database {
+impl ReadonlyStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
     }
@@ -221,9 +221,26 @@ impl BaoReadonlyDb for Database {
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         future::ok(()).boxed()
     }
+
+    fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+            .map(flatten_to_io)
+            .boxed()
+    }
+
+    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+        Box::new(std::iter::empty())
+    }
 }
 
-impl BaoMapEntry<Database> for PartialEntry {
+impl MapEntry<Store> for PartialEntry {
     fn hash(&self) -> blake3::Hash {
         unreachable!()
     }
@@ -247,29 +264,17 @@ impl BaoMapEntry<Database> for PartialEntry {
     }
 }
 
-impl BaoPartialMapEntry<Database> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::OutboardMut>> {
+impl PartialMapEntry<Store> for PartialEntry {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
         unreachable!()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Database as BaoPartialMap>::DataWriter>> {
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
         unreachable!()
     }
 }
 
-impl BaoDb for Database {
-    fn export(
-        &self,
-        hash: Hash,
-        target: PathBuf,
-        mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .boxed()
-    }
+impl baomap::Store for Store {
     fn import(
         &self,
         data: PathBuf,
@@ -284,9 +289,5 @@ impl BaoDb for Database {
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let _ = bytes;
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
-    }
-
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
     }
 }

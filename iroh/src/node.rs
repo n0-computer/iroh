@@ -30,19 +30,19 @@ use bao_tree::{ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::baomap::{
+    BaoMap, ExportMode, MapEntry, PartialMapEntry, ReadonlyStore, Store, ValidateProgress,
+};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ExportMode, ShareProgress};
+use iroh_bytes::provider::ShareProgress;
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
 use iroh_bytes::IROH_BLOCK_SIZE;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
-    provider::{
-        BaoMap, BaoMapEntry, BaoReadonlyDb, CustomGetHandler, ProvideProgress,
-        RequestAuthorizationHandler, ValidateProgress,
-    },
+    provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
 };
@@ -165,7 +165,7 @@ impl<D: BaoMap> Builder<D> {
 
 impl<D, E, C> Builder<D, E, C>
 where
-    D: BaoDb,
+    D: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -523,7 +523,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoReadonlyDb> Node<D> {
+impl<D: ReadonlyStore> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
@@ -641,7 +641,7 @@ struct RpcHandler<D, C> {
     collection_parser: C,
 }
 
-impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
+impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -1255,7 +1255,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::provider::{ImportMode, ImportProgress};
+        use iroh_bytes::baomap::{ImportMode, ImportProgress};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = TokioProgressSender::new(progress);
@@ -1382,7 +1382,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 }
 
-fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: CollectionParser>(
+fn handle_rpc_request<D: Store, E: ServiceEndpoint<ProviderService>, C: CollectionParser>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
     handler: &RpcHandler<D, C>,
@@ -1428,7 +1428,7 @@ fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: Collecti
 }
 
 #[derive(Debug, Clone)]
-enum BlobInfo<D: BaoDb> {
+enum BlobInfo<D: Store> {
     // we have the blob completely
     Complete,
     // we have the blob partially
@@ -1440,7 +1440,7 @@ enum BlobInfo<D: BaoDb> {
     Missing,
 }
 
-impl<D: BaoDb> BlobInfo<D> {
+impl<D: Store> BlobInfo<D> {
     fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
         match self {
             BlobInfo::Complete => RangeSet2::empty(),
@@ -1545,7 +1545,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::baomap::readonly_mem::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
         let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1562,7 +1562,7 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::baomap::mem::Database::default();
+        let db = crate::baomap::mem::Store::default();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())

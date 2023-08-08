@@ -19,7 +19,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+pub use iroh_bytes::{baomap::ValidateProgress, provider::ProvideProgress};
 
 /// A request to the node to provide the data at the given path
 ///

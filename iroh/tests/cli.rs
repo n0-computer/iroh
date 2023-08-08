@@ -284,8 +284,8 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(all(unix, feature = "cli"))]
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::baomap::flat::Database;
-    use iroh_bytes::provider::BaoReadonlyDb;
+    use iroh::baomap::flat::Store;
+    use iroh_bytes::baomap::ReadonlyStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -339,13 +339,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     };
     provide(&foo_path)?;
     // should have some data now
-    let db = Database::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
+    let db = Store::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 2);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Database::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
+    let db = Store::load_blocking(&iroh_data_dir, &iroh_data_dir)?;
     let blobs = db.blobs().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 4);
 

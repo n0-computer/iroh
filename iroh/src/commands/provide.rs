@@ -13,7 +13,7 @@ use iroh::{
     node::{Node, StaticTokenAuthHandler},
     rpc_protocol::{ProvideRequest, ProviderRequest, ProviderResponse, ProviderService},
 };
-use iroh_bytes::{protocol::RequestToken, provider::BaoDb, util::runtime};
+use iroh_bytes::{baomap::Store, protocol::RequestToken, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
@@ -54,7 +54,7 @@ pub async fn run(
         iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
     }
     tokio::fs::create_dir_all(&iroh_data_root).await?;
-    let db = flat::Database::load(&iroh_data_root, &iroh_data_root)
+    let db = flat::Store::load(&iroh_data_root, &iroh_data_root)
         .await
         .with_context(|| {
             format!(
@@ -131,7 +131,7 @@ pub async fn run(
     Ok(())
 }
 
-async fn provide<D: BaoDb>(
+async fn provide<D: Store>(
     db: D,
     rt: &runtime::Handle,
     key: Option<PathBuf>,

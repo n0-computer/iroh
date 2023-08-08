@@ -67,8 +67,8 @@ impl GetInteractive {
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
-        let db: iroh::baomap::flat::Database =
-            iroh::baomap::flat::Database::load(temp_dir.clone(), temp_dir.clone()).await?;
+        let db: iroh::baomap::flat::Store =
+            iroh::baomap::flat::Store::load(temp_dir.clone(), temp_dir.clone()).await?;
         // spin up temp node and ask it to download the data for us
         let provider = iroh::node::Node::builder(db)
             .collection_parser(IrohCollectionParser)
