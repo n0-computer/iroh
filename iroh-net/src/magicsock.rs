@@ -981,7 +981,7 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
             ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self.peer_map.endpoints().map(|(_, ep)| ep.info()).collect();
+                let eps: Vec<_> = self.peer_map.endpoint_infos();
                 let _ = s.send(eps);
             }
             ActorMessage::LocalEndpoints(s) => {
