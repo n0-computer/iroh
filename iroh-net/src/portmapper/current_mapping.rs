@@ -11,7 +11,7 @@ use futures::Future;
 use iroh_metrics::inc;
 use std::time::Duration;
 use tokio::{sync::watch, time};
-use tracing::{trace, debug};
+use tracing::{debug, trace};
 
 /// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {
