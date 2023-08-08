@@ -156,6 +156,7 @@ impl Endpoint {
             .collect();
 
         EndpointInfo {
+            id: self.id,
             public_key: self.public_key,
             derp_region: self.derp_addr,
             addrs,
@@ -1082,6 +1083,11 @@ impl PeerMap {
         self.by_id.iter_mut()
     }
 
+    /// Get the [`EndpointInfo`]s for each endpoint
+    pub(super) fn endpoint_infos(&self) -> Vec<EndpointInfo> {
+        self.endpoints().map(|(_, ep)| ep.info()).collect()
+    }
+
     /// Inserts a new endpoint into the [`PeerMap`].
     pub(super) fn insert_endpoint(&mut self, options: Options) -> usize {
         let id = self.next_id;
@@ -1162,7 +1168,7 @@ struct EndpointState {
 }
 
 /// The type of connection we have to the endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ConnectionType {
     /// Direct UDP connection
     Direct(SocketAddr),
@@ -1173,8 +1179,10 @@ pub enum ConnectionType {
 }
 
 /// Details about an Endpoint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct EndpointInfo {
+    /// The id in the peer_map
+    pub id: usize,
     /// The public key of the endpoint.
     pub public_key: PublicKey,
     /// Derp region, if available.
@@ -1287,5 +1295,266 @@ impl AddrLatency {
             return false;
         }
         self.latency < other.latency
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::key::SecretKey;
+
+    #[test]
+    fn test_endpoint_infos() {
+        // endpoint with a `best_addr` that has a latency
+        let pong_src = "0.0.0.0:1".parse().unwrap();
+        let latency = Duration::from_millis(50);
+        let (a_endpoint, a_socket_addr) = {
+            let socket_addr = "0.0.0.0:10".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::from([(
+                SendAddr::Udp(socket_addr),
+                EndpointState {
+                    index: Index::Some(0),
+                    last_ping: None,
+                    last_got_ping: None,
+                    last_got_ping_tx_id: None,
+                    call_me_maybe_time: None,
+                    recent_pongs: vec![PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Udp(socket_addr),
+                        pong_src,
+                    }],
+                    recent_pong: 0,
+                },
+            )]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            (
+                Endpoint {
+                    id: 0,
+                    conn_sender: send,
+                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    conn_public_key: key.public(),
+                    public_key: key.public(),
+                    last_full_ping: None,
+                    derp_addr: Some(0),
+                    best_addr: Some(AddrLatency {
+                        addr: socket_addr,
+                        latency: Some(latency),
+                    }),
+                    best_addr_at: Some(now),
+                    trust_best_addr_until: now.checked_add(Duration::from_secs(100)),
+                    endpoint_state,
+                    is_call_me_maybe_ep: HashMap::new(),
+                    pending_cli_pings: Vec::new(),
+                    expired: false,
+                    sent_ping: HashMap::new(),
+                    last_active: now,
+                },
+                socket_addr,
+            )
+        };
+        // endpoint w/ no best addr but a derp  w/ latency
+        let b_endpoint = {
+            // let socket_addr = "0.0.0.0:9".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::from([(
+                SendAddr::Derp(0),
+                EndpointState {
+                    index: Index::Some(1),
+                    last_ping: None,
+                    last_got_ping: None,
+                    last_got_ping_tx_id: None,
+                    call_me_maybe_time: None,
+                    recent_pongs: vec![PongReply {
+                        latency,
+                        pong_at: now,
+                        from: SendAddr::Derp(0),
+                        pong_src,
+                    }],
+                    recent_pong: 0,
+                },
+            )]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            Endpoint {
+                id: 1,
+                conn_sender: send,
+                quic_mapped_addr: QuicMappedAddr::generate(),
+                conn_public_key: key.public(),
+                public_key: key.public(),
+                last_full_ping: None,
+                derp_addr: Some(0),
+                best_addr: None,
+                best_addr_at: None,
+                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                endpoint_state,
+                is_call_me_maybe_ep: HashMap::new(),
+                pending_cli_pings: Vec::new(),
+                expired: false,
+                sent_ping: HashMap::new(),
+                last_active: now,
+            }
+        };
+
+        // endpoint w/ no best addr but a derp  w/ no latency
+        let c_endpoint = {
+            // let socket_addr = "0.0.0.0:8".parse().unwrap();
+            let now = Instant::now();
+            let endpoint_state = HashMap::new();
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            Endpoint {
+                id: 2,
+                conn_sender: send,
+                quic_mapped_addr: QuicMappedAddr::generate(),
+                conn_public_key: key.public(),
+                public_key: key.public(),
+                last_full_ping: None,
+                derp_addr: Some(0),
+                best_addr: None,
+                best_addr_at: None,
+                trust_best_addr_until: now.checked_sub(Duration::from_secs(100)),
+                endpoint_state,
+                is_call_me_maybe_ep: HashMap::new(),
+                pending_cli_pings: Vec::new(),
+                expired: false,
+                sent_ping: HashMap::new(),
+                last_active: now,
+            }
+        };
+
+        // endpoint w/ expired best addr
+        let (d_endpoint, d_socket_addr) = {
+            let socket_addr = "0.0.0.0:7".parse().unwrap();
+            let now = Instant::now();
+            let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
+            let endpoint_state = HashMap::from([
+                (
+                    SendAddr::Udp(socket_addr),
+                    EndpointState {
+                        index: Index::Some(0),
+                        last_ping: None,
+                        last_got_ping: None,
+                        last_got_ping_tx_id: None,
+                        call_me_maybe_time: None,
+                        recent_pongs: vec![PongReply {
+                            latency,
+                            pong_at: now,
+                            from: SendAddr::Udp(socket_addr),
+                            pong_src,
+                        }],
+                        recent_pong: 0,
+                    },
+                ),
+                (
+                    SendAddr::Derp(0),
+                    EndpointState {
+                        index: Index::Some(1),
+                        last_ping: None,
+                        last_got_ping: None,
+                        last_got_ping_tx_id: None,
+                        call_me_maybe_time: None,
+                        recent_pongs: vec![PongReply {
+                            latency,
+                            pong_at: now,
+                            from: SendAddr::Derp(0),
+                            pong_src,
+                        }],
+                        recent_pong: 0,
+                    },
+                ),
+            ]);
+            let (send, _) = mpsc::channel(1);
+            let key = SecretKey::generate();
+            (
+                Endpoint {
+                    id: 3,
+                    conn_sender: send,
+                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    conn_public_key: key.public(),
+                    public_key: key.public(),
+                    last_full_ping: None,
+                    derp_addr: Some(0),
+                    best_addr: Some(AddrLatency {
+                        addr: socket_addr,
+                        latency: Some(Duration::from_millis(80)),
+                    }),
+                    best_addr_at: Some(now),
+                    trust_best_addr_until: Some(expired),
+                    endpoint_state,
+                    is_call_me_maybe_ep: HashMap::new(),
+                    pending_cli_pings: Vec::new(),
+                    expired: false,
+                    sent_ping: HashMap::new(),
+                    last_active: now,
+                },
+                socket_addr,
+            )
+        };
+        let expect = Vec::from([
+            EndpointInfo {
+                id: a_endpoint.id,
+                public_key: a_endpoint.public_key.clone(),
+                derp_region: a_endpoint.derp_addr,
+                addrs: Vec::from([(a_socket_addr.clone(), Some(latency))]),
+                conn_type: ConnectionType::Direct(a_socket_addr),
+                latency: Some(latency),
+            },
+            EndpointInfo {
+                id: b_endpoint.id,
+                public_key: b_endpoint.public_key.clone(),
+                derp_region: b_endpoint.derp_addr,
+                addrs: Vec::new(),
+                conn_type: ConnectionType::Relay(0),
+                latency: Some(latency),
+            },
+            EndpointInfo {
+                id: c_endpoint.id,
+                public_key: c_endpoint.public_key.clone(),
+                derp_region: c_endpoint.derp_addr,
+                addrs: Vec::new(),
+                conn_type: ConnectionType::Relay(0),
+                latency: None,
+            },
+            EndpointInfo {
+                id: d_endpoint.id,
+                public_key: d_endpoint.public_key.clone(),
+                derp_region: d_endpoint.derp_addr,
+                addrs: Vec::from([(d_socket_addr, Some(latency))]),
+                conn_type: ConnectionType::Relay(0),
+                latency: Some(latency),
+            },
+        ]);
+
+        let peer_map = PeerMap {
+            by_node_key: HashMap::from([
+                (a_endpoint.public_key.clone(), a_endpoint.id),
+                (b_endpoint.public_key.clone(), b_endpoint.id),
+                (c_endpoint.public_key.clone(), c_endpoint.id),
+                (d_endpoint.public_key.clone(), d_endpoint.id),
+            ]),
+            by_ip_port: HashMap::from([
+                (SendAddr::Udp(a_socket_addr), a_endpoint.id),
+                (SendAddr::Udp(d_socket_addr), d_endpoint.id),
+            ]),
+            by_quic_mapped_addr: HashMap::from([
+                (a_endpoint.quic_mapped_addr.clone(), a_endpoint.id),
+                (b_endpoint.quic_mapped_addr.clone(), b_endpoint.id),
+                (c_endpoint.quic_mapped_addr.clone(), c_endpoint.id),
+                (d_endpoint.quic_mapped_addr.clone(), d_endpoint.id),
+            ]),
+            by_id: HashMap::from([
+                (a_endpoint.id, a_endpoint),
+                (b_endpoint.id, b_endpoint),
+                (c_endpoint.id, c_endpoint),
+                (d_endpoint.id, d_endpoint),
+            ]),
+            next_id: 5,
+        };
+        let mut got = peer_map.endpoint_infos();
+        got.sort_by_key(|p| p.id);
+        assert_eq!(expect, got);
     }
 }
