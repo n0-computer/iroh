@@ -209,7 +209,7 @@ impl FromStr for Ticket {
 
 #[cfg(test)]
 mod tests {
-    use bao_tree::blake3;
+    // use bao_tree::blake3;
     use iroh_net::tls::Keypair;
 
     use super::*;

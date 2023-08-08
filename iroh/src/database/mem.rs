@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
-use bao_tree::blake3;
+// use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderMemOutboard;
 use bytes::Bytes;

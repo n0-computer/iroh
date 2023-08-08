@@ -14,7 +14,9 @@ rust-version = "1.66"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bao-tree = { version = "0.6.0", features = ["tokio_fsm"], default-features = false }
+# bao-tree = { version = "0.6.0", features = ["tokio_fsm"], default-features = false }
+bao-tree = { git = "https://github.com/Arqu/bao-tree", branch= "main", features = ["tokio_fsm"], default-features = false }
+blake3 = { git = "https://github.com/Arqu/iroh-blake3", branch = "arqu/blake3" }
 bytes = "1"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 flume = "0.10.14"

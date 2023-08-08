@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use bao_tree::blake3;
+// use bao_tree::blake3;
 use bao_tree::{io::outboard::PreOrderMemOutboard, ByteNum, ChunkNum};
 use console::style;
 use indicatif::{
