@@ -11,7 +11,7 @@ use futures::Future;
 use iroh_metrics::inc;
 use std::time::Duration;
 use tokio::{sync::watch, time};
-use tracing::trace;
+use tracing::{trace, debug};
 
 /// This is an implementation detail to facilitate testing.
 pub(super) trait Mapping: std::fmt::Debug + Unpin {
@@ -90,7 +90,7 @@ impl<M: Mapping> CurrentMapping<M> {
     /// Updates the mapping, informing of any changes to the external address. The old mapping is
     /// returned.
     pub(super) fn update(&mut self, mapping: Option<M>) -> Option<M> {
-        trace!("new port mapping {mapping:?}");
+        debug!("new port mapping {mapping:?}");
         let maybe_external_addr = mapping.as_ref().map(|mapping| {
             let (ip, port) = mapping.external();
             SocketAddrV4::new(ip, port.into())
