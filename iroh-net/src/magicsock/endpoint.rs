@@ -132,21 +132,35 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub fn info(&self) -> EndpointInfo {
+        let (conn_type, latency) = if self.is_best_addr_valid(Instant::now()) {
+            let addr_info = self.best_addr.as_ref().expect("checked");
+            (ConnectionType::Direct(addr_info.addr), addr_info.latency)
+        } else if let Some(region_id) = self.derp_addr {
+            let latency = match self.endpoint_state.get(&SendAddr::Derp(region_id)) {
+                Some(endpoint_state) => endpoint_state.recent_pong().map(|pong| pong.latency),
+                None => None,
+            };
+            (ConnectionType::Relay(region_id), latency)
+        } else {
+            (ConnectionType::None, None)
+        };
         let addrs = self
             .endpoint_state
-            .keys()
-            .filter_map(|addr| match addr {
-                SendAddr::Udp(addr) => Some(*addr),
+            .iter()
+            .filter_map(|(addr, endpoint_state)| match addr {
+                SendAddr::Udp(addr) => {
+                    Some((*addr, endpoint_state.recent_pong().map(|pong| pong.latency)))
+                }
                 _ => None,
             })
             .collect();
 
         EndpointInfo {
             public_key: self.public_key,
-            derp_addr: self.derp_addr,
+            derp_region: self.derp_addr,
             addrs,
-            has_direct_connection: self.is_best_addr_valid(Instant::now()),
-            latency: self.best_addr.as_ref().and_then(|a| a.latency),
+            conn_type,
+            latency,
         }
     }
 
@@ -1147,18 +1161,30 @@ struct EndpointState {
     index: Index,
 }
 
+/// The type of connection we have to the endpoint.
+#[derive(Debug, Clone)]
+pub enum ConnectionType {
+    /// Direct UDP connection
+    Direct(SocketAddr),
+    /// Relay connection over DERP
+    Relay(u16),
+    /// We have no verified connection to this PublicKey
+    None,
+}
+
 /// Details about an Endpoint
 #[derive(Debug, Clone)]
 pub struct EndpointInfo {
     /// The public key of the endpoint.
     pub public_key: PublicKey,
     /// Derp region, if available.
-    pub derp_addr: Option<u16>,
-    /// List of addresses this node might be reachable under.
-    pub addrs: Vec<SocketAddr>,
-    /// Is this node currently direcly reachable?
-    pub has_direct_connection: bool,
-    /// Current latency information, for a direct connection if available.
+    pub derp_region: Option<u16>,
+    /// List of addresses at which this node might be reachable, plus any latency information we
+    /// have about that address.
+    pub addrs: Vec<(SocketAddr, Option<Duration>)>,
+    /// The type of connection we have to the peer, either direct or over relay.
+    pub conn_type: ConnectionType,
+    /// The latency of the `conn_type`.
     pub latency: Option<Duration>,
 }
 
