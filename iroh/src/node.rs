@@ -36,6 +36,7 @@ use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ExportMode, ShareProgress};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
+use iroh_bytes::IROH_BLOCK_SIZE;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
@@ -848,6 +849,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let entry = db.get_or_create_partial(hash, size)?;
         // open the data file in any case
         let df = entry.data_writer().await?;
+        let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
+            Some(entry.outboard_mut().await?)
+        } else {
+            None
+        };
         // allocate a new id for progress reports for this transfer
         let id = sender.new_id();
         sender.send(ShareProgress::Found { id, hash, size }).await?;
@@ -865,13 +871,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         let mut pw = ProgressSliceWriter2::new(df, on_write);
         // use the convenience method to write all to the two vfs objects
-        let (end, ofo) = content
-            .write_all_with_outboard(|_, _| entry.outboard_mut(), &mut pw)
+        let end = content
+            .write_all_with_outboard(of.as_mut(), &mut pw)
             .await?;
         // sync the data file
         pw.sync().await?;
         // sync the outboard file, if we wrote one
-        if let Some(mut of) = ofo {
+        if let Some(mut of) = of {
             of.sync().await?;
         }
         db.insert_complete(entry).await?;
@@ -899,6 +905,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         let (content, size) = header.next().await?;
         // open the data file in any case
         let df = entry.data_writer().await?;
+        let mut of = if needs_outboard(size) {
+            Some(entry.outboard_mut().await?)
+        } else {
+            None
+        };
         // allocate a new id for progress reports for this transfer
         let id = sender.new_id();
         sender.send(ShareProgress::Found { id, hash, size }).await?;
@@ -916,13 +927,13 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
         };
         let mut pw = ProgressSliceWriter2::new(df, on_write);
         // use the convenience method to write all to the two vfs objects
-        let (end, ofo) = content
-            .write_all_with_outboard(|_, _| entry.outboard_mut(), &mut pw)
+        let end = content
+            .write_all_with_outboard(of.as_mut(), &mut pw)
             .await?;
         // sync the data file
         pw.sync().await?;
         // sync the outboard file
-        if let Some(mut of) = ofo {
+        if let Some(mut of) = of {
             of.sync().await?;
         }
         // actually store the data. it is up to the db to decide if it wants to
@@ -1510,6 +1521,10 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
             }
         }
     }
+}
+
+fn needs_outboard(size: u64) -> bool {
+    size > (IROH_BLOCK_SIZE.bytes() as u64)
 }
 
 #[cfg(all(test, feature = "flat-db"))]
