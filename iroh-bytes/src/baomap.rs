@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait MapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
+pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> blake3::Hash;
     /// The size of the entry.
@@ -42,7 +42,7 @@ pub trait MapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
 }
 
 /// A generic collection of blobs with precomputed outboards
-pub trait BaoMap: Clone + Send + Sync + 'static {
+pub trait Map: Clone + Send + Sync + 'static {
     /// The outboard type. This can be an in memory outboard or an outboard that
     /// retrieves the data asynchronously from a remote database.
     type Outboard: bao_tree::io::fsm::Outboard;
@@ -71,7 +71,7 @@ pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
 }
 
 /// A mutable bao map
-pub trait PartialMap: BaoMap {
+pub trait PartialMap: Map {
     /// The outboard type to write data to the partial entry.
     type OutboardMut: bao_tree::io::fsm::OutboardMut;
     /// The writer type to write data to the partial entry.
@@ -95,7 +95,7 @@ pub trait PartialMap: BaoMap {
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
-pub trait ReadonlyStore: BaoMap {
+pub trait ReadonlyStore: Map {
     /// list all blobs in the database. This should include collections, since
     /// collections are blobs and can be requested as blobs.
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;

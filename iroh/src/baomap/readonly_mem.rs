@@ -22,8 +22,8 @@ use futures::{
 };
 use iroh_bytes::{
     baomap::{
-        self, BaoMap, ExportMode, ImportMode, ImportProgress, MapEntry, PartialMap,
-        PartialMapEntry, ReadonlyStore, ValidateProgress,
+        self, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
+        ReadonlyStore, ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -134,14 +134,14 @@ impl Store {
     }
 }
 
-/// The [BaoMapEntry] implementation for [Store].
+/// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     outboard: PreOrderMemOutboard<Bytes>,
     data: Bytes,
 }
 
-/// The [BaoPartialMapEntry] implementation for [Store].
+/// The [PartialMapEntry] implementation for [Store].
 ///
 /// This is an unoccupied type, since [Store] is does not allow creating partial entries.
 #[derive(Debug, Clone)]
@@ -169,7 +169,7 @@ impl MapEntry<Store> for Entry {
     }
 }
 
-impl BaoMap for Store {
+impl Map for Store {
     type Outboard = PreOrderMemOutboard<Bytes>;
     type DataReader = Bytes;
     type Entry = Entry;

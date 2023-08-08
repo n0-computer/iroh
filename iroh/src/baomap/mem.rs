@@ -27,7 +27,7 @@ use iroh_bytes::baomap::ImportProgress;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
 use iroh_bytes::baomap::ValidateProgress;
-use iroh_bytes::baomap::{BaoMap, MapEntry, ReadonlyStore};
+use iroh_bytes::baomap::{Map, MapEntry, ReadonlyStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -190,7 +190,7 @@ struct State {
     partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
 }
 
-/// The [BaoMapEntry] implementation for [Store].
+/// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     hash: blake3::Hash,
@@ -222,7 +222,7 @@ impl MapEntry<Store> for Entry {
     }
 }
 
-/// The [BaoMapEntry] implementation for [Store].
+/// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct PartialEntry {
     hash: blake3::Hash,
@@ -259,7 +259,7 @@ impl MapEntry<Store> for PartialEntry {
     }
 }
 
-impl BaoMap for Store {
+impl Map for Store {
     type Outboard = PreOrderOutboard<MemFile>;
     type DataReader = MemFile;
     type Entry = Entry;

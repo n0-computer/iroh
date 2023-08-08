@@ -256,7 +256,7 @@ pub async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) 
 /// close the writer, and return with `Ok(SentStatus::NotFound)`.
 ///
 /// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
-pub async fn transfer_collection<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn transfer_collection<D: Map, E: EventSender, C: CollectionParser>(
     request: GetRequest,
     // Store from which to fetch blobs.
     db: &D,
@@ -349,7 +349,7 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 }
 
 /// Handle a single connection.
-pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn handle_connection<D: Map, E: EventSender, C: CollectionParser>(
     connecting: quinn::Connecting,
     db: D,
     events: E,
@@ -407,7 +407,7 @@ pub async fn handle_connection<D: BaoMap, E: EventSender, C: CollectionParser>(
     .await
 }
 
-async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
+async fn handle_stream<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
@@ -444,7 +444,7 @@ async fn handle_stream<D: BaoMap, E: EventSender, C: CollectionParser>(
         }
     }
 }
-async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
+async fn handle_custom_get<E: EventSender, D: Map, C: CollectionParser>(
     db: D,
     request: CustomGetRequest,
     mut writer: ResponseWriter<E>,
@@ -472,7 +472,7 @@ async fn handle_custom_get<E: EventSender, D: BaoMap, C: CollectionParser>(
 }
 
 /// Handle a single standard get request.
-pub async fn handle_get<D: BaoMap, E: EventSender, C: CollectionParser>(
+pub async fn handle_get<D: Map, E: EventSender, C: CollectionParser>(
     db: D,
     request: GetRequest,
     collection_parser: C,
@@ -575,7 +575,7 @@ pub enum SentStatus {
 }
 
 /// Send a
-pub async fn send_blob<D: BaoMap, W: AsyncWrite + Unpin + Send + 'static>(
+pub async fn send_blob<D: Map, W: AsyncWrite + Unpin + Send + 'static>(
     db: &D,
     name: Hash,
     ranges: &RangeSpec,

@@ -18,7 +18,7 @@ use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt};
 use iroh_bytes::baomap::{
-    self, BaoMap, ExportMode, ImportMode, ImportProgress, MapEntry, PartialMap, PartialMapEntry,
+    self, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
     ReadonlyStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
@@ -283,7 +283,7 @@ struct Inner {
 /// This
 #[derive(Debug, Clone)]
 pub struct Store(Arc<Inner>);
-/// The [BaoMapEntry] and [BaoPartialMapEntry] implementation for [Store].
+/// The [MapEntry] and [PartialMapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     /// the hash is not part of the entry itself
@@ -412,7 +412,7 @@ fn needs_outboard(size: u64) -> bool {
     size > (IROH_BLOCK_SIZE.bytes() as u64)
 }
 
-impl BaoMap for Store {
+impl Map for Store {
     type Entry = Entry;
     type Outboard = PreOrderOutboard<MemOrFile>;
     type DataReader = MemOrFile;

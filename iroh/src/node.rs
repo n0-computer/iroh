@@ -31,7 +31,7 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    BaoMap, ExportMode, MapEntry, PartialMapEntry, ReadonlyStore, Store, ValidateProgress,
+    ExportMode, Map, MapEntry, PartialMapEntry, ReadonlyStore, Store, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
@@ -78,8 +78,8 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database. Various database implementations are available
-/// in [`crate::database`]. Everything else is optional.
+/// You must supply a blob store. Various store implementations are available
+/// in [`crate::baomap`]. Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -88,7 +88,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
 where
-    D: BaoMap,
+    D: Map,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -145,7 +145,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
     }
 }
 
-impl<D: BaoMap> Builder<D> {
+impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db(db: D) -> Self {
         Self {
@@ -497,7 +497,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoMap> {
+pub struct Node<D: Map> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -606,7 +606,7 @@ impl<D: ReadonlyStore> Node<D> {
     }
 }
 
-impl<D: BaoMap> NodeInner<D> {
+impl<D: Map> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -627,7 +627,7 @@ impl<D: BaoMap> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoMap> Future for Node<D> {
+impl<D: Map> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
