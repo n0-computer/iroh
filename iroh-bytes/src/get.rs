@@ -391,7 +391,7 @@ pub mod fsm {
             Ok((done, res))
         }
 
-        /// Write the entire blob to a slice writer
+        /// Write the entire blob to a slice writer.
         pub async fn write_all<D: AsyncSliceWriter>(
             self,
             data: D,
@@ -401,7 +401,10 @@ pub mod fsm {
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// an outboard if needed.
+        ///
+        /// The creation of the outboard is done lazily. `outboard` will only
+        /// be invoked if the blob is larger than a single chunk group.
         pub async fn write_all_with_outboard<D, F, Fut, O>(
             self,
             outboard: F,
@@ -471,7 +474,10 @@ pub mod fsm {
         }
 
         /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// an outboard if needed.
+        ///
+        /// The creation of the outboard is done lazily. `outboard` will only
+        /// be invoked if the blob is larger than a single chunk group.
         pub async fn write_all_with_outboard<D, F, Fut, O>(
             self,
             of: F,
@@ -519,8 +525,7 @@ pub mod fsm {
             }
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard.
+        /// Write the entire blob to a slice writer.
         pub async fn write_all<D>(self, mut data: D) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
