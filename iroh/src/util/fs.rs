@@ -85,11 +85,12 @@ pub fn scan_path(root: PathBuf) -> anyhow::Result<Vec<DataSource>> {
     })
 }
 
-/// converts a canonicalized relative path to a string, returning an error if
-/// the path is not valid unicode
+/// This function converts a canonicalized relative path to a string, returning
+/// an error if the path is not valid unicode.
 ///
-/// this will also fail if the path is non canonical, i.e. contains `..` or `.`,
-/// or if the path components contain any windows or unix path separators
+/// This function will also fail if the path is non canonical, i.e. contains
+/// `..` or `.`, or if the path components contain any windows or unix path
+/// separators.
 pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     let parts = path
         .as_ref()

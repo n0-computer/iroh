@@ -273,69 +273,72 @@ pub enum ProvideProgress {
 /// Progress updates for the provide operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShareProgress {
-    /// A new connection was established
+    /// A new connection was established.
     Connected,
-    /// An item was found with hash `hash`, from now on referred to via `id`
+    /// An item was found with hash `hash`, from now on referred to via `id`.
     Found {
-        /// a new unique id for this entry
+        /// A new unique id for this entry.
         id: u64,
-        /// the name of the entry
+        /// The name of the entry.
         hash: Hash,
-        /// the size of the entry in bytes
+        /// The size of the entry in bytes.
         size: u64,
     },
-    /// An item was found with hash `hash`, from now on referred to via `id`
+    /// An item was found with hash `hash`, from now on referred to via `id`.
     FoundCollection {
-        /// the name of the entry
+        /// The name of the entry.
         hash: Hash,
-        /// number of children in the collection, if known
+        /// Number of children in the collection, if known.
         num_blobs: Option<u64>,
-        /// the size of the entry in bytes, if known
+        /// The size of the entry in bytes, if known.
         total_blobs_size: Option<u64>,
     },
-    /// We got progress ingesting item `id`
+    /// We got progress ingesting item `id`.
     Progress {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the offset of the progress, in bytes
+        /// The offset of the progress, in bytes.
         offset: u64,
     },
-    /// We are done with `id`, and the hash is `hash`
+    /// We are done with `id`, and the hash is `hash`.
     Done {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
     },
-    /// We are done with the network part - all data is local
+    /// We are done with the network part - all data is local.
     NetworkDone {
-        /// The number of bytes written
+        /// The number of bytes written.
         bytes_written: u64,
-        /// The number of bytes read
+        /// The number of bytes read.
         bytes_read: u64,
-        /// The time it took to transfer the data
+        /// The time it took to transfer the data.
         elapsed: Duration,
     },
-    /// We are done with the whole operation
-    AllDone,
-    ///
+    /// The download part is done for this id, we are now exporting the data
+    /// to the specified out path.
     Export {
-        ///
+        /// Unique id of the entry.
         id: u64,
-        ///
+        /// The hash of the entry.
         hash: Hash,
-        ///
+        /// The size of the entry in bytes.
         size: u64,
-        ///
+        /// The path to the file where the data is exported.
         target: String,
     },
+    /// We have made progress exporting the data.
     ///
+    /// This is only sent for large blobs.
     ExportProgress {
-        ///
+        /// Unique id of the entry that is being exported.
         id: u64,
-        ///
+        /// The offset of the progress, in bytes.
         offset: u64,
     },
-    /// We got an error and need to abort
+    /// We got an error and need to abort.
     Abort(RpcError),
+    /// We are done with the whole operation.
+    AllDone,
 }
 
 /// hook into the request handling to process authorization by examining
@@ -745,38 +748,41 @@ pub trait BaoDb: BaoReadonlyDb + BaoPartialMap {
     /// list partial blobs in the database
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
 
-    /// extract a file to a local path
+    /// This trait method extracts a file to a local path.
     ///
     /// `hash` is the hash of the file
     /// `target` is the path to the target file
-    /// `stable` is true if the file can be assumed to be retained unchanged in the file system
+    /// `mode` is a hint how the file should be exported.
     /// `progress` is a callback that is called with the total number of bytes that have been written
     fn export(
         &self,
         hash: Hash,
         target: PathBuf,
-        stable: bool,
+        mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>>;
 
-    /// import a file from a local path
+    /// This trait method imports a file from a local path.
     ///
-    /// `data` is the path to the file
-    /// `stable` is true if the file can be assumed to be retained unchanged in the file system. If
-    /// `stable` is false, the file will be copied.
-    /// `progress` is a callback that is called with the total number of bytes that have been written
-    /// to the database. This returns an error to allow the caller to abort the import.
+    /// `data` is the path to the file.
+    /// `mode` is a hint how the file should be imported.
+    /// `progress` is a sender that provides a way for the importer to send progress messages
+    /// when importing large files. This also serves as a way to cancel the import. If the
+    /// consumer of the progress messages is dropped, subsequent attempts to send progress
+    /// will fail.
     ///
     /// Returns the hash of the imported file. The reason to have this method is that some database
     /// implementations might be able to import a file without copying it.
     fn import(
         &self,
         data: PathBuf,
-        stable: bool,
+        mode: ImportMode,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>>;
 
-    /// import a byte slice
+    /// This trait method imports data from memory.
+    ///
+    /// It is a special case of `import` that does not use the file system.
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>>;
 }
 
@@ -790,11 +796,7 @@ pub enum ImportProgress {
     /// Found a path
     ///
     /// This will be the first message for an id
-    Found {
-        id: u64,
-        path: PathBuf,
-        stable: bool,
-    },
+    Found { id: u64, path: PathBuf },
     /// Progress when copying the file to the store
     ///
     /// This will be omitted if the store can use the file in place
@@ -815,6 +817,48 @@ pub enum ImportProgress {
     ///
     /// This comes after `Size` and zero or more `OutboardProgress` messages
     OutboardDone { id: u64, hash: Hash },
+}
+
+/// The import mode describes how files will be imported.
+///
+/// This is a hint to the import trait method. For some implementations, this
+/// does not make any sense. E.g. an in memory implementation will always have
+/// to copy the file into memory. Also, a disk based implementation might choose
+/// to copy small files even if the mode is `Reference`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportMode {
+    /// This mode will copy the file into the database before hashing.
+    ///
+    /// This is the safe default because the file can not be accidentally modified
+    /// after it has been imported.
+    #[default]
+    Copy,
+    /// This mode will reference the file in place and assume it is unchanged after import.
+    ///
+    /// This has a large performance and storage benefit, but it is less safe since
+    /// the file might be modified after it has been imported.
+    Reference,
+}
+/// The import mode describes how files will be imported.
+///
+/// This is a hint to the import trait method. For some implementations, this
+/// does not make any sense. E.g. an in memory implementation will always have
+/// to copy the file into memory. Also, a disk based implementation might choose
+/// to copy small files even if the mode is `Reference`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportMode {
+    /// This mode will copy the file to the target directory.
+    ///
+    /// This is the safe default because the file can not be accidentally modified
+    /// after it has been exported.
+    #[default]
+    Copy,
+    /// This mode will move the file to the target directory and then reference it from
+    /// the database.
+    ///
+    /// This has a large performance and storage benefit, but it is less safe since
+    /// the file might be modified in the target directory after it has been exported.
+    Reference,
 }
 
 #[allow(missing_docs)]

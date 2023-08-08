@@ -23,6 +23,8 @@ use futures::FutureExt;
 use iroh_bytes::provider::BaoDb;
 use iroh_bytes::provider::BaoPartialMap;
 use iroh_bytes::provider::BaoPartialMapEntry;
+use iroh_bytes::provider::ExportMode;
+use iroh_bytes::provider::ImportMode;
 use iroh_bytes::provider::ImportProgress;
 use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{BaoMap, BaoMapEntry, BaoReadonlyDb};
@@ -390,7 +392,7 @@ impl BaoDb for Database {
     fn import(
         &self,
         data: std::path::PathBuf,
-        _stable: bool,
+        _mode: ImportMode,
         _progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
@@ -408,11 +410,11 @@ impl BaoDb for Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        stable: bool,
+        mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, stable, progress))
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -450,7 +452,7 @@ impl Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        _stable: bool,
+        _mode: ExportMode,
         _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         tracing::trace!("exporting {} to {}", hash, target.display());

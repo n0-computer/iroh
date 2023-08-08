@@ -7,7 +7,6 @@ members = [
   "iroh-metrics",
 ]
 
-
 [profile.release]
 debug = true
 

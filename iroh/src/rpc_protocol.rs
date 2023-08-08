@@ -45,26 +45,38 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
     type Response = ProvideProgress;
 }
 
-///
+/// A request to the node to download and share the data specified by the hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareRequest {
-    ///
+    /// This mandatory field contains the hash of the data to download and share.
     pub hash: Hash,
-    ///
+    /// If this flag is true, the hash is assumed to be a collection and all
+    /// children are downloaded and shared as well.
     pub recursive: bool,
-    ///
+    /// This mandatory field specifies the peer to download the data from.
     pub peer: PeerId,
-    ///
+    /// This vec contains possible candidate addresses of the peer.
     pub addrs: Vec<SocketAddr>,
-    ///
+    /// If this flag is true, the data is downloaded even if it is already
+    /// available locally.
     pub force: bool,
-    ///
+    /// This optional field contains a request token that can be used to authorize
+    /// the download request.
     pub token: Option<RequestToken>,
-    ///
+    /// This optional field contains the derp region to use for contacting the peer
+    /// over the DERP protocol.
     pub derp_region: Option<u16>,
-    /// The path where the data should go
+    /// This optional field contains the path to store the data to. If it is not
+    /// set, the data is dumped to stdout.
     pub out: Option<String>,
+    /// If this flag is true, the data is shared in place, i.e. it is moved to the
+    /// out path instead of being copied. The database itself contains only a
+    /// reference to the out path of the file.
     ///
+    /// If the data is modified in the location specified by the out path,
+    /// download attempts for the associated hash will fail.
+    ///
+    /// This flag is only relevant if the out path is set.
     pub in_place: bool,
 }
 

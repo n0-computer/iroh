@@ -72,7 +72,7 @@ impl Cli {
                 derp_region,
                 mut out,
                 stable: in_place,
-                ..
+                force,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -111,7 +111,7 @@ impl Cli {
                         token: token.cloned(),
                         out: out.map(|x| x.display().to_string()),
                         in_place,
-                        force: true, // todo: use force from Commands::Share
+                        force,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -345,7 +345,6 @@ pub enum Commands {
     Share {
         /// Hash to get, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
-        #[clap(long)]
         hash: Option<Hash>,
         /// treat as collection, required unless ticket is specified
         #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]

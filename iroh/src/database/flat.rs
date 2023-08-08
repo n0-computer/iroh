@@ -17,10 +17,11 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt};
-use iroh_bytes::provider::ValidateProgress;
 use iroh_bytes::provider::{
-    BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ImportProgress,
+    BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ExportMode,
+    ImportProgress,
 };
+use iroh_bytes::provider::{ImportMode, ValidateProgress};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
@@ -493,11 +494,11 @@ impl BaoDb for Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        stable: bool,
+        mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, stable, progress))
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -505,11 +506,11 @@ impl BaoDb for Database {
     fn import(
         &self,
         path: PathBuf,
-        stable: bool,
+        mode: ImportMode,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.import_sync(path, stable, progress))
+        tokio::task::spawn_blocking(move || this.import_sync(path, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -540,7 +541,7 @@ impl Database {
     fn import_sync(
         self,
         path: PathBuf,
-        stable: bool,
+        mode: ImportMode,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<(Hash, u64)> {
         if !path.is_absolute() {
@@ -559,43 +560,45 @@ impl Database {
         progress.blocking_send(ImportProgress::Found {
             id,
             path: path.clone(),
-            stable,
         })?;
-        let (hash, new, outboard) = if stable {
-            // compute outboard and hash from the data in place, since we assume that it is stable
-            let size = path.metadata()?.len();
-            progress.blocking_send(ImportProgress::Size { id, size })?;
-            let progress2 = progress.clone();
-            let (hash, outboard) = compute_outboard(&path, size, move |offset| {
-                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
-            })?;
-            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-            (
-                hash,
-                CompleteEntry::new_external(size, path.clone()),
-                outboard,
-            )
-        } else {
-            let uuid = rand::thread_rng().gen::<[u8; 16]>();
-            let temp_data_path = self
-                .0
-                .options
-                .partial_path
-                .join(format!("{}.temp", hex::encode(uuid)));
-            // copy the data, since it is not stable
-            progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-            let size = std::fs::copy(&path, &temp_data_path)?;
-            // report the size only after the copy is done
-            progress.blocking_send(ImportProgress::Size { id, size })?;
-            // compute outboard and hash from the temp file that we own
-            let progress2 = progress.clone();
-            let (hash, outboard) = compute_outboard(&temp_data_path, size, move |offset| {
-                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
-            })?;
-            progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-            let data_path = self.owned_data_path(&hash);
-            std::fs::rename(temp_data_path, data_path)?;
-            (hash, CompleteEntry::new_default(size), outboard)
+        let (hash, new, outboard) = match mode {
+            ImportMode::Reference => {
+                // compute outboard and hash from the data in place, since we assume that it is stable
+                let size = path.metadata()?.len();
+                progress.blocking_send(ImportProgress::Size { id, size })?;
+                let progress2 = progress.clone();
+                let (hash, outboard) = compute_outboard(&path, size, move |offset| {
+                    Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+                })?;
+                progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+                (
+                    hash,
+                    CompleteEntry::new_external(size, path.clone()),
+                    outboard,
+                )
+            }
+            ImportMode::Copy => {
+                let uuid = rand::thread_rng().gen::<[u8; 16]>();
+                let temp_data_path = self
+                    .0
+                    .options
+                    .partial_path
+                    .join(format!("{}.temp", hex::encode(uuid)));
+                // copy the data, since it is not stable
+                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                let size = std::fs::copy(&path, &temp_data_path)?;
+                // report the size only after the copy is done
+                progress.blocking_send(ImportProgress::Size { id, size })?;
+                // compute outboard and hash from the temp file that we own
+                let progress2 = progress.clone();
+                let (hash, outboard) = compute_outboard(&temp_data_path, size, move |offset| {
+                    Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+                })?;
+                progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+                let data_path = self.owned_data_path(&hash);
+                std::fs::rename(temp_data_path, data_path)?;
+                (hash, CompleteEntry::new_default(size), outboard)
+            }
         };
         if let Some(outboard) = outboard.as_ref() {
             let outboard_path = self.owned_outboard_path(&hash);
@@ -640,10 +643,10 @@ impl Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        stable: bool,
+        mode: ExportMode,
         _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        tracing::trace!("exporting {} to {} ({})", hash, target.display(), stable);
+        tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
 
         if !target.is_absolute() {
             return Err(io::Error::new(
@@ -678,6 +681,7 @@ impl Database {
             (source, size, entry.owned_data)
         };
         // copy all the things
+        let stable = mode == ExportMode::Reference;
         let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
             tracing::info!("moving {} to {}", source.display(), target.display());
             if let Err(e) = std::fs::rename(source, &target) {
@@ -695,7 +699,6 @@ impl Database {
             entry.external.insert(target);
             Some(entry.external_to_bytes())
         } else {
-            tracing::info!("{} {} {}", size, stable, owned);
             tracing::info!("copying {} to {}", source.display(), target.display());
             // todo: progress
             std::fs::copy(&source, &target)?;
@@ -706,7 +709,7 @@ impl Database {
                     "hash not found in database",
                 ));
             };
-            if stable {
+            if mode == ExportMode::Reference {
                 entry.external.insert(target);
                 Some(entry.external_to_bytes())
             } else {

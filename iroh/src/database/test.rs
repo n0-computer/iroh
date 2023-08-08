@@ -22,8 +22,8 @@ use futures::{
 };
 use iroh_bytes::{
     provider::{
-        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb,
-        ImportProgress, ValidateProgress,
+        BaoDb, BaoMap, BaoMapEntry, BaoPartialMap, BaoPartialMapEntry, BaoReadonlyDb, ExportMode,
+        ImportMode, ImportProgress, ValidateProgress,
     },
     util::progress::{IdGenerator, ProgressSender},
     Hash, IROH_BLOCK_SIZE,
@@ -106,7 +106,7 @@ impl Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        _stable: bool,
+        _mode: ExportMode,
         _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         tracing::trace!("exporting {} to {}", hash, target.display());
@@ -262,21 +262,21 @@ impl BaoDb for Database {
         &self,
         hash: Hash,
         target: PathBuf,
-        stable: bool,
+        mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, stable, progress))
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
     fn import(
         &self,
         data: PathBuf,
-        stable: bool,
+        mode: ImportMode,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
-        let _ = (data, stable, progress);
+        let _ = (data, mode, progress);
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 

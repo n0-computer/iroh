@@ -34,7 +34,7 @@ use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ShareProgress};
+use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ExportMode, ShareProgress};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
@@ -776,6 +776,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
+        let mode = if stable {
+            ExportMode::Reference
+        } else {
+            ExportMode::Copy
+        };
         if recursive {
             #[cfg(feature = "iroh-collection")]
             {
@@ -796,7 +801,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                     tracing::trace!("exporting blob {} to {}", hash, path.display());
                     let id = progress.new_id();
                     let progress1 = progress.clone();
-                    db.export(*hash, path, stable, move |offset| {
+                    db.export(*hash, path, mode, move |offset| {
                         Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
                     })
                     .await?;
@@ -817,7 +822,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 })
                 .await?;
             let progress1 = progress.clone();
-            db.export(hash, path, stable, move |offset| {
+            db.export(hash, path, mode, move |offset| {
                 Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
             })
             .await?;
@@ -1239,7 +1244,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::provider::ImportProgress;
+        use iroh_bytes::provider::{ImportMode, ImportProgress};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = TokioProgressSender::new(progress);
@@ -1271,6 +1276,11 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
             "path must be either a Directory or a File"
         );
         let data_sources = crate::util::fs::scan_path(root)?;
+        let mode = if msg.in_place {
+            ImportMode::Reference
+        } else {
+            ImportMode::Copy
+        };
         const IO_PARALLELISM: usize = 4;
         let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
             .map(|source| {
@@ -1279,7 +1289,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
                 async move {
                     let name = source.name().to_string();
                     let (hash, size) = db
-                        .import(source.path().to_owned(), msg.in_place, import_progress)
+                        .import(source.path().to_owned(), mode, import_progress)
                         .await?;
                     io::Result::Ok((Blob { hash, name }, size))
                 }

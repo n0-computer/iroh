@@ -20,21 +20,22 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from"
 flume = "0.10.14"
 futures = "0.3.25"
 hex = { version = "0.4.3" }
-iroh-io = { version = "0.2.2" }
-iroh-net = { version = "0.5.1", path = "../iroh-net" }
 iroh-bytes = { version = "0.5.0", path = "../iroh-bytes" }
+iroh-io = { version = "0.2.2" }
 iroh-metrics = { version = "0.5.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.5.1", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
+rand = "0.8"
 range-collections = { version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["io-util", "rt"] }
-tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
 walkdir = "2"
 
@@ -49,7 +50,6 @@ tempfile = { version = "3.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 data-encoding = "2.4.0"
 url = { version = "2.4", features = ["serde"] }
-rand = "0.8"
 
 [features]
 default = ["cli", "metrics"]
@@ -64,19 +64,16 @@ test = []
 anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1"
 duct = "0.13.6"
+genawaiter = { version = "0.99", features = ["futures03"] }
 nix = "0.26.2"
+postcard = "1"
+proptest = "1.2.0"
 rand = "0.8"
 regex = { version = "1.7.1", features = ["std"] }
+tempfile = "3.4"
 testdir = "0.8"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-postcard = "1"
-proptest = "1.2.0"
-tempfile = "3.4"
-genawaiter = { version = "0.99", features = ["futures03"] }
-
-[profile.release]
-debug = true
 
 [[bin]]
 name = "iroh"
