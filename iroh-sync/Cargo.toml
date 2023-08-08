@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 
 [dependencies]
 anyhow = "1.0.71"
-blake3 = { package = "iroh-blake3", version = "1.4.3"}
+blake3 = { git = "https://github.com/Arqu/iroh-blake3", branch = "arqu/blake3" }
 crossbeam = "0.8.2"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
 ed25519-dalek = { version = "2.0.0-rc.2", features = ["serde", "rand_core"] }
