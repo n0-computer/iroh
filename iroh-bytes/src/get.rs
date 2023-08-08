@@ -51,7 +51,7 @@ impl Stats {
 ///
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
 pub mod fsm {
-    use std::{io, result};
+    use std::result;
 
     use crate::protocol::{read_lp, GetRequest, NonEmptyRequestRangeSpecIter};
 
@@ -62,10 +62,8 @@ pub mod fsm {
         io::fsm::{
             OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext, ResponseDecoderStart,
         },
-        BaoTree,
     };
     use derive_more::From;
-    use futures::Future;
     use iroh_io::AsyncSliceWriter;
 
     self_cell::self_cell! {
@@ -407,13 +405,11 @@ pub mod fsm {
         /// be invoked if the blob is larger than a single chunk group.
         pub async fn write_all_with_outboard<D, F, Fut, O>(
             self,
-            outboard: F,
+            outboard: Option<O>,
             data: D,
-        ) -> result::Result<(AtEndBlob, Option<O>), DecodeError>
+        ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
-            F: FnOnce(Hash, BaoTree) -> Fut,
-            Fut: Future<Output = io::Result<O>>,
             O: OutboardMut,
         {
             let (content, _size) = self.next().await?;
@@ -478,40 +474,25 @@ pub mod fsm {
         ///
         /// The creation of the outboard is done lazily. `outboard` will only
         /// be invoked if the blob is larger than a single chunk group.
-        pub async fn write_all_with_outboard<D, F, Fut, O>(
+        pub async fn write_all_with_outboard<D, O>(
             self,
-            of: F,
+            mut outboard: Option<O>,
             mut data: D,
-        ) -> result::Result<(AtEndBlob, Option<O>), DecodeError>
+        ) -> result::Result<AtEndBlob, DecodeError>
         where
             D: AsyncSliceWriter,
-            F: FnOnce(Hash, BaoTree) -> Fut,
-            Fut: Future<Output = io::Result<O>>,
             O: OutboardMut,
         {
             let mut content = self;
-            let mut outboard: Option<O> = None;
-            let mut of = Some(of);
             loop {
                 match content.next().await {
                     BlobContentNext::More((content1, item)) => {
                         content = content1;
                         match item? {
                             BaoContentItem::Parent(parent) => {
-                                let outboard = if let Some(outboard) = outboard.as_mut() {
-                                    outboard
-                                } else {
-                                    let f = of.take().unwrap();
-                                    let tree = content.tree();
-                                    let hash = content.hash();
-                                    outboard = Some(
-                                        (f)((*hash).into(), *tree)
-                                            .await
-                                            .map_err(DecodeError::Io)?,
-                                    );
-                                    outboard.as_mut().unwrap()
-                                };
-                                outboard.save(parent.node, &parent.pair).await?;
+                                if let Some(outboard) = outboard.as_mut() {
+                                    outboard.save(parent.node, &parent.pair).await?;
+                                }
                             }
                             BaoContentItem::Leaf(leaf) => {
                                 data.write_bytes_at(leaf.offset.0, leaf.data).await?;
@@ -519,7 +500,7 @@ pub mod fsm {
                         }
                     }
                     BlobContentNext::Done(end) => {
-                        return Ok((end, outboard));
+                        return Ok(end);
                     }
                 }
             }
