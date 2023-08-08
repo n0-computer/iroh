@@ -34,9 +34,9 @@ use crate::Hash;
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
 pub trait BaoMapEntry<D: BaoMap>: Clone + Send + Sync + 'static {
-    /// The hash of the entry
+    /// The hash of the entry.
     fn hash(&self) -> blake3::Hash;
-    /// the size of the entry
+    /// The size of the entry.
     fn size(&self) -> u64;
     /// Compute the available ranges.
     ///
@@ -92,20 +92,20 @@ pub trait BaoPartialMap: BaoMap {
     /// It must also be readable.
     type PartialEntry: BaoPartialMapEntry<Self>;
 
-    /// Get an existing partial entry, or create a new one
+    /// Get an existing partial entry, or create a new one.
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
-    /// Get an existing partial entry
+    /// Get an existing partial entry.
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
 
-    /// Upgrade a partial entry to a complete entry
+    /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
 }
 
-/// Extension of BaoMap to add misc methods used by the rpc calls
+/// Extension of BaoMap to add misc methods used by the rpc calls.
 pub trait BaoReadonlyDb: BaoMap {
     /// list all blobs in the database. This should include collections, since
     /// collections are blobs and can be requested as blobs.
@@ -213,55 +213,55 @@ pub enum ValidateProgress {
         /// the size of the entry
         size: u64,
     },
-    /// We got progress ingesting item `id`
+    /// We got progress ingesting item `id`.
     Progress {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the offset of the progress, in bytes
+        /// The offset of the progress, in bytes.
         offset: u64,
     },
     /// We are done with `id`
     Done {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// an error if we failed to validate the entry
+        /// An error if we failed to validate the entry.
         error: Option<String>,
     },
-    /// We are done with the whole operation
+    /// We are done with the whole operation.
     AllDone,
-    /// We got an error and need to abort
+    /// We got an error and need to abort.
     Abort(RpcError),
 }
 
-/// Progress updates for the provide operation
+/// Progress updates for the provide operation.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ProvideProgress {
     /// An item was found with name `name`, from now on referred to via `id`
     Found {
-        /// a new unique id for this entry
+        /// A new unique id for this entry.
         id: u64,
-        /// the name of the entry
+        /// The name of the entry.
         name: String,
-        /// the size of the entry in bytes
+        /// The size of the entry in bytes.
         size: u64,
     },
-    /// We got progress ingesting item `id`
+    /// We got progress ingesting item `id`.
     Progress {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the offset of the progress, in bytes
+        /// The offset of the progress, in bytes.
         offset: u64,
     },
-    /// We are done with `id`, and the hash is `hash`
+    /// We are done with `id`, and the hash is `hash`.
     Done {
-        /// the unique id of the entry
+        /// The unique id of the entry.
         id: u64,
-        /// the hash of the entry
+        /// The hash of the entry.
         hash: Hash,
     },
-    /// We are done with the whole operation
+    /// We are done with the whole operation.
     AllDone {
-        /// the hash of the created collection
+        /// The hash of the created collection.
         hash: Hash,
     },
     /// We got an error and need to abort.
@@ -270,7 +270,7 @@ pub enum ProvideProgress {
     Abort(RpcError),
 }
 
-/// Progress updates for the provide operation
+/// Progress updates for the provide operation.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShareProgress {
     /// A new connection was established.

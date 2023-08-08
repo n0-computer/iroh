@@ -398,11 +398,10 @@ pub mod fsm {
             content.write_all(data).await
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard if needed.
+        /// Write the entire blob to a slice writer and to an optional outboard.
         ///
-        /// The creation of the outboard is done lazily. `outboard` will only
-        /// be invoked if the blob is larger than a single chunk group.
+        /// The outboard is only written to if the blob is larger than a single
+        /// chunk group.
         pub async fn write_all_with_outboard<D, O>(
             self,
             outboard: Option<O>,
@@ -416,12 +415,12 @@ pub mod fsm {
             content.write_all_with_outboard(outboard, data).await
         }
 
-        /// Hash of the blob we are reading
+        /// The hash of the blob we are reading.
         pub fn hash(&self) -> Hash {
             (*self.stream.hash()).into()
         }
 
-        /// Ranges we have requested
+        /// The ranges we have requested for the current hash.
         pub fn ranges(&self) -> &RangeSet2<ChunkNum> {
             self.stream.ranges()
         }
@@ -459,21 +458,20 @@ pub mod fsm {
             }
         }
 
-        /// The geometry of the tree
+        /// The geometry of the tree we are currently reading.
         pub fn tree(&self) -> &bao_tree::BaoTree {
             self.stream.tree()
         }
 
-        /// The hash of the blob we are reading
+        /// The hash of the blob we are reading.
         pub fn hash(&self) -> &blake3::Hash {
             self.stream.hash()
         }
 
-        /// Write the entire blob to a slice writer, optionally also writing
-        /// an outboard if needed.
+        /// Write the entire blob to a slice writer and to an optional outboard.
         ///
-        /// The creation of the outboard is done lazily. `outboard` will only
-        /// be invoked if the blob is larger than a single chunk group.
+        /// The outboard is only written to if the blob is larger than a single
+        /// chunk group.
         pub async fn write_all_with_outboard<D, O>(
             self,
             mut outboard: Option<O>,
