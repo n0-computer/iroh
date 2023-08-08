@@ -72,7 +72,6 @@ impl Cli {
                 derp_region,
                 mut out,
                 stable: in_place,
-                force,
             } => {
                 if let Some(out) = out.as_mut() {
                     tracing::info!("canonicalizing output path");
@@ -111,7 +110,6 @@ impl Cli {
                         token: token.cloned(),
                         out: out.map(|x| x.display().to_string()),
                         in_place,
-                        force,
                     })
                     .await?;
                 while let Some(item) = stream.next().await {
@@ -383,9 +381,6 @@ pub enum Commands {
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
-        /// Force download even if the data is already present
-        #[clap(long, default_value_t = true)]
-        force: bool,
     },
     /// List listening addresses of the provider.
     Addresses {

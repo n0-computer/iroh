@@ -57,9 +57,6 @@ pub struct ShareRequest {
     pub peer: PeerId,
     /// This vec contains possible candidate addresses of the peer.
     pub addrs: Vec<SocketAddr>,
-    /// If this flag is true, the data is downloaded even if it is already
-    /// available locally.
-    pub force: bool,
     /// This optional field contains a request token that can be used to authorize
     /// the download request.
     pub token: Option<RequestToken>,

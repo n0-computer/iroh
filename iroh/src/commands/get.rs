@@ -89,7 +89,6 @@ impl GetInteractive {
                 recursive: !self.single,
                 peer: self.opts.peer_id,
                 addrs: self.opts.addrs,
-                force: false,
                 derp_region: self.opts.derp_region,
                 token: self.token,
                 in_place: true,
