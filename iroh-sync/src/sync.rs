@@ -13,6 +13,11 @@ use std::{
     time::SystemTime,
 };
 
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
+#[cfg(feature = "metrics")]
+use iroh_metrics::{inc, inc_by};
+
 use parking_lot::RwLock;
 
 use ed25519_dalek::{Signature, SignatureError, Signer, SigningKey, VerifyingKey};
@@ -316,6 +321,13 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         for cb in on_insert.values() {
             cb(InsertOrigin::Local, signed_entry.clone());
         }
+
+        #[cfg(feature = "metrics")]
+        {
+            inc!(Metrics, new_entries_local);
+            inc_by!(Metrics, new_entries_local_size, len);
+        }
+
         Ok(())
     }
 
@@ -354,6 +366,12 @@ impl<S: ranger::Store<RecordIdentifier, SignedEntry>> Replica<S> {
         for cb in on_insert.values() {
             cb(InsertOrigin::Sync(received_from), entry.clone());
         }
+        #[cfg(feature = "metrics")]
+        {
+            inc!(Metrics, new_entries_remote);
+            inc_by!(Metrics, new_entries_remote_size, entry.content_len());
+        }
+
         Ok(())
     }
 

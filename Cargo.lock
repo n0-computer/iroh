@@ -1964,6 +1964,7 @@ dependencies = [
  "hex",
  "iroh-blake3",
  "iroh-bytes",
+ "iroh-metrics",
  "once_cell",
  "ouroboros",
  "parking_lot",
