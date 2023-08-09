@@ -7,4 +7,6 @@ pub enum IrohError {
     Runtime(String),
     #[error("node creation failed: {0}")]
     NodeCreate(String),
+    #[error("doc error: {0}")]
+    Doc(String),
 }

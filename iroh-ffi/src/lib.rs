@@ -3,6 +3,6 @@ mod error;
 mod node;
 
 pub use self::error::IrohError;
-pub use self::node::IrohNode;
+pub use self::node::{Doc, IrohNode};
 
 uniffi::include_scaffolding!("iroh");

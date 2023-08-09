@@ -24,6 +24,7 @@ use crate::rpc_protocol::{KeyBytes, ProviderService};
 use crate::sync::PeerSource;
 
 /// Iroh client
+#[derive(Debug, Clone)]
 pub struct Iroh<C> {
     rpc: RpcClient<ProviderService, C>,
 }
@@ -85,6 +86,7 @@ where
 }
 
 /// Document handle
+#[derive(Debug, Clone)]
 pub struct Doc<C> {
     id: NamespaceId,
     rpc: RpcClient<ProviderService, C>,

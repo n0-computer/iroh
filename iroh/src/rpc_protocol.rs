@@ -298,7 +298,8 @@ pub struct AuthorShareRequest {
 }
 
 /// todo
-#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "cli", clap::ValueEnum)]
 pub enum ShareMode {
     /// Read-only access
     Read,

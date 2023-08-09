@@ -5,9 +5,15 @@ interface IrohNode {
   [Throws=IrohError]
   constructor();
   string peer_id();
+  [Throws=IrohError]
+  Doc sync_create_doc();
+};
+
+interface Doc {
+  string id();
 };
 
 [Error]
 enum IrohError {
-  "Runtime", "NodeCreate"
+  "Runtime", "NodeCreate", "Doc"
 };

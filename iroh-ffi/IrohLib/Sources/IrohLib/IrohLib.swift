@@ -332,8 +332,75 @@ private struct FfiConverterString: FfiConverter {
     }
 }
 
+public protocol DocProtocol {
+    func id() -> String
+}
+
+public class Doc: DocProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    deinit {
+        try! rustCall { uniffi_iroh_fn_free_doc(pointer, $0) }
+    }
+
+    public func id() -> String {
+        return try! FfiConverterString.lift(
+            try!
+                rustCall {
+                    uniffi_iroh_fn_method_doc_id(self.pointer, $0)
+                }
+        )
+    }
+}
+
+public struct FfiConverterTypeDoc: FfiConverter {
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = Doc
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Doc {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if ptr == nil {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: Doc, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> Doc {
+        return Doc(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: Doc) -> UnsafeMutableRawPointer {
+        return value.pointer
+    }
+}
+
+public func FfiConverterTypeDoc_lift(_ pointer: UnsafeMutableRawPointer) throws -> Doc {
+    return try FfiConverterTypeDoc.lift(pointer)
+}
+
+public func FfiConverterTypeDoc_lower(_ value: Doc) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeDoc.lower(value)
+}
+
 public protocol IrohNodeProtocol {
     func peerId() -> String
+    func syncCreateDoc() throws -> Doc
 }
 
 public class IrohNode: IrohNodeProtocol {
@@ -362,6 +429,14 @@ public class IrohNode: IrohNodeProtocol {
                 rustCall {
                     uniffi_iroh_fn_method_irohnode_peer_id(self.pointer, $0)
                 }
+        )
+    }
+
+    public func syncCreateDoc() throws -> Doc {
+        return try FfiConverterTypeDoc.lift(
+            rustCallWithError(FfiConverterTypeIrohError.lift) {
+                uniffi_iroh_fn_method_irohnode_sync_create_doc(self.pointer, $0)
+            }
         )
     }
 }
@@ -411,6 +486,9 @@ public enum IrohError {
     // Simple error enums only carry a message
     case NodeCreate(message: String)
 
+    // Simple error enums only carry a message
+    case Doc(message: String)
+
     fileprivate static func uniffiErrorHandler(_ error: RustBuffer) throws -> Error {
         return try FfiConverterTypeIrohError.lift(error)
     }
@@ -430,6 +508,10 @@ public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
                 message: FfiConverterString.read(from: &buf)
             )
 
+        case 3: return try .Doc(
+                message: FfiConverterString.read(from: &buf)
+            )
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -440,6 +522,8 @@ public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
         case let .NodeCreate(message):
             writeInt(&buf, Int32(2))
+        case let .Doc(message):
+            writeInt(&buf, Int32(3))
         }
     }
 }
@@ -465,6 +549,12 @@ private var initializationResult: InitializationResult {
         return InitializationResult.contractVersionMismatch
     }
     if uniffi_iroh_checksum_method_irohnode_peer_id() != 46487 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_method_irohnode_sync_create_doc() != 28890 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_method_doc_id() != 34918 {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_constructor_irohnode_new() != 18953 {

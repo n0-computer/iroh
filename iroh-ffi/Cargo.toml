@@ -28,9 +28,10 @@ anyhow = "1.0.69"
 blake3 = "1.3.3"
 bytes = "1"
 data-encoding = { version = "2.3.3" }
-iroh = { path = "../iroh", default-features = false, features = ["mem-db", "iroh-collection"] }
+iroh = { path = "../iroh", default-features = false, features = ["mem-db", "iroh-collection", "flat-db", "sync"] }
 iroh-io = { version = "0.2.1" }
 iroh-net = { path = "../iroh-net" }
+iroh-sync = { path = "../iroh-sync", features = ["fs-store"] }
 libc = "0.2.141"
 multibase = { version = "0.9.1"}
 num_cpus = { version = "1.15.0" }
@@ -41,6 +42,7 @@ thiserror = "1.0.44"
 tokio = "1.25.0"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 uniffi = { version = "0.24.3", features = ["cli"] }
+quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 
 [build-dependencies]
 uniffi = { version = "0.24.3", features = ["build"] }
