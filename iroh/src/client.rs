@@ -22,8 +22,8 @@ use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BytesGetRequest, DocGetRequest, DocImportRequest,
-    DocSetRequest, DocShareRequest, DocShareResponse, DocStartSyncRequest, DocTicket,
-    DocsCreateRequest, DocsListRequest, ShareMode, VersionRequest,
+    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocTicket, DocsCreateRequest,
+    DocsListRequest, ShareMode, VersionRequest,
 };
 use crate::rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService};
 use crate::sync::PeerSource;
@@ -209,7 +209,7 @@ where
         Ok(flatten(stream).map_ok(|res| res.entry))
     }
 
-    pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocShareResponse> {
+    pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocTicket> {
         let res = self
             .rpc
             .rpc(DocShareRequest {
@@ -217,7 +217,7 @@ where
                 mode,
             })
             .await??;
-        Ok(res)
+        Ok(res.0)
     }
 
     pub async fn start_sync(&self, peers: Vec<PeerSource>) -> Result<()> {
