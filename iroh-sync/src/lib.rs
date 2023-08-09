@@ -1,8 +1,8 @@
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod ranger;
 pub mod store;
 pub mod sync;
-#[cfg(feature = "metrics")]
-pub mod metrics;
 
 use iroh_metrics::{
     core::{Counter, Metric},
