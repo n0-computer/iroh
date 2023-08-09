@@ -20,11 +20,13 @@ impl Doc {
     }
 }
 
-#[derive(Clone)]
-pub struct IrohNode {
-    inner: Node<flat::Database, iroh_sync::store::fs::Store>,
+pub struct IrohNode(Arc<Inner>);
+
+struct Inner {
+    node: Node<flat::Database, iroh_sync::store::fs::Store>,
     async_runtime: Handle,
-    sync_client: Arc<iroh::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>>,
+    sync_client: iroh::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>,
+    tokio_rt: tokio::runtime::Runtime,
 }
 
 impl IrohNode {
@@ -65,30 +67,43 @@ impl IrohNode {
             })
             .map_err(|e| Error::NodeCreate(e.to_string()))?;
 
-        let sync_client = Arc::new(node.client());
+        let sync_client = node.client();
 
-        Ok(IrohNode {
-            inner: node,
+        Ok(IrohNode(Arc::new(Inner {
+            node,
             async_runtime: rt,
             sync_client,
-        })
+            tokio_rt,
+        })))
     }
 
     pub fn peer_id(&self) -> String {
-        self.inner.peer_id().to_string()
-    }
-
-    pub fn async_runtime(&self) -> &Handle {
-        &self.async_runtime
+        self.0.node.peer_id().to_string()
     }
 
     pub fn sync_create_doc(&self) -> Result<Arc<Doc>> {
         let doc = self
+            .0
             .async_runtime
             .main()
-            .block_on(async { self.sync_client.create_doc().await })
+            .block_on(async { self.0.sync_client.create_doc().await })
             .map_err(|e| Error::Doc(e.to_string()))?;
 
         Ok(Arc::new(Doc(doc)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_doc_create() {
+        let node = IrohNode::new().unwrap();
+        let peer_id = node.peer_id();
+        println!("id: {}", peer_id);
+        let doc = node.sync_create_doc().unwrap();
+        let doc_id = doc.id();
+        println!("doc_id: {}", doc_id);
     }
 }
