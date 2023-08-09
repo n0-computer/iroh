@@ -164,7 +164,7 @@ impl Doc {
                 println!("ok");
             }
             Doc::Share { mode } => {
-                let DocShareResponse(ticket) = doc.share(mode).await?;
+                let ticket = doc.share(mode).await?;
                 // println!("key:    {}", hex::encode(ticket.key));
                 // println!(
                 //     "peers:  {}",
