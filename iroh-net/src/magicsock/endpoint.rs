@@ -7,13 +7,16 @@ use std::{
 };
 
 use futures::future::BoxFuture;
+use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, info, trace, warn};
 
 use crate::{config, disco, key, magicsock::Timer, net::ip::is_unicast_link_local, stun};
 
-use super::{ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr};
+use super::{
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoInfo, QuicMappedAddr, SendAddr,
+};
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -94,6 +97,11 @@ pub(super) struct Options {
 impl Endpoint {
     pub fn new(id: usize, options: Options) -> Self {
         let quic_mapped_addr = QuicMappedAddr::generate();
+
+        if options.derp_addr.is_some() {
+            // we potentially have a relay connection to the peer
+            inc!(MagicsockMetrics, num_relay_conns_added);
+        }
 
         Endpoint {
             id,
@@ -193,6 +201,16 @@ impl Endpoint {
 
         // If we found a candidate, set to best addr
         if let Some(pong) = last_pong {
+            if self.best_addr.is_none() {
+                // we now have a direct connection, adjust direct connection count
+                inc!(MagicsockMetrics, num_direct_conns_added);
+                if self.derp_addr.is_some() {
+                    // we no longer rely on the relay connection, decrease the relay connection
+                    // count
+                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                }
+            }
+
             self.best_addr = Some(AddrLatency {
                 addr: pong.from.as_socket_addr(),
                 latency: Some(lowest_latency),
@@ -315,6 +333,12 @@ impl Endpoint {
             // If we fail to ping our current best addr, it is not that good anymore.
             if let Some(ref addr) = self.best_addr {
                 if sp.to == addr.addr {
+                    // we had a direct connection that is no longer valid
+                    inc!(MagicsockMetrics, num_direct_conns_removed);
+                    if self.derp_addr.is_some() {
+                        // we can only connect through a relay connection
+                        inc!(MagicsockMetrics, num_relay_conns_added);
+                    }
                     self.best_addr = None;
                     self.trust_best_addr_until = None;
                 }
@@ -418,6 +442,13 @@ impl Endpoint {
                     .map(|a| ep == &a.addr)
                     .unwrap_or_default()
                 {
+                    // we no longer rely on a direct connection
+                    if self.best_addr.is_some() {
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
@@ -483,6 +514,17 @@ impl Endpoint {
     }
 
     pub fn update_from_node(&mut self, n: &config::Node) {
+        if self.best_addr.is_none() {
+            // we do not have a direct connection, so changing the derp information may
+            // have an effect on our connection status
+            if self.derp_addr.is_none() && n.derp.is_some() {
+                // we did not have a relay connection before, but now we do
+                inc!(MagicsockMetrics, num_relay_conns_added)
+            } else if self.derp_addr.is_some() && n.derp.is_none() {
+                // we had a relay connection before but do not have one now
+                inc!(MagicsockMetrics, num_relay_conns_removed)
+            }
+        }
         self.derp_addr = n.derp;
 
         for st in self.endpoint_state.values_mut() {
@@ -514,6 +556,14 @@ impl Endpoint {
                     .map(|a| ep == &a.addr)
                     .unwrap_or_default()
                 {
+                    if self.best_addr.is_some() {
+                        // we no long rely on a direct connection
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            // we only have a relay connection to the peer
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
@@ -524,6 +574,14 @@ impl Endpoint {
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
     fn reset(&mut self) {
+        if self.best_addr.is_some() {
+            // we no longer rely on a direct connection
+            inc!(MagicsockMetrics, num_relay_conns_removed);
+            if self.derp_addr.is_some() {
+                // we are now relying on a relay connection
+                inc!(MagicsockMetrics, num_direct_conns_added);
+            }
+        }
         self.last_full_ping = None;
         self.best_addr = None;
         self.best_addr_at = None;
@@ -582,6 +640,14 @@ impl Endpoint {
                         .map(|a| ep == &a.addr)
                         .unwrap_or_default()
                     {
+                        // no longer relying on a direct connection, remove conn count
+                        if self.best_addr.is_some() {
+                            inc!(MagicsockMetrics, num_direct_conns_removed);
+                            if self.derp_addr.is_some() {
+                                // we now rely on a relay connection, add a relay count
+                                inc!(MagicsockMetrics, num_relay_conns_added);
+                            }
+                        }
                         self.best_addr = None;
                     }
                     return false;
@@ -709,6 +775,14 @@ impl Endpoint {
 
                     if is_better {
                         info!("disco: node {:?} now using {:?}", self.public_key, sp.to);
+                        if self.best_addr.is_none() {
+                            // we now have direct connection!
+                            inc!(MagicsockMetrics, num_direct_conns_added);
+                            if self.derp_addr.is_some() {
+                                // no long relying on a relay connection, remove a relay conn
+                                inc!(MagicsockMetrics, num_relay_conns_removed);
+                            }
+                        }
                         self.best_addr.replace(this_pong.clone());
                     }
                     let best_addr = self.best_addr.as_mut().expect("just set");
@@ -771,6 +845,14 @@ impl Endpoint {
         self.is_call_me_maybe_ep.retain(|ep, want| {
             if !*want {
                 if self.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                    if self.best_addr.is_some() {
+                        // no longer relying on the direct connection
+                        inc!(MagicsockMetrics, num_direct_conns_removed);
+                        if self.derp_addr.is_some() {
+                            // we are now relying on the relay connection, add a relay conn
+                            inc!(MagicsockMetrics, num_relay_conns_added);
+                        }
+                    }
                     self.best_addr = None;
                 }
                 return false;
