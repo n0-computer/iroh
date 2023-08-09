@@ -1,6 +1,6 @@
 //! Utilities for working with tokio io
 use derive_more::Display;
-use range_collections::RangeSet2;
+use iroh_bytes::baomap::range_collections::RangeSet2;
 use std::{io::Write, path::PathBuf, result};
 use thiserror::Error;
 

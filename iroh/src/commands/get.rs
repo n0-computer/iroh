@@ -12,7 +12,7 @@ use iroh::{
     rpc_protocol::ShareRequest,
     util::{io::pathbuf_from_name, progress::ProgressSliceWriter},
 };
-use iroh_bytes::provider::ShareProgress;
+use iroh_bytes::{baomap::range_collections::RangeSet2, provider::ShareProgress};
 use iroh_bytes::{
     get::{
         self,
@@ -22,7 +22,6 @@ use iroh_bytes::{
     Hash,
 };
 use iroh_io::ConcatenateSliceWriter;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
 #[allow(clippy::large_enum_variant)]

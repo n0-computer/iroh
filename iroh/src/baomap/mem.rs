@@ -16,12 +16,14 @@ use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
 use bao_tree::BaoTree;
 use bao_tree::ByteNum;
+use bao_tree::ChunkNum;
 use bytes::Bytes;
 use bytes::BytesMut;
 use derive_more::From;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_bytes::baomap;
+use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::ExportMode;
 use iroh_bytes::baomap::ImportMode;
 use iroh_bytes::baomap::ImportProgress;
@@ -36,7 +38,6 @@ use iroh_bytes::util::runtime;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
 use super::flatten_to_io;
@@ -210,9 +211,7 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(
-        &self,
-    ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 
@@ -242,9 +241,7 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(
-        &self,
-    ) -> BoxFuture<'_, io::Result<range_collections::RangeSet2<bao_tree::ChunkNum>>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<bao_tree::ChunkNum>>> {
         futures::future::ok(RangeSet2::all()).boxed()
     }
 

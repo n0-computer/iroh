@@ -136,6 +136,7 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt};
+use iroh_bytes::baomap::range_collections::RangeSet2;
 use iroh_bytes::baomap::{
     self, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
     ReadableStore, ValidateProgress,
@@ -144,7 +145,6 @@ use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use rand::Rng;
-use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 

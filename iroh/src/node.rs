@@ -31,6 +31,7 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
+    range_collections::{range_set::RangeSetRange, RangeSet2},
     ExportMode, Map, MapEntry, PartialMapEntry, ReadableStore, Store, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
@@ -57,8 +58,6 @@ use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
-use range_collections::range_set::RangeSetRange;
-use range_collections::RangeSet2;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;

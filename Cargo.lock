@@ -1664,7 +1664,6 @@ dependencies = [
  "quic-rpc",
  "quinn",
  "rand",
- "range-collections",
  "regex",
  "serde",
  "tempfile",

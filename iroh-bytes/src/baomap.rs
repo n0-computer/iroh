@@ -16,6 +16,9 @@ use range_collections::RangeSet2;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+pub use bao_tree;
+pub use range_collections;
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)

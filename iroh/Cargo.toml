@@ -30,7 +30,6 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
 quinn = "0.10"
 rand = "0.8"
-range-collections = { version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["io-util", "rt"] }
