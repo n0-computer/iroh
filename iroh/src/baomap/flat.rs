@@ -155,7 +155,7 @@ struct State {
     // complete entries
     complete: BTreeMap<Hash, CompleteEntry>,
     // partial entries
-    partial: BTreeMap<Hash, PartialEntry>,
+    partial: BTreeMap<Hash, PartialEntryData>,
     // outboard data, cached for all complete entries
     outboard: BTreeMap<Hash, Bytes>,
     // data, cached for all complete entries that are small enough
@@ -220,7 +220,7 @@ impl CompleteEntry {
 }
 
 #[derive(Debug, Clone, Default)]
-struct PartialEntry {
+struct PartialEntryData {
     // size of the data
     #[allow(dead_code)]
     size: u64,
@@ -228,62 +228,78 @@ struct PartialEntry {
     uuid: [u8; 16],
 }
 
-impl PartialEntry {
+impl PartialEntryData {
     fn new(size: u64, uuid: [u8; 16]) -> Self {
         Self { size, uuid }
     }
 }
 
-impl PartialMapEntry<Store> for Entry {
+impl MapEntry<Store> for PartialEntry {
+    fn hash(&self) -> blake3::Hash {
+        self.hash
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<RangeSet2<ChunkNum>>> {
+        futures::future::ok(RangeSet2::all()).boxed()
+    }
+
+    fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
+        async move {
+            let file = File::open(self.outboard_path.clone()).await?;
+            Ok(PreOrderOutboard {
+                root: self.hash,
+                tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
+                data: MemOrFile::File(file),
+            })
+        }
+        .boxed()
+    }
+
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<<Store as Map>::DataReader>> {
+        async move {
+            let file = File::open(self.data_path.clone()).await?;
+            Ok(MemOrFile::File(file))
+        }
+        .boxed()
+    }
+}
+
+impl PartialMapEntry<Store> for PartialEntry {
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
         let hash = self.hash;
-        let size = self.entry.size();
+        let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
-        let outboard = self.entry.outboard.clone();
+        let path = self.outboard_path.clone();
         async move {
-            if let Either::Right(path) = outboard {
-                let mut writer = iroh_io::File::create(move || {
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(path.clone())
-                })
-                .await?;
-                writer.write_at(0, &size.to_le_bytes()).await?;
-                Ok(PreOrderOutboard {
-                    root: hash,
-                    tree,
-                    data: writer,
-                })
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "cannot write to in-memory outboard",
-                ))
-            }
+            let mut writer = iroh_io::File::create(move || {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(path)
+            })
+            .await?;
+            writer.write_at(0, &size.to_le_bytes()).await?;
+            Ok(PreOrderOutboard {
+                root: hash,
+                tree,
+                data: writer,
+            })
         }
         .boxed()
     }
 
     fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
-        let data = self.entry.data.clone();
-        async move {
-            if let Either::Right((path, _)) = data {
-                let writer = iroh_io::File::create(move || {
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(path.clone())
-                })
-                .await?;
-                Ok(writer)
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "cannot write to in-memory data",
-                ))
-            }
-        }
+        let path = self.data_path.clone();
+        iroh_io::File::create(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path.clone())
+        })
         .boxed()
     }
 }
@@ -293,53 +309,41 @@ impl PartialMap for Store {
 
     type DataWriter = iroh_io::File;
 
-    type PartialEntry = Entry;
+    type PartialEntry = PartialEntry;
 
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
         let entry = self.0.state.read().unwrap().partial.get(hash)?.clone();
-        Some(Entry {
+        Some(PartialEntry {
             hash: blake3::Hash::from(*hash),
-            entry: EntryData {
-                data: Either::Right((
-                    self.0.options.partial_data_path(*hash, &entry.uuid),
-                    entry.size,
-                )),
-                outboard: Either::Right(self.0.options.partial_outboard_path(*hash, &entry.uuid)),
-            },
+            size: entry.size,
+            data_path: self.0.options.partial_data_path(*hash, &entry.uuid),
+            outboard_path: self.0.options.partial_outboard_path(*hash, &entry.uuid),
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Entry> {
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
         let mut state = self.0.state.write().unwrap();
         let entry = state.partial.entry(hash).or_insert_with(|| {
             let uuid = rand::thread_rng().gen::<[u8; 16]>();
-            PartialEntry::new(size, uuid)
+            PartialEntryData::new(size, uuid)
         });
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
-        Ok(Entry {
+        Ok(PartialEntry {
             hash: blake3::Hash::from(hash),
-            entry: EntryData {
-                data: Either::Right((data_path, size)),
-                outboard: Either::Right(outboard_path),
-            },
+            size: entry.size,
+            data_path,
+            outboard_path,
         })
     }
 
-    fn insert_complete(&self, entry: Entry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         let hash = entry.hash.into();
         let data_path = self.0.options.owned_data_path(&hash);
         async move {
-            let Either::Right((temp_data_path, size)) = entry.entry.data else {
-                // we are using the same type for partial and complete entries, but partial entries
-                // always have the left(path) case
-                unreachable!()
-            };
-            let Either::Right(temp_outboard_path) = entry.entry.outboard else {
-                // we are using the same type for partial and complete entries, but partial entries
-                // always have the left(path) case
-                unreachable!()
-            };
+            let size = entry.size;
+            let temp_data_path = entry.data_path;
+            let temp_outboard_path = entry.outboard_path;
             // for a short time we will have neither partial nor complete
             self.0.state.write().unwrap().partial.remove(&hash);
             tokio::fs::rename(temp_data_path, &data_path).await?;
@@ -407,7 +411,7 @@ struct Inner {
 /// This
 #[derive(Debug, Clone)]
 pub struct Store(Arc<Inner>);
-/// The [MapEntry] and [PartialMapEntry] implementation for [Store].
+/// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     /// the hash is not part of the entry itself
@@ -534,6 +538,15 @@ impl EntryData {
 
 fn needs_outboard(size: u64) -> bool {
     size > (IROH_BLOCK_SIZE.bytes() as u64)
+}
+
+/// The [PartialMapEntry] implementation for [Store].
+#[derive(Debug, Clone)]
+pub struct PartialEntry {
+    hash: blake3::Hash,
+    size: u64,
+    data_path: PathBuf,
+    outboard_path: PathBuf,
 }
 
 impl Map for Store {
@@ -1042,7 +1055,7 @@ impl Store {
                 if current_size > 0 {
                     partial.insert(
                         hash,
-                        PartialEntry {
+                        PartialEntryData {
                             size: expected_size,
                             uuid: *uuid,
                         },
