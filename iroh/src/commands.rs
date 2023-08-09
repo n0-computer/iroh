@@ -1,12 +1,10 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
+use iroh::client::connect_raw;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
@@ -407,35 +405,8 @@ pub enum Commands {
     },
 }
 
-async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
-    let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
-    let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
-    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
-    let server_name = "localhost".to_string();
-    let connection = QuinnConnection::new(endpoint, addr, server_name);
-    let client = RpcClient::new(connection);
-    // Do a version request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
-        .await
-        .context("iroh server is not running")??;
-    Ok(client)
-}
-
-pub fn create_quinn_client(
-    bind_addr: SocketAddr,
-    alpn_protocols: Vec<Vec<u8>>,
-    keylog: bool,
-) -> Result<quinn::Endpoint> {
-    let keypair = iroh_net::tls::Keypair::generate();
-    let tls_client_config =
-        iroh_net::tls::make_client_config(&keypair, None, alpn_protocols, keylog)?;
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-    client_config.transport_config(Arc::new(transport_config));
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+pub async fn make_rpc_client(rpc_port: u16) -> anyhow::Result<RpcClient> {
+    connect_raw(rpc_port).await
 }
 
 #[cfg(feature = "metrics")]
