@@ -1197,7 +1197,7 @@ impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, 
 }
 
 /// A file name that indicates the purpose of the file.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum FileName {
     /// Incomplete data for the hash, with an unique id
     PartialData(Hash, [u8; 16]),
@@ -1280,6 +1280,9 @@ impl FromStr for FileName {
             } else {
                 Err(())
             }
+        } else if ext == "meta" {
+            let data = hex::decode(base).map_err(|_| ())?;
+            Ok(Self::Meta(data))
         } else {
             hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
             if ext == "data" {
@@ -1288,8 +1291,6 @@ impl FromStr for FileName {
                 Ok(Self::Outboard(hash.into()))
             } else if ext == "paths" {
                 Ok(Self::Paths(hash.into()))
-            } else if ext == "meta" {
-                Ok(Self::Meta(hash.into()))
             } else {
                 Err(())
             }
@@ -1351,6 +1352,47 @@ impl FileName {
             FileName::Meta(data) => data.as_slice(),
             FileName::Outboard(_) => &[],
             FileName::Paths(_) => &[],
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_hash() -> impl Strategy<Value = Hash> {
+        any::<[u8; 32]>().prop_map(|x| x.into())
+    }
+
+    fn arb_filename() -> impl Strategy<Value = FileName> {
+        prop_oneof![
+            arb_hash().prop_map(FileName::Data),
+            arb_hash().prop_map(FileName::Outboard),
+            arb_hash().prop_map(FileName::Paths),
+            (arb_hash(), any::<[u8; 16]>())
+                .prop_map(|(hash, uuid)| FileName::PartialData(hash, uuid)),
+            (arb_hash(), any::<[u8; 16]>())
+                .prop_map(|(hash, uuid)| FileName::PartialOutboard(hash, uuid)),
+            any::<Vec<u8>>().prop_map(FileName::Meta),
+        ]
+    }
+
+    #[test]
+    fn filename_parse_error() {
+        assert!(FileName::from_str("foo").is_err());
+        assert!(FileName::from_str("1234.data").is_err());
+        assert!(FileName::from_str("1234ABDC.outboard").is_err());
+        assert!(FileName::from_str("1234-1234.data").is_err());
+        assert!(FileName::from_str("1234ABDC-1234.outboard").is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn filename_roundtrip(name in arb_filename()) {
+            let s = name.to_string();
+            let name2 = super::FileName::from_str(&s).unwrap();
+            prop_assert_eq!(name, name2);
         }
     }
 }
