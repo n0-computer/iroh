@@ -20,6 +20,7 @@ use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::protocol::GetRequest;
+use iroh_bytes::util::RpcResult;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
     provider::{
@@ -55,7 +56,7 @@ use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
     ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
-    VersionResponse, WatchRequest, WatchResponse,
+    VersionResponse, WatchRequest, WatchResponse, StatsGetRequest, StatsGetResponse,
 };
 use crate::sync::{SyncEngine, SYNC_ALPN};
 
@@ -69,6 +70,21 @@ pub const DEFAULT_BIND_ADDR: (Ipv4Addr, u16) = (Ipv4Addr::LOCALHOST, 11204);
 
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
+
+#[cfg(feature = "metrics")]
+/// Initialize the metrics collection.
+pub fn init_metrics_collection() {
+    use iroh_metrics::core::Metric;
+
+    iroh_metrics::core::Core::init(|reg, metrics| {
+        metrics.insert(crate::metrics::Metrics::new(reg));
+        metrics.insert(iroh_sync::metrics::Metrics::new(reg));
+        metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+    });
+}
 
 /// Builder for the [`Node`].
 ///
@@ -275,6 +291,10 @@ where
     pub async fn spawn(self) -> Result<Node<D, S>> {
         trace!("spawning node");
         let rt = self.rt.context("runtime not set")?;
+
+        // TODO: this should actually run globally only once.
+        #[cfg(feature = "metrics")]
+        init_metrics_collection();
 
         let (endpoints_update_s, endpoints_update_r) = flume::bounded(1);
         let mut transport_config = quinn::TransportConfig::default();
@@ -831,6 +851,16 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
         anyhow::bail!("provide not supported yet for this database type");
     }
 
+    async fn stats(self, _req: StatsGetRequest) -> RpcResult<StatsGetResponse> {
+        #[cfg(feature = "metrics")]
+        let res = Ok(StatsGetResponse { stats: crate::metrics::get_metrics()? });
+
+        #[cfg(not(feature = "metrics"))]
+        let res = Err(anyhow::anyhow!("metrics are disabled").into());
+
+        res
+    }
+
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -911,6 +941,7 @@ fn handle_rpc_request<
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
             Addrs(msg) => chan.rpc(msg, handler, RpcHandler::addrs).await,
             Shutdown(msg) => chan.rpc(msg, handler, RpcHandler::shutdown).await,
+            Stats(msg) => chan.rpc(msg, handler, RpcHandler::stats).await,
             Validate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::validate)
                     .await
