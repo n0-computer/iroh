@@ -31,7 +31,7 @@ use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_bytes::baomap::{
-    ExportMode, Map, MapEntry, PartialMapEntry, ReadonlyStore, Store, ValidateProgress,
+    ExportMode, Map, MapEntry, PartialMapEntry, ReadableStore, Store, ValidateProgress,
 };
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
@@ -523,7 +523,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: ReadonlyStore> Node<D> {
+impl<D: ReadableStore> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.

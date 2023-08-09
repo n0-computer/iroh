@@ -285,7 +285,7 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[test]
 fn cli_provide_persistence() -> anyhow::Result<()> {
     use iroh::baomap::flat::Store;
-    use iroh_bytes::baomap::ReadonlyStore;
+    use iroh_bytes::baomap::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,

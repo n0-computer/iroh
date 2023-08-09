@@ -112,8 +112,8 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn with_map<U: Send + Sync + 'static, F: Fn(U) -> Self::Msg + Send + Sync + Clone + 'static>(
         self,
         f: F,
-    ) -> With<Self, U, F> {
-        With(self, f, PhantomData)
+    ) -> WithMap<Self, U, F> {
+        WithMap(self, f, PhantomData)
     }
 
     /// Transform the message type by filter-mapping to the type of this sender.
@@ -123,8 +123,8 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     >(
         self,
         f: F,
-    ) -> FilterWith<Self, U, F> {
-        FilterWith(self, f, PhantomData)
+    ) -> WithFilterMap<Self, U, F> {
+        WithFilterMap(self, f, PhantomData)
     }
 }
 
@@ -174,8 +174,10 @@ impl IdGenerator for IgnoreProgressSender<()> {
     }
 }
 
+/// Transform the message type by mapping to the type of this sender.
 ///
-pub struct With<
+/// See [ProgressSender::with_map].
+pub struct WithMap<
     I: ProgressSender,
     U: Send + Sync + 'static,
     F: Fn(U) -> I::Msg + Clone + Send + Sync + 'static,
@@ -185,7 +187,7 @@ impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> I::Msg + Clone + Send + Sync + 'static,
-    > std::fmt::Debug for With<I, U, F>
+    > std::fmt::Debug for WithMap<I, U, F>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("With").field(&self.0).finish()
@@ -196,7 +198,7 @@ impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> I::Msg + Clone + Send + Sync + 'static,
-    > Clone for With<I, U, F>
+    > Clone for WithMap<I, U, F>
 {
     fn clone(&self) -> Self {
         Self(self.0.clone(), self.1.clone(), PhantomData)
@@ -207,7 +209,7 @@ impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> I::Msg + Clone + Send + Sync + 'static,
-    > ProgressSender for With<I, U, F>
+    > ProgressSender for WithMap<I, U, F>
 {
     type Msg = U;
 
@@ -229,14 +231,16 @@ impl<
     }
 }
 
+/// Transform the message type by filter-mapping to the type of this sender.
 ///
-pub struct FilterWith<I, U, F>(I, F, PhantomData<U>);
+/// See [ProgressSender::with_filter_map].
+pub struct WithFilterMap<I, U, F>(I, F, PhantomData<U>);
 
 impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> Option<I::Msg> + Clone + Send + Sync + 'static,
-    > std::fmt::Debug for FilterWith<I, U, F>
+    > std::fmt::Debug for WithFilterMap<I, U, F>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("FilterWith").field(&self.0).finish()
@@ -247,14 +251,14 @@ impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> Option<I::Msg> + Clone + Send + Sync + 'static,
-    > Clone for FilterWith<I, U, F>
+    > Clone for WithFilterMap<I, U, F>
 {
     fn clone(&self) -> Self {
         Self(self.0.clone(), self.1.clone(), PhantomData)
     }
 }
 
-impl<I: IdGenerator, U, F> IdGenerator for FilterWith<I, U, F> {
+impl<I: IdGenerator, U, F> IdGenerator for WithFilterMap<I, U, F> {
     fn new_id(&self) -> u64 {
         self.0.new_id()
     }
@@ -264,7 +268,7 @@ impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> Option<I::Msg> + Clone + Send + Sync + 'static,
-    > ProgressSender for FilterWith<I, U, F>
+    > ProgressSender for WithFilterMap<I, U, F>
 {
     type Msg = U;
 
@@ -324,7 +328,7 @@ impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
     }
 }
 
-/// A conveneince type for sending progress messages.
+/// A convenience type for sending progress messages.
 pub struct TokioProgressSender<T> {
     sender: tokio::sync::mpsc::Sender<T>,
     id: std::sync::Arc<std::sync::atomic::AtomicU64>,

@@ -95,7 +95,7 @@ pub trait PartialMap: Map {
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
-pub trait ReadonlyStore: Map {
+pub trait ReadableStore: Map {
     /// list all blobs in the database. This should include collections, since
     /// collections are blobs and can be requested as blobs.
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
@@ -123,7 +123,7 @@ pub trait ReadonlyStore: Map {
 }
 
 /// The mutable part of a BaoDb
-pub trait Store: ReadonlyStore + PartialMap {
+pub trait Store: ReadableStore + PartialMap {
     /// This trait method imports a file from a local path.
     ///
     /// `data` is the path to the file.

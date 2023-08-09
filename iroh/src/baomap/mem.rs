@@ -27,7 +27,7 @@ use iroh_bytes::baomap::ImportProgress;
 use iroh_bytes::baomap::PartialMap;
 use iroh_bytes::baomap::PartialMapEntry;
 use iroh_bytes::baomap::ValidateProgress;
-use iroh_bytes::baomap::{Map, MapEntry, ReadonlyStore};
+use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -179,7 +179,7 @@ impl AsyncSliceWriter for MemFile {
 }
 
 #[derive(Debug, Clone, Default)]
-///
+/// A full in memory database for iroh-bytes.
 pub struct Store {
     state: Arc<RwLock<State>>,
 }
@@ -293,7 +293,7 @@ impl Map for Store {
     }
 }
 
-impl ReadonlyStore for Store {
+impl ReadableStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(
             self.state
@@ -312,7 +312,7 @@ impl ReadonlyStore for Store {
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
-        todo!()
+        futures::future::err(anyhow::anyhow!("validate not implemented")).boxed()
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {

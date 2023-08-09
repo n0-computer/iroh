@@ -19,7 +19,7 @@ use futures::future::Either;
 use futures::{Future, FutureExt};
 use iroh_bytes::baomap::{
     self, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
-    ReadonlyStore, ValidateProgress,
+    ReadableStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -209,14 +209,18 @@ impl PartialMap for Store {
 
     fn insert_complete(&self, entry: Entry) -> BoxFuture<'_, io::Result<()>> {
         let hash = entry.hash.into();
-        let Either::Right((temp_data_path, size)) = entry.entry.data else {
-            todo!()
-        };
-        let Either::Right(temp_outboard_path) = entry.entry.outboard else {
-            todo!()
-        };
         let data_path = self.0.options.owned_data_path(&hash);
         async move {
+            let Either::Right((temp_data_path, size)) = entry.entry.data else {
+                // we are using the same type for partial and complete entries, but partial entries
+                // always have the left(path) case
+                unreachable!()
+            };
+            let Either::Right(temp_outboard_path) = entry.entry.outboard else {
+                // we are using the same type for partial and complete entries, but partial entries
+                // always have the left(path) case
+                unreachable!()
+            };
             // for a short time we will have neither partial nor complete
             self.0.state.write().unwrap().partial.remove(&hash);
             tokio::fs::rename(temp_data_path, &data_path).await?;
@@ -466,7 +470,7 @@ impl Map for Store {
     }
 }
 
-impl ReadonlyStore for Store {
+impl ReadableStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         let inner = self.0.state.read().unwrap();
         let items = inner.complete.keys().copied().collect::<Vec<_>>();
