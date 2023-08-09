@@ -13,12 +13,16 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, trace};
 
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
+#[cfg(feature = "metrics")]
+use iroh_metrics::inc;
+
 /// The ALPN identifier for the iroh-sync protocol
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 
 mod engine;
 mod live;
-pub mod metrics;
 pub mod rpc;
 
 pub use engine::*;
@@ -56,6 +60,14 @@ pub async fn connect_and_sync<S: store::Store>(
         .context("dial_and_sync")?;
     let (mut send_stream, mut recv_stream) = connection.open_bi().await?;
     let res = run_alice::<S, _, _>(&mut send_stream, &mut recv_stream, doc, Some(peer_id)).await;
+
+    #[cfg(feature = "metrics")]
+    if res.is_ok() {
+        inc!(Metrics, initial_sync_success);
+    } else {
+        inc!(Metrics, initial_sync_failed);
+    }
+
     debug!("sync with peer {}: finish {:?}", peer_id, res);
     res
 }
@@ -111,13 +123,22 @@ pub async fn handle_connection<S: store::Store>(
     let (mut send_stream, mut recv_stream) = connection.accept_bi().await?;
     debug!(peer = ?peer_id, "incoming sync: start");
 
-    run_bob(
+    let res = run_bob(
         &mut send_stream,
         &mut recv_stream,
         replica_store,
         Some(peer_id),
     )
-    .await?;
+    .await;
+
+    #[cfg(feature = "metrics")]
+    if res.is_ok() {
+        inc!(Metrics, initial_sync_success);
+    } else {
+        inc!(Metrics, initial_sync_failed);
+    }
+
+    res?;
     send_stream.finish().await?;
 
     debug!(peer = ?peer_id, "incoming sync: done");

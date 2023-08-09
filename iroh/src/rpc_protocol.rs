@@ -9,7 +9,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -490,6 +490,26 @@ pub struct BytesGetResponse {
     pub data: Bytes,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StatsGetRequest {}
+
+impl RpcMsg<ProviderService> for StatsGetRequest {
+    type Response = RpcResult<StatsGetResponse>;
+}
+
+/// Counter stats
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CounterStats {
+    pub value: u64,
+    pub description: String,
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StatsGetResponse {
+    pub stats: HashMap<String, CounterStats>,
+}
+
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
 pub struct ProviderService;
@@ -526,6 +546,8 @@ pub enum ProviderRequest {
     DocShare(DocShareRequest),         // DocGetContent(DocGetContentRequest),
 
     BytesGet(BytesGetRequest),
+
+    Stats(StatsGetRequest),
 }
 
 /// The response enum, listing all possible responses.
@@ -561,7 +583,9 @@ pub enum ProviderResponse {
     DocJoin(RpcResult<DocStartSyncResponse>),
     DocShare(RpcResult<DocShareResponse>),
 
-    BytesGet(RpcResult<BytesGetResponse>), // DocGetContent(DocGetContentResponse),
+    BytesGet(RpcResult<BytesGetResponse>),
+
+    Stats(RpcResult<StatsGetResponse>),
 }
 
 impl Service for ProviderService {

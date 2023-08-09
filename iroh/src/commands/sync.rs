@@ -2,7 +2,7 @@ use clap::Parser;
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    rpc_protocol::{DocShareResponse, DocTicket, ProviderRequest, ProviderResponse, ShareMode},
+    rpc_protocol::{DocTicket, ProviderRequest, ProviderResponse, ShareMode},
     sync::PeerSource,
 };
 use iroh_sync::{

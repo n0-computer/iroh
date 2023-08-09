@@ -12,7 +12,6 @@ use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
 };
-use iroh_metrics::inc;
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store,
@@ -21,8 +20,6 @@ use iroh_sync::{
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, task::JoinError};
 use tracing::{debug, error, info, warn};
-
-use super::metrics::Metrics;
 
 const CHANNEL_CAP: usize = 8;
 
@@ -274,11 +271,6 @@ impl<S: store::Store> Actor<S> {
                 // TODO: Make sure that the peer is dialable.
                 let res = connect_and_sync::<S>(&endpoint, &replica, peer, None, &[]).await;
                 debug!("synced with {peer}: {res:?}");
-                // collect metrics
-                match &res {
-                    Ok(_) => inc!(Metrics, initial_sync_success),
-                    Err(_) => inc!(Metrics, initial_sync_failed),
-                }
                 (topic, peer, res)
             }
             .boxed()
