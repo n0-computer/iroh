@@ -9,4 +9,8 @@ pub enum IrohError {
     NodeCreate(String),
     #[error("doc error: {0}")]
     Doc(String),
+    #[error("author error: {0}")]
+    Author(String),
+    #[error("doc ticket error: {0}")]
+    DocTicket(String),
 }

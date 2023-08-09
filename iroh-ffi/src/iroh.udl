@@ -6,14 +6,29 @@ interface IrohNode {
   constructor();
   string peer_id();
   [Throws=IrohError]
-  Doc sync_create_doc();
+  Doc create_doc();
+  [Throws=IrohError]
+  Doc import_doc(DocTicket ticket);
+  [Throws=IrohError]
+  AuthorId create_author();
 };
 
 interface Doc {
   string id();
+  [Throws=IrohError]
+  DocTicket share_write();
+};
+
+interface AuthorId {
+};
+
+interface DocTicket {
+  [Name=from_string, Throws=IrohError]
+  constructor(string content);
+  string to_string();
 };
 
 [Error]
 enum IrohError {
-  "Runtime", "NodeCreate", "Doc"
+  "Runtime", "NodeCreate", "Doc", "Author", "DocTicket"
 };

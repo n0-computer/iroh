@@ -352,7 +352,7 @@ pub struct DocsCreateResponse {
 }
 
 /// todo
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct DocTicket {
     /// either a public or private key
     pub key: KeyBytes,

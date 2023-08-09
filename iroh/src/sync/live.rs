@@ -29,7 +29,7 @@ const CHANNEL_CAP: usize = 8;
 /// The address to connect to a peer
 /// TODO: Move into iroh-net
 /// TODO: Make an enum and support DNS resolution
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PeerSource {
     pub peer_id: PeerId,
     pub addrs: Vec<SocketAddr>,

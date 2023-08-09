@@ -6,23 +6,52 @@ use iroh::{
     database::flat,
     net::tls::Keypair,
     node::{Node, DEFAULT_BIND_ADDR},
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
+    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService, ShareMode},
 };
 use quic_rpc::transport::flume::FlumeConnection;
 
 use crate::error::{IrohError as Error, Result};
 
-pub struct Doc(ClientDoc<FlumeConnection<ProviderResponse, ProviderRequest>>);
+pub struct Doc {
+    inner: ClientDoc<FlumeConnection<ProviderResponse, ProviderRequest>>,
+    rt: Handle,
+}
 
 impl Doc {
     pub fn id(&self) -> String {
-        self.0.id().to_string()
+        self.inner.id().to_string()
+    }
+
+    pub fn share_write(&self) -> Result<Arc<DocTicket>> {
+        let ticket = self
+            .rt
+            .main()
+            .block_on(async { self.inner.share(ShareMode::Write).await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+
+        Ok(Arc::new(DocTicket(ticket)))
     }
 }
 
-pub struct IrohNode(Arc<Inner>);
+pub use iroh_sync::sync::AuthorId;
 
-struct Inner {
+#[derive(Debug, PartialEq, Eq)]
+pub struct DocTicket(iroh::rpc_protocol::DocTicket);
+
+impl DocTicket {
+    pub fn from_string(content: String) -> Result<Self> {
+        let ticket = content
+            .parse::<iroh::rpc_protocol::DocTicket>()
+            .map_err(|e| Error::DocTicket(e.to_string()))?;
+        Ok(DocTicket(ticket))
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+pub struct IrohNode {
     node: Node<flat::Database, iroh_sync::store::fs::Store>,
     async_runtime: Handle,
     sync_client: iroh::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>,
@@ -69,27 +98,52 @@ impl IrohNode {
 
         let sync_client = node.client();
 
-        Ok(IrohNode(Arc::new(Inner {
+        Ok(IrohNode {
             node,
             async_runtime: rt,
             sync_client,
             tokio_rt,
-        })))
+        })
     }
 
     pub fn peer_id(&self) -> String {
-        self.0.node.peer_id().to_string()
+        self.node.peer_id().to_string()
     }
 
-    pub fn sync_create_doc(&self) -> Result<Arc<Doc>> {
+    pub fn create_doc(&self) -> Result<Arc<Doc>> {
         let doc = self
-            .0
             .async_runtime
             .main()
-            .block_on(async { self.0.sync_client.create_doc().await })
+            .block_on(async { self.sync_client.create_doc().await })
             .map_err(|e| Error::Doc(e.to_string()))?;
 
-        Ok(Arc::new(Doc(doc)))
+        Ok(Arc::new(Doc {
+            inner: doc,
+            rt: self.async_runtime.clone(),
+        }))
+    }
+
+    pub fn create_author(&self) -> Result<Arc<AuthorId>> {
+        let author = self
+            .async_runtime
+            .main()
+            .block_on(async { self.sync_client.create_author().await })
+            .map_err(|e| Error::Author(e.to_string()))?;
+
+        Ok(Arc::new(author))
+    }
+
+    pub fn import_doc(&self, ticket: Arc<DocTicket>) -> Result<Arc<Doc>> {
+        let doc = self
+            .async_runtime
+            .main()
+            .block_on(async { self.sync_client.import_doc(ticket.0.clone()).await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+
+        Ok(Arc::new(Doc {
+            inner: doc,
+            rt: self.async_runtime.clone(),
+        }))
     }
 }
 
@@ -102,8 +156,15 @@ mod tests {
         let node = IrohNode::new().unwrap();
         let peer_id = node.peer_id();
         println!("id: {}", peer_id);
-        let doc = node.sync_create_doc().unwrap();
+        let doc = node.create_doc().unwrap();
         let doc_id = doc.id();
         println!("doc_id: {}", doc_id);
+
+        let doc_ticket = doc.share_write().unwrap();
+        let doc_ticket_string = doc_ticket.to_string();
+        let dock_ticket_back = DocTicket::from_string(doc_ticket_string.clone()).unwrap();
+        assert_eq!(doc_ticket.as_ref(), &dock_ticket_back);
+        println!("doc_ticket: {}", doc_ticket_string);
+        node.import_doc(doc_ticket).unwrap();
     }
 }
