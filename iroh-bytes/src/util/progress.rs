@@ -1,7 +1,7 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use std::marker::PhantomData;
 
 /// A general purpose progress sender. This should be usable for reporting progress
@@ -71,6 +71,7 @@ use std::marker::PhantomData;
 /// # Tokio progress sender
 ///
 /// If you want to report progress over a tokio channel, you can use the [TokioProgressSender] type.
+/// If you want to use a flume channel, you can use the [FlumeProgressSender] type.
 ///
 /// # Implementing your own progress sender
 ///
@@ -328,7 +329,78 @@ impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
     }
 }
 
-/// A convenience type for sending progress messages.
+/// A progress sender that uses a flume channel.
+pub struct FlumeProgressSender<T> {
+    sender: flume::Sender<T>,
+    id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl<T> std::fmt::Debug for FlumeProgressSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlumeProgressSender")
+            .field("id", &self.id)
+            .field("sender", &self.sender)
+            .finish()
+    }
+}
+
+impl<T> Clone for FlumeProgressSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            id: self.id.clone(),
+        }
+    }
+}
+
+impl<T> FlumeProgressSender<T> {
+    /// Create a new progress sender from a tokio mpsc sender.
+    pub fn new(sender: flume::Sender<T>) -> Self {
+        Self {
+            sender,
+            id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+}
+
+impl<T> IdGenerator for FlumeProgressSender<T> {
+    fn new_id(&self) -> u64 {
+        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
+    type Msg = T;
+
+    type SendFuture<'a> =
+        futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
+
+    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_> {
+        self.sender
+            .send_async(msg)
+            .map_err(|_| ProgressSendError::ReceiverDropped)
+            .boxed()
+    }
+
+    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        match self.sender.try_send(msg) {
+            Ok(_) => Ok(()),
+            Err(flume::TrySendError::Full(_)) => Ok(()),
+            Err(flume::TrySendError::Disconnected(_)) => Err(ProgressSendError::ReceiverDropped),
+        }
+    }
+
+    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        match self.sender.send(msg) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(ProgressSendError::ReceiverDropped),
+        }
+    }
+}
+
+/// A progress sender that uses a tokio mpsc channel.
+///
+/// Note that the blocking_send method will fail when called in an async context.
 pub struct TokioProgressSender<T> {
     sender: tokio::sync::mpsc::Sender<T>,
     id: std::sync::Arc<std::sync::atomic::AtomicU64>,

@@ -38,7 +38,7 @@ use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
 use iroh_bytes::provider::ShareProgress;
-use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
+use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::IROH_BLOCK_SIZE;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
@@ -61,7 +61,6 @@ use range_collections::range_set::RangeSetRange;
 use range_collections::RangeSet2;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
@@ -739,14 +738,14 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
         // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = mpsc::channel(32);
+        let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
             if let Err(e) = self.provide0(msg, tx).await {
-                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
+                tx2.send_async(ProvideProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
     }
 
     async fn get(
@@ -1234,15 +1233,15 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
 
     fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
         async move {
-            let (sender, receiver) = mpsc::channel(1024);
-            let sender = TokioProgressSender::new(sender);
+            let (sender, receiver) = flume::bounded(1024);
+            let sender = FlumeProgressSender::new(sender);
             if let Err(cause) = self.share0(msg, sender.clone()).await {
                 sender
                     .send(ShareProgress::Abort(cause.into()))
                     .await
                     .unwrap();
             };
-            ReceiverStream::new(receiver)
+            receiver.into_stream()
         }
         .flatten_stream()
     }
@@ -1251,14 +1250,14 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     async fn provide0(
         self,
         msg: ProvideRequest,
-        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
         use iroh_bytes::baomap::{ImportMode, ImportProgress};
         use std::{collections::BTreeMap, sync::Mutex};
 
-        let progress = TokioProgressSender::new(progress);
+        let progress = FlumeProgressSender::new(progress);
         let names = Arc::new(Mutex::new(BTreeMap::new()));
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
