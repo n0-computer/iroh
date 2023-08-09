@@ -44,7 +44,7 @@ impl Commands {
                 let mut response = client.server_streaming(ListIncompleteBlobsRequest).await?;
                 while let Some(item) = response.next().await {
                     let item = item?;
-                    println!("{} {} {}", item.path, item.hash, item.size);
+                    println!("{} {}", item.hash, item.size);
                 }
             }
             Commands::Collections { rpc_port } => {

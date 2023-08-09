@@ -130,8 +130,6 @@ pub struct ListIncompleteBlobsRequest;
 /// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListIncompleteBlobsResponse {
-    /// Location of the blob
-    pub path: String,
     /// The size we got
     pub size: u64,
     /// The size we expect

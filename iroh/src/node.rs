@@ -683,7 +683,6 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
                     hash,
                     size: 0,
                     expected_size: entry.size(),
-                    path: "".to_owned(),
                 })
             });
             async move { t.await.ok()?.ok() }
@@ -1328,7 +1327,7 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     async fn provide0(
         self,
         _msg: ProvideRequest,
-        _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        _progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
         anyhow::bail!("collections not supported");
     }
