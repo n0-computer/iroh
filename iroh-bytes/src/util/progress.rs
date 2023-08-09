@@ -68,9 +68,8 @@ use std::marker::PhantomData;
 ///
 /// If you don't want to report progress, you can use the [IgnoreProgressSender] type.
 ///
-/// # Tokio progress sender
+/// # Flume progress sender
 ///
-/// If you want to report progress over a tokio channel, you can use the [TokioProgressSender] type.
 /// If you want to use a flume channel, you can use the [FlumeProgressSender] type.
 ///
 /// # Implementing your own progress sender
@@ -303,32 +302,6 @@ impl<
     }
 }
 
-impl<T> IdGenerator for TokioProgressSender<T> {
-    fn new_id(&self) -> u64 {
-        TokioProgressSender::new_id(self)
-    }
-}
-
-impl<T: Send + Sync + 'static> ProgressSender for TokioProgressSender<T> {
-    type Msg = T;
-
-    type SendFuture<'a> =
-        futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
-
-    fn send(&self, msg: T) -> Self::SendFuture<'_> {
-        let t: T = msg;
-        TokioProgressSender::send(self, t).boxed()
-    }
-
-    fn try_send(&self, msg: T) -> std::result::Result<(), ProgressSendError> {
-        TokioProgressSender::try_send(self, msg)
-    }
-
-    fn blocking_send(&self, msg: T) -> std::result::Result<(), ProgressSendError> {
-        TokioProgressSender::blocking_send(self, msg)
-    }
-}
-
 /// A progress sender that uses a flume channel.
 pub struct FlumeProgressSender<T> {
     sender: flume::Sender<T>,
@@ -398,32 +371,6 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
     }
 }
 
-/// A progress sender that uses a tokio mpsc channel.
-///
-/// Note that the blocking_send method will fail when called in an async context.
-pub struct TokioProgressSender<T> {
-    sender: tokio::sync::mpsc::Sender<T>,
-    id: std::sync::Arc<std::sync::atomic::AtomicU64>,
-}
-
-impl<T> std::fmt::Debug for TokioProgressSender<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokioProgressSender")
-            .field("id", &self.id)
-            .field("sender", &self.sender)
-            .finish()
-    }
-}
-
-impl<T> Clone for TokioProgressSender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            id: self.id.clone(),
-        }
-    }
-}
-
 /// An error that can occur when sending progress messages.
 ///
 /// Really the only error that can occur is if the receiver is dropped.
@@ -437,62 +384,5 @@ pub enum ProgressSendError {
 impl From<ProgressSendError> for std::io::Error {
     fn from(e: ProgressSendError) -> Self {
         std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)
-    }
-}
-
-impl<T> TokioProgressSender<T> {
-    /// Create a new progress sender from a tokio mpsc sender.
-    pub fn new(sender: tokio::sync::mpsc::Sender<T>) -> Self {
-        Self {
-            sender,
-            id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        }
-    }
-
-    /// allocate a new id for progress reports for this transfer
-    pub(crate) fn new_id(&self) -> u64 {
-        self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// send a message and yield if the receiver is full.
-    /// this will only fail if the receiver is dropped.
-    /// It can be used to send important progress messages where delivery must be guaranteed.
-    /// E.g. start(id)/end(id)
-    pub(crate) async fn send(
-        &self,
-        msg: impl Into<T>,
-    ) -> std::result::Result<(), ProgressSendError> {
-        let msg = msg.into();
-        self.sender
-            .send(msg)
-            .await
-            .map_err(|_| ProgressSendError::ReceiverDropped)
-    }
-
-    /// try to send a message and drop it if the receiver is full.
-    /// this will only fail if the receiver is dropped.
-    /// It can be used to send progress messages where delivery is not important, e.g.
-    /// a self contained progress message.
-    pub(crate) fn try_send(&self, msg: impl Into<T>) -> std::result::Result<(), ProgressSendError> {
-        let msg = msg.into();
-        match self.sender.try_send(msg) {
-            Ok(_) => Ok(()),
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => Ok(()),
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                Err(ProgressSendError::ReceiverDropped)
-            }
-        }
-    }
-
-    ///
-    pub(crate) fn blocking_send(
-        &self,
-        msg: impl Into<T>,
-    ) -> std::result::Result<(), ProgressSendError> {
-        let msg = msg.into();
-        match self.sender.blocking_send(msg) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ProgressSendError::ReceiverDropped),
-        }
     }
 }
