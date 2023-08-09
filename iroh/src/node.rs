@@ -1561,7 +1561,8 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::baomap::mem::Store::default();
+        let rt = runtime::Handle::from_currrent(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())

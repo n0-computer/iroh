@@ -30,6 +30,7 @@ use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
 use iroh_bytes::util::progress::ProgressSender;
+use iroh_bytes::util::runtime;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
 use iroh_io::AsyncSliceReader;
 use iroh_io::AsyncSliceWriter;
@@ -178,10 +179,14 @@ impl AsyncSliceWriter for MemFile {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 /// A full in memory database for iroh-bytes.
-pub struct Store {
-    state: Arc<RwLock<State>>,
+pub struct Store(Arc<Inner>);
+
+#[derive(Debug)]
+struct Inner {
+    rt: runtime::Handle,
+    state: RwLock<State>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,7 +270,7 @@ impl Map for Store {
     type Entry = Entry;
 
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let state = self.state.read().unwrap();
+        let state = self.0.state.read().unwrap();
         // look up the ids
         if let Some((data, outboard)) = state.complete.get(hash) {
             Some(Entry {
@@ -296,7 +301,8 @@ impl Map for Store {
 impl ReadableStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
         Box::new(
-            self.state
+            self.0
+                .state
                 .read()
                 .unwrap()
                 .complete
@@ -316,7 +322,7 @@ impl ReadableStore for Store {
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let state = self.state.read().unwrap();
+        let state = self.0.state.read().unwrap();
         let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
         Box::new(hashes.into_iter())
     }
@@ -329,7 +335,10 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+        self.0
+            .rt
+            .main()
+            .spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -343,7 +352,7 @@ impl PartialMap for Store {
     type PartialEntry = PartialEntry;
 
     fn get_partial(&self, hash: &Hash) -> Option<PartialEntry> {
-        let state = self.state.read().unwrap();
+        let state = self.0.state.read().unwrap();
         let (data, outboard) = state.partial.get(hash)?;
         Some(PartialEntry {
             hash: (*hash).into(),
@@ -365,7 +374,8 @@ impl PartialMap for Store {
             data: outboard.clone(),
         };
         // insert into the partial map, replacing any existing entry
-        self.state
+        self.0
+            .state
             .write()
             .unwrap()
             .partial
@@ -387,7 +397,7 @@ impl PartialMap for Store {
             let hash = entry.hash.into();
             let data = entry.data.freeze();
             let outboard = entry.outboard.data.freeze();
-            let mut state = self.state.write().unwrap();
+            let mut state = self.0.state.write().unwrap();
             let outboard = PreOrderOutboard {
                 root: entry.outboard.root,
                 tree: entry.outboard.tree,
@@ -409,28 +419,42 @@ impl baomap::Store for Store {
         _progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let bytes: Bytes = std::fs::read(data)?.into();
-            let size = bytes.len() as u64;
-            let hash = this.import_bytes_sync(bytes);
-            Ok((hash, size))
-        })
-        .map(flatten_to_io)
-        .boxed()
+        self.0
+            .rt
+            .main()
+            .spawn_blocking(move || {
+                let bytes: Bytes = std::fs::read(data)?.into();
+                let size = bytes.len() as u64;
+                let hash = this.import_bytes_sync(bytes);
+                Ok((hash, size))
+            })
+            .map(flatten_to_io)
+            .boxed()
     }
 
     fn import_bytes(&self, bytes: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let hash = this.import_bytes_sync(bytes);
-            Ok(hash)
-        })
-        .map(flatten_to_io)
-        .boxed()
+        self.0
+            .rt
+            .main()
+            .spawn_blocking(move || {
+                let hash = this.import_bytes_sync(bytes);
+                Ok(hash)
+            })
+            .map(flatten_to_io)
+            .boxed()
     }
 }
 
 impl Store {
+    /// Create a new in memory database, using the given runtime.
+    pub fn new(rt: runtime::Handle) -> Self {
+        Self(Arc::new(Inner {
+            rt,
+            state: RwLock::new(State::default()),
+        }))
+    }
+
     fn import_bytes_sync(&self, bytes: Bytes) -> Hash {
         let size = bytes.len() as u64;
         let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
@@ -440,7 +464,8 @@ impl Store {
             tree,
             data: outboard.into(),
         };
-        self.state
+        self.0
+            .state
             .write()
             .unwrap()
             .complete
@@ -471,7 +496,7 @@ impl Store {
         })?;
         // create the directory in which the target file is
         std::fs::create_dir_all(parent)?;
-        let state = self.state.read().unwrap();
+        let state = self.0.state.read().unwrap();
         let (data, _) = state
             .complete
             .get(&hash)

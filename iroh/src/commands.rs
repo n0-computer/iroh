@@ -130,6 +130,7 @@ impl Cli {
             } => {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
+                        rt: rt.clone(),
                         hash: ticket.hash(),
                         opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
                         token: ticket.token().cloned(),
@@ -137,6 +138,7 @@ impl Cli {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
+                        rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
                             addrs,

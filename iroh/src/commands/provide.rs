@@ -54,7 +54,7 @@ pub async fn run(
         iroh_data_root = std::env::current_dir()?.join(iroh_data_root);
     }
     tokio::fs::create_dir_all(&iroh_data_root).await?;
-    let db = flat::Store::load(&iroh_data_root, &iroh_data_root)
+    let db = flat::Store::load(&iroh_data_root, &iroh_data_root, rt)
         .await
         .with_context(|| {
             format!(

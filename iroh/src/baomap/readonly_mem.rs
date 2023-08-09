@@ -31,8 +31,6 @@ use iroh_bytes::{
 use range_collections::RangeSet2;
 use tokio::sync::mpsc;
 
-use super::flatten_to_io;
-
 /// A readonly in memory database for iroh-bytes.
 ///
 /// This is basically just a HashMap, so it does not allow for any modifications
@@ -102,7 +100,7 @@ impl Store {
         Some(entry.1.clone())
     }
 
-    fn export_sync(
+    async fn export_impl(
         &self,
         hash: Hash,
         target: PathBuf,
@@ -124,12 +122,12 @@ impl Store {
             )
         })?;
         // create the directory in which the target file is
-        std::fs::create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
         let data = self
             .get(&hash)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
 
-        std::fs::write(target, data)?;
+        tokio::fs::write(target, data).await?;
         Ok(())
     }
 }
@@ -231,10 +229,7 @@ impl ReadableStore for Store {
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .boxed()
+        self.export_impl(hash, target, mode, progress).boxed()
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {

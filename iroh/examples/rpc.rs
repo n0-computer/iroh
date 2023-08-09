@@ -75,12 +75,13 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
+    let rt = runtime::Handle::from_currrent(1)?;
     // let iroh_data_dir = std::env::current_dir()?.join(".iroh");
     // tokio::fs::create_dir_all(&iroh_data_dir).await?;
     // // create a new persistent database
     // let db = iroh::database::flat::Store::load(iroh_data_dir.clone(), iroh_data_dir).await?;
     // run(db).await
 
-    let db = iroh::baomap::mem::Store::default();
+    let db = iroh::baomap::mem::Store::new(rt);
     run(db).await
 }

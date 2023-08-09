@@ -368,6 +368,7 @@ struct Options {
     partial_path: PathBuf,
     move_threshold: u64,
     inline_threshold: u64,
+    rt: tokio::runtime::Handle,
 }
 
 impl Options {
@@ -618,7 +619,10 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxFuture<'_, io::Result<()>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
@@ -632,14 +636,20 @@ impl baomap::Store for Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.import_sync(path, mode, progress))
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.import_sync(path, mode, progress))
             .map(flatten_to_io)
             .boxed()
     }
 
     fn import_bytes(&self, data: Bytes) -> BoxFuture<'_, io::Result<Hash>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.import_bytes_sync(data))
+        self.0
+            .options
+            .rt
+            .spawn_blocking(move || this.import_bytes_sync(data))
             .map(flatten_to_io)
             .boxed()
     }
@@ -846,7 +856,11 @@ impl Store {
     }
 
     /// scan a directory for data
-    pub(crate) fn load_sync(complete_path: PathBuf, partial_path: PathBuf) -> anyhow::Result<Self> {
+    pub(crate) fn load_sync(
+        complete_path: PathBuf,
+        partial_path: PathBuf,
+        rt: iroh_bytes::util::runtime::Handle,
+    ) -> anyhow::Result<Self> {
         tracing::info!(
             "loading database from {} {}",
             complete_path.display(),
@@ -1070,6 +1084,7 @@ impl Store {
                 partial_path,
                 move_threshold: 1024 * 128,
                 inline_threshold: 1024 * 16,
+                rt: rt.main().clone(),
             },
         })))
     }
@@ -1078,10 +1093,12 @@ impl Store {
     pub fn load_blocking(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
-        let db = Self::load_sync(complete_path, partial_path)?;
+        let rt = rt.clone();
+        let db = Self::load_sync(complete_path, partial_path, rt)?;
         Ok(db)
     }
 
@@ -1089,10 +1106,14 @@ impl Store {
     pub async fn load(
         complete_path: impl AsRef<Path>,
         partial_path: impl AsRef<Path>,
+        rt: &iroh_bytes::util::runtime::Handle,
     ) -> anyhow::Result<Self> {
         let complete_path = complete_path.as_ref().to_path_buf();
         let partial_path = partial_path.as_ref().to_path_buf();
-        let db = tokio::task::spawn_blocking(move || Self::load_sync(complete_path, partial_path))
+        let rtc = rt.clone();
+        let db = rt
+            .main()
+            .spawn_blocking(move || Self::load_sync(complete_path, partial_path, rtc))
             .await??;
         Ok(db)
     }
