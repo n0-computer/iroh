@@ -10,7 +10,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use derive_more::{From, TryInto};
-use iroh_bytes::Hash;
+use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
 use iroh_net::tls::PeerId;
 
 use quic_rpc::{
@@ -19,7 +19,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use iroh_bytes::provider::{ProvideProgress, ValidateProgress};
+pub use iroh_bytes::{baomap::ValidateProgress, provider::ProvideProgress};
 
 /// A request to the node to provide the data at the given path
 ///
@@ -32,6 +32,9 @@ pub struct ProvideRequest {
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
     pub path: PathBuf,
+    /// True if the provider can assume that the data will not change, so it
+    /// can be shared in place.
+    pub in_place: bool,
 }
 
 impl Msg<ProviderService> for ProvideRequest {
@@ -42,9 +45,52 @@ impl ServerStreamingMsg<ProviderService> for ProvideRequest {
     type Response = ProvideProgress;
 }
 
+/// A request to the node to download and share the data specified by the hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareRequest {
+    /// This mandatory field contains the hash of the data to download and share.
+    pub hash: Hash,
+    /// If this flag is true, the hash is assumed to be a collection and all
+    /// children are downloaded and shared as well.
+    pub recursive: bool,
+    /// This mandatory field specifies the peer to download the data from.
+    pub peer: PeerId,
+    /// This vec contains possible candidate addresses of the peer.
+    pub addrs: Vec<SocketAddr>,
+    /// This optional field contains a request token that can be used to authorize
+    /// the download request.
+    pub token: Option<RequestToken>,
+    /// This optional field contains the derp region to use for contacting the peer
+    /// over the DERP protocol.
+    pub derp_region: Option<u16>,
+    /// This optional field contains the path to store the data to. If it is not
+    /// set, the data is dumped to stdout.
+    pub out: Option<String>,
+    /// If this flag is true, the data is shared in place, i.e. it is moved to the
+    /// out path instead of being copied. The database itself contains only a
+    /// reference to the out path of the file.
+    ///
+    /// If the data is modified in the location specified by the out path,
+    /// download attempts for the associated hash will fail.
+    ///
+    /// This flag is only relevant if the out path is set.
+    pub in_place: bool,
+}
+
+impl Msg<ProviderService> for ShareRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ShareRequest {
+    type Response = ShareProgress;
+}
+
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ValidateRequest;
+pub struct ValidateRequest {
+    /// If true, remove invalid data
+    pub repair: bool,
+}
 
 impl Msg<ProviderService> for ValidateRequest {
     type Pattern = ServerStreaming;
@@ -75,6 +121,29 @@ impl Msg<ProviderService> for ListBlobsRequest {
 
 impl ServerStreamingMsg<ProviderService> for ListBlobsRequest {
     type Response = ListBlobsResponse;
+}
+
+/// List all blobs, including collections
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListIncompleteBlobsRequest;
+
+/// A response to a list blobs request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListIncompleteBlobsResponse {
+    /// The size we got
+    pub size: u64,
+    /// The size we expect
+    pub expected_size: u64,
+    /// The hash of the blob
+    pub hash: Hash,
+}
+
+impl Msg<ProviderService> for ListIncompleteBlobsRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for ListIncompleteBlobsRequest {
+    type Response = ListIncompleteBlobsResponse;
 }
 
 /// List all collections
@@ -198,8 +267,10 @@ pub enum ProviderRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
     ListBlobs(ListBlobsRequest),
+    ListIncompleteBlobs(ListIncompleteBlobsRequest),
     ListCollections(ListCollectionsRequest),
     Provide(ProvideRequest),
+    Share(ShareRequest),
     Id(IdRequest),
     Addrs(AddrsRequest),
     Shutdown(ShutdownRequest),
@@ -213,8 +284,10 @@ pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     ListBlobs(ListBlobsResponse),
+    ListIncompleteBlobs(ListIncompleteBlobsResponse),
     ListCollections(ListCollectionsResponse),
     Provide(ProvideProgress),
+    Share(ShareProgress),
     Id(IdResponse),
     Addrs(AddrsResponse),
     Validate(ValidateProgress),

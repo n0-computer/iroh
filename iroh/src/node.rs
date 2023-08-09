@@ -7,27 +7,47 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::future::Future;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+use crate::dial::Ticket;
+use crate::rpc_protocol::{
+    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
+    ListCollectionsRequest, ListCollectionsResponse, ListIncompleteBlobsRequest,
+    ListIncompleteBlobsResponse, ProvideRequest, ProviderRequest, ProviderResponse,
+    ProviderService, ShareRequest, ShutdownRequest, ValidateRequest, VersionRequest,
+    VersionResponse, WatchRequest, WatchResponse,
+};
+use crate::util::progress::ProgressSliceWriter2;
 use anyhow::{Context, Result};
+use bao_tree::io::fsm::OutboardMut;
+use bao_tree::{ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::baomap::{
+    range_collections::{range_set::RangeSetRange, RangeSet2},
+    ExportMode, Map, MapEntry, PartialMapEntry, ReadableStore, Store, ValidateProgress,
+};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
-use iroh_bytes::protocol::GetRequest;
+use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
+use iroh_bytes::get::{self, Stats};
+use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
+use iroh_bytes::provider::ShareProgress;
+use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
+use iroh_bytes::IROH_BLOCK_SIZE;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
-    provider::{
-        BaoMap, BaoMapEntry, BaoReadonlyDb, CustomGetHandler, ProvideProgress,
-        RequestAuthorizationHandler, ValidateProgress,
-    },
+    provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
 };
+use iroh_io::AsyncSliceReader;
 use iroh_net::{
     config::Endpoint,
     derp::DerpMap,
@@ -43,14 +63,6 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
-use crate::dial::Ticket;
-use crate::rpc_protocol::{
-    AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
-    ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
-    VersionResponse, WatchRequest, WatchResponse,
-};
-
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
@@ -64,8 +76,8 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database. Various database implementations are available
-/// in [`crate::database`]. Everything else is optional.
+/// You must supply a blob store. Various store implementations are available
+/// in [`crate::baomap`]. Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -74,7 +86,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
 where
-    D: BaoMap,
+    D: Map,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -131,7 +143,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
     }
 }
 
-impl<D: BaoMap> Builder<D> {
+impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db(db: D) -> Self {
         Self {
@@ -151,7 +163,7 @@ impl<D: BaoMap> Builder<D> {
 
 impl<D, E, C> Builder<D, E, C>
 where
-    D: BaoReadonlyDb,
+    D: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -278,14 +290,12 @@ where
             }))
             .bind(self.bind_addr.port())
             .await?;
-
         trace!("created quinn endpoint");
 
         let (cb_sender, cb_receiver) = mpsc::channel(8);
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
-
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let rt2 = rt.clone();
         let rt3 = rt.clone();
@@ -485,7 +495,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoMap> {
+pub struct Node<D: Map> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -511,7 +521,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoReadonlyDb> Node<D> {
+impl<D: ReadableStore> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
@@ -594,7 +604,7 @@ impl<D: BaoReadonlyDb> Node<D> {
     }
 }
 
-impl<D: BaoMap> NodeInner<D> {
+impl<D: Map> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -615,7 +625,7 @@ impl<D: BaoMap> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoMap> Future for Node<D> {
+impl<D: Map> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -629,7 +639,7 @@ struct RpcHandler<D, C> {
     collection_parser: C,
 }
 
-impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
+impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -650,6 +660,31 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
                 let path = "".to_owned();
                 Some(ListBlobsResponse { hash, size, path })
             }
+        })
+    }
+
+    fn list_incomplete_blobs(
+        self,
+        _msg: ListIncompleteBlobsRequest,
+    ) -> impl Stream<Item = ListIncompleteBlobsResponse> + Send + 'static {
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.local_pool().clone();
+        futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
+            let db = db.clone();
+            let t = local.spawn_pinned(move || async move {
+                let Some(entry) = db.get_partial(&hash) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "no partial entry found",
+                    ));
+                };
+                io::Result::Ok(ListIncompleteBlobsResponse {
+                    hash,
+                    size: 0,
+                    expected_size: entry.size(),
+                })
+            });
+            async move { t.await.ok()?.ok() }
         })
     }
 
@@ -700,43 +735,582 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
     }
 
     fn provide(self, msg: ProvideRequest) -> impl Stream<Item = ProvideProgress> {
-        let (tx, rx) = mpsc::channel(1);
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
         let tx2 = tx.clone();
         self.rt().local_pool().spawn_pinned(|| async move {
             if let Err(e) = self.provide0(msg, tx).await {
-                tx2.send(ProvideProgress::Abort(e.into())).await.unwrap();
+                tx2.send_async(ProvideProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
     }
 
-    #[cfg(feature = "flat-db")]
+    async fn get(
+        self,
+        conn: quinn::Connection,
+        hash: Hash,
+        recursive: bool,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<Stats> {
+        let res = if recursive {
+            self.get_collection(conn, &hash, sender).await
+        } else {
+            self.get_blob(conn, &hash, sender).await
+        };
+        if let Err(e) = res.as_ref() {
+            tracing::error!("get failed: {}", e);
+        }
+        res
+    }
+
+    async fn export(
+        self,
+        out: String,
+        hash: Hash,
+        recursive: bool,
+        stable: bool,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<()> {
+        let db = &self.inner.db;
+        let path = PathBuf::from(&out);
+        let mode = if stable {
+            ExportMode::TryReference
+        } else {
+            ExportMode::Copy
+        };
+        if recursive {
+            #[cfg(feature = "iroh-collection")]
+            {
+                use crate::collection::{Blob, Collection};
+                use crate::util::io::pathbuf_from_name;
+                use iroh_io::AsyncSliceReaderExt;
+                tracing::trace!("exporting collection {} to {}", hash, path.display());
+                tokio::fs::create_dir_all(&path).await?;
+                let collection = db.get(&hash).context("collection not there")?;
+                let mut reader = collection.data_reader().await?;
+                let bytes: Bytes = reader.read_to_end().await?;
+                let collection = Collection::from_bytes(&bytes).context("invalid collection")?;
+                for Blob { hash, name } in collection.blobs() {
+                    let path = path.join(pathbuf_from_name(name));
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tracing::trace!("exporting blob {} to {}", hash, path.display());
+                    let id = progress.new_id();
+                    let progress1 = progress.clone();
+                    db.export(*hash, path, mode, move |offset| {
+                        Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+                    })
+                    .await?;
+                }
+            }
+            #[cfg(not(feature = "iroh-collection"))]
+            anyhow::bail!("recursive export not supported without iroh-collection feature");
+        } else if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+            let id = progress.new_id();
+            let entry = db.get(&hash).context("entry not there")?;
+            progress
+                .send(ShareProgress::Export {
+                    id,
+                    hash,
+                    target: out,
+                    size: entry.size(),
+                })
+                .await?;
+            let progress1 = progress.clone();
+            db.export(hash, path, mode, move |offset| {
+                Ok(progress1.try_send(ShareProgress::ExportProgress { id, offset })?)
+            })
+            .await?;
+        }
+        anyhow::Ok(())
+    }
+
+    /// Get a blob that was requested completely.
+    ///
+    /// We need to create our own files and handle the case where an outboard
+    /// is not needed.
+    async fn get_blob_inner(
+        db: &D,
+        header: AtBlobHeader,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<AtEndBlob> {
+        use iroh_io::AsyncSliceWriter;
+
+        let hash = header.hash();
+        // read the size
+        let (content, size) = header.next().await?;
+        // create the temp file pair
+        let entry = db.get_or_create_partial(hash, size)?;
+        // open the data file in any case
+        let df = entry.data_writer().await?;
+        let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
+            Some(entry.outboard_mut().await?)
+        } else {
+            None
+        };
+        // allocate a new id for progress reports for this transfer
+        let id = sender.new_id();
+        sender.send(ShareProgress::Found { id, hash, size }).await?;
+        let sender2 = sender.clone();
+        let on_write = move |offset: u64, _length: usize| {
+            // if try send fails it means that the receiver has been dropped.
+            // in that case we want to abort the write_all_with_outboard.
+            sender2
+                .try_send(ShareProgress::Progress { id, offset })
+                .map_err(|e| {
+                    tracing::info!("aborting download of {}", hash);
+                    e
+                })?;
+            Ok(())
+        };
+        let mut pw = ProgressSliceWriter2::new(df, on_write);
+        // use the convenience method to write all to the two vfs objects
+        let end = content
+            .write_all_with_outboard(of.as_mut(), &mut pw)
+            .await?;
+        // sync the data file
+        pw.sync().await?;
+        // sync the outboard file, if we wrote one
+        if let Some(mut of) = of {
+            of.sync().await?;
+        }
+        db.insert_complete(entry).await?;
+        // notify that we are done
+        sender.send(ShareProgress::Done { id }).await?;
+        Ok(end)
+    }
+
+    /// Get a blob that was requested partially.
+    ///
+    /// We get passed the data and outboard ids. Partial downloads are only done
+    /// for large blobs where the outboard is present.
+    async fn get_blob_inner_partial(
+        db: &D,
+        header: AtBlobHeader,
+        entry: D::PartialEntry,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<AtEndBlob> {
+        // TODO: the data we get is validated at this point, but we need to check
+        // that it actually contains the requested ranges. Or DO WE?
+        use iroh_io::AsyncSliceWriter;
+
+        let hash = header.hash();
+        // read the size
+        let (content, size) = header.next().await?;
+        // open the data file in any case
+        let df = entry.data_writer().await?;
+        let mut of = if needs_outboard(size) {
+            Some(entry.outboard_mut().await?)
+        } else {
+            None
+        };
+        // allocate a new id for progress reports for this transfer
+        let id = sender.new_id();
+        sender.send(ShareProgress::Found { id, hash, size }).await?;
+        let sender2 = sender.clone();
+        let on_write = move |offset: u64, _length: usize| {
+            // if try send fails it means that the receiver has been dropped.
+            // in that case we want to abort the write_all_with_outboard.
+            sender2
+                .try_send(ShareProgress::Progress { id, offset })
+                .map_err(|e| {
+                    tracing::info!("aborting download of {}", hash);
+                    e
+                })?;
+            Ok(())
+        };
+        let mut pw = ProgressSliceWriter2::new(df, on_write);
+        // use the convenience method to write all to the two vfs objects
+        let end = content
+            .write_all_with_outboard(of.as_mut(), &mut pw)
+            .await?;
+        // sync the data file
+        pw.sync().await?;
+        // sync the outboard file
+        if let Some(mut of) = of {
+            of.sync().await?;
+        }
+        // actually store the data. it is up to the db to decide if it wants to
+        // rename the files or not.
+        db.insert_complete(entry).await?;
+        // notify that we are done
+        sender.send(ShareProgress::Done { id }).await?;
+        Ok(end)
+    }
+
+    async fn get_missing_ranges_blob(
+        entry: &D::PartialEntry,
+    ) -> anyhow::Result<RangeSet2<ChunkNum>> {
+        use tracing::trace as log;
+        // compute the valid range from just looking at the data file
+        let mut data_reader = entry.data_reader().await?;
+        let data_size = data_reader.len().await?;
+        let valid_from_data = RangeSet2::from(..ByteNum(data_size).full_chunks());
+        // compute the valid range from just looking at the outboard file
+        let mut outboard = entry.outboard().await?;
+        let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
+        let valid: RangeSet2<ChunkNum> = valid_from_data.intersection(&valid_from_outboard);
+        let total_valid: u64 = valid
+            .iter()
+            .map(|x| match x {
+                RangeSetRange::Range(x) => x.end.to_bytes().0 - x.start.to_bytes().0,
+                RangeSetRange::RangeFrom(_) => 0,
+            })
+            .sum();
+        log!("valid_from_data: {:?}", valid_from_data);
+        log!("valid_from_outboard: {:?}", valid_from_data);
+        log!("total_valid: {}", total_valid);
+        let invalid = RangeSet2::all().difference(&valid);
+        Ok(invalid)
+    }
+
+    async fn get_blob(
+        &self,
+        conn: quinn::Connection,
+        hash: &Hash,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<Stats> {
+        let db = &self.inner.db;
+        let end = if let Some(entry) = db.get_partial(hash) {
+            trace!("got partial data for {}", hash,);
+
+            let required_ranges = Self::get_missing_ranges_blob(&entry)
+                .await
+                .ok()
+                .unwrap_or_else(RangeSet2::all);
+            let request = GetRequest::new(*hash, RangeSpecSeq::new([required_ranges]));
+            // full request
+            let request = get::fsm::start(conn, iroh_bytes::protocol::Request::Get(request));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+
+            Self::get_blob_inner_partial(db, header, entry, progress).await?
+        } else {
+            // full request
+            let request = get::fsm::start(
+                conn,
+                iroh_bytes::protocol::Request::Get(GetRequest::single(*hash)),
+            );
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            Self::get_blob_inner(db, header, progress).await?
+        };
+
+        // we have requested a single hash, so we must be at closing
+        let EndBlobNext::Closing(end) = end.next() else {
+            anyhow::bail!("expected Closing");
+        };
+        // this closes the bidi stream. Do something with the stats?
+        let stats = end.next().await?;
+        anyhow::Ok(stats)
+    }
+
+    /// Given a collection of hashes, figure out what is missing
+    async fn get_missing_ranges_collection(
+        &self,
+        collection: &Vec<Hash>,
+    ) -> io::Result<Vec<BlobInfo<D>>> {
+        let db = &self.inner.db;
+        let items = collection.iter().map(|hash| async move {
+            io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
+                // first look for partial
+                trace!("got partial data for {}", hash,);
+                let missing_chunks = Self::get_missing_ranges_blob(&entry)
+                    .await
+                    .ok()
+                    .unwrap_or_else(RangeSet2::all);
+                BlobInfo::Partial {
+                    entry,
+                    missing_chunks,
+                }
+            } else if db.get(hash).is_some() {
+                // then look for complete
+                BlobInfo::Complete
+            } else {
+                BlobInfo::Missing
+            })
+        });
+        let mut res = Vec::with_capacity(collection.len());
+        // todo: parallelize maybe?
+        for item in items {
+            res.push(item.await?);
+        }
+        Ok(res)
+    }
+
+    async fn get_collection(
+        &self,
+        conn: quinn::Connection,
+        root_hash: &Hash,
+        sender: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<Stats> {
+        use tracing::info as log;
+        let db = &self.inner.db;
+        let finishing = if let Some(entry) = db.get(root_hash) {
+            log!("already got collection - doing partial download");
+            // got the collection
+            let reader = entry.data_reader().await?;
+            let (mut collection, stats) = self.collection_parser.parse(0, reader).await?;
+            sender
+                .send(ShareProgress::FoundCollection {
+                    hash: *root_hash,
+                    num_blobs: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
+                })
+                .await?;
+            let mut children: Vec<Hash> = vec![];
+            while let Some(hash) = collection.next().await? {
+                children.push(hash);
+            }
+            let missing_info = self.get_missing_ranges_collection(&children).await?;
+            if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
+                log!("nothing to do");
+                return Ok(Stats::default());
+            }
+            let missing_iter = std::iter::once(RangeSet2::empty())
+                .chain(missing_info.iter().map(|x| x.missing_chunks()))
+                .collect::<Vec<_>>();
+            log!("requesting chunks {:?}", missing_iter);
+            let request = GetRequest::new(*root_hash, RangeSpecSeq::new(missing_iter));
+            let request = get::fsm::start(conn, request.into());
+            // create a new bidi stream
+            let connected = request.next().await?;
+            log!("connected");
+            // we have not requested the root, so this must be StartChild
+            let ConnectedNext::StartChild(start) = connected.next().await? else {
+                anyhow::bail!("expected StartChild");
+            };
+            let mut next = EndBlobNext::MoreChildren(start);
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset =
+                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let (child_hash, info) =
+                    match (children.get(child_offset), missing_info.get(child_offset)) {
+                        (Some(blob), Some(info)) => (*blob, info),
+                        _ => break start.finish(),
+                    };
+                tracing::info!(
+                    "requesting child {} {:?}",
+                    child_hash,
+                    info.missing_chunks()
+                );
+                let header = start.next(child_hash);
+                let end_blob = match info {
+                    BlobInfo::Missing => Self::get_blob_inner(db, header, sender.clone()).await?,
+                    BlobInfo::Partial { entry, .. } => {
+                        Self::get_blob_inner_partial(db, header, entry.clone(), sender.clone())
+                            .await?
+                    }
+                    BlobInfo::Complete => anyhow::bail!("got data we have not requested"),
+                };
+                next = end_blob.next();
+            }
+        } else {
+            tracing::info!("don't have collection - doing full download");
+            // don't have the collection, so probably got nothing
+            let request = get::fsm::start(
+                conn,
+                iroh_bytes::protocol::Request::Get(GetRequest::all(*root_hash)),
+            );
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // read the blob and add it to the database
+            let end_root = Self::get_blob_inner(db, header, sender.clone()).await?;
+            // read the collection fully for now
+            let entry = db.get(root_hash).context("just downloaded")?;
+            let reader = entry.data_reader().await?;
+            let (mut collection, stats) = self.collection_parser.parse(0, reader).await?;
+            sender
+                .send(ShareProgress::FoundCollection {
+                    hash: *root_hash,
+                    num_blobs: stats.num_blobs,
+                    total_blobs_size: stats.total_blob_size,
+                })
+                .await?;
+            let mut children = vec![];
+            while let Some(hash) = collection.next().await? {
+                children.push(hash);
+            }
+            let mut next = end_root.next();
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset =
+                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let child_hash = match children.get(child_offset) {
+                    Some(blob) => *blob,
+                    None => break start.finish(),
+                };
+                let header = start.next(child_hash);
+                let end_blob = Self::get_blob_inner(db, header, sender.clone()).await?;
+                next = end_blob.next();
+            }
+        };
+        // this closes the bidi stream. Do something with the stats?
+        let stats = finishing.next().await?;
+        anyhow::Ok(stats)
+    }
+
+    async fn share0(
+        self,
+        msg: ShareRequest,
+        progress: impl ProgressSender<Msg = ShareProgress> + IdGenerator,
+    ) -> anyhow::Result<()> {
+        let local = self.inner.rt.local_pool().clone();
+        let hash = msg.hash;
+        tracing::info!("share: {:?}", msg);
+        let conn = self
+            .inner
+            .endpoint
+            .connect(
+                msg.peer,
+                &iroh_bytes::protocol::ALPN,
+                msg.derp_region,
+                &msg.addrs,
+            )
+            .await?;
+        progress.send(ShareProgress::Connected).await?;
+        let progress2 = progress.clone();
+        let progress3 = progress.clone();
+        let this = self.clone();
+        let download =
+            local.spawn_pinned(move || self.get(conn, msg.hash, msg.recursive, progress2));
+        let _export = local.spawn_pinned(move || async move {
+            let stats = download.await.unwrap()?;
+            progress
+                .send(ShareProgress::NetworkDone {
+                    bytes_written: stats.bytes_written,
+                    bytes_read: stats.bytes_read,
+                    elapsed: stats.elapsed,
+                })
+                .await?;
+            if let Some(out) = msg.out {
+                if let Err(cause) = this
+                    .export(out, hash, msg.recursive, msg.in_place, progress3)
+                    .await
+                {
+                    progress.send(ShareProgress::Abort(cause.into())).await?;
+                }
+            }
+            progress.send(ShareProgress::AllDone).await?;
+            anyhow::Ok(())
+        });
+        Ok(())
+    }
+
+    fn share(self, msg: ShareRequest) -> impl Stream<Item = ShareProgress> {
+        async move {
+            let (sender, receiver) = flume::bounded(1024);
+            let sender = FlumeProgressSender::new(sender);
+            if let Err(cause) = self.share0(msg, sender.clone()).await {
+                sender
+                    .send(ShareProgress::Abort(cause.into()))
+                    .await
+                    .unwrap();
+            };
+            receiver.into_stream()
+        }
+        .flatten_stream()
+    }
+
+    #[cfg(feature = "iroh-collection")]
     async fn provide0(
         self,
         msg: ProvideRequest,
-        progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        use crate::database::flat::{create_collection_inner, create_data_sources, Database};
-        use crate::util::progress::Progress;
-        use std::any::Any;
+        use crate::collection::{Blob, Collection};
+        use futures::TryStreamExt;
+        use iroh_bytes::baomap::{ImportMode, ImportProgress};
+        use std::{collections::BTreeMap, sync::Mutex};
+
+        let progress = FlumeProgressSender::new(progress);
+        let names = Arc::new(Mutex::new(BTreeMap::new()));
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Found { id, path, .. } => {
+                names.lock().unwrap().insert(id, path);
+                None
+            }
+            ImportProgress::Size { id, size } => {
+                let path = names.lock().unwrap().remove(&id)?;
+                Some(ProvideProgress::Found {
+                    id,
+                    name: path.display().to_string(),
+                    size,
+                })
+            }
+            ImportProgress::OutboardProgress { id, offset } => {
+                Some(ProvideProgress::Progress { id, offset })
+            }
+            ImportProgress::OutboardDone { hash, id } => Some(ProvideProgress::Done { hash, id }),
+            _ => None,
+        });
         let root = msg.path;
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
         anyhow::ensure!(
             root.is_dir() || root.is_file(),
             "path must be either a Directory or a File"
         );
-        let data_sources = create_data_sources(root)?;
-        // create the collection
-        // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(data_sources, Progress::new(progress)).await?;
-
-        // todo: generify this
-        // for now provide will only work if D is a Database
-        let boxed_db: Box<dyn Any> = Box::new(self.inner.db.clone());
-        if let Some(current) = boxed_db.downcast_ref::<Database>().cloned() {
-            current.union_with(db);
+        let data_sources = crate::util::fs::scan_path(root)?;
+        let mode = if msg.in_place {
+            ImportMode::TryReference
         } else {
-            anyhow::bail!("provide not supported yet for this database type");
-        }
+            ImportMode::Copy
+        };
+        const IO_PARALLELISM: usize = 4;
+        let result: Vec<(Blob, u64)> = futures::stream::iter(data_sources)
+            .map(|source| {
+                let import_progress = import_progress.clone();
+                let db = self.inner.db.clone();
+                async move {
+                    let name = source.name().to_string();
+                    let (hash, size) = db
+                        .import(source.path().to_owned(), mode, import_progress)
+                        .await?;
+                    io::Result::Ok((Blob { hash, name }, size))
+                }
+            })
+            .buffered(IO_PARALLELISM)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let total_blobs_size = result.iter().map(|(_, size)| *size).sum();
+        let blobs = result.into_iter().map(|(blob, _)| blob).collect::<Vec<_>>();
+        let collection = Collection::new(blobs, total_blobs_size)?;
+        let data = collection.to_bytes()?;
+        let hash = self.inner.db.import_bytes(data.into()).await?;
+        progress.send(ProvideProgress::AllDone { hash }).await?;
 
         self.inner
             .callbacks
@@ -748,13 +1322,13 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
         Ok(())
     }
 
-    #[cfg(not(feature = "flat-db"))]
+    #[cfg(not(feature = "iroh-collection"))]
     async fn provide0(
         self,
         _msg: ProvideRequest,
-        _progress: tokio::sync::mpsc::Sender<ProvideProgress>,
+        _progress: flume::Sender<ProvideProgress>,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("provide not supported yet for this database type");
+        anyhow::bail!("collections not supported");
     }
 
     async fn version(self, _: VersionRequest) -> VersionResponse {
@@ -805,11 +1379,7 @@ impl<D: BaoMap + BaoReadonlyDb, C: CollectionParser> RpcHandler<D, C> {
     }
 }
 
-fn handle_rpc_request<
-    D: BaoReadonlyDb,
-    E: ServiceEndpoint<ProviderService>,
-    C: CollectionParser,
->(
+fn handle_rpc_request<D: Store, E: ServiceEndpoint<ProviderService>, C: CollectionParser>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
     handler: &RpcHandler<D, C>,
@@ -818,9 +1388,18 @@ fn handle_rpc_request<
     let handler = handler.clone();
     rt.main().spawn(async move {
         use ProviderRequest::*;
+        tracing::info!(
+            "handling rpc request: {:?} {}",
+            msg,
+            std::any::type_name::<E>()
+        );
         match msg {
             ListBlobs(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::list_blobs)
+                    .await
+            }
+            ListIncompleteBlobs(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::list_incomplete_blobs)
                     .await
             }
             ListCollections(msg) => {
@@ -831,6 +1410,7 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, RpcHandler::provide)
                     .await
             }
+            Share(msg) => chan.server_streaming(msg, handler, RpcHandler::share).await,
             Watch(msg) => chan.server_streaming(msg, handler, RpcHandler::watch).await,
             Version(msg) => chan.rpc(msg, handler, RpcHandler::version).await,
             Id(msg) => chan.rpc(msg, handler, RpcHandler::id).await,
@@ -842,6 +1422,29 @@ fn handle_rpc_request<
             }
         }
     });
+}
+
+#[derive(Debug, Clone)]
+enum BlobInfo<D: Store> {
+    // we have the blob completely
+    Complete,
+    // we have the blob partially
+    Partial {
+        entry: D::PartialEntry,
+        missing_chunks: RangeSet2<ChunkNum>,
+    },
+    // we don't have the blob at all
+    Missing,
+}
+
+impl<D: Store> BlobInfo<D> {
+    fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
+        match self {
+            BlobInfo::Complete => RangeSet2::empty(),
+            BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
+            BlobInfo::Missing => RangeSet2::all(),
+        }
+    }
 }
 
 /// Create a [`quinn::ServerConfig`] with the given keypair and limits.
@@ -917,11 +1520,14 @@ impl RequestAuthorizationHandler for StaticTokenAuthHandler {
     }
 }
 
+fn needs_outboard(size: u64) -> bool {
+    size > (IROH_BLOCK_SIZE.bytes() as u64)
+}
+
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;
-    use std::collections::HashMap;
     use std::net::Ipv4Addr;
     use std::path::Path;
 
@@ -936,7 +1542,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::database::mem::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
         let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -950,10 +1556,11 @@ mod tests {
         assert!(!ticket.addrs().is_empty());
     }
 
-    #[cfg(feature = "flat-db")]
+    #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::database::flat::Database::from(HashMap::new());
+        let rt = runtime::Handle::from_currrent(1)?;
+        let db = crate::baomap::mem::Store::new(rt);
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())
@@ -981,6 +1588,7 @@ mod tests {
                 .controller()
                 .server_streaming(ProvideRequest {
                     path: Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+                    in_place: false,
                 })
                 .await?;
 

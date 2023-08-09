@@ -6,7 +6,6 @@
 //! //! run this example from the project root:
 //!     $ cargo run -p hello-world
 use iroh::bytes::util::runtime;
-use iroh::database::mem;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -22,7 +21,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new, empty in memory database
-    let mut db = mem::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
     let rt = runtime::Handle::from_currrent(1)?;
     // add some data and remember the hash

@@ -7,8 +7,12 @@ members = [
   "iroh-metrics",
 ]
 
+[profile.release]
+debug = true
+
 [profile.optimized-release]
 inherits = 'release'
+debug = false
 lto = true
 debug-assertions = false
 opt-level = 3

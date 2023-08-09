@@ -8,7 +8,6 @@
 //!     $ cargo run -p collection
 use iroh::bytes::util::runtime;
 use iroh::collection::{Blob, Collection, IrohCollectionParser};
-use iroh::database::mem;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -24,7 +23,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new database and add two blobs
-    let (mut db, names) = mem::Database::new([
+    let (mut db, names) = iroh::baomap::readonly_mem::Store::new([
         ("blob1", b"the first blob of bytes".to_vec()),
         ("blob2", b"the second blob of bytes".to_vec()),
     ]);

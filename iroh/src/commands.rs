@@ -6,6 +6,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use futures::StreamExt;
 use iroh::dial::Ticket;
 use iroh::rpc_protocol::*;
 use iroh_bytes::{protocol::RequestToken, util::runtime, Hash};
@@ -60,6 +61,63 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self, rt: &runtime::Handle, config: &Config) -> Result<()> {
         match self.command {
+            Commands::Share {
+                hash,
+                recursive,
+                rpc_port,
+                peer,
+                addr,
+                token,
+                ticket,
+                derp_region,
+                mut out,
+                stable: in_place,
+            } => {
+                if let Some(out) = out.as_mut() {
+                    tracing::info!("canonicalizing output path");
+                    let absolute = std::env::current_dir()?.join(&out);
+                    tracing::info!("output path is {} -> {}", out.display(), absolute.display());
+                    *out = absolute;
+                }
+                let client = make_rpc_client(rpc_port).await?;
+                let (peer, addr, token, derp_region, hash, recursive) =
+                    if let Some(ticket) = ticket.as_ref() {
+                        (
+                            ticket.peer(),
+                            ticket.addrs().to_vec(),
+                            ticket.token(),
+                            ticket.derp_region(),
+                            ticket.hash(),
+                            ticket.recursive(),
+                        )
+                    } else {
+                        (
+                            peer.unwrap(),
+                            addr,
+                            token.as_ref(),
+                            derp_region,
+                            hash.unwrap(),
+                            recursive.unwrap_or_default(),
+                        )
+                    };
+                let mut stream = client
+                    .server_streaming(ShareRequest {
+                        hash,
+                        recursive,
+                        peer,
+                        addrs: addr,
+                        derp_region,
+                        token: token.cloned(),
+                        out: out.map(|x| x.display().to_string()),
+                        in_place,
+                    })
+                    .await?;
+                while let Some(item) = stream.next().await {
+                    let item = item?;
+                    println!("{:?}", item);
+                }
+                Ok(())
+            }
             Commands::Get {
                 hash,
                 peer,
@@ -72,6 +130,7 @@ impl Cli {
             } => {
                 let get = if let Some(ticket) = ticket {
                     self::get::GetInteractive {
+                        rt: rt.clone(),
                         hash: ticket.hash(),
                         opts: ticket.as_get_options(Keypair::generate(), config.derp_map()),
                         token: ticket.token().cloned(),
@@ -79,6 +138,7 @@ impl Cli {
                     }
                 } else if let (Some(peer), Some(hash)) = (peer, hash) {
                     self::get::GetInteractive {
+                        rt: rt.clone(),
                         hash,
                         opts: iroh::dial::Options {
                             addrs,
@@ -108,6 +168,7 @@ impl Cli {
                 addr,
                 rpc_port,
                 request_token,
+                in_place,
             } => {
                 let request_token = match request_token {
                     Some(RequestTokenOptions::Random) => Some(RequestToken::generate()),
@@ -117,6 +178,7 @@ impl Cli {
                 self::provide::run(
                     rt,
                     path,
+                    in_place,
                     ProvideOptions {
                         addr,
                         rpc_port,
@@ -128,7 +190,7 @@ impl Cli {
                 .await
             }
             Commands::List(cmd) => cmd.run().await,
-            Commands::Validate { rpc_port } => self::validate::run(rpc_port).await,
+            Commands::Validate { rpc_port, repair } => self::validate::run(rpc_port, repair).await,
             Commands::Shutdown { force, rpc_port } => {
                 let client = make_rpc_client(rpc_port).await?;
                 client.rpc(ShutdownRequest { force }).await?;
@@ -142,7 +204,11 @@ impl Cli {
                 println!("PeerID: {}", response.peer_id);
                 Ok(())
             }
-            Commands::Add { path, rpc_port } => self::add::run(path, rpc_port).await,
+            Commands::Add {
+                path,
+                rpc_port,
+                in_place,
+            } => self::add::run(path, in_place, rpc_port).await,
             Commands::Addresses { rpc_port } => {
                 let client = make_rpc_client(rpc_port).await?;
                 let response = client.rpc(AddrsRequest).await?;
@@ -170,6 +236,12 @@ pub enum Commands {
     Provide {
         /// Path to initial file or directory to provide
         path: Option<PathBuf>,
+        /// Serve data in place
+        ///
+        /// Set this to true only if you are sure that the data in its current location
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
         #[clap(long, short)]
         /// Listening address to bind to
         #[clap(long, short, default_value_t = SocketAddr::from(iroh::node::DEFAULT_BIND_ADDR))]
@@ -191,6 +263,9 @@ pub enum Commands {
         /// RPC port of the provider
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
+        /// Repair the store by removing invalid data
+        #[clap(long, default_value_t = false)]
+        repair: bool,
     },
     /// Shutdown provider.
     Shutdown {
@@ -214,6 +289,12 @@ pub enum Commands {
     Add {
         /// The path to the file or folder to add
         path: PathBuf,
+        /// Add in place
+        ///
+        /// Set this to true only if you are sure that the data in its current location
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        in_place: bool,
         /// RPC port
         #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
         rpc_port: u16,
@@ -256,6 +337,52 @@ pub enum Commands {
         /// True to download a single blob, false (default) to download a collection and its children.
         #[clap(long, default_value_t = false)]
         single: bool,
+    },
+    /// Download data to the running provider's database and provide it.
+    ///
+    /// In addition to downloading the data, you can also specify an optional output directory
+    /// where the data will be exported to after it has been downloaded.
+    Share {
+        /// Hash to get, required unless ticket is specified
+        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
+        hash: Option<Hash>,
+        /// treat as collection, required unless ticket is specified
+        #[clap(long, conflicts_with = "ticket", required_unless_present = "ticket")]
+        recursive: Option<bool>,
+        /// PeerId of the provider
+        #[clap(
+            long,
+            short,
+            conflicts_with = "ticket",
+            required_unless_present = "ticket"
+        )]
+        peer: Option<PeerId>,
+        /// Addresses of the provider
+        #[clap(
+            long,
+            short,
+            conflicts_with = "ticket",
+            required_unless_present = "ticket"
+        )]
+        addr: Vec<SocketAddr>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long, conflicts_with = "ticket")]
+        token: Option<RequestToken>,
+        /// base32-encoded Request token to use for authentication, if any
+        #[clap(long, conflicts_with = "ticket")]
+        derp_region: Option<u16>,
+        #[clap(long, conflicts_with_all = &["peer", "hash", "recursive"])]
+        ticket: Option<Ticket>,
+        /// Directory in which to save the file(s)
+        #[clap(long, short)]
+        out: Option<PathBuf>,
+        /// If this is set to true, the data will be moved to the output directory,
+        /// and iroh will assume that it will not change.
+        #[clap(long, default_value_t = false)]
+        stable: bool,
+        /// RPC port
+        #[clap(long, default_value_t = DEFAULT_RPC_PORT)]
+        rpc_port: u16,
     },
     /// List listening addresses of the provider.
     Addresses {
