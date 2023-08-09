@@ -1955,6 +1955,7 @@ dependencies = [
  "blake3",
  "bytes",
  "data-encoding",
+ "futures",
  "iroh",
  "iroh-io",
  "iroh-net",
