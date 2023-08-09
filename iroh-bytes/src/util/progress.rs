@@ -135,8 +135,13 @@ pub trait IdGenerator {
 }
 
 /// A no-op progress sender.
-#[derive(Default)]
 pub struct IgnoreProgressSender<T>(PhantomData<T>);
+
+impl<T> Default for IgnoreProgressSender<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 impl<T> Clone for IgnoreProgressSender<T> {
     fn clone(&self) -> Self {
@@ -168,7 +173,7 @@ impl<T: Send + Sync + 'static> ProgressSender for IgnoreProgressSender<T> {
     }
 }
 
-impl IdGenerator for IgnoreProgressSender<()> {
+impl<T> IdGenerator for IgnoreProgressSender<T> {
     fn new_id(&self) -> u64 {
         0
     }

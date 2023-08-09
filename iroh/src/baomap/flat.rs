@@ -776,7 +776,7 @@ impl Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
 
@@ -832,8 +832,10 @@ impl Store {
             Some(entry.external_to_bytes())
         } else {
             tracing::info!("copying {} to {}", source.display(), target.display());
+            progress(0)?;
             // todo: progress
             std::fs::copy(&source, &target)?;
+            progress(size)?;
             let mut state = self.0.state.write().unwrap();
             let Some(entry) = state.complete.get_mut(&hash) else {
                 return Err(io::Error::new(

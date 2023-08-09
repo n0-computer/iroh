@@ -29,7 +29,7 @@ use iroh_bytes::{
     Hash, IROH_BLOCK_SIZE,
 };
 use range_collections::RangeSet2;
-use tokio::sync::mpsc;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -105,7 +105,7 @@ impl Store {
         hash: Hash,
         target: PathBuf,
         _mode: ExportMode,
-        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         tracing::trace!("exporting {} to {}", hash, target.display());
 
@@ -127,7 +127,15 @@ impl Store {
             .get(&hash)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
 
-        tokio::fs::write(target, data).await?;
+        let mut offset = 0u64;
+        let mut file = tokio::fs::File::create(&target).await?;
+        for chunk in data.chunks(1024 * 1024) {
+            progress(offset)?;
+            file.write_all(chunk).await?;
+            offset += chunk.len() as u64;
+        }
+        file.sync_all().await?;
+        drop(file);
         Ok(())
     }
 }

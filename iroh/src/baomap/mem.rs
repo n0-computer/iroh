@@ -3,6 +3,7 @@
 //! Main entry point is [Store].
 use std::collections::BTreeMap;
 use std::io;
+use std::io::Write;
 use std::num::TryFromIntError;
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ use iroh_bytes::baomap::PartialMapEntry;
 use iroh_bytes::baomap::ValidateProgress;
 use iroh_bytes::baomap::{Map, MapEntry, ReadableStore};
 use iroh_bytes::util::progress::IdGenerator;
+use iroh_bytes::util::progress::IgnoreProgressSender;
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::util::runtime;
 use iroh_bytes::{Hash, IROH_BLOCK_SIZE};
@@ -414,18 +416,29 @@ impl PartialMap for Store {
 impl baomap::Store for Store {
     fn import(
         &self,
-        data: std::path::PathBuf,
+        path: std::path::PathBuf,
         _mode: ImportMode,
-        _progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxFuture<'_, io::Result<(Hash, u64)>> {
         let this = self.clone();
         self.0
             .rt
             .main()
             .spawn_blocking(move || {
-                let bytes: Bytes = std::fs::read(data)?.into();
+                let id = progress.new_id();
+                progress.blocking_send(ImportProgress::Found {
+                    id,
+                    path: path.clone(),
+                })?;
+                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                // todo: provide progress for reading into mem
+                let bytes: Bytes = std::fs::read(path)?.into();
+                progress.blocking_send(ImportProgress::Size {
+                    id,
+                    size: bytes.len() as u64,
+                })?;
                 let size = bytes.len() as u64;
-                let hash = this.import_bytes_sync(bytes);
+                let hash = this.import_bytes_sync(bytes, progress)?;
                 Ok((hash, size))
             })
             .map(flatten_to_io)
@@ -437,10 +450,7 @@ impl baomap::Store for Store {
         self.0
             .rt
             .main()
-            .spawn_blocking(move || {
-                let hash = this.import_bytes_sync(bytes);
-                Ok(hash)
-            })
+            .spawn_blocking(move || this.import_bytes_sync(bytes, IgnoreProgressSender::default()))
             .map(flatten_to_io)
             .boxed()
     }
@@ -455,9 +465,19 @@ impl Store {
         }))
     }
 
-    fn import_bytes_sync(&self, bytes: Bytes) -> Hash {
+    fn import_bytes_sync(
+        &self,
+        bytes: Bytes,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<Hash> {
         let size = bytes.len() as u64;
+        let id = progress.new_id();
+        progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
         let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+        progress.blocking_send(ImportProgress::OutboardDone {
+            id,
+            hash: hash.into(),
+        })?;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard = PreOrderOutboard {
             root: hash,
@@ -470,7 +490,7 @@ impl Store {
             .unwrap()
             .complete
             .insert(hash.into(), (bytes, outboard));
-        hash.into()
+        Ok(hash.into())
     }
 
     fn export_sync(
@@ -478,7 +498,7 @@ impl Store {
         hash: Hash,
         target: PathBuf,
         _mode: ExportMode,
-        _progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         tracing::trace!("exporting {} to {}", hash, target.display());
 
@@ -502,7 +522,15 @@ impl Store {
             .get(&hash)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
 
-        std::fs::write(target, data)?;
+        let mut file = std::fs::File::create(target)?;
+        let mut offset = 0;
+        for chunk in data.chunks(1024 * 1024) {
+            progress(offset)?;
+            file.write_all(chunk)?;
+            offset += chunk.len() as u64;
+        }
+        file.flush()?;
+        drop(file);
         Ok(())
     }
 }
