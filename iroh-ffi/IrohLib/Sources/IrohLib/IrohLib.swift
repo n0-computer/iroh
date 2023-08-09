@@ -294,6 +294,19 @@ private func uniffiCheckCallStatus(
 
 // Public interface members begin here.
 
+private struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
 private struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -607,6 +620,7 @@ public protocol IrohNodeProtocol {
     func createDoc() throws -> Doc
     func importDoc(ticket: DocTicket) throws -> Doc
     func createAuthor() throws -> AuthorId
+    func stats() throws -> [String: CounterStats]
 }
 
 public class IrohNode: IrohNodeProtocol {
@@ -659,6 +673,14 @@ public class IrohNode: IrohNodeProtocol {
         return try FfiConverterTypeAuthorId.lift(
             rustCallWithError(FfiConverterTypeIrohError.lift) {
                 uniffi_iroh_fn_method_irohnode_create_author(self.pointer, $0)
+            }
+        )
+    }
+
+    public func stats() throws -> [String: CounterStats] {
+        return try FfiConverterDictionaryStringTypeCounterStats.lift(
+            rustCallWithError(FfiConverterTypeIrohError.lift) {
+                uniffi_iroh_fn_method_irohnode_stats(self.pointer, $0)
             }
         )
     }
@@ -778,6 +800,57 @@ public func FfiConverterTypeSignedEntry_lower(_ value: SignedEntry) -> UnsafeMut
     return FfiConverterTypeSignedEntry.lower(value)
 }
 
+public struct CounterStats {
+    public var value: UInt64
+    public var description: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: UInt64, description: String) {
+        self.value = value
+        self.description = description
+    }
+}
+
+extension CounterStats: Equatable, Hashable {
+    public static func == (lhs: CounterStats, rhs: CounterStats) -> Bool {
+        if lhs.value != rhs.value {
+            return false
+        }
+        if lhs.description != rhs.description {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(value)
+        hasher.combine(description)
+    }
+}
+
+public struct FfiConverterTypeCounterStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CounterStats {
+        return try CounterStats(
+            value: FfiConverterUInt64.read(from: &buf),
+            description: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CounterStats, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.value, into: &buf)
+        FfiConverterString.write(value.description, into: &buf)
+    }
+}
+
+public func FfiConverterTypeCounterStats_lift(_ buf: RustBuffer) throws -> CounterStats {
+    return try FfiConverterTypeCounterStats.lift(buf)
+}
+
+public func FfiConverterTypeCounterStats_lower(_ value: CounterStats) -> RustBuffer {
+    return FfiConverterTypeCounterStats.lower(value)
+}
+
 public enum IrohError {
     // Simple error enums only carry a message
     case Runtime(message: String)
@@ -871,6 +944,29 @@ private struct FfiConverterSequenceTypeSignedEntry: FfiConverterRustBuffer {
     }
 }
 
+private struct FfiConverterDictionaryStringTypeCounterStats: FfiConverterRustBuffer {
+    public static func write(_ value: [String: CounterStats], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeCounterStats.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: CounterStats] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: CounterStats]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeCounterStats.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -897,6 +993,9 @@ private var initializationResult: InitializationResult {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_method_irohnode_create_author() != 12072 {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if uniffi_iroh_checksum_method_irohnode_stats() != 12801 {
         return InitializationResult.apiChecksumMismatch
     }
     if uniffi_iroh_checksum_method_doc_id() != 34918 {

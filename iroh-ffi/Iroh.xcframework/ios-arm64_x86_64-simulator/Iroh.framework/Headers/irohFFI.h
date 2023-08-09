@@ -81,6 +81,8 @@ void*_Nonnull uniffi_iroh_fn_method_irohnode_import_doc(void*_Nonnull ptr, void*
 );
 void*_Nonnull uniffi_iroh_fn_method_irohnode_create_author(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
+RustBuffer uniffi_iroh_fn_method_irohnode_stats(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
 void uniffi_iroh_fn_free_doc(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_iroh_fn_method_doc_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -129,6 +131,9 @@ uint16_t uniffi_iroh_checksum_method_irohnode_import_doc(void
     
 );
 uint16_t uniffi_iroh_checksum_method_irohnode_create_author(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_irohnode_stats(void
     
 );
 uint16_t uniffi_iroh_checksum_method_doc_id(void

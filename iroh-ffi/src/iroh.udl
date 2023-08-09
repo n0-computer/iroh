@@ -11,6 +11,8 @@ interface IrohNode {
   Doc import_doc(DocTicket ticket);
   [Throws=IrohError]
   AuthorId create_author();
+  [Throws=IrohError]
+  record<string, CounterStats> stats();
 };
 
 interface Doc {
@@ -40,6 +42,11 @@ interface DocTicket {
   [Name=from_string, Throws=IrohError]
   constructor(string content);
   string to_string();
+};
+
+dictionary CounterStats {
+  u64 value;
+  string description;
 };
 
 [Error]

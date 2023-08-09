@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::TryStreamExt;
 use iroh::{
@@ -13,6 +13,8 @@ use iroh_sync::store::{GetFilter, KeyFilter};
 use quic_rpc::transport::flume::FlumeConnection;
 
 use crate::error::{IrohError as Error, Result};
+
+pub use iroh::rpc_protocol::CounterStats;
 
 pub struct SignedEntry(iroh_sync::sync::SignedEntry);
 
@@ -221,6 +223,15 @@ impl IrohNode {
             inner: doc,
             rt: self.async_runtime.clone(),
         }))
+    }
+
+    pub fn stats(&self) -> Result<HashMap<String, CounterStats>> {
+        let stats = self
+            .async_runtime
+            .main()
+            .block_on(async { self.sync_client.stats().await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+        Ok(stats)
     }
 }
 
