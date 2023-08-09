@@ -30,19 +30,19 @@ use bao_tree::{ByteNum, ChunkNum};
 use bytes::Bytes;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_bytes::baomap::{
+    ExportMode, Map, MapEntry, PartialMapEntry, ReadonlyStore, Store, ValidateProgress,
+};
 use iroh_bytes::collection::{CollectionParser, NoCollectionParser};
 use iroh_bytes::get::fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext};
 use iroh_bytes::get::{self, Stats};
 use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-use iroh_bytes::provider::{BaoDb, BaoPartialMapEntry, ExportMode, ShareProgress};
+use iroh_bytes::provider::ShareProgress;
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender, TokioProgressSender};
 use iroh_bytes::IROH_BLOCK_SIZE;
 use iroh_bytes::{
     protocol::{Closed, Request, RequestToken},
-    provider::{
-        BaoMap, BaoMapEntry, BaoReadonlyDb, CustomGetHandler, ProvideProgress,
-        RequestAuthorizationHandler, ValidateProgress,
-    },
+    provider::{CustomGetHandler, ProvideProgress, RequestAuthorizationHandler},
     util::runtime,
     util::Hash,
 };
@@ -78,8 +78,8 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a database. Various database implementations are available
-/// in [`crate::database`]. Everything else is optional.
+/// You must supply a blob store. Various store implementations are available
+/// in [`crate::baomap`]. Everything else is optional.
 ///
 /// Finally you can create and run the node by calling [`Builder::spawn`].
 ///
@@ -88,7 +88,7 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct Builder<D, E = DummyServerEndpoint, C = NoCollectionParser>
 where
-    D: BaoMap,
+    D: Map,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -145,7 +145,7 @@ impl CustomGetHandler for NoopCustomGetHandler {
     }
 }
 
-impl<D: BaoMap> Builder<D> {
+impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given database.
     fn with_db(db: D) -> Self {
         Self {
@@ -165,7 +165,7 @@ impl<D: BaoMap> Builder<D> {
 
 impl<D, E, C> Builder<D, E, C>
 where
-    D: BaoDb,
+    D: Store,
     E: ServiceEndpoint<ProviderService>,
     C: CollectionParser,
 {
@@ -497,7 +497,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D: BaoMap> {
+pub struct Node<D: Map> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
 }
@@ -523,7 +523,7 @@ pub enum Event {
     ByteProvide(iroh_bytes::provider::Event),
 }
 
-impl<D: BaoReadonlyDb> Node<D> {
+impl<D: ReadonlyStore> Node<D> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
@@ -606,7 +606,7 @@ impl<D: BaoReadonlyDb> Node<D> {
     }
 }
 
-impl<D: BaoMap> NodeInner<D> {
+impl<D: Map> NodeInner<D> {
     async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
         self.endpoint.local_endpoints().await
     }
@@ -627,7 +627,7 @@ impl<D: BaoMap> NodeInner<D> {
 }
 
 /// The future completes when the spawned tokio task finishes.
-impl<D: BaoMap> Future for Node<D> {
+impl<D: Map> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -641,7 +641,7 @@ struct RpcHandler<D, C> {
     collection_parser: C,
 }
 
-impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
+impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
     fn rt(&self) -> runtime::Handle {
         self.inner.rt.clone()
     }
@@ -1255,7 +1255,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     ) -> anyhow::Result<()> {
         use crate::collection::{Blob, Collection};
         use futures::TryStreamExt;
-        use iroh_bytes::provider::{ImportMode, ImportProgress};
+        use iroh_bytes::baomap::{ImportMode, ImportProgress};
         use std::{collections::BTreeMap, sync::Mutex};
 
         let progress = TokioProgressSender::new(progress);
@@ -1382,7 +1382,7 @@ impl<D: BaoDb, C: CollectionParser> RpcHandler<D, C> {
     }
 }
 
-fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: CollectionParser>(
+fn handle_rpc_request<D: Store, E: ServiceEndpoint<ProviderService>, C: CollectionParser>(
     msg: ProviderRequest,
     chan: RpcChannel<ProviderService, E>,
     handler: &RpcHandler<D, C>,
@@ -1428,7 +1428,7 @@ fn handle_rpc_request<D: BaoDb, E: ServiceEndpoint<ProviderService>, C: Collecti
 }
 
 #[derive(Debug, Clone)]
-enum BlobInfo<D: BaoDb> {
+enum BlobInfo<D: Store> {
     // we have the blob completely
     Complete,
     // we have the blob partially
@@ -1440,7 +1440,7 @@ enum BlobInfo<D: BaoDb> {
     Missing,
 }
 
-impl<D: BaoDb> BlobInfo<D> {
+impl<D: Store> BlobInfo<D> {
     fn missing_chunks(&self) -> RangeSet2<ChunkNum> {
         match self {
             BlobInfo::Complete => RangeSet2::empty(),
@@ -1545,7 +1545,7 @@ mod tests {
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
         let rt = test_runtime();
-        let (db, hashes) = crate::database::test::Database::new([("test", b"hello")]);
+        let (db, hashes) = crate::baomap::readonly_mem::Store::new([("test", b"hello")]);
         let hash = hashes["test"].into();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
@@ -1562,7 +1562,7 @@ mod tests {
     #[cfg(feature = "mem-db")]
     #[tokio::test]
     async fn test_node_add_collection_event() -> Result<()> {
-        let db = crate::database::mem::Database::default();
+        let db = crate::baomap::mem::Store::default();
         let node = Node::builder(db)
             .bind_addr((Ipv4Addr::UNSPECIFIED, 0).into())
             .runtime(&test_runtime())

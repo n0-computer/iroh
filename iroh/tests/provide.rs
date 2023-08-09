@@ -29,10 +29,11 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use bao_tree::blake3;
 use iroh_bytes::{
+    baomap::Store,
     collection::{CollectionParser, CollectionStats, LinkStream},
     get::{fsm, fsm::ConnectedNext, Stats},
     protocol::{AnyGetRequest, CustomGetRequest, GetRequest, RequestToken},
-    provider::{self, BaoDb, CustomGetHandler, RequestAuthorizationHandler},
+    provider::{self, CustomGetHandler, RequestAuthorizationHandler},
     util::runtime,
     Hash,
 };
@@ -43,7 +44,7 @@ fn test_runtime() -> runtime::Handle {
     runtime::Handle::from_currrent(1).unwrap()
 }
 
-fn test_node<D: BaoDb>(
+fn test_node<D: Store>(
     db: D,
     addr: SocketAddr,
 ) -> Builder<D, DummyServerEndpoint, IrohCollectionParser> {
@@ -155,7 +156,7 @@ async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
     let addr = "127.0.0.1:0".parse().unwrap();
 
-    let mut db = iroh::database::test::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
     let expect_name = "hello_world".to_string();
     let collection = Collection::new(
@@ -227,7 +228,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, lookup) = iroh::database::test::Database::new(file_opts.clone());
+    let (mut mdb, lookup) = iroh::baomap::readonly_mem::Store::new(file_opts.clone());
     let mut blobs = Vec::new();
     let mut total_blobs_size = 0u64;
 
@@ -362,7 +363,7 @@ async fn test_server_close() {
     let rt = test_runtime();
     // Prepare a Provider transferring a file.
     setup_logging();
-    let mut db = iroh::database::test::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::new(
         vec![Blob {
@@ -423,8 +424,8 @@ async fn test_server_close() {
 /// returns the database and the root hash of the collection
 fn create_test_db(
     entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-) -> (iroh::database::test::Database, Hash) {
-    let (mut db, hashes) = iroh::database::test::Database::new(entries);
+) -> (iroh::baomap::readonly_mem::Store, Hash) {
+    let (mut db, hashes) = iroh::baomap::readonly_mem::Store::new(entries);
     let collection = Collection::new(
         hashes
             .into_iter()
@@ -623,7 +624,7 @@ async fn test_custom_collection_parser() {
     // create a collection consisting of 2 leafs
     let leaf1_data = vec![0u8; 12345];
     let leaf2_data = vec![1u8; 67890];
-    let mut db = iroh::database::test::Database::default();
+    let mut db = iroh::baomap::readonly_mem::Store::default();
     let leaf1_hash = db.insert(leaf1_data.clone());
     let leaf2_hash = db.insert(leaf2_data.clone());
     let collection = vec![leaf1_hash, leaf2_hash];
@@ -696,7 +697,7 @@ impl CustomGetHandler for BlobCustomHandler {
 async fn test_custom_request_blob() {
     let rt = test_runtime();
     let expected = b"hello".to_vec();
-    let (db, hashes) = iroh::database::test::Database::new([("test", &expected)]);
+    let (db, hashes) = iroh::baomap::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
     let addr = "127.0.0.1:0".parse().unwrap();
     let node = test_node(db, addr)

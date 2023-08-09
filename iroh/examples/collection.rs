@@ -23,7 +23,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     // create a new database and add two blobs
-    let (mut db, names) = iroh::database::test::Database::new([
+    let (mut db, names) = iroh::baomap::readonly_mem::Store::new([
         ("blob1", b"the first blob of bytes".to_vec()),
         ("blob2", b"the second blob of bytes".to_vec()),
     ]);

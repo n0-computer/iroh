@@ -5,7 +5,7 @@ use console::{style, Emoji};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::rpc_protocol::ValidateRequest;
-use iroh_bytes::{provider::ValidateProgress, Hash};
+use iroh_bytes::{baomap::ValidateProgress, Hash};
 
 use super::make_rpc_client;
 
