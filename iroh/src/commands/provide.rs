@@ -133,14 +133,14 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
 async fn provide<D: BaoReadonlyDb, S: Store>(
     db: D,
     store: S,
-    blobs_path: PathBuf,
+    writable_db_path: PathBuf,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
 ) -> Result<Node<D, S>> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = Node::builder(db, store, blobs_path)
+    let mut builder = Node::builder(db, store, writable_db_path)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);

@@ -17,7 +17,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
 };
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use self::util::{read_message, write_message, Dialer, Timers};
 use crate::proto::{self, TopicId};
@@ -260,6 +260,20 @@ struct IrohInfo {
     derp_region: Option<u16>,
 }
 
+impl IrohInfo {
+    async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
+        Ok(Self {
+            addrs: endpoint
+                .local_endpoints()
+                .await?
+                .iter()
+                .map(|ep| ep.addr)
+                .collect(),
+            derp_region: endpoint.my_derp().await,
+        })
+    }
+}
+
 /// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
 enum ConnOrigin {
@@ -351,11 +365,7 @@ impl Actor {
                     }
                 },
                 _ = self.on_endpoints_rx.changed() => {
-                    let endpoints = self.on_endpoints_rx.borrow().clone();
-                    let info = IrohInfo {
-                        addrs: endpoints.iter().map(|ep| ep.addr).collect(),
-                        derp_region: self.endpoint.my_derp().await
-                    };
+                    let info = IrohInfo::from_endpoint(&self.endpoint).await?;
                     let peer_data = postcard::to_stdvec(&info)?;
                     self.handle_in_event(InEvent::UpdatePeerData(peer_data.into()), Instant::now()).await?;
                 }
@@ -464,13 +474,21 @@ impl Actor {
 
     async fn handle_in_event(&mut self, event: InEvent, now: Instant) -> anyhow::Result<()> {
         let me = *self.state.me();
-        debug!(me = ?me, "handle in_event  {event:?}");
+        if matches!(event, InEvent::TimerExpired(_)) {
+            trace!(me = ?me, "handle in_event  {event:?}");
+        } else {
+            debug!(me = ?me, "handle in_event  {event:?}");
+        };
         if let InEvent::PeerDisconnected(peer) = &event {
             self.conn_send_tx.remove(peer);
         }
         let out = self.state.handle(event, now);
         for event in out {
-            debug!(me = ?me, "handle out_event {event:?}");
+            if matches!(event, OutEvent::ScheduleTimer(_, _)) {
+                trace!(me = ?me, "handle out_event {event:?}");
+            } else {
+                debug!(me = ?me, "handle out_event {event:?}");
+            };
             match event {
                 OutEvent::SendMessage(peer_id, message) => {
                     if let Some(send) = self.conn_send_tx.get(&peer_id) {
@@ -513,10 +531,14 @@ impl Actor {
                 OutEvent::PeerData(peer, data) => match postcard::from_bytes::<IrohInfo>(&data) {
                     Err(err) => warn!("Failed to decode PeerData from {peer}: {err}"),
                     Ok(info) => {
-                        debug!("add known addrs for {peer}: {info:?}...");
-                        self.endpoint
+                        debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known addrs: {info:?}");
+                        if let Err(err) = self
+                            .endpoint
                             .add_known_addrs(peer, info.derp_region, &info.addrs)
-                            .await?;
+                            .await
+                        {
+                            debug!(me = ?self.endpoint.peer_id(), peer = ?peer, "add known failed: {err:?}");
+                        }
                     }
                 },
             }

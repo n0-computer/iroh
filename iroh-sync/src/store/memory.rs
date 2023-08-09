@@ -32,7 +32,7 @@ impl super::Store for Store {
     type GetLatestIter<'a> = GetLatestIter<'a>;
     type GetAllIter<'a> = GetAllIter<'a>;
 
-    fn get_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
+    fn open_replica(&self, namespace: &NamespaceId) -> Result<Option<Replica<Self::Instance>>> {
         let replicas = &*self.replicas.read();
         Ok(replicas.get(namespace).cloned())
     }

@@ -11,11 +11,15 @@
 //! Note that this is subject to change. The RPC protocol is not yet stable.
 use std::{net::SocketAddr, path::PathBuf};
 
+use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::Hash;
 use iroh_net::tls::PeerId;
 
-use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
+use iroh_sync::{
+    store::GetFilter,
+    sync::{AuthorId, NamespaceId, SignedEntry},
+};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
@@ -347,19 +351,19 @@ pub struct DocsCreateResponse {
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsImportRequest {
+pub struct DocImportRequest {
     // either a public or private key
     pub key: KeyBytes,
     pub peers: Vec<PeerSource>,
 }
 
-impl RpcMsg<ProviderService> for DocsImportRequest {
-    type Response = RpcResult<DocsImportResponse>;
+impl RpcMsg<ProviderService> for DocImportRequest {
+    type Response = RpcResult<DocImportResponse>;
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocsImportResponse {
+pub struct DocImportResponse {
     pub doc_id: NamespaceId,
 }
 
@@ -378,23 +382,23 @@ impl RpcMsg<ProviderService> for DocShareRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocShareResponse {
     pub key: KeyBytes,
-    pub me: PeerSource,
+    pub peer: PeerSource,
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocJoinRequest {
+pub struct DocStartSyncRequest {
     pub doc_id: NamespaceId,
     pub peers: Vec<PeerSource>,
 }
 
-impl RpcMsg<ProviderService> for DocJoinRequest {
-    type Response = RpcResult<DocJoinResponse>;
+impl RpcMsg<ProviderService> for DocStartSyncRequest {
+    type Response = RpcResult<DocStartSyncResponse>;
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocJoinResponse {}
+pub struct DocStartSyncResponse {}
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
@@ -420,10 +424,7 @@ pub struct DocSetResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocGetRequest {
     pub doc_id: NamespaceId,
-    pub author_id: Option<AuthorId>,
-    pub key: Vec<u8>,
-    pub prefix: bool,
-    pub latest: bool,
+    pub filter: GetFilter,
 }
 
 impl Msg<ProviderService> for DocGetRequest {
@@ -442,25 +443,18 @@ pub struct DocGetResponse {
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocListRequest {
-    pub doc_id: NamespaceId,
-    pub latest: bool,
-    // pub author: Option<Author>,
-    // pub prefix: Option<String>,
+pub struct BytesGetRequest {
+    pub hash: Hash,
 }
 
-impl Msg<ProviderService> for DocListRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<ProviderService> for DocListRequest {
-    type Response = RpcResult<DocListResponse>;
+impl RpcMsg<ProviderService> for BytesGetRequest {
+    type Response = RpcResult<BytesGetResponse>;
 }
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocListResponse {
-    pub entry: SignedEntry,
+pub struct BytesGetResponse {
+    pub data: Bytes,
 }
 
 /// The RPC service for the iroh provider process.
@@ -491,13 +485,14 @@ pub enum ProviderRequest {
 
     DocsList(DocsListRequest),
     DocsCreate(DocsCreateRequest),
-    DocsImport(DocsImportRequest),
+    DocsImport(DocImportRequest),
 
     DocSet(DocSetRequest),
     DocGet(DocGetRequest),
-    DocList(DocListRequest),
-    DocJoin(DocJoinRequest),   // DocGetContent(DocGetContentRequest),
-    DocShare(DocShareRequest), // DocGetContent(DocGetContentRequest),
+    DocStartSync(DocStartSyncRequest), // DocGetContent(DocGetContentRequest),
+    DocShare(DocShareRequest),         // DocGetContent(DocGetContentRequest),
+
+    BytesGet(BytesGetRequest),
 }
 
 /// The response enum, listing all possible responses.
@@ -526,14 +521,14 @@ pub enum ProviderResponse {
 
     DocsList(RpcResult<DocsListResponse>),
     DocsCreate(RpcResult<DocsCreateResponse>),
-    DocsImport(RpcResult<DocsImportResponse>),
+    DocsImport(RpcResult<DocImportResponse>),
 
     DocSet(RpcResult<DocSetResponse>),
     DocGet(RpcResult<DocGetResponse>),
-    DocList(RpcResult<DocListResponse>),
-    DocJoin(RpcResult<DocJoinResponse>),
+    DocJoin(RpcResult<DocStartSyncResponse>),
     DocShare(RpcResult<DocShareResponse>),
-    // DocGetContent(DocGetContentResponse),
+
+    BytesGet(RpcResult<BytesGetResponse>), // DocGetContent(DocGetContentResponse),
 }
 
 impl Service for ProviderService {

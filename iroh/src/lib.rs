@@ -18,6 +18,8 @@ pub mod rpc_protocol;
 pub mod sync;
 pub mod util;
 
+pub mod client;
+
 /// Expose metrics module
 #[cfg(feature = "metrics")]
 pub mod metrics;

@@ -16,11 +16,11 @@ use iroh_metrics::inc;
 use iroh_net::{tls::PeerId, MagicEndpoint};
 use iroh_sync::{
     store,
-    sync::{InsertOrigin, Replica, SignedEntry},
+    sync::{InsertOrigin, NamespaceId, RemovalToken, Replica, SignedEntry},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, task::JoinError};
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
 use super::metrics::Metrics;
 
@@ -36,6 +36,9 @@ pub struct PeerSource {
     pub derp_region: Option<u16>,
 }
 
+// /// A SyncId is a 32 byte array which is both a [`NamespaceId`] and a [`TopicId`].
+// pub struct SyncId([u8; 32]);
+
 impl PeerSource {
     /// Deserializes from bytes.
     fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
@@ -44,6 +47,18 @@ impl PeerSource {
     /// Serializes to bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
+    }
+    pub async fn from_endpoint(endpoint: &MagicEndpoint) -> anyhow::Result<Self> {
+        Ok(Self {
+            peer_id: endpoint.peer_id(),
+            derp_region: endpoint.my_derp().await,
+            addrs: endpoint
+                .local_endpoints()
+                .await?
+                .into_iter()
+                .map(|ep| ep.addr)
+                .collect(),
+        })
     }
 }
 
@@ -82,9 +97,16 @@ enum SyncState {
 
 #[derive(Debug)]
 pub enum ToActor<S: store::Store> {
-    SyncDoc {
-        doc: Replica<S::Instance>,
-        initial_peers: Vec<PeerSource>,
+    StartSync {
+        replica: Replica<S::Instance>,
+        peers: Vec<PeerSource>,
+    },
+    JoinPeers {
+        namespace: NamespaceId,
+        peers: Vec<PeerSource>,
+    },
+    StopSync {
+        namespace: NamespaceId,
     },
     Shutdown,
 }
@@ -113,19 +135,33 @@ impl<S: store::Store> LiveSync<S> {
     }
 
     /// Cancel the live sync.
-    pub async fn cancel(&self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         self.to_actor_tx.send(ToActor::<S>::Shutdown).await?;
         self.task.clone().await?;
         Ok(())
     }
 
-    pub async fn add(
+    pub async fn start_sync(
         &self,
-        doc: Replica<S::Instance>,
-        initial_peers: Vec<PeerSource>,
+        replica: Replica<S::Instance>,
+        peers: Vec<PeerSource>,
     ) -> Result<()> {
         self.to_actor_tx
-            .send(ToActor::<S>::SyncDoc { doc, initial_peers })
+            .send(ToActor::<S>::StartSync { replica, peers })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<PeerSource>) -> Result<()> {
+        self.to_actor_tx
+            .send(ToActor::<S>::JoinPeers { namespace, peers })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn stop_sync(&self, namespace: NamespaceId) -> Result<()> {
+        self.to_actor_tx
+            .send(ToActor::<S>::StopSync { namespace })
             .await?;
         Ok(())
     }
@@ -137,7 +173,7 @@ struct Actor<S: store::Store> {
     endpoint: MagicEndpoint,
     gossip: Gossip,
 
-    docs: HashMap<TopicId, Replica<S::Instance>>,
+    replicas: HashMap<TopicId, (Replica<S::Instance>, RemovalToken)>,
     subscription: BoxStream<'static, Result<(TopicId, Event)>>,
     sync_state: HashMap<(TopicId, PeerId), SyncState>,
 
@@ -155,19 +191,19 @@ impl<S: store::Store> Actor<S> {
         gossip: Gossip,
         to_actor_rx: mpsc::Receiver<ToActor<S>>,
     ) -> Self {
-        let (insert_tx, insert_rx) = flume::bounded(64);
+        let (insert_entry_tx, insert_entry_rx) = flume::bounded(64);
         let sub = gossip.clone().subscribe_all().boxed();
 
         Self {
             gossip,
             endpoint,
-            insert_entry_rx: insert_rx,
-            insert_entry_tx: insert_tx,
+            insert_entry_rx,
+            insert_entry_tx,
             to_actor_rx,
             sync_state: Default::default(),
             pending_syncs: Default::default(),
             pending_joins: Default::default(),
-            docs: Default::default(),
+            replicas: Default::default(),
             subscription: sub,
         }
     }
@@ -181,10 +217,12 @@ impl<S: store::Store> Actor<S> {
                         // received shutdown signal, or livesync handle was dropped:
                         // break loop and exit
                         Some(ToActor::Shutdown) | None => {
-                            self.on_shutdown().await?;
+                            self.shutdown().await?;
                             break;
                         }
-                        Some(ToActor::SyncDoc { doc, initial_peers }) => self.insert_doc(doc, initial_peers).await?,
+                        Some(ToActor::StartSync { replica, peers }) => self.start_sync(replica, peers).await?,
+                        Some(ToActor::StopSync { namespace }) => self.stop_sync(&namespace).await?,
+                        Some(ToActor::JoinPeers { namespace, peers }) => self.join_gossip_and_start_initial_sync(&namespace, peers).await?,
                     }
                 }
                 // new gossip message
@@ -206,6 +244,8 @@ impl<S: store::Store> Actor<S> {
                 Some((topic, res)) = self.pending_joins.next() => {
                     if let Err(err) = res {
                         error!("failed to join {topic:?}: {err:?}");
+                    } else {
+                        info!("joined sync topic {topic:?}");
                     }
                     // TODO: maintain some join state
                 }
@@ -215,7 +255,7 @@ impl<S: store::Store> Actor<S> {
     }
 
     fn sync_with_peer(&mut self, topic: TopicId, peer: PeerId) {
-        let Some(doc) = self.docs.get(&topic) else {
+        let Some((replica, _token)) = self.replicas.get(&topic) else {
             return;
         };
         // Check if we synced and only start sync if not yet synced
@@ -225,16 +265,15 @@ impl<S: store::Store> Actor<S> {
         if let Some(_state) = self.sync_state.get(&(topic, peer)) {
             return;
         };
-        // TODO: fixme (doc_id, peer)
         self.sync_state.insert((topic, peer), SyncState::Running);
         let task = {
             let endpoint = self.endpoint.clone();
-            let doc = doc.clone();
+            let replica = replica.clone();
             async move {
-                debug!("sync with {peer}");
+                debug!("init sync with {peer}");
                 // TODO: Make sure that the peer is dialable.
-                let res = connect_and_sync::<S>(&endpoint, &doc, peer, None, &[]).await;
-                debug!("> synced with {peer}: {res:?}");
+                let res = connect_and_sync::<S>(&endpoint, &replica, peer, None, &[]).await;
+                debug!("synced with {peer}: {res:?}");
                 // collect metrics
                 match &res {
                     Ok(_) => inc!(Metrics, initial_sync_success),
@@ -247,30 +286,43 @@ impl<S: store::Store> Actor<S> {
         self.pending_syncs.push(task);
     }
 
-    async fn on_shutdown(&mut self) -> anyhow::Result<()> {
-        for (topic, _doc) in self.docs.drain() {
-            // TODO: Remove the on_insert callbacks
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        for (topic, (replica, removal_token)) in self.replicas.drain() {
+            replica.remove_on_insert(removal_token);
             self.gossip.quit(topic).await?;
         }
         Ok(())
     }
 
-    async fn insert_doc(
+    async fn stop_sync(&mut self, namespace: &NamespaceId) -> anyhow::Result<()> {
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        if let Some((replica, removal_token)) = self.replicas.remove(&topic) {
+            replica.remove_on_insert(removal_token);
+            self.gossip.quit(topic).await?;
+        }
+        Ok(())
+    }
+
+    async fn join_gossip_and_start_initial_sync(
         &mut self,
-        doc: Replica<S::Instance>,
-        initial_peers: Vec<PeerSource>,
-    ) -> Result<()> {
-        let peer_ids: Vec<PeerId> = initial_peers.iter().map(|p| p.peer_id).collect();
+        namespace: &NamespaceId,
+        peers: Vec<PeerSource>,
+    ) -> anyhow::Result<()> {
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        let peer_ids: Vec<PeerId> = peers.iter().map(|p| p.peer_id).collect();
 
         // add addresses of initial peers to our endpoint address book
-        for peer in &initial_peers {
-            self.endpoint
+        for peer in &peers {
+            if let Err(err) = self
+                .endpoint
                 .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
-                .await?;
+                .await
+            {
+                warn!(peer = ?peer.peer_id, "failed to add known addrs: {err:?}");
+            }
         }
 
         // join gossip for the topic to receive and send message
-        let topic = TopicId::from_bytes(*doc.namespace().as_bytes());
         self.pending_joins.push({
             let peer_ids = peer_ids.clone();
             let gossip = self.gossip.clone();
@@ -283,27 +335,38 @@ impl<S: store::Store> Actor<S> {
             .boxed()
         });
 
-        // setup replica insert notifications.
-        let insert_entry_tx = self.insert_entry_tx.clone();
-        doc.on_insert(Box::new(move |origin, entry| {
-            // only care for local inserts, otherwise we'd do endless gossip loops
-            if let InsertOrigin::Local = origin {
-                // TODO: this is potentially blocking inside an async call. figure out a better solution
-                insert_entry_tx.send((topic, entry)).ok();
-            }
-        }));
-        self.docs.insert(topic, doc);
-        // add addresses of initial peers to our endpoint address book
-        for peer in &initial_peers {
-            self.endpoint
-                .add_known_addrs(peer.peer_id, peer.derp_region, &peer.addrs)
-                .await?;
-        }
-
         // trigger initial sync with initial peers
         for peer in peer_ids {
             self.sync_with_peer(topic, peer);
         }
+        Ok(())
+    }
+
+    async fn start_sync(
+        &mut self,
+        replica: Replica<S::Instance>,
+        peers: Vec<PeerSource>,
+    ) -> Result<()> {
+        let namespace = replica.namespace();
+        let topic = TopicId::from_bytes(*namespace.as_bytes());
+        if !self.replicas.contains_key(&topic) {
+            // setup replica insert notifications.
+            let insert_entry_tx = self.insert_entry_tx.clone();
+            let removal_token = replica.on_insert(Box::new(move |origin, entry| {
+                // only care for local inserts, otherwise we'd do endless gossip loops
+                if let InsertOrigin::Local = origin {
+                    // TODO: this is potentially blocking inside an async call. figure out a better solution
+                    if let Err(err) = insert_entry_tx.send((topic, entry)) {
+                        warn!("on_insert forward failed: {err} - LiveSync actor dropped");
+                    }
+                }
+            }));
+            self.replicas.insert(topic, (replica, removal_token));
+        }
+
+        self.join_gossip_and_start_initial_sync(&namespace, peers)
+            .await?;
+
         Ok(())
     }
 
@@ -316,7 +379,7 @@ impl<S: store::Store> Actor<S> {
     }
 
     fn on_gossip_event(&mut self, topic: TopicId, event: Event) -> Result<()> {
-        let Some(doc) = self.docs.get(&topic) else {
+        let Some((replica, _token)) = self.replicas.get(&topic) else {
             return Err(anyhow!("Missing doc for {topic:?}"));
         };
         match event {
@@ -324,13 +387,19 @@ impl<S: store::Store> Actor<S> {
             Event::Received(data, prev_peer) => {
                 let op: Op = postcard::from_bytes(&data)?;
                 match op {
-                    Op::Put(entry) => doc.insert_remote_entry(entry, Some(prev_peer.to_bytes()))?,
+                    Op::Put(entry) => {
+                        debug!(peer = ?prev_peer, topic = ?topic, "received entry via gossip");
+                        replica.insert_remote_entry(entry, Some(prev_peer.to_bytes()))?
+                    }
                 }
             }
             // A new neighbor appeared in the gossip swarm. Try to sync with it directly.
             // [Self::sync_with_peer] will check to not resync with peers synced previously in the
             // same session. TODO: Maybe this is too broad and leads to too many sync requests.
-            Event::NeighborUp(peer) => self.sync_with_peer(topic, peer),
+            Event::NeighborUp(peer) => {
+                debug!(peer = ?peer, "new neighbor, init sync");
+                self.sync_with_peer(topic, peer);
+            }
             _ => {}
         }
         Ok(())
@@ -340,6 +409,7 @@ impl<S: store::Store> Actor<S> {
     async fn on_insert_entry(&mut self, topic: TopicId, entry: SignedEntry) -> Result<()> {
         let op = Op::Put(entry);
         let message = postcard::to_stdvec(&op)?.into();
+        debug!(topic = ?topic, "broadcast new entry");
         self.gossip.broadcast(topic, message).await?;
         Ok(())
     }

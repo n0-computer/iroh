@@ -48,14 +48,16 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
+use crate::database::flat::writable::WritableFileDatabase;
 use crate::dial::Ticket;
+use crate::download::Downloader;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
     ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
     VersionResponse, WatchRequest, WatchResponse,
 };
-use crate::sync::{node::SyncNode, BlobStore, SYNC_ALPN};
+use crate::sync::{SyncEngine, SYNC_ALPN};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -292,13 +294,15 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .on_endpoints(Box::new(move |eps| {
-                if !endpoints_update_s.is_disconnected() && !eps.is_empty() {
-                    endpoints_update_s.send(()).ok();
+                if eps.is_empty() {
+                    return;
                 }
-
                 // send our updated endpoints to the gossip protocol to be sent as PeerData to peers
                 if let Some(gossip) = gossip_cell2.get() {
                     gossip.update_endpoints(eps).ok();
+                }
+                if !endpoints_update_s.is_disconnected() {
+                    endpoints_update_s.send(()).ok();
                 }
             }))
             .bind(self.bind_addr.port())
@@ -317,13 +321,16 @@ where
         gossip_cell.set(gossip.clone()).unwrap();
 
         // spawn the sync engine
-        let blobs = BlobStore::new(rt.clone(), self.docs.1, endpoint.clone()).await?;
-        let sync = SyncNode::spawn(
+        // TODO: Remove once persistence is merged
+        let db = WritableFileDatabase::new(self.docs.1).await?;
+        let downloader = Downloader::new(rt.clone(), endpoint.clone(), db.clone());
+        let sync = SyncEngine::spawn(
             rt.clone(),
-            self.docs.0,
             endpoint.clone(),
             gossip.clone(),
-            blobs,
+            self.docs.0,
+            db,
+            downloader,
         );
 
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
@@ -406,6 +413,7 @@ where
 
         // forward our initial endpoints to the gossip protocol
         if let Ok(local_endpoints) = server.local_endpoints().await {
+            debug!(me = ?server.peer_id(), "gossip initial update: {local_endpoints:?}");
             gossip.update_endpoints(&local_endpoints).ok();
         }
 
@@ -556,7 +564,7 @@ struct NodeInner<D, S: Store> {
     #[allow(dead_code)]
     callbacks: Callbacks,
     rt: runtime::Handle,
-    pub(crate) sync: SyncNode<S>,
+    pub(crate) sync: SyncEngine<S>,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -570,8 +578,10 @@ impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     /// Returns a new builder for the [`Node`].
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder(db: D, store: S, blobs_path: PathBuf) -> Builder<D, S> {
-        Builder::with_db_and_store(db, store, blobs_path)
+    ///
+    /// TODO: remove blobs_path argument once peristence branch is merged
+    pub fn builder(db: D, store: S, writable_db_path: PathBuf) -> Builder<D, S> {
+        Builder::with_db_and_store(db, store, writable_db_path)
     }
 
     /// The address on which the node socket is bound.
@@ -611,10 +621,17 @@ impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
+    ///
+    /// TODO: remove and replace with client?
     pub fn controller(
         &self,
     ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
         RpcClient::new(self.inner.controller.clone())
+    }
+
+    ///
+    pub fn client(&self) -> super::client::Iroh<impl ServiceConnection<ProviderService>> {
+        super::client::Iroh::new(self.controller())
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -928,7 +945,7 @@ fn handle_rpc_request<
             }
             DocsImport(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.docs_import(req).await
+                    handler.inner.sync.doc_import(req).await
                 })
                 .await
             }
@@ -942,21 +959,22 @@ fn handle_rpc_request<
                 chan.server_streaming(msg, handler, |handler, req| handler.inner.sync.doc_get(req))
                     .await
             }
-            DocList(msg) => {
-                chan.server_streaming(msg, handler, |handler, req| {
-                    handler.inner.sync.doc_list(req)
-                })
-                .await
-            }
-            DocJoin(msg) => {
+            DocStartSync(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
-                    handler.inner.sync.doc_join(req).await
+                    handler.inner.sync.doc_start_sync(req).await
                 })
                 .await
             }
             DocShare(msg) => {
                 chan.rpc(msg, handler, |handler, req| async move {
                     handler.inner.sync.doc_share(req).await
+                })
+                .await
+            }
+            // TODO: make streaming
+            BytesGet(msg) => {
+                chan.rpc(msg, handler, |handler, req| async move {
+                    handler.inner.sync.bytes_get(req).await
                 })
                 .await
             }

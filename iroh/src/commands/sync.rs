@@ -1,18 +1,21 @@
 use anyhow::anyhow;
 use clap::Parser;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    rpc_protocol::{
-        AuthorCreateRequest, AuthorListRequest, DocGetRequest, DocGetResponse, DocJoinRequest,
-        DocListRequest, DocListResponse, DocSetRequest, DocShareRequest, DocShareResponse,
-        DocsCreateRequest, DocsImportRequest, DocsListRequest, ShareMode,
-    },
+    rpc_protocol::{ProviderRequest, ProviderResponse, ShareMode},
     sync::PeerSource,
 };
-use iroh_sync::sync::{AuthorId, NamespaceId, SignedEntry};
+use iroh_sync::{
+    store::{GetFilter, KeyFilter},
+    sync::{AuthorId, NamespaceId, SignedEntry},
+};
+use quic_rpc::transport::quinn::QuinnConnection;
 
 use super::RpcClient;
+
+// TODO: It is a bit unfortunate that we have to drag the generics all through. Maybe box the conn?
+pub type Iroh = iroh::client::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 #[derive(Debug, Clone, Parser)]
 pub enum Commands {
@@ -33,10 +36,11 @@ pub enum Commands {
 
 impl Commands {
     pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
+        let iroh = Iroh::new(client);
         match self {
-            Commands::Author { command } => command.run(client).await,
-            Commands::Docs { command } => command.run(client).await,
-            Commands::Doc { command, id } => command.run(client, id).await,
+            Commands::Author { command } => command.run(iroh).await,
+            Commands::Docs { command } => command.run(iroh).await,
+            Commands::Doc { command, id } => command.run(iroh, id).await,
         }
     }
 }
@@ -48,17 +52,17 @@ pub enum Author {
 }
 
 impl Author {
-    pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: Iroh) -> anyhow::Result<()> {
         match self {
             Author::List => {
-                let mut stream = client.server_streaming(AuthorListRequest {}).await?;
-                while let Some(author) = stream.next().await {
-                    println!("{}", author??.author_id);
+                let mut stream = iroh.list_authors().await?;
+                while let Some(author_id) = stream.try_next().await? {
+                    println!("{}", author_id);
                 }
             }
             Author::Create => {
-                let author = client.rpc(AuthorCreateRequest).await??;
-                println!("{}", author.author_id);
+                let author_id = iroh.create_author().await?;
+                println!("{}", author_id);
             }
         }
         Ok(())
@@ -77,23 +81,23 @@ pub enum Docs {
 }
 
 impl Docs {
-    pub async fn run(self, client: RpcClient) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: Iroh) -> anyhow::Result<()> {
         match self {
             Docs::Create => {
-                let res = client.rpc(DocsCreateRequest {}).await??;
-                println!("{}", res.id);
+                let doc = iroh.create_doc().await?;
+                println!("created {}", doc.id());
             }
             Docs::Import { key, peers } => {
                 let key = hex::decode(key)?
                     .try_into()
                     .map_err(|_| anyhow!("invalid length"))?;
-                let res = client.rpc(DocsImportRequest { key, peers }).await??;
-                println!("{:?}", res);
+                let doc = iroh.import_doc(key, peers).await?;
+                println!("imported {}", doc.id());
             }
             Docs::List => {
-                let mut iter = client.server_streaming(DocsListRequest {}).await?;
-                while let Some(doc) = iter.next().await {
-                    println!("{}", doc??.id)
+                let mut stream = iroh.list_docs().await?;
+                while let Some(id) = stream.try_next().await? {
+                    println!("{}", id)
                 }
             }
         }
@@ -103,92 +107,101 @@ impl Docs {
 
 #[derive(Debug, Clone, Parser)]
 pub enum Doc {
-    Join {
+    StartSync {
         peers: Vec<PeerSource>,
     },
     Share {
         mode: ShareMode,
     },
+    /// Set an entry
     Set {
+        /// Author of this entry.
         author: AuthorId,
+        /// Key to the entry (parsed as UTF-8 string).
         key: String,
+        /// Content to store for this entry (parsed as UTF-8 string)
         value: String,
     },
+    /// Get entries by key
+    ///
+    /// Shows the author, content hash and content length for all entries for this key.
     Get {
+        /// Key to the entry (parsed as UTF-8 string).
         key: String,
-
+        /// If true, get all entries that start with KEY.
         #[clap(short, long)]
         prefix: bool,
+        /// Filter by author.
         #[clap(short, long)]
         author: Option<AuthorId>,
-        /// Include old entries for keys.
+        /// If true, old entries will be included. By default only the latest value for each key is
+        /// shown.
         #[clap(short, long)]
         old: bool,
+        // TODO: get content?
     },
     List {
-        /// Include old entries for keys.
+        /// If true, old entries will be included. By default only the latest value for each key is
+        /// shown.
         #[clap(short, long)]
         old: bool,
+        /// Optional key prefix (parsed as UTF-8 string)
+        prefix: Option<String>,
     },
 }
 
 impl Doc {
-    pub async fn run(self, client: RpcClient, doc_id: NamespaceId) -> anyhow::Result<()> {
+    pub async fn run(self, iroh: Iroh, doc_id: NamespaceId) -> anyhow::Result<()> {
+        let doc = iroh.get_doc(doc_id)?;
         match self {
-            Doc::Join { peers } => {
-                // let peers = peers.map(|peer| PeerSource::try_from)?;
-                let res = client.rpc(DocJoinRequest { doc_id, peers }).await??;
-                println!("{:?}", res);
+            Doc::StartSync { peers } => {
+                doc.start_sync(peers).await?;
+                println!("ok");
             }
             Doc::Share { mode } => {
-                let DocShareResponse { key, me } =
-                    client.rpc(DocShareRequest { doc_id, mode }).await??;
-                println!("key: {}", hex::encode(key));
-                println!("me:  {}", me);
+                let res = doc.share(mode).await?;
+                println!("key: {}", hex::encode(res.key));
+                println!("me:  {}", res.peer);
             }
             Doc::Set { author, key, value } => {
-                let res = client
-                    .rpc(DocSetRequest {
-                        author_id: author,
-                        key: key.as_bytes().to_vec(),
-                        value: value.as_bytes().to_vec(),
-                        doc_id,
-                    })
-                    .await??;
-                println!("{}", fmt_entry(&res.entry));
+                let key = key.as_bytes().to_vec();
+                let value = value.as_bytes().to_vec();
+                let entry = doc.set_bytes(author, key, value).await?;
+                println!("{}", fmt_entry(&entry));
             }
             Doc::Get {
                 key,
                 prefix,
                 author,
-                old: all,
+                old,
             } => {
-                let mut stream = client
-                    .server_streaming(DocGetRequest {
-                        key: key.as_bytes().to_vec(),
-                        doc_id,
-                        author_id: author,
-                        prefix,
-                        // todo: support option
-                        latest: !all,
-                    })
-                    .await?;
-                while let Some(res) = stream.next().await {
-                    let DocGetResponse { entry } = res??;
+                let key = key.as_bytes().to_vec();
+                let key = match prefix {
+                    true => KeyFilter::Prefix(key),
+                    false => KeyFilter::Key(key),
+                };
+                let filter = GetFilter {
+                    latest: !old,
+                    author,
+                    key,
+                };
+                let mut stream = doc.get(filter).await?;
+                while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
                 }
             }
-            Doc::List { old: all } => {
-                let mut stream = client
-                    // TODO: fields
-                    .server_streaming(DocListRequest {
-                        doc_id,
-                        latest: !all, // author: None,
-                                      // prefix: None,
-                    })
-                    .await?;
-                while let Some(res) = stream.next().await {
-                    let DocListResponse { entry } = res??;
+            Doc::List { old, prefix } => {
+                let key = match prefix {
+                    Some(prefix) => KeyFilter::Prefix(prefix.as_bytes().to_vec()),
+                    None => KeyFilter::All,
+                };
+                let filter = GetFilter {
+                    latest: !old,
+                    author: None,
+                    key,
+                };
+                let mut stream = doc.get(filter).await?;
+                while let Some(entry) = stream.try_next().await? {
                     println!("{}", fmt_entry(&entry));
                 }
             }
