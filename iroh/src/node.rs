@@ -42,7 +42,7 @@ use once_cell::sync::OnceCell;
 use quic_rpc::server::RpcChannel;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
-use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
+use quic_rpc::{RpcClient, RpcServer, ServiceEndpoint};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
@@ -625,12 +625,14 @@ impl<D: BaoReadonlyDb, S: Store> Node<D, S> {
     /// TODO: remove and replace with client?
     pub fn controller(
         &self,
-    ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
+    ) -> RpcClient<ProviderService, FlumeConnection<ProviderResponse, ProviderRequest>> {
         RpcClient::new(self.inner.controller.clone())
     }
 
-    ///
-    pub fn client(&self) -> super::client::Iroh<impl ServiceConnection<ProviderService>> {
+    /// Return a client to control this node over an in-memory channel.
+    pub fn client(
+        &self,
+    ) -> super::client::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>> {
         super::client::Iroh::new(self.controller())
     }
 

@@ -1,9 +1,8 @@
-use anyhow::anyhow;
 use clap::Parser;
 use futures::TryStreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    rpc_protocol::{ProviderRequest, ProviderResponse, ShareMode},
+    rpc_protocol::{DocShareResponse, DocTicket, ProviderRequest, ProviderResponse, ShareMode},
     sync::PeerSource,
 };
 use iroh_sync::{
@@ -73,11 +72,12 @@ impl Author {
 pub enum Docs {
     List,
     Create,
-    Import {
-        key: String,
-        #[clap(short, long)]
-        peers: Vec<PeerSource>,
-    },
+    // Import {
+    //     key: String,
+    //     #[clap(short, long)]
+    //     peers: Vec<PeerSource>,
+    // },
+    Import { ticket: DocTicket },
 }
 
 impl Docs {
@@ -87,11 +87,16 @@ impl Docs {
                 let doc = iroh.create_doc().await?;
                 println!("created {}", doc.id());
             }
-            Docs::Import { key, peers } => {
-                let key = hex::decode(key)?
-                    .try_into()
-                    .map_err(|_| anyhow!("invalid length"))?;
-                let doc = iroh.import_doc(key, peers).await?;
+            // Docs::Import { key, peers } => {
+            //     let key = hex::decode(key)?
+            //         .try_into()
+            //         .map_err(|_| anyhow!("invalid length"))?;
+            //     let ticket = DocTicket::new(key, peers);
+            //     let doc = iroh.import_doc(ticket).await?;
+            //     println!("imported {}", doc.id());
+            // }
+            Docs::Import { ticket } => {
+                let doc = iroh.import_doc(ticket).await?;
                 println!("imported {}", doc.id());
             }
             Docs::List => {
@@ -159,9 +164,18 @@ impl Doc {
                 println!("ok");
             }
             Doc::Share { mode } => {
-                let res = doc.share(mode).await?;
-                println!("key: {}", hex::encode(res.key));
-                println!("me:  {}", res.peer);
+                let DocShareResponse(ticket) = doc.share(mode).await?;
+                // println!("key:    {}", hex::encode(ticket.key));
+                // println!(
+                //     "peers:  {}",
+                //     ticket
+                //         .peers
+                //         .iter()
+                //         .map(|p| p.to_string())
+                //         .collect::<Vec<_>>()
+                //         .join(", ")
+                // );
+                println!("ticket: {}", ticket);
             }
             Doc::Set { author, key, value } => {
                 let key = key.as_bytes().to_vec();
