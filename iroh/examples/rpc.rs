@@ -1,13 +1,7 @@
-//! An example that serves an iroh collection from memory.
-//!
-//! Since this is using the default iroh collection format, it can be downloaded
-//! recursively using the iroh CLI.
-//!
-//! This is using an in memory database and a random peer id.
-//! run this example from the project root:
-//!     $ cargo run -p collection
+//! An example that runs an iroh node that can be controlled via RPC.
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use clap::Parser;
 use iroh::collection::IrohCollectionParser;
 use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
 use iroh::{bytes::util::runtime, rpc_protocol::ProviderService};
@@ -72,16 +66,30 @@ async fn run(db: impl Store) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to use to store the iroh database.
+    ///
+    /// If this is not set, an in memory database will be used.
+    #[clap(long)]
+    path: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     let rt = runtime::Handle::from_currrent(1)?;
-    // let iroh_data_dir = std::env::current_dir()?.join(".iroh");
-    // tokio::fs::create_dir_all(&iroh_data_dir).await?;
-    // // create a new persistent database
-    // let db = iroh::database::flat::Store::load(iroh_data_dir.clone(), iroh_data_dir).await?;
-    // run(db).await
 
-    let db = iroh::baomap::mem::Store::new(rt);
-    run(db).await
+    let args = Args::parse();
+    match args.path {
+        Some(path) => {
+            tokio::fs::create_dir_all(&path).await?;
+            let db = iroh::baomap::flat::Store::load(path.clone(), path, &rt).await?;
+            run(db).await
+        }
+        None => {
+            let db = iroh::baomap::mem::Store::new(rt);
+            run(db).await
+        }
+    }
 }
