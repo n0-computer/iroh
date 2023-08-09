@@ -1,7 +1,10 @@
 use indicatif::HumanBytes;
 use iroh::{database::flat::writable::WritableFileDatabase, node::Node};
 use iroh_bytes::util::runtime;
-use iroh_sync::{store::{GetFilter, KeyFilter}, sync::SignedEntry};
+use iroh_sync::{
+    store::{GetFilter, KeyFilter},
+    sync::SignedEntry,
+};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
