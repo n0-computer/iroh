@@ -565,7 +565,7 @@ impl Store {
             path: path.clone(),
         })?;
         let (hash, new, outboard) = match mode {
-            ImportMode::Reference => {
+            ImportMode::TryReference => {
                 // compute outboard and hash from the data in place, since we assume that it is stable
                 let size = path.metadata()?.len();
                 progress.blocking_send(ImportProgress::Size { id, size })?;
@@ -684,7 +684,7 @@ impl Store {
             (source, size, entry.owned_data)
         };
         // copy all the things
-        let stable = mode == ExportMode::Reference;
+        let stable = mode == ExportMode::TryReference;
         let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
             tracing::info!("moving {} to {}", source.display(), target.display());
             if let Err(e) = std::fs::rename(source, &target) {
@@ -712,7 +712,7 @@ impl Store {
                     "hash not found in database",
                 ));
             };
-            if mode == ExportMode::Reference {
+            if mode == ExportMode::TryReference {
                 entry.external.insert(target);
                 Some(entry.external_to_bytes())
             } else {

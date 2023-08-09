@@ -778,7 +778,7 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
         let mode = if stable {
-            ExportMode::Reference
+            ExportMode::TryReference
         } else {
             ExportMode::Copy
         };
@@ -1288,7 +1288,7 @@ impl<D: Store, C: CollectionParser> RpcHandler<D, C> {
         );
         let data_sources = crate::util::fs::scan_path(root)?;
         let mode = if msg.in_place {
-            ImportMode::Reference
+            ImportMode::TryReference
         } else {
             ImportMode::Copy
         };

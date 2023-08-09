@@ -59,6 +59,9 @@ pub trait Map: Clone + Send + Sync + 'static {
     ///
     /// It is not guaranteed that the entry is complete. A [PartialMap] would return
     /// here both complete and partial entries, so that you can share partial entries.
+    ///
+    /// This function should not block to perform io. The knowledge about
+    /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
 }
 
@@ -88,6 +91,11 @@ pub trait PartialMap: Map {
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
     /// Get an existing partial entry.
+    ///
+    /// This will return `None` if there is no partial entry for this hash.
+    ///
+    /// This function should not block to perform io. The knowledge about
+    /// partial entries must be present in memory.
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
 
     /// Upgrade a partial entry to a complete entry.
@@ -98,8 +106,14 @@ pub trait PartialMap: Map {
 pub trait ReadableStore: Map {
     /// list all blobs in the database. This should include collections, since
     /// collections are blobs and can be requested as blobs.
+    ///
+    /// This function should not block to perform io. The knowledge about
+    /// existing blobs must be present in memory.
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
     /// list all roots (collections or other explicitly added things) in the database
+    ///
+    /// This function should not block to perform io. The knowledge about
+    /// existing roots must be present in memory.
     fn roots(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
     /// Validate the database
     fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -195,11 +209,14 @@ pub enum ImportMode {
     /// after it has been imported.
     #[default]
     Copy,
-    /// This mode will reference the file in place and assume it is unchanged after import.
+    /// This mode will try to reference the file in place and assume it is unchanged after import.
     ///
     /// This has a large performance and storage benefit, but it is less safe since
     /// the file might be modified after it has been imported.
-    Reference,
+    ///
+    /// Stores are allowed to ignore this mode and always copy the file, e.g.
+    /// if the file is very small or if the store does not support referencing files.
+    TryReference,
 }
 /// The import mode describes how files will be imported.
 ///
@@ -215,12 +232,15 @@ pub enum ExportMode {
     /// after it has been exported.
     #[default]
     Copy,
-    /// This mode will move the file to the target directory and then reference it from
+    /// This mode will try to move the file to the target directory and then reference it from
     /// the database.
     ///
     /// This has a large performance and storage benefit, but it is less safe since
     /// the file might be modified in the target directory after it has been exported.
-    Reference,
+    ///
+    /// Stores are allowed to ignore this mode and always copy the file, e.g.
+    /// if the file is very small or if the store does not support referencing files.
+    TryReference,
 }
 
 #[allow(missing_docs)]
