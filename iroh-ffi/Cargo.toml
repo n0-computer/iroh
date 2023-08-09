@@ -43,6 +43,7 @@ tokio = "1.25.0"
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 uniffi = { version = "0.24.3", features = ["cli"] }
 quic-rpc = { version = "0.6", default-features = false, features = ["flume-transport"] }
+futures = "0.3.25"
 
 [build-dependencies]
 uniffi = { version = "0.24.3", features = ["build"] }

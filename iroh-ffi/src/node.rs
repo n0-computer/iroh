@@ -1,16 +1,30 @@
 use std::sync::Arc;
 
+use futures::stream::TryStreamExt;
 use iroh::{
     bytes::util::runtime::Handle,
     client::Doc as ClientDoc,
     database::flat,
     net::tls::Keypair,
     node::{Node, DEFAULT_BIND_ADDR},
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService, ShareMode},
+    rpc_protocol::{ProviderRequest, ProviderResponse, ShareMode},
 };
+use iroh_sync::store::{GetFilter, KeyFilter};
 use quic_rpc::transport::flume::FlumeConnection;
 
 use crate::error::{IrohError as Error, Result};
+
+pub struct SignedEntry(iroh_sync::sync::SignedEntry);
+
+impl SignedEntry {
+    pub fn author(&self) -> Arc<AuthorId> {
+        Arc::new(AuthorId(self.0.author()))
+    }
+
+    pub fn key(&self) -> Vec<u8> {
+        self.0.key().to_vec()
+    }
+}
 
 pub struct Doc {
     inner: ClientDoc<FlumeConnection<ProviderResponse, ProviderRequest>>,
@@ -22,6 +36,28 @@ impl Doc {
         self.inner.id().to_string()
     }
 
+    pub fn latest(&self) -> Result<Vec<Arc<SignedEntry>>> {
+        let latest = self
+            .rt
+            .main()
+            .block_on(async {
+                let get_result = self
+                    .inner
+                    .get(GetFilter {
+                        latest: true,
+                        author: None,
+                        key: KeyFilter::All,
+                    })
+                    .await?;
+                get_result
+                    .map_ok(|e| Arc::new(SignedEntry(e)))
+                    .try_collect::<Vec<_>>()
+                    .await
+            })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+        Ok(latest)
+    }
+
     pub fn share_write(&self) -> Result<Arc<DocTicket>> {
         let ticket = self
             .rt
@@ -31,9 +67,50 @@ impl Doc {
 
         Ok(Arc::new(DocTicket(ticket)))
     }
+
+    pub fn share_read(&self) -> Result<Arc<DocTicket>> {
+        let ticket = self
+            .rt
+            .main()
+            .block_on(async { self.inner.share(ShareMode::Read).await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+
+        Ok(Arc::new(DocTicket(ticket)))
+    }
+
+    pub fn set_bytes(
+        &self,
+        author_id: Arc<AuthorId>,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<Arc<SignedEntry>> {
+        let entry = self
+            .rt
+            .main()
+            .block_on(async { self.inner.set_bytes(author_id.0.clone(), key, value).await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+
+        Ok(Arc::new(SignedEntry(entry)))
+    }
+
+    pub fn get_content_bytes(&self, entry: Arc<SignedEntry>) -> Result<Vec<u8>> {
+        let content = self
+            .rt
+            .main()
+            .block_on(async { self.inner.get_content_bytes(&entry.0).await })
+            .map_err(|e| Error::Doc(e.to_string()))?;
+
+        Ok(content.to_vec())
+    }
 }
 
-pub use iroh_sync::sync::AuthorId;
+pub struct AuthorId(iroh_sync::sync::AuthorId);
+
+impl AuthorId {
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DocTicket(iroh::rpc_protocol::DocTicket);
@@ -130,7 +207,7 @@ impl IrohNode {
             .block_on(async { self.sync_client.create_author().await })
             .map_err(|e| Error::Author(e.to_string()))?;
 
-        Ok(Arc::new(author))
+        Ok(Arc::new(AuthorId(author)))
     }
 
     pub fn import_doc(&self, ticket: Arc<DocTicket>) -> Result<Arc<Doc>> {

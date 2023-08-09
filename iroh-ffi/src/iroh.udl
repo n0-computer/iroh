@@ -17,9 +17,23 @@ interface Doc {
   string id();
   [Throws=IrohError]
   DocTicket share_write();
+  [Throws=IrohError]
+  DocTicket share_read();
+  [Throws=IrohError]
+  SignedEntry set_bytes(AuthorId author, bytes key, bytes value);
+  [Throws=IrohError]
+  bytes get_content_bytes(SignedEntry entry);
+  [Throws=IrohError]
+  sequence<SignedEntry> latest();
 };
 
 interface AuthorId {
+  string to_string();
+};
+
+interface SignedEntry {
+  AuthorId author();
+  bytes key();
 };
 
 interface DocTicket {

@@ -64,6 +64,7 @@ typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnul
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
+typedef void (*UniFfiFutureCallbackUnsafeMutableRawPointer)(const void * _Nonnull, void*_Nonnull, RustCallStatus);
 typedef void (*UniFfiFutureCallbackRustBuffer)(const void * _Nonnull, RustBuffer, RustCallStatus);
 
 // Scaffolding functions
@@ -86,7 +87,23 @@ RustBuffer uniffi_iroh_fn_method_doc_id(void*_Nonnull ptr, RustCallStatus *_Nonn
 );
 void*_Nonnull uniffi_iroh_fn_method_doc_share_write(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
+void*_Nonnull uniffi_iroh_fn_method_doc_share_read(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void*_Nonnull uniffi_iroh_fn_method_doc_set_bytes(void*_Nonnull ptr, void*_Nonnull author, RustBuffer key, RustBuffer value, RustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_iroh_fn_method_doc_get_content_bytes(void*_Nonnull ptr, void*_Nonnull entry, RustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_iroh_fn_method_doc_latest(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
 void uniffi_iroh_fn_free_authorid(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_iroh_fn_method_authorid_to_string(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void uniffi_iroh_fn_free_signedentry(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void*_Nonnull uniffi_iroh_fn_method_signedentry_author(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_iroh_fn_method_signedentry_key(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 void uniffi_iroh_fn_free_docticket(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
@@ -118,6 +135,27 @@ uint16_t uniffi_iroh_checksum_method_doc_id(void
     
 );
 uint16_t uniffi_iroh_checksum_method_doc_share_write(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_doc_share_read(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_doc_set_bytes(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_doc_get_content_bytes(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_doc_latest(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_authorid_to_string(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_signedentry_author(void
+    
+);
+uint16_t uniffi_iroh_checksum_method_signedentry_key(void
     
 );
 uint16_t uniffi_iroh_checksum_method_docticket_to_string(void
