@@ -18,7 +18,6 @@ use crate::metrics::Metrics;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 
-
 /// The ALPN identifier for the iroh-sync protocol
 pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
 

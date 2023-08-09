@@ -5,6 +5,7 @@
 // TODO: fill out docs
 #![allow(missing_docs)]
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -21,9 +22,9 @@ use quic_rpc::transport::quinn::QuinnConnection;
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, DocGetRequest, DocImportRequest,
-    DocSetRequest, DocShareRequest, DocStartSyncRequest, DocTicket, DocsCreateRequest,
-    DocsListRequest, ShareMode, VersionRequest,
+    AuthorCreateRequest, AuthorListRequest, BytesGetRequest, CounterStats, DocGetRequest,
+    DocImportRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocTicket,
+    DocsCreateRequest, DocsListRequest, ShareMode, StatsGetRequest, VersionRequest,
 };
 use crate::rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService};
 use crate::sync::PeerSource;
@@ -140,6 +141,11 @@ where
     pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
         let res = self.rpc.rpc(BytesGetRequest { hash }).await??;
         Ok(res.data)
+    }
+
+    pub async fn stats(&self) -> Result<HashMap<String, CounterStats>> {
+        let res = self.rpc.rpc(StatsGetRequest {}).await??;
+        Ok(res.stats)
     }
 }
 

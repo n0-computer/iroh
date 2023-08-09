@@ -55,8 +55,8 @@ use crate::download::Downloader;
 use crate::rpc_protocol::{
     AddrsRequest, AddrsResponse, IdRequest, IdResponse, ListBlobsRequest, ListBlobsResponse,
     ListCollectionsRequest, ListCollectionsResponse, ProvideRequest, ProviderRequest,
-    ProviderResponse, ProviderService, ShutdownRequest, ValidateRequest, VersionRequest,
-    VersionResponse, WatchRequest, WatchResponse, StatsGetRequest, StatsGetResponse,
+    ProviderResponse, ProviderService, ShutdownRequest, StatsGetRequest, StatsGetResponse,
+    ValidateRequest, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::sync::{SyncEngine, SYNC_ALPN};
 
@@ -853,7 +853,9 @@ impl<D: BaoMap + BaoReadonlyDb, S: Store, C: CollectionParser> RpcHandler<D, S, 
 
     async fn stats(self, _req: StatsGetRequest) -> RpcResult<StatsGetResponse> {
         #[cfg(feature = "metrics")]
-        let res = Ok(StatsGetResponse { stats: crate::metrics::get_metrics()? });
+        let res = Ok(StatsGetResponse {
+            stats: crate::metrics::get_metrics()?,
+        });
 
         #[cfg(not(feature = "metrics"))]
         let res = Err(anyhow::anyhow!("metrics are disabled").into());
