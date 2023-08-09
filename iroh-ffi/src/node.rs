@@ -49,10 +49,6 @@ impl IrohNode {
         // TODO: store and load keypair
         let keypair = Keypair::generate();
 
-        let (rpc_endpoint, rpc_conn) =
-            quic_rpc::transport::flume::connection::<ProviderRequest, ProviderResponse>(8);
-        let rpc_client = quic_rpc::RpcClient::new(rpc_conn);
-
         let rt_inner = rt.clone();
         let node = rt
             .main()
@@ -62,7 +58,6 @@ impl IrohNode {
 
                 Node::builder(db, store, path)
                     .bind_addr(DEFAULT_BIND_ADDR.into())
-                    .rpc_endpoint(rpc_endpoint)
                     .keypair(keypair)
                     .runtime(&rt_inner)
                     .spawn()
@@ -70,7 +65,7 @@ impl IrohNode {
             })
             .map_err(|e| Error::NodeCreate(e.to_string()))?;
 
-        let sync_client = Arc::new(iroh::client::Iroh::new(rpc_client));
+        let sync_client = Arc::new(node.client());
 
         Ok(IrohNode {
             inner: node,
