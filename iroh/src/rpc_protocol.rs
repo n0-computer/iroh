@@ -9,11 +9,12 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::{protocol::RequestToken, provider::ShareProgress, Hash};
+use iroh_gossip::proto::util::base32;
 use iroh_net::tls::PeerId;
 
 use iroh_sync::{
@@ -416,12 +417,46 @@ pub struct DocsCreateResponse {
 }
 
 /// todo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DocImportRequest {
-    // either a public or private key
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DocTicket {
+    /// either a public or private key
     pub key: KeyBytes,
+    /// a list of peers
     pub peers: Vec<PeerSource>,
 }
+impl DocTicket {
+    /// Create a new doc ticket
+    pub fn new(key: KeyBytes, peers: Vec<PeerSource>) -> Self {
+        Self { key, peers }
+    }
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let bytes = postcard::to_stdvec(&self)?;
+        Ok(bytes)
+    }
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let slf = postcard::from_bytes(&bytes)?;
+        Ok(slf)
+    }
+}
+impl FromStr for DocTicket {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_bytes(&base32::parse_vec(s)?)
+    }
+}
+impl fmt::Display for DocTicket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            base32::fmt(&self.to_bytes().expect("failed to serialize"))
+        )
+    }
+}
+
+/// todo
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocImportRequest(pub DocTicket);
 
 impl RpcMsg<ProviderService> for DocImportRequest {
     type Response = RpcResult<DocImportResponse>;
@@ -446,10 +481,7 @@ impl RpcMsg<ProviderService> for DocShareRequest {
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocShareResponse {
-    pub key: KeyBytes,
-    pub peer: PeerSource,
-}
+pub struct DocShareResponse(pub DocTicket);
 
 /// todo
 #[derive(Serialize, Deserialize, Debug)]
