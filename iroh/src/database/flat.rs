@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::{fmt, io, result};
 
 use anyhow::Context;
+use bao_tree::blake3;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderMemOutboard};
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -27,6 +28,8 @@ use crate::util::io::canonicalize_path;
 use crate::util::io::validate_bao;
 use crate::util::io::BaoValidationError;
 use crate::util::progress::{Progress, ProgressReader, ProgressReaderUpdate};
+
+pub mod writable;
 
 /// File name of directory inside `IROH_DATA_DIR` where outboards are stored.
 const FNAME_OUTBOARDS: &str = "outboards";

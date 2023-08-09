@@ -589,15 +589,19 @@ impl Service {
             // strategy:
             // 1. check the available services and prefer pcp, then nat_pmp then upnp since it's
             //    the most unreliable, but possibly the most deployed one
-            // 2. if no service was available, fallback to upnp if enabled
-            self.mapping_task = if pcp || (!recently_probed && self.config.enable_pcp) {
+            // 2. if no service was available, fallback to upnp if enabled, followed by pcp and
+            //    nat_pmp
+            self.mapping_task = if pcp {
+                // try pcp if avaiable first
                 let task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
                 Some(tokio::spawn(task.instrument(info_span!("pcp"))).into())
-            } else if nat_pmp || (!recently_probed && self.config.enable_nat_pmp) {
+            } else if nat_pmp {
+                // next nat_pmp if available
                 let task =
                     mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
                 Some(tokio::spawn(task.instrument(info_span!("pmp"))).into())
             } else if upnp || self.config.enable_upnp {
+                // next upnp if available or enabled
                 let external_port = external_addr.map(|(_addr, port)| port);
                 let gateway = self
                     .full_probe
@@ -606,6 +610,16 @@ impl Service {
                     .map(|(gateway, _last_seen)| gateway.clone());
                 let task = mapping::Mapping::new_upnp(local_ip, local_port, gateway, external_port);
                 Some(tokio::spawn(task.instrument(info_span!("upnp"))).into())
+            } else if !recently_probed && self.config.enable_pcp {
+                // if no service is available and the default fallback (upnp) is disabled, try pcp
+                // first
+                let task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
+                Some(tokio::spawn(task.instrument(info_span!("pcp"))).into())
+            } else if !recently_probed && self.config.enable_nat_pmp {
+                // finally try nat_pmp if enabled
+                let task =
+                    mapping::Mapping::new_nat_pmp(local_ip, local_port, gateway, external_addr);
+                Some(tokio::spawn(task.instrument(info_span!("pmp"))).into())
             } else {
                 // give up
                 return;

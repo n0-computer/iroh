@@ -1,5 +1,6 @@
 //! Utility functions and types.
 use anyhow::Result;
+use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, result, str::FromStr};
@@ -78,6 +79,18 @@ impl From<blake3::Hash> for Hash {
 impl From<[u8; 32]> for Hash {
     fn from(value: [u8; 32]) -> Self {
         Hash(blake3::Hash::from(value))
+    }
+}
+
+impl From<Hash> for [u8; 32] {
+    fn from(value: Hash) -> Self {
+        *value.as_bytes()
+    }
+}
+
+impl From<&[u8; 32]> for Hash {
+    fn from(value: &[u8; 32]) -> Self {
+        Hash(blake3::Hash::from(*value))
     }
 }
 

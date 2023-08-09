@@ -3,8 +3,10 @@ members = [
   "iroh",
   "iroh-bytes",
   "iroh-ffi",
+  "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
+  "iroh-sync",
 ]
 
 [profile.optimized-release]

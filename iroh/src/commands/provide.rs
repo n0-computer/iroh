@@ -15,6 +15,7 @@ use iroh::{
 };
 use iroh_bytes::{protocol::RequestToken, provider::BaoReadonlyDb, util::runtime};
 use iroh_net::{derp::DerpMap, tls::Keypair};
+use iroh_sync::store::Store;
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio::io::AsyncWriteExt;
 use tracing::{info_span, Instrument};
@@ -25,6 +26,10 @@ use super::{
     add::{aggregate_add_response, print_add_response},
     MAX_RPC_CONNECTIONS, MAX_RPC_STREAMS, RPC_ALPN,
 };
+
+/// File name inside `IROH_DATA_DIR` where docs stored.
+/// TODO: Move some other place
+pub const DOCS_PATH: &str = "docs";
 
 #[derive(Debug)]
 pub struct ProvideOptions {
@@ -60,9 +65,12 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
             Database::default()
         }
     };
+    let store = iroh_sync::store::fs::Store::new(iroh_data_root.join(DOCS_PATH))?;
+    let blobs_path = iroh_data_root.join("blobstemp");
+
     let key = Some(iroh_data_root.join("keypair"));
     let token = opts.request_token.clone();
-    let provider = provide(db.clone(), rt, key, opts).await?;
+    let provider = provide(db.clone(), store, blobs_path, rt, key, opts).await?;
     let controller = provider.controller();
     if let Some(t) = token.as_ref() {
         println!("Request token: {}", t);
@@ -122,15 +130,17 @@ pub async fn run(rt: &runtime::Handle, path: Option<PathBuf>, opts: ProvideOptio
     Ok(())
 }
 
-async fn provide<D: BaoReadonlyDb>(
+async fn provide<D: BaoReadonlyDb, S: Store>(
     db: D,
+    store: S,
+    writable_db_path: PathBuf,
     rt: &runtime::Handle,
     key: Option<PathBuf>,
     opts: ProvideOptions,
-) -> Result<Node<D>> {
+) -> Result<Node<D, S>> {
     let keypair = get_keypair(key).await?;
 
-    let mut builder = Node::builder(db)
+    let mut builder = Node::builder(db, store, writable_db_path)
         .collection_parser(IrohCollectionParser)
         .custom_auth_handler(Arc::new(StaticTokenAuthHandler::new(opts.request_token)))
         .keylog(opts.keylog);
